@@ -96,9 +96,12 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
     const seq = ++loadSeqRef.current;
     const mgr = mgrRef.current;
     const chart = chartRef.current;
-    const candles = data?.candles;
-    if (!mgr || !chart || !candles?.length) return;
+    if (!mgr || !chart || !data?.candles?.length) return;
     if (seq !== loadSeqRef.current) return;
+
+    const payload = data; // narrowed: data is ChartMarketData here
+    const candles = payload.candles;
+
     try {
       mgr.setHistory(candles, kindRef.current);
       mgr.setVolumeVisible(prefs.volume !== false);
@@ -111,9 +114,9 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
         macd: prefs.indicators?.macd !== false,
         srLevels: prefs.indicators?.srLevels !== false,
       };
-      mgr.rebuildIndicators(data.indicators ?? null, vis);
-      mgr.rebuildSrLines(data.indicators ?? null, vis.srLevels);
-      if (data.markers?.length) mgr.applyMarkers(data.markers);
+      mgr.rebuildIndicators(payload.indicators ?? null, vis);
+      mgr.rebuildSrLines(payload.indicators ?? null, vis.srLevels);
+      if (payload.markers?.length) mgr.applyMarkers(payload.markers);
       if (extraLevels?.length) mgr.rebuildExtraLevels(extraLevels);
       chart.timeScale().fitContent();
     } catch {
