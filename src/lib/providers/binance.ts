@@ -25,10 +25,12 @@ export class ProviderError extends Error {
 
 const SPOT_HOSTS = [
   env.binanceBaseUrl,
-  "https://api.binance.com",
+  // Prefer vision endpoint first — less geo-blocked from many Vercel regions
+  "https://data-api.binance.vision",
   "https://api1.binance.com",
   "https://api2.binance.com",
-  "https://data-api.binance.vision",
+  "https://api3.binance.com",
+  "https://api.binance.com",
 ].filter((h): h is string => Boolean(h));
 
 const FUTURES_HOSTS = [env.binanceFapiBaseUrl, "https://fapi.binance.com", "https://fapi1.binance.com"].filter(
@@ -71,92 +73,90 @@ async function getFromHosts<T>(hosts: string[], startIdx: number, path: string, 
   for (let i = 0; i < hosts.length; i++) {
     const idx = (startIdx + i) % hosts.length;
     const url = `${hosts[idx]}${path}`;
-    const res = await httpJson<T>(url, { provider, timeoutMs: 8_000, retries: 1 });
-    if (res.ok && res.data != null) return { data: res.data, hostIdx: idx };
+    // Isolate circuit state per host so one geo-blocked endpoint does not block all failovers
+    const hostProvider = i === 0 ? provider : `${provider}:h${idx}`;
+    const res = await httpJson<T>(url, { provider: hostProvider, timeoutMs: 8_000, retries: 1 });
+    if (res.ok && res.data != null) {
+      if (i > 0) {
+        try {
+          const { recordSuccess } = await import("../health");
+          recordSuccess(provider, res.latencyMs ?? 0);
+        } catch {
+          /* ignore */
+        }
+      }
+      return { data: res.data, hostIdx: idx };
+    }
     lastErr = res.error ?? "unreachable";
   }
   throw new ProviderError(`${provider}: all hosts failed (${lastErr})`, provider);
 }
 
-/** Full market 24h tickers (single request covers the whole spot market). */
-export async function getAllSpotTickers(): Promise<BinanceTicker24h[]> {
-  const { data, hostIdx } = await getFromHosts<BinanceTicker24h[]>(SPOT_HOSTS, lastGoodSpot, "/api/v3/ticker/24hr", BINANCE_SPOT);
-  lastGoodSpot = hostIdx;
-  return data;
-}
+export const binance = {
+  async getSpotTicker(symbol: string): Promise<BinanceTicker24h> {
+    const { data, hostIdx } = await getFromHosts<BinanceTicker24h>(
+      SPOT_HOSTS,
+      lastGoodSpot,
+      `/api/v3/ticker/24hr?symbol=${encodeURIComponent(symbol)}`,
+      BINANCE_SPOT,
+    );
+    lastGoodSpot = hostIdx;
+    return data;
+  },
 
-export async function getSpotTicker(symbol: string): Promise<BinanceTicker24h> {
-  const { data, hostIdx } = await getFromHosts<BinanceTicker24h>(
-    SPOT_HOSTS,
-    lastGoodSpot,
-    `/api/v3/ticker/24hr?symbol=${encodeURIComponent(symbol)}`,
-    BINANCE_SPOT,
-  );
-  lastGoodSpot = hostIdx;
-  return data;
-}
+  async getAllSpotTickers(): Promise<BinanceTicker24h[]> {
+    const { data, hostIdx } = await getFromHosts<BinanceTicker24h[]>(SPOT_HOSTS, lastGoodSpot, `/api/v3/ticker/24hr`, BINANCE_SPOT);
+    lastGoodSpot = hostIdx;
+    return data;
+  },
 
-type RawKline = [number, string, string, string, string, string, number, string, number, string, string, string];
+  async getKlines(symbol: string, interval: string, limit = 200): Promise<OhlcvBar[]> {
+    const { data, hostIdx } = await getFromHosts<unknown[][]>(
+      SPOT_HOSTS,
+      lastGoodSpot,
+      `/api/v3/klines?symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(interval)}&limit=${limit}`,
+      BINANCE_SPOT,
+    );
+    lastGoodSpot = hostIdx;
+    return data.map((row) => ({
+      time: Number(row[0]),
+      open: Number(row[1]),
+      high: Number(row[2]),
+      low: Number(row[3]),
+      close: Number(row[4]),
+      volume: Number(row[5]),
+    }));
+  },
 
-export async function getKlines(symbol: string, interval: string, limit = 200): Promise<OhlcvBar[]> {
-  const { data, hostIdx } = await getFromHosts<RawKline[]>(
-    SPOT_HOSTS,
-    lastGoodSpot,
-    `/api/v3/klines?symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(interval)}&limit=${limit}`,
-    BINANCE_SPOT,
-  );
-  lastGoodSpot = hostIdx;
-  return data.map((k) => ({
-    time: k[0],
-    open: Number(k[1]),
-    high: Number(k[2]),
-    low: Number(k[3]),
-    close: Number(k[4]),
-    volume: Number(k[5]),
-  }));
-}
+  async getFundingRate(symbol: string): Promise<FundingInfo | null> {
+    try {
+      const { data, hostIdx } = await getFromHosts<Record<string, string>>(
+        FUTURES_HOSTS,
+        lastGoodFutures,
+        `/fapi/v1/premiumIndex?symbol=${encodeURIComponent(symbol)}`,
+        BINANCE_FUTURES,
+      );
+      lastGoodFutures = hostIdx;
+      return {
+        symbol,
+        markPrice: Number(data.markPrice),
+        indexPrice: Number(data.indexPrice),
+        fundingRate: Number(data.lastFundingRate),
+        nextFundingTime: Number(data.nextFundingTime),
+      };
+    } catch {
+      return null;
+    }
+  },
 
-/** Futures mark price + funding rate (may be geo-blocked → throws ProviderError). */
-export async function getFundingRate(symbol: string): Promise<FundingInfo> {
-  type Premium = { symbol: string; markPrice: string; indexPrice: string; lastFundingRate: string; nextFundingTime: number };
-  const { data, hostIdx } = await getFromHosts<Premium>(
-    FUTURES_HOSTS,
-    lastGoodFutures,
-    `/fapi/v1/premiumIndex?symbol=${encodeURIComponent(symbol)}`,
-    BINANCE_FUTURES,
-  );
-  lastGoodFutures = hostIdx;
-  return {
-    symbol: data.symbol,
-    markPrice: Number(data.markPrice),
-    indexPrice: Number(data.indexPrice),
-    fundingRate: Number(data.lastFundingRate),
-    nextFundingTime: data.nextFundingTime,
-  };
-}
-
-export async function getAllFundingRates(): Promise<FundingInfo[]> {
-  type Premium = { symbol: string; markPrice: string; indexPrice: string; lastFundingRate: string; nextFundingTime: number };
-  const { data, hostIdx } = await getFromHosts<Premium[]>(FUTURES_HOSTS, lastGoodFutures, `/fapi/v1/premiumIndex`, BINANCE_FUTURES);
-  lastGoodFutures = hostIdx;
-  return data.map((d) => ({
-    symbol: d.symbol,
-    markPrice: Number(d.markPrice),
-    indexPrice: Number(d.indexPrice),
-    fundingRate: Number(d.lastFundingRate),
-    nextFundingTime: d.nextFundingTime,
-  }));
-}
-
-/** Open interest for a perpetual contract. */
-export async function getOpenInterest(symbol: string): Promise<{ symbol: string; openInterest: number; time: number }> {
-  type OI = { symbol: string; openInterest: string; time: number };
-  const { data, hostIdx } = await getFromHosts<OI>(
-    FUTURES_HOSTS,
-    lastGoodFutures,
-    `/fapi/v1/openInterest?symbol=${encodeURIComponent(symbol)}`,
-    BINANCE_FUTURES,
-  );
-  lastGoodFutures = hostIdx;
-  return { symbol: data.symbol, openInterest: Number(data.openInterest), time: data.time };
-}
+  async getOpenInterest(symbol: string): Promise<{ openInterest: number; time: number }> {
+    const { data, hostIdx } = await getFromHosts<Record<string, string>>(
+      FUTURES_HOSTS,
+      lastGoodFutures,
+      `/fapi/v1/openInterest?symbol=${encodeURIComponent(symbol)}`,
+      BINANCE_FUTURES,
+    );
+    lastGoodFutures = hostIdx;
+    return { openInterest: Number(data.openInterest), time: Date.now() };
+  },
+};
