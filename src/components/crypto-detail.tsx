@@ -21,6 +21,7 @@ import { Badge, Chg, fmtCompact, fmtNum, FreshnessDot, Loading, MetaLine, Panel,
 import { OrcaChart } from "@/components/orca-chart";
 import { TechnicalPanel } from "@/components/technical-panel";
 import { ScalpPanel } from "@/components/scalp-panel";
+import { CryptoTradeDesk } from "@/components/crypto-trade-desk";
 import { AddToWatchlist } from "@/components/watchlist-button";
 import { useSettings } from "@/lib/settings";
 import { usePrefCurrency } from "@/lib/fx-pref";
@@ -31,7 +32,9 @@ const INTERVALS = ["15m", "1h", "4h", "1d"] as const;
 export function CryptoDetailPage({ symbol }: { symbol: string }) {
   const { settings } = useSettings();
   const { fmtUsd } = usePrefCurrency();
-  const [interval, setInterval] = useState<(typeof INTERVALS)[number]>(settings.dashboard.defaultTimeframe);
+  const [interval, setInterval] = useState<(typeof INTERVALS)[number]>(
+    (settings.dashboard.defaultTimeframe as (typeof INTERVALS)[number]) || "1h",
+  );
   const { data, meta, isLoading } = useApi<CryptoDetail>(`/api/v1/crypto/${encodeURIComponent(symbol)}?interval=${interval}`, {
     refreshInterval: 20_000,
   });
@@ -63,35 +66,29 @@ export function CryptoDetailPage({ symbol }: { symbol: string }) {
         <div className="flex flex-col gap-3 p-4 md:flex-row md:items-end md:justify-between">
           <div>
             <div className="flex items-center gap-2">
-              <h1 className="text-xl font-semibold">
-                {data.baseAsset}
-                <span className="text-sm font-normal text-ink-3">/USDT</span>
-              </h1>
-              <Badge tone="accent">Binance Spot</Badge>
+              <h1 className="text-xl font-semibold">{data.baseAsset}/USDT</h1>
+              <Badge tone="accent">{data.symbol}</Badge>
+              <Badge tone="neutral">Binance Spot</Badge>
               <FreshnessDot status={meta?.freshness} ageMs={meta?.ageMs} />
               <AddToWatchlist assetType="crypto" symbol={data.symbol} />
             </div>
             <div className="num mt-1 flex items-baseline gap-3">
-              <span className="text-[28px] font-semibold leading-none">{fmtNum(t.price, digits)}</span>
+              <span className="text-[28px] font-semibold">{fmtNum(t.price, digits)}</span>
               <Chg value={t.changePercent} className="text-[14px]" />
             </div>
           </div>
-          <div className="grid grid-cols-3 gap-2 text-right md:grid-cols-4">
-            <HeadStat label="Cao 24h" value={fmtNum(t.high, digits)} />
-            <HeadStat label="Thấp 24h" value={fmtNum(t.low, digits)} />
-            <HeadStat label="Vol 24h" value={fmtUsd(t.quoteVolume)} />
-            <HeadStat label="Giao dịch" value={fmtCompact(t.trades24h)} />
+          <div className="flex flex-wrap gap-4">
+            <HeadStat label="Cao 24h" value={fmtNum(t.high24h ?? t.price, digits)} />
+            <HeadStat label="Thấp 24h" value={fmtNum(t.low24h ?? t.price, digits)} />
+            <HeadStat label="Vol 24h" value={`$${fmtCompact(t.quoteVolume)}`} />
+            <HeadStat label="Giao dịch" value={fmtCompact(t.trades ?? 0)} />
           </div>
         </div>
-        <div className="flex items-center justify-between border-t border-line px-4 py-2">
-          <div className="flex gap-1">
-            {INTERVALS.map((iv) => (
-              <button
-                key={iv}
-                onClick={() => setInterval(iv)}
-                className={`rounded-md px-2.5 py-1 text-[11px] ${interval === iv ? "bg-accent/15 text-accent" : "text-ink-3 hover:text-ink"}`}
-              >
-                {iv}
+        <div className="flex items-center justify-between border-t border-border-subtle px-4 py-2">
+          <div className="seg">
+            {INTERVALS.map((x) => (
+              <button key={x} type="button" data-active={interval === x} onClick={() => setInterval(x)}>
+                {x}
               </button>
             ))}
           </div>
@@ -101,7 +98,13 @@ export function CryptoDetailPage({ symbol }: { symbol: string }) {
 
       <div className="grid grid-cols-12 gap-3">
         <div className="col-span-12">
-          <OrcaChart symbol={data.symbol} assetType="crypto" defaultTimeframe={interval} height={440} title={`${data.baseAsset}/USDT`} />
+          <OrcaChart
+            symbol={data.symbol}
+            assetType="crypto"
+            defaultTimeframe={interval}
+            height={440}
+            title={`${data.baseAsset}/USDT`}
+          />
         </div>
 
         <div className="col-span-12 space-y-3 xl:col-span-4">
@@ -172,6 +175,10 @@ export function CryptoDetailPage({ symbol }: { symbol: string }) {
               <li className="text-ink-3">Phân tích thuần định lượng từ dữ liệu Binance — không phải khuyến nghị.</li>
             </ul>
           </Panel>
+        </div>
+
+        <div className="col-span-12 xl:col-span-8">
+          <CryptoTradeDesk symbol={data.symbol} />
         </div>
 
         <div className="col-span-12">
