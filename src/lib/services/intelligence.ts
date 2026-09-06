@@ -166,30 +166,33 @@ export interface ScalpResult {
 export async function buildScalpSignal(symbolRaw: string, timeframe = "5m"): Promise<{ result: ScalpResult; meta: Meta } | null> {
   ensureBinanceWsStarted();
   const sym = symbolRaw.toUpperCase().endsWith("USDT") ? symbolRaw.toUpperCase() : `${symbolRaw.toUpperCase()}USDT`;
+  const m5Interval = timeframe === "1m" ? "5m" : timeframe === "15m" ? "15m" : "5m";
 
   const [m15, m5, m1, markets, detail] = await Promise.all([
-    getCryptoKlines(sym, "15m", 120),
-    getCryptoKlines(sym, timeframe === "1m" ? "5m" : timeframe === "15m" ? "15m" : "5m", 320),
-    getCryptoKlines(sym, "1m", 120),
-    getCryptoMarkets(),
-    getCryptoDetail(sym, "15m"),
+    getCryptoKlines(sym, "15m", 120).catch(() => null),
+    getCryptoKlines(sym, m5Interval, 320).catch(() => null),
+    getCryptoKlines(sym, "1m", 120).catch(() => null),
+    getCryptoMarkets().catch(() => null),
+    getCryptoDetail(sym, "15m").catch(() => null),
   ]);
 
-  const primaryBars = m5?.bars ?? m15?.bars;
-  if (!primaryBars || primaryBars.length < 60) return null;
-  if (!m15 || m15.bars.length < 40) return null;
+  const barsM5 = m5?.bars ?? m15?.bars ?? null;
+  if (!barsM5 || barsM5.length < 60) return null;
 
-  const q5 = validateBars(primaryBars);
-  const q15 = validateBars(m15.bars);
+  const barsM15 = m15?.bars && m15.bars.length >= 40 ? m15.bars : barsM5;
+  const barsM1 = m1?.bars && m1.bars.length >= 30 ? m1.bars : null;
+
+  const q5 = validateBars(barsM5);
+  const q15 = validateBars(barsM15);
   if (q5.status !== "VALID") void logQualityEvent("binance-spot", `scalp:${sym}:m5`, q5);
   if (q15.status !== "VALID") void logQualityEvent("binance-spot", `scalp:${sym}:m15`, q15);
 
-  const q1 = m1 && m1.bars.length >= 30 ? validateBars(m1.bars) : null;
+  const q1 = barsM1 ? validateBars(barsM1) : null;
   const row = markets?.rows.find((r) => r.symbol === sym);
   const funding = detail?.detail.funding?.fundingRate ?? null;
   const oi = detail?.detail.openInterest?.openInterest ?? null;
 
-  const signal = analyzeScalpMulti({
+  let signal = analyzeScalpMulti({
     symbol: sym,
     barsM15: q15.cleaned,
     barsM5: q5.cleaned,
@@ -198,17 +201,25 @@ export async function buildScalpSignal(symbolRaw: string, timeframe = "5m"): Pro
     fundingRate: funding,
     openInterest: oi,
   });
+
+  if (!signal) {
+    signal = analyzeScalp(q5.cleaned, { timeframe: m5Interval, quoteVolume24h: row?.quoteVolume ?? null, symbol: sym });
+  }
   if (!signal) return null;
 
   const wsTick = binanceWs.getTicker(sym, 10_000);
+  const lastBar = barsM5[barsM5.length - 1];
   const meta = buildMeta({
     source: wsTick ? "binance-ws + binance" : "binance",
-    sourceTimestampMs: wsTick?.eventTime ?? primaryBars[primaryBars.length - 1]?.time ?? Date.now(),
+    sourceTimestampMs: wsTick?.eventTime ?? lastBar?.time ?? Date.now(),
     note: wsTick
-      ? "Scalp multi-TF (M15->M5->M1) · gia realtime qua centralized WebSocket"
-      : "Scalp multi-TF (M15->M5->M1) · WS chua live - nen REST",
+      ? "Scalp multi-TF · gia realtime qua WebSocket"
+      : m15
+        ? "Scalp multi-TF · REST (WS chua live)"
+        : "Scalp single-TF fallback · thieu M15",
+    partial: !m15 || !m1,
   });
-  meta.qualityStatus = q5.status === "VALID" && q15.status === "VALID" ? "VALID" : "SUSPECT";
+  meta.qualityStatus = q5.status === "VALID" ? (q15.status === "VALID" ? "VALID" : "SUSPECT") : "SUSPECT";
   return { result: { signal, quality: meta.qualityStatus, wsLive: Boolean(wsTick) }, meta };
 }
 
