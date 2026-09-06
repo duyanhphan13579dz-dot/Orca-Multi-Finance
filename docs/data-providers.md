@@ -85,12 +85,15 @@ crash cả trang.
   unit/perf 7D/1M/3M/YTD/1Y/5Y/related-stocks — **không có API JSON công khai** (đã verify 404) nên KHÔNG
   dùng `def.key` làm ticker, không ép endpoints không tồn tại. Brent/wheat/aluminum/zinc/cacao → 404 đã verify
   → không có `simplizePath` (honest UNAVAILABLE hoặc fallback).
-- **Snapshot cadence:** client poll 3s (UI `/commodities` + detail) · server cache quote
+- **Snapshot cadence:** client poll 3s (UI `/commodities` + detail) · server aggregate
   `COMMODITY_SNAPSHOT_TTL_MS` mặc định **3000ms** (floor 2000ms) với in-flight dedup + stale-while-revalidate
-  (lỗi nguồn → phục vụ bản STALE cũ, không vỡ UI). Đã verify 2026-09-06: trang Simplize SSR chỉ regenerate
-  **~10 phút/lần** (timestamp nhảy 13:59:18 → 14:09:18, giá giữ nguyên) nên dữ liệu lặp lại giữa các lần poll
-  là bình thường; quyết định poll 3s là chủ trương user (rủi ro tải lên origin + chính sách thương mại của
-  Simplize đã được nêu rõ trong `docs/simplize-vn-audit.md`).
+  (lỗi nguồn → phục vụ bản STALE cũ, không vỡ UI). **Cache PER-SOURCE** để aggregate 3s không đập nguồn:
+  Simplize trang **3 phút** (trang chỉ regenerate ~10 phút/lần — verified 13:59:18→14:09:18, giá giữ nguyên),
+  WiFeed portal **3 phút** (dữ liệu cập nhật theo ngày), Yahoo batch **30s**, Binance **15s**; aggregate 3s
+  chỉ rebuild từ các cache này → ~10 trang Simplize + 1 portal mỗi phút/nút (thay vì 30 trang/3s).
+  UA: **KHÔNG gửi UA bot** cho WiFeed (WAF WiGroup chặn bot UA) — dùng Chrome UA + Accept/Language trình duyệt.
+  Quyết định poll 3s là chủ trương user (rủi ro tải lên origin + chính sách thương mại của Simplize đã được
+  nêu rõ trong `docs/simplize-vn-audit.md`).
 - **VietnamBiz Data portal (WiFeed/WiGroup)** — `data.vietnambiz.vn/goods` (user cung cấp,
   verified live 2026-09-06): 1 request SSR bảng giá cho TOÀN BỘ mặt hàng (kể cả **Nhôm Trung Quốc
   24,373 CNY/tấn** & **Kẽm Trung Quốc 26,633** — 2 mục trước đây KHÔNG có nguồn nào). Cũng là nguồn

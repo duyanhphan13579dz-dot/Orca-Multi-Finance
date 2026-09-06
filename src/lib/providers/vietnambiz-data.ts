@@ -19,7 +19,11 @@ import type { RawCommodityQuote } from "./commodities";
 export const VN_DATA_PROVIDER = "vietnambiz-data";
 export const VN_DATA_SOURCE = "VietnamBiz Data (WiFeed)";
 
-const UA = "Mozilla/5.0 (compatible; OrcaFinance/1.0; +https://github.com)";
+/** Chrome UA mặc định của http.ts — KHÔNG gửi UA bot (WAF WiGroup chặn bot UA). */
+const DATA_PORTAL_HEADERS: Record<string, string> = {
+  Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+  "Accept-Language": "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7",
+};
 
 /* ------------------------------ HTML helpers ------------------------------ */
 
@@ -46,15 +50,29 @@ function stripHtmlScaffolding(html: string): string {
     .replace(/<template\b[^>]*>[\s\S]*?<\/template>/gi, " ");
 }
 
-/** Quét nốt CSS rule còn sót (`.css-x19ppn{…}`, `where(…)`, `@media…`). */
-function stripCssText(s: string): string {
-  return s
-    .replace(/\.css-[a-zA-Z0-9_\\-]+\s*\{[^}]*\}/g, " ")
-    .replace(/where\([^)]*\)/gi, " ")
-    .replace(/@media[^{]*\{[\s\S]*?\}\s*\}/g, " ")
-    .replace(/[a-zA-Z0-9_.@#:\-\[\]'"]+\s*\{[^}]*\}/g, " ")
-    .replace(/[\s,;{}:]+$/g, " ")
-    .trim();
+/**
+ * Quét nốt CSS còn sót Ở DẠNG TEXT (ANTD cssinjs có thể đặt critical CSS làm
+ * text trong cell, không bọc <style>): `.css-xxx{…}`, `,where(.css-ls3dc0f)
+ * [class^="ant-typography"]…{…}`, `@media…`, khai báo `font-weight:…`…
+ * Lặp tới khi sạch (block `{…}` có thể lồng nhau).
+ */
+function stripCssText(raw: string): string {
+  let t = raw;
+  for (let i = 0; i < 6; i++) {
+    const prev = t;
+    t = t
+      .replace(/\{[^{}]*\}/g, " ")
+      .replace(/where\([^)]*\)/gi, " ")
+      .replace(/\[[^\]]{0,160}\]/g, " ")
+      .replace(/\.css-[a-zA-Z0-9_-]+/g, " ")
+      .replace(/@media[^{;]*/gi, " ")
+      .replace(/(?:font-weight|font-family|font-size|line-height|box-sizing|color|content|background|border|text-[\w-]+)\s*:\s*[^,;{}]+[;,]/gi, " ")
+      .replace(/(?:font-weight|font-family|font-size|line-height|box-sizing|color|content|background)\s*:\s*[^,;{}]+/gi, " ")
+      .replace(/(?::|::)(?:before|after|first-child|last-child|not)\b/gi, " ")
+      .replace(/,+(?=\s*(?:[a-z.#[:@,)]|\s*$))/gi, " ");
+    if (t === prev) break;
+  }
+  return t;
 }
 
 function cellText(cell: string): string {
@@ -70,11 +88,12 @@ function cellText(cell: string): string {
     .trim();
 }
 
-const isCssJunk = (s: string) => /\.css-|^\{|@media|where\(|ant-typography|font-weight:/.test(s);
+const isCssJunk = (s: string) =>
+  /\.css-|where\(|\{|\}|ant-typography|font-(?:weight|family|size)|line-height|box-sizing|content:|color:inherit|@media/.test(s);
 
 /** cell đã cellText() nhưng vẫn lẫn CSS dạng text → trả về "" (không hiện rác). */
 const cleanCell = (s: string | null | undefined): string => {
-  const t = (s ?? "").trim();
+  const t = stripCssText((s ?? "").trim());
   return isCssJunk(t) ? "" : t;
 };
 
@@ -90,8 +109,10 @@ function headerMatches(row: string[], tokens: string[]): boolean {
 }
 
 /**
- * Tách rows từ các BẢNG THẬT (theo header token). Loại bỏ scaffolding + các
- * bảng chứa CSS dump (bảng đầu tiên của trang SSR có thể là cssinjs critical CSS).
+ * Tách rows từ các BẢNG THẬT. Mỗi bảng: tìm hàng header (theo token, SAU khi
+ * clean CSS) ở vị trí bất kỳ; nếu có → lấy các hàng dữ liệu phía sau. Bảng
+ * CSS-dump / bảng không có header khớp bị loại. Không phụ thuộc cell đầu tiên
+ * (thead có thể chứa nhiều row/sticky header).
  */
 export function extractTableRows(html: string, expectedHeaders: string[] = GOODS_HEADERS): string[][] {
   const out: string[][] = [];
@@ -110,12 +131,8 @@ export function extractTableRows(html: string, expectedHeaders: string[] = GOODS
       if (tds.length) rows.push(tds);
     }
     if (!rows.length) continue;
-    const first = rows[0];
-    // Chỉ giữ bảng có header khớp dữ liệu thật; bảng CSS (cột đầu là khối
-    // `.css-…`) hoặc bảng khác bị loại.
-    if (headerMatches(first, expectedHeaders) && !first.some((c) => isCssJunk(c))) {
-      out.push(...rows.slice(1));
-    }
+    const headerIdx = rows.findIndex((r) => headerMatches(r, expectedHeaders));
+    if (headerIdx >= 0) out.push(...rows.slice(headerIdx + 1));
   }
   return out;
 }
@@ -263,16 +280,17 @@ export async function getVnbDatasetText(dataset: "goods" | "macro-economic" | "c
   const base = env.vietnambizDataBaseUrl.replace(/\/$/, "");
   const url = `${base}/${dataset}`;
   const res = await cached(`vnb-data:${dataset}`, {
-    // goods/rates cập nhật theo ngày; TTL theo snapshot (3s default, user-mandated)
-    // để UI 3s luôn query lại portal — 1 request batch cho TOÀN BỘ mặt hàng.
-    ttlMs: env.commoditySnapshotTtlMs,
+    // WiFeed cập nhật theo NGÀY — cache 3 phút (không phải 3s) là đủ và tránh
+    // bị WAF rate-limit khi client poll 3s (tổng hợp commodities:all vẫn tươi 3s
+    // vì đọc từ cache này + các cache per-source khác).
+    ttlMs: 3 * 60_000,
     staleMs: 24 * 3_600_000,
     producer: async () => {
       const r = await httpText(url, {
         provider: VN_DATA_PROVIDER,
-        timeoutMs: 9_000,
+        timeoutMs: 12_000,
         retries: 1,
-        headers: { "User-Agent": UA, Accept: "text/html" },
+        headers: DATA_PORTAL_HEADERS,
       });
       if (!r.ok || !r.text) throw new ProviderError(`vietnambiz-data: ${r.error ?? "unreachable"} (${url})`, VN_DATA_PROVIDER);
       return r.text;

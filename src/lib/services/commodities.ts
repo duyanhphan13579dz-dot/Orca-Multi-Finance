@@ -64,7 +64,12 @@ export interface CommodityMarket {
 /* ------------------------------ provider prep ------------------------------ */
 
 async function paxgQuote(symbol: string): Promise<RawCommodityQuote> {
-  const t = await getSpotTicker(symbol);
+  // cache 15s — tránh poll 3s đập Binance liên tục
+  const t = await cached(`commodities:binance:${symbol}`, {
+    ttlMs: 15_000,
+    staleMs: 30 * 60_000,
+    producer: () => getSpotTicker(symbol),
+  }).then((r) => r.value);
   return {
     source: "Binance (PAXG ≈ XAU)",
     price: Number(t.lastPrice),
@@ -97,8 +102,18 @@ function priorityFor(def: CommodityDef): SourceKind[] {
   return order;
 }
 
+/**
+ * Cache per-page Simplize 3 phút (trang chỉ regenerate ~10 phút/lần —
+ * verified) → aggregate 3s KHÔNG tải lại 30 trang mỗi 3 giây; provider không
+ * bị rate-limit/throttle. STALE trên 24h khi nguồn lỗi.
+ */
 function simplizeRecord(def: CommodityDef): Promise<RawCommodityQuote> {
-  return getSimplizeCommodityPage(def.simplizePath as string);
+  const path = def.simplizePath as string;
+  return cached(`simplize:page:${path}`, {
+    ttlMs: 3 * 60_000,
+    staleMs: 24 * 3_600_000,
+    producer: () => getSimplizeCommodityPage(path),
+  }).then((r) => r.value);
 }
 
 function yahooRecord(def: CommodityDef, yahooByTicker: Map<string, Awaited<ReturnType<typeof getYahooQuotes>> extends Map<string, infer V> ? V : never>): RawCommodityQuote | null {
@@ -142,7 +157,13 @@ async function fetchAll(): Promise<CommodityMarket> {
   const yahooTickers = COMMODITY_CATALOG.filter((d) => d.yahooSymbol).map((d) => d.yahooSymbol as string);
   let yahooByTicker = new Map<string, Awaited<ReturnType<typeof getYahooQuotes>> extends Map<string, infer V> ? V : never>();
   try {
-    yahooByTicker = await getYahooQuotes(yahooTickers);
+    // batch 30s — futures không đổi mỗi 3s; aggregate 3s đọc cache.
+    const yahooRes = await cached("commodities:yahoo:quotes", {
+      ttlMs: 30_000,
+      staleMs: 3 * 3_600_000,
+      producer: () => getYahooQuotes(yahooTickers),
+    });
+    yahooByTicker = yahooRes.value;
     if (yahooByTicker.size) sourcesUsed.add("Yahoo Finance (futures)");
   } catch (e) {
     errors.push(e instanceof Error ? e.message : "yahoo error");
@@ -150,11 +171,13 @@ async function fetchAll(): Promise<CommodityMarket> {
 
   // VietnamBiz Data portal (WiFeed) — 1 request cho TOÀN BỘ mặt hàng khớp mapping
   let vnbDataByKey = new Map<string, RawCommodityQuote>();
+  let vnbDataError: string | null = null;
   try {
     vnbDataByKey = await getVnbGoodsQuotes();
     if (vnbDataByKey.size) sourcesUsed.add("VietnamBiz Data (WiFeed)");
   } catch (e) {
-    errors.push(`vietnambiz-data: ${e instanceof Error ? e.message : String(e)}`);
+    vnbDataError = `vietnambiz-data: ${e instanceof Error ? e.message : String(e)}`;
+    errors.push(vnbDataError);
   }
 
   const rows: CommodityRow[] = [];
@@ -191,6 +214,8 @@ async function fetchAll(): Promise<CommodityMarket> {
           if (q && Number.isFinite(q.price) && q.price > 0) {
             records.push({ kind, q });
             if (records.length >= 3) break;
+          } else if (kind === "vnbData" && vnbDataError) {
+            failures.push(`${kind}: ${vnbDataError}`);
           } else {
             failures.push(`${kind}: không có giá hợp lệ`);
           }

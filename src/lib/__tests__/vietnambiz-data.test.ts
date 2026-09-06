@@ -303,3 +303,58 @@ export function isCssLike(items: unknown[]): boolean {
   const s = items.join(" ");
   return /\.css-|where\(|ant-typography|font-weight:/.test(s);
 }
+
+/* --------------- Regression 2: ANTD cssinjs CSS NẰM TRỰC TIẾP TRONG CELL ---------------
+ * Trang thực tế có thể đặt critical CSS làm TEXT trong ô bảng (không bọc
+ * <style>) — đúng blob chụp từ UI: `.css-x19ppn{…},where(.css-ls3dc0f)
+ * [class^="ant-typography"],…{…}` nằm ngay trước nhãn. Parser phải loại hết
+ * CSS chữ và giữ NGUYÊN nhãn/số liệu (không còn "$", dấu phẩy, selector thừa).
+ */
+const CSS_TEXT_BLOB =
+  `.css-x19ppn{font-weight:800;line-height:1.5714285714285714;font-size:0.875rem;font-weight:500;color:inherit;},` +
+  `where(.css-ls3dc0f)[class^="ant-typography"],where(.css-ls3dc0f)[class^="ant-typography"]{` +
+  `font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,"Noto Sans",` +
+  `sans-serif,"Apple Color Emoji","Segoe UI Emoji","Segoe UI Symbol","Noto Color Emoji";font-size:14px;box-sizing:border-box;},` +
+  `where(.css-ls3dc0f)[class^="ant-typography"]:before,where(.css-ls3dc0f)[class^="ant-typography"]:after{box-sizing:border-box;},` +
+  `where(.css-ls3dc0f)[class^="ant-typography"]:before,where(.css-ls3dc0f)[class^="ant-typography"]:after{content:"";}`;
+
+function cssTextTable(body: string, headers: string[]): string {
+  const th = headers.map((h) => `<th>${CSS_TEXT_BLOB}${h}</th>`).join("");
+  return `<table><tr>${th}</tr>${body}</table>`;
+}
+
+test("REGRESSION 2: CSS-as-text trong cell — macro giữ NGUYÊN nhãn + số, hết rác selector", () => {
+  const html = cssTextTable(
+    `<tr><td>${CSS_TEXT_BLOB}Tăng trưởng GDP (YoY)</td><td>${CSS_TEXT_BLOB}Quý 2/2026</td><td>8.39%</td><td>7.94%</td><td>Ngày 29 tháng cuối cùng của quý</td></tr>
+     <tr><td>${CSS_TEXT_BLOB}PMI</td><td>Tháng 08/2026</td><td>53.3</td><td>52.9</td><td>Ngày 1 hàng tháng</td></tr>`,
+    ["Chỉ tiêu", "Kỳ công bố", "Kỳ hiện tại", "Kỳ trước", "Ngày công bố tiếp theo"],
+  );
+  const rows = parseVnbMacroRows(html);
+  assert.equal(rows.length, 2);
+  const gdp = rows.find((r) => r.indicator.startsWith("Tăng trưởng GDP"));
+  assert.ok(gdp, `indicator sạch: ${JSON.stringify(rows[0]?.indicator)}`);
+  assert.equal(gdp?.indicator, "Tăng trưởng GDP (YoY)");
+  assert.equal(gdp?.period, "Quý 2/2026");
+  assert.equal(gdp?.currentRaw, "8.39%");
+  const pmi = rows.find((r) => r.indicator === "PMI");
+  assert.equal(pmi?.current, 53.3);
+  assert.ok(!rows.some((r) => /\.css-|where\(|ant-typography|\$/.test(`${r.indicator} ${r.period} ${r.currentRaw ?? ""}`)));
+});
+
+test("REGRESSION 2: CSS-as-text trong cell — goods name/unit/price sạch", () => {
+  const html = cssTextTable(
+    `<tr><td>${CSS_TEXT_BLOB}Giá heo hơi trong nước<br>Đồng/kg</td><td>57,833</td><td>--</td><td>--</td><td>--</td><td>04/09/2026</td></tr>
+     <tr><td>${CSS_TEXT_BLOB}Nhôm Trung Quốc<br>CNY/tấn</td><td>24,373</td><td>--</td><td>--</td><td>--</td><td>05/09/2026</td></tr>`,
+    ["Mặt hàng", "Giá", "% Ngày", "% Tháng", "% Năm", "Ngày cập nhật"],
+  );
+  const rows = parseVnbGoodsRows(html);
+  assert.equal(rows.length, 2);
+  assert.equal(rows[0].name, "Giá heo hơi trong nước");
+  assert.equal(rows[0].unit, "Đồng/kg");
+  assert.equal(rows[0].price, 57_833);
+  assert.equal(rows[1].name, "Nhôm Trung Quốc");
+  assert.equal(rows[1].price, 24_373);
+  const mapped = mapVnbGoodsRows(rows);
+  assert.equal(mapped.get("aluminum")?.price, 24_373);
+  assert.equal(mapped.get("pig-vn")?.price, 57_833);
+});
