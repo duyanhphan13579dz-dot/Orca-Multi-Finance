@@ -20,12 +20,14 @@ export class ChartLiveManager {
   private interval: ReturnType<typeof setInterval> | null = null;
 
   /** start a new live subscription; returns token (stale responses must check) */
-  start(symbol: string, timeframe: string, handlers: LiveHandlers): number {
+  start(symbol: string, timeframe: string, handlers: LiveHandlers, assetType = "crypto"): number {
     this.stop();
     const tk = ++this.token;
     handlers.onLiveState({ state: "connecting", ageMs: null });
 
-    const es = new EventSource(`/api/v1/chart/stream?symbol=${encodeURIComponent(symbol)}&assetType=crypto&timeframe=${encodeURIComponent(timeframe)}&_=${Date.now()}`);
+    const es = new EventSource(
+      `/api/v1/chart/stream?symbol=${encodeURIComponent(symbol)}&assetType=${encodeURIComponent(assetType)}&timeframe=${encodeURIComponent(timeframe)}&_=${Date.now()}`,
+    );
     this.es = es;
 
     const candleHandler = (e: Event, closed: boolean) => {
@@ -47,7 +49,6 @@ export class ChartLiveManager {
     es.onopen = () => {
       if (tk !== this.token) return;
       if (this.everConnected) {
-        // reconnect path: validate gap → resync via history refetch
         handlers.onResyncNeeded();
       }
       this.everConnected = true;
@@ -56,10 +57,10 @@ export class ChartLiveManager {
     es.onerror = () => {
       if (tk !== this.token) return;
       handlers.onLiveState({ state: "reconnecting", ageMs: null });
-      es.close(); // browser native EventSource won't retry after explicit errors in some impls — restart manually
+      es.close();
       if (tk === this.token) {
         setTimeout(() => {
-          if (tk === this.token) this.start(symbol, timeframe, handlers);
+          if (tk === this.token) this.start(symbol, timeframe, handlers, assetType);
         }, 3_000 + Math.random() * 2_000);
       }
     };
