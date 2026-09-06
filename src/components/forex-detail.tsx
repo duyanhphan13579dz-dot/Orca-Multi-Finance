@@ -1,7 +1,17 @@
 "use client";
 
 import { useApi } from "@/lib/hooks";
-import type { ForexDetail } from "@/lib/services/forex";
+import type { ForexRow, OhlcvBar, TechnicalSnapshot } from "@/lib/types";
+
+interface ForexDetail {
+  pair: string;
+  base: string;
+  quote: string;
+  current: ForexRow | null;
+  series: OhlcvBar[];
+  technical: TechnicalSnapshot | null;
+  referenceNote: string;
+}
 import { Badge, Chg, FreshnessDot, Loading, MetaLine, Panel, Unavailable } from "@/components/ui";
 import { OrcaChart } from "@/components/orca-chart";
 import { TechnicalPanel } from "@/components/technical-panel";
@@ -22,7 +32,9 @@ export function ForexDetailPage({ pair }: { pair: string }) {
         <div className="flex flex-col gap-2 p-4 md:flex-row md:items-end md:justify-between">
           <div>
             <div className="flex items-center gap-2">
-              <h1 className="text-xl font-semibold">{data.base}/{data.quote}</h1>
+              <h1 className="text-xl font-semibold">
+                {data.base}/{data.quote}
+              </h1>
               <Badge tone="accent">{pair}</Badge>
               <FreshnessDot status={meta?.freshness} ageMs={meta?.ageMs} />
               <AddToWatchlist assetType="forex" symbol={pair} />
