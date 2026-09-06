@@ -33,7 +33,9 @@ export function CryptoDetailPage({ symbol }: { symbol: string }) {
   const { settings } = useSettings();
   const { fmtUsd } = usePrefCurrency();
   const [interval, setInterval] = useState<(typeof INTERVALS)[number]>(
-    (settings.dashboard.defaultTimeframe as (typeof INTERVALS)[number]) || "1h",
+    (INTERVALS as readonly string[]).includes(settings.dashboard.defaultTimeframe)
+      ? (settings.dashboard.defaultTimeframe as (typeof INTERVALS)[number])
+      : "1h",
   );
   const { data, meta, isLoading } = useApi<CryptoDetail>(`/api/v1/crypto/${encodeURIComponent(symbol)}?interval=${interval}`, {
     refreshInterval: 20_000,
@@ -78,10 +80,10 @@ export function CryptoDetailPage({ symbol }: { symbol: string }) {
             </div>
           </div>
           <div className="flex flex-wrap gap-4">
-            <HeadStat label="Cao 24h" value={fmtNum(t.high24h ?? t.price, digits)} />
-            <HeadStat label="Thấp 24h" value={fmtNum(t.low24h ?? t.price, digits)} />
-            <HeadStat label="Vol 24h" value={`$${fmtCompact(t.quoteVolume)}`} />
-            <HeadStat label="Giao dịch" value={fmtCompact(t.trades ?? 0)} />
+            <HeadStat label="Cao 24h" value={fmtNum(t.high ?? t.price, digits)} />
+            <HeadStat label="Thấp 24h" value={fmtNum(t.low ?? t.price, digits)} />
+            <HeadStat label="Vol 24h" value={`$${fmtCompact(t.quoteVolume ?? 0)}`} />
+            <HeadStat label="Giao dịch" value={fmtCompact(t.trades24h ?? 0)} />
           </div>
         </div>
         <div className="flex items-center justify-between border-t border-border-subtle px-4 py-2">
@@ -151,7 +153,7 @@ export function CryptoDetailPage({ symbol }: { symbol: string }) {
           >
             <ul className="space-y-1.5 text-[12px] leading-relaxed text-ink-2">
               <li>
-                Vol 24h quy đổi đạt <b className="num">${fmtCompact(t.quoteVolume)}</b> —{" "}
+                Vol 24h quy đổi đạt <b className="num">${fmtCompact(t.quoteVolume ?? 0)}</b> —{" "}
                 {(t.quoteVolume ?? 0) > 1e9
                   ? "thanh khoản rất dày"
                   : (t.quoteVolume ?? 0) > 1e8
