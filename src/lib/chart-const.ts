@@ -44,9 +44,19 @@ export function tfsFor(asset: ChartAssetType): readonly string[] {
 }
 
 export const TF_LABEL: Record<string, string> = {
-  "1m": "1m", "3m": "3m", "5m": "5m", "15m": "15m", "30m": "30m",
-  "1h": "1H", "2h": "2H", "4h": "4H", "6h": "6H", "12h": "12H",
-  "1d": "1D", "1w": "1W", "1M": "1M",
+  "1m": "1m",
+  "3m": "3m",
+  "5m": "5m",
+  "15m": "15m",
+  "30m": "30m",
+  "1h": "1H",
+  "2h": "2H",
+  "4h": "4H",
+  "6h": "6H",
+  "12h": "12H",
+  "1d": "1D",
+  "1w": "1W",
+  "1M": "1M",
 };
 
 /** binance kline interval for crypto timeframe (1:1 coverage) */
@@ -76,4 +86,37 @@ export function aggregateCandles(candles: ChartCandle[], tfMs: number): ChartCan
   }
   if (cur) out.push(cur);
   return out;
+}
+
+/** Client-safe chart payload shapes (also used by server chart service). */
+export interface IndicatorPoint {
+  time: number;
+  value?: number;
+}
+
+export interface ChartIndicators {
+  ema20: IndicatorPoint[];
+  ema50: IndicatorPoint[];
+  rsi14: IndicatorPoint[];
+  macd?: { macd: IndicatorPoint[]; signal: IndicatorPoint[]; hist: IndicatorPoint[] };
+  bollinger?: { upper: IndicatorPoint[]; mid: IndicatorPoint[]; lower: IndicatorPoint[] };
+  vwap?: IndicatorPoint[];
+  support?: number[];
+  resistance?: number[];
+}
+
+export interface ChartSignalMarker {
+  time: number;
+  type: string;
+  position: "aboveBar" | "belowBar" | "inBar";
+  title: string;
+}
+
+export interface ChartMarketData {
+  candles: ChartCandle[];
+  indicators: ChartIndicators | null;
+  markers: ChartSignalMarker[];
+  intervalMs: number;
+  gaps: number;
+  suspect: number;
 }
