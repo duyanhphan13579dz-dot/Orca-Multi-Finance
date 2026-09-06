@@ -290,3 +290,23 @@ export const alerts = pgTable("alerts", {
   triggeredAt: timestamp("triggered_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
+
+/* -------------------------- Financial memory (AI) -------------------------- */
+/* Tách riêng khỏi conversation memory theo spec AI Agent: chỉ lưu khi user
+ * đồng ý (consent), gắn userId để access control, không trộn dữ liệu giữa user. */
+
+export const financialProfiles = pgTable("financial_profiles", {
+  userId: uuid("user_id").primaryKey().references(() => users.id, { onDelete: "cascade" }),
+  profile: jsonb("profile").notNull(),
+  consent: boolean("consent").notNull().default(false),
+  consentAt: timestamp("consent_at", { withTimezone: true }),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+export const financialMemoryLogs = pgTable("financial_memory_logs", {
+  id: bigint("id", { mode: "number" }).primaryKey().generatedAlwaysAsIdentity(),
+  userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  action: text("action").notNull(), // upsert | delete | consent
+  meta: jsonb("meta"),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});

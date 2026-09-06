@@ -12,6 +12,7 @@
     "test": "node --import tsx --require ./test/test-setup/patch-server-only.cjs --test \"src/lib/__tests__/**/*.test.ts\"",
     "test:watch": "node --import tsx --require ./test/test-setup/patch-server-only.cjs --test --watch \"src/lib/__tests__/**/*.test.ts\"",
     "check": "npm run typecheck && npm test",
+    "eval:ai": "node --import tsx --require ./test/test-setup/patch-server-only.cjs --test \"src/lib/__tests__/ai-eval.test.ts\"",
     "db:push": "drizzle-kit push",
     "db:generate": "drizzle-kit generate"
   },
