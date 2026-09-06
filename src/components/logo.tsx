@@ -1,21 +1,33 @@
 "use client";
 
+import { useState } from "react";
+
 /**
  * ORCA FINANCIAL brand system — sticker orca mark + wordmark.
- * Source asset: /brand/orca-mark.png (AI-crafted, navy-optimized).
+ * Asset ưu tiên: /brand/orca-logo.png (logo shield do chủ sở hữu cung cấp —
+ * đặt file tên `orca-logo.png` trong public/brand/).
+ * Fallback: /brand/orca-mark.svg (asset chính thức đã commit) — không bao giờ
+ * hiển thị ảnh vỡ.
  */
 
+const PNG_SRC = "/brand/orca-logo.png";
+const SVG_SRC = "/brand/orca-mark.svg";
+
 export function OrcaMark({ size = 32, className = "" }: { size?: number; className?: string }) {
+  const [src, setSrc] = useState(PNG_SRC);
   return (
     // eslint-disable-next-line @next/next/no-img-element
     <img
-      src="/brand/orca-mark.png"
+      src={src}
       alt="ORCA Financial"
       width={size}
       height={size}
       className={`shrink-0 rounded-lg ${className}`}
       style={{ width: size, height: size }}
       draggable={false}
+      onError={() => {
+        if (src !== SVG_SRC) setSrc(SVG_SRC);
+      }}
     />
   );
 }

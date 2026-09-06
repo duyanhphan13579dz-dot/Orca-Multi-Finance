@@ -170,7 +170,7 @@ function ReportView({ report, meta, onPrint }: { report: DailyReport; meta: impo
       {/* report header */}
       <div id="report-print-area">
         <div className="hd flex items-center gap-3 border-b border-line pb-3">
-          <img src="/brand/orca-mark.png" alt="ORCA" className="size-11 rounded-lg" />
+          <img src="/brand/orca-mark.svg" alt="ORCA" className="size-11 rounded-lg" />
           <div className="min-w-0">
             <h2 className="text-[19px] font-semibold leading-tight">{report.title}</h2>
             <p className="text-[12px] text-text-muted">{report.subtitle}</p>
