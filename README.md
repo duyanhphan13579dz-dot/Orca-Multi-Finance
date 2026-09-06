@@ -57,6 +57,7 @@ Không có module nào dùng số liệu giả. Khi provider lỗi: **retry → 
 | Technical engine (RSI/MACD/BB/ATR/S-R/patterns) | Implemented | Pure quantitative, deterministic |
 | Watchlist + Trade Journal | Implemented | Local-first + server sync (`/api/v1/watchlist`, merge khi đăng nhập) |
 | Alerts | Implemented | CRUD `/api/v1/alerts*` + pure evaluator + scheduler poll 5 phút |
+| Data Reliability (Phase 2) | Implemented | VN multi-provider engine (VNStock⇄VNDirect) + fallback + reconciliation + Data Confidence (`meta.dataConfidence`) + session-aware SLA + async archive (`stock_quotes`/`stock_ohlcv`) — chi tiết `docs/architecture.md` §9 |
 | Auth (email/password, scrypt, JWT cookie) | Implemented | `/api/v1/auth/*` |
 | Ops/Observability (`/system`) | Implemented | Provider health, latency, circuit, cache stats |
 | VN Stocks: universe/quotes/OHLCV/financials | Implemented (needs key) | Tự kích hoạt khi `VNSTOCK_API_KEY` được cấu hình |

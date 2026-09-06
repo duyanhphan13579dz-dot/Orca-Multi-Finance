@@ -91,6 +91,34 @@ class Scheduler {
     if (minutes >= parse(cfg.summaryTime) && !(await this.already("market_summary", date))) {
       void this.fire("market_summary");
     }
+    // PHASE 2 — ASYNC HISTORICAL ARCHIVE: chạy 1 lần/ngày sau khi phiên VN kết thúc
+    // (15:00+). Idempotent theo date (stock_ohlcv PK symbol+date, upsert an toàn).
+    if (minutes >= 15 * 60 + 2) void this.maybeArchiveDaily(date);
+  }
+
+  private async maybeArchiveDaily(date: string) {
+    if (this.running.has("archive:daily")) return;
+    const { archiveState, runDailyArchive } = await import("../services/archive");
+    if (archiveState().lastDate === date) return;
+    this.running.add("archive:daily");
+    try {
+      const { marketStore } = await import("./market-store");
+      const stockSyms = marketStore
+        .snapshot("stock")
+        .map((q) => q.symbol)
+        .filter((s) => /^[A-Z0-9]{3,5}$/.test(s))
+        .slice(0, 25);
+      if (!stockSyms.length) return;
+      const { vnDataEngine } = await import("../engines/vn-data-engine");
+      await runDailyArchive(stockSyms, async (sym) => {
+        const r = await vnDataEngine.resolveOhlcv(sym, 260);
+        return r?.bars ?? null;
+      });
+    } catch {
+      /* best-effort — retry next tick */
+    } finally {
+      this.running.delete("archive:daily");
+    }
   }
 
   stats() {

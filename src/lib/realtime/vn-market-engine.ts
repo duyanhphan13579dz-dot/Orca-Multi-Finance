@@ -19,9 +19,8 @@ import { multiTfCandles } from "./multi-tf-candles";
 import { CHANNEL } from "./channels";
 import { emitEvent } from "./event-envelope";
 import { getVnSession, type VnSessionInfo, type VnSessionState } from "../vn/sessions";
-import * as vnstock from "../providers/vnstock";
-import * as vndirect from "../providers/vndirect";
-import type { IndexQuote, Quote } from "../types";
+import { vnDataEngine } from "../engines/vn-data-engine";
+import type { IndexQuote } from "../types";
 
 export interface VnQuoteInput {
   symbol: string;
@@ -145,24 +144,12 @@ class VnMarketDataEngine {
     }
   }
 
-  /** Single-flight poll: VNStock primary → VNDirect fallback. */
+  /** Single-flight poll: multi-provider engine (health-aware + fallback + reconciliation). */
   private async poll(): Promise<void> {
     const syms = [...this.symbols];
     if (!syms.length) return;
-    interface Res {
-      quotes: Quote[];
-      indices: IndexQuote[];
-    }
-    let res: Res | null = null;
-    try {
-      const q = await vnstock.getVnQuotes(syms);
-      const idx = await vnstock.getVnIndices().catch(() => ({ items: [] as IndexQuote[], sourceTs: Date.now() }));
-      res = { quotes: q, indices: idx.items };
-    } catch {
-      const q = await vndirect.getVndQuotes(syms);
-      res = { quotes: q.quotes, indices: [] };
-    }
-    if (!res) throw new Error("both vn providers failed");
+    const res = await vnDataEngine.resolveQuotes(syms);
+    if (!res.quotes.length) throw new Error("all vn providers failed");
 
     const now = Date.now();
     for (const quote of res.quotes) {
@@ -181,24 +168,35 @@ class VnMarketDataEngine {
         ts: quote.updatedAt ? Date.parse(quote.updatedAt) || now : now,
       };
       this.ingestQuote(input);
+      // Async historical archive (minute-dedupe, best-effort) — Phase 2
+      void (async () => {
+        try {
+          const { archiveQuoteSnapshot } = await import("../services/archive");
+          await archiveQuoteSnapshot(input.symbol, quote, `vn-engine:${res.providers.join("+")}`);
+        } catch {
+          /* best-effort */
+        }
+      })();
     }
 
     // Index snapshot → typed event + store
-    if (res.indices.length) {
-      this.indices = res.indices;
-      for (const idx of res.indices) {
+    const idx = await vnDataEngine.resolveIndices();
+    const items = idx?.items ?? [];
+    if (items.length) {
+      this.indices = items;
+      for (const indexQuote of items) {
         marketStore.setQuote({
           assetType: "index",
-          symbol: idx.code,
-          price: idx.value,
-          change: idx.change ?? null,
-          changePercent: idx.changePercent ?? null,
-          volume: idx.volume ?? null,
+          symbol: indexQuote.code,
+          price: indexQuote.value,
+          change: indexQuote.change ?? null,
+          changePercent: indexQuote.changePercent ?? null,
+          volume: indexQuote.volume ?? null,
           source: "vn-market-engine",
-          ts: idx.updatedAt ? Date.parse(idx.updatedAt) || now : now,
+          ts: indexQuote.updatedAt ? Date.parse(indexQuote.updatedAt) || now : now,
         });
       }
-      emitEvent(CHANNEL.vnIndex, "vn.index", { items: res.indices, session: getVnSession(), checkedAt: new Date().toISOString() }, { assetType: "index", ts: now });
+      emitEvent(CHANNEL.vnIndex, "vn.index", { items, session: getVnSession(), checkedAt: new Date().toISOString() }, { assetType: "index", ts: now });
     }
     this.pollCount += 1;
     this.lastError = null;

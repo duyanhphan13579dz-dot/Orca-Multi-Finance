@@ -138,7 +138,21 @@ Data contract per analysis: `{asset, market_data, technical_state, market_state,
 
 Còn lại roadmap: WS nâng cấp từ SSE, delta JSON patches, incremental chạy trực tiếp trên kline của store (đã có engine sẵn sàng), VN universe scheduler.
 
-## 9. Security
+## 9. Data Reliability (Phase 2)
+
+**Nguyên tắc:** UI giữ nguyên (ORCA UI/UX Stability Rule §0) — mọi thay đổi nằm ở lớp dữ liệu: dữ liệu hiển thị đáng tin cậy hơn, ít lỗi hơn, tự khôi phục tốt hơn.
+
+1. **Vietnam Multi-Provider Data Engine** — `src/lib/engines/vn-data-engine.ts`: N provider (VNStock primary, VNDirect secondary), adapter DI (test với fake), health-aware routing (circuit-open bị loại khỏi vòng gọi), telemetry `recordSuccess/recordFailure` per adapter.
+2. **Provider fallback** — quotes: chạy song song các provider sống → reconcile; OHLCV: fallback tuần tự VNStock → VNDirect → **archive**; indices: VNStock → null (UNAVAILABLE) → cache stale giữ bản cuối.
+3. **Reconciliation** — tái dùng `reconcile.ts` (không lấy trung bình): quality → freshness → priority; discrepancy > 0.8% ghi `providerLogs` + expose `meta.discrepancies`.
+4. **Data Confidence** — `src/lib/confidence.ts`: điểm 0..1 + level (high ≥.85 / medium ≥.55 / low ≥.30 / unverified): agreement đa nguồn (+.30 max), quality (+.30), freshness theo SLA phiên (+.20), provider health (+.20), fallback penalty (−.15). **1 nguồn tối đa .80 → không bao giờ high khi chưa đối chiếu chéo.** `meta.dataConfidence` (thêm mới, backward-compatible).
+5. **Market session awareness** — `vnSlasForSession()` trong `vn/sessions.ts`: trading 30s/3m/10m · pre-open+lunch 60m/2h/18h · ngoài phiên 18h/24h/7d → SLA động theo trạng thái phiên (trước đây hardcode); confidence dùng `vnValidSlaMs()` (3m phiên / 1h nghỉ / 18h ngoài).
+6. **Data freshness** — `freshness.ts` giữ nguyên model LIVE/FRESH/DELAYED/STALE/DEGRADED/UNAVAILABLE; meta.note minh bạch khi fallback/degraded.
+7. **Async Historical Archive** — `src/lib/services/archive.ts` dùng bảng `stock_quotes` (PK symbol+ts, dedupe phút) + `stock_ohlcv` (PK symbol+date): quote snapshot mỗi phút từ VN engine (best-effort, không chặn request), nến ngày qua scheduler sau 15:02 giờ VN (1 lần/ngày, idempotent); đọc archive làm **fallback OHLCV khi provider offline**.
+
+Ràng buộc API: chỉ **thêm** field `meta.dataConfidence`/`meta.providers` — schema response cũ giữ nguyên, UI không đổi.
+
+## 10. Security
 
 - API keys chỉ đọc qua `src/lib/env.ts` (module `server-only`), không biến `NEXT_PUBLIC_*`.
 - Auth: scrypt password hash, JWT HS256 trong httpOnly cookie (`/api/v1/auth/*`), audit logs.

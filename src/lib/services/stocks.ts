@@ -2,10 +2,11 @@ import "server-only";
 import { cached } from "../cache";
 import { buildMeta } from "../freshness";
 import * as vnstock from "../providers/vnstock";
-import * as vndirect from "../providers/vndirect";
 import { env } from "../env";
-import { buildQuoteSet, logDiscrepancies, reconcileQuotes } from "../reconcile";
 import { validateBars, logQualityEvent } from "../quality";
+import { vnDataEngine } from "../engines/vn-data-engine";
+import { computeBarConfidence, aggregateConfidence, type DataConfidence } from "../confidence";
+import { vnSlasForSession } from "../vn/sessions";
 import { analyzeSeries, detectPatterns } from "../technical";
 import { filterAndSortRows } from "../engines/screener";
 import { VN_SECURITIES } from "../vn/master";
@@ -27,15 +28,22 @@ export async function getVnIndices(): Promise<{ items: IndexQuote[]; meta: Meta 
     const res = await cached("vn:indices", {
       ttlMs: 30_000,
       staleMs: 24 * 3_600_000,
-      producer: () => vnstock.getVnIndices(),
+      producer: async () => {
+        const r = await vnDataEngine.resolveIndices();
+        if (!r) throw new Error("no index provider");
+        return r;
+      },
     });
     const meta = buildMeta({
-      source: "vnstock",
+      source: res.value.providers.join("+"),
       sourceTimestampMs: res.value.sourceTs,
       cached: res.cached,
       stale: res.stale,
-      slas: { liveSlaMs: 30_000, freshSlaMs: 300_000, delayedSlaMs: 3_600_000 },
+      degraded: res.value.degraded,
+      note: res.value.degraded ? "Có nguồn index không khả dụng lần này" : undefined,
+      slas: vnSlasForSession(),
     });
+    if (res.value.confidence) meta.dataConfidence = res.value.confidence;
     return { items: res.value.items, meta };
   } catch {
     return null;
@@ -49,30 +57,22 @@ export async function getVnQuotes(symbols: string[]): Promise<{ quotes: Quote[];
       ttlMs: 15_000,
       staleMs: 24 * 3_600_000,
       producer: async () => {
-        // RECONCILIATION: VNStock (primary) + VNDirect (secondary/validation)
-        const [pri, sec] = await Promise.allSettled([vnstock.getVnQuotes(symbols), vndirect.getVndQuotes(symbols)]);
-        const priQuotes = pri.status === "fulfilled" ? pri.value : null;
-        const secQuotes = sec.status === "fulfilled" ? sec.value : null;
-        if (!priQuotes && !secQuotes) throw new Error("both providers failed");
-        let quotes: Quote[] = priQuotes ?? secQuotes?.quotes ?? [];
-        const discrepancies: { check: string; message: string }[] = [];
-        let note: string | undefined;
-        let source = priQuotes ? "vnstock" : "vndirect";
-        if (priQuotes && secQuotes) {
-          const r = reconcileQuotes([
-            buildQuoteSet("vnstock", 1, priQuotes),
-            buildQuoteSet("vndirect", 2, secQuotes.quotes),
-          ]);
-          quotes = r.quotes;
-          discrepancies.push(...r.discrepancies.map((d) => ({ check: "provider_discrepancy", message: `${d.symbol}: ${d.values.map((v) => `${v.provider}=${v.price}`).join(" vs ")} (${d.deviationPct}%)` })));
-          note = r.notes.join(" · ");
-          source = "vnstock+vndirect (reconciled)";
-          void logDiscrepancies(r);
-        } else if (!priQuotes && secQuotes) {
-          note = "VNStock lỗi — fallback VNDirect (secondary)";
-          source = "vndirect";
-        }
-        return { quotes, fetchedAt: Date.now(), discrepancies, note, source };
+        // MULTI-PROVIDER: VNStock (primary) + VNDirect (secondary) —
+        // health-aware routing, graceful fallback, reconciliation + confidence.
+        const r = await vnDataEngine.resolveQuotes(symbols);
+        if (!r.quotes.length) throw new Error("all vn providers failed");
+        const confidenceParts: DataConfidence[] = [...r.bySymbol.values()].map((x) => x.confidence);
+        return {
+          quotes: r.quotes,
+          fetchedAt: Date.now(),
+          bySymbol: r.bySymbol,
+          providers: r.providers,
+          discrepancies: r.discrepancies.map((d) => ({ check: "provider_discrepancy", message: `${d.symbol}: ${d.values.map((v) => `${v.provider}=${v.price}`).join(" vs ")} (${d.deviationPct}%)` })),
+          note: r.notes.join(" · ") || undefined,
+          source: r.providers.join("+") + (r.fallback ? " (fallback)" : ""),
+          degraded: r.degraded,
+          confidence: aggregateConfidence(confidenceParts),
+        };
       },
     });
     const meta = buildMeta({
@@ -80,10 +80,13 @@ export async function getVnQuotes(symbols: string[]): Promise<{ quotes: Quote[];
       sourceTimestampMs: res.value.fetchedAt,
       cached: res.cached,
       stale: res.stale,
+      degraded: res.value.degraded,
       note: res.value.note,
-      slas: { liveSlaMs: 30_000, freshSlaMs: 300_000, delayedSlaMs: 3_600_000 },
+      slas: vnSlasForSession(),
     });
     meta.discrepancies = res.value.discrepancies;
+    if (res.value.confidence) meta.dataConfidence = res.value.confidence;
+    if (res.value.providers?.length) meta.providers = res.value.providers;
     return { quotes: res.value.quotes, meta };
   } catch {
     return null;
@@ -97,21 +100,23 @@ export async function getVnOhlcv(symbol: string, limit = 250): Promise<{ bars: O
       ttlMs: 60_000,
       staleMs: 7 * 24 * 3_600_000,
       producer: async () => {
-        let bars: OhlcvBar[];
-        let source = "vnstock";
-        let note: string | undefined;
-        try {
-          bars = await vnstock.getVnOhlcv(sym, limit);
-        } catch {
-          bars = await vndirect.getVndOhlcv(sym, limit);
-          source = "vndirect";
-          note = "VNStock lỗi — fallback VNDirect cho chuỗi OHLCV";
-        }
+        // MULTI-PROVIDER + ARCHIVE FALLBACK: vnstock → vndirect → archive
+        const r = await vnDataEngine.resolveOhlcv(sym, limit);
+        if (!r) throw new Error("all vn ohlcv sources unavailable");
         // DATA QUALITY: validate + sanitize (dupes/out-of-order/invalid bars)
-        const q = validateBars(bars);
-        if (q.status !== "VALID") void logQualityEvent(source, `ohlcv:${sym}`, q);
+        const q = validateBars(r.bars);
+        if (q.status !== "VALID") void logQualityEvent(r.provider, `ohlcv:${sym}`, q);
         if (q.status === "INVALID") throw new Error("invalid ohlcv series");
-        return { bars: q.cleaned, fetchedAt: Date.now(), source, note, qualityStatus: q.status };
+        const gapRatio = gapRatioOf(q.cleaned);
+        const confidence = computeBarConfidence({
+          quality: q.status,
+          gapRatio,
+          source: r.provider === "archive" ? "archive" : r.provider === "vndirect" ? "secondary" : "primary",
+          barCount: q.cleaned.length,
+          historySufficient: q.cleaned.length >= 120,
+        });
+        const note = r.fallback ? (r.provider === "archive" ? "Provider OHLCV offline — phục vụ từ archive lịch sử" : "VNStock lỗi — fallback VNDirect cho chuỗi OHLCV") : undefined;
+        return { bars: q.cleaned, fetchedAt: Date.now(), source: r.provider, note, qualityStatus: q.status, confidence, degraded: r.degraded };
       },
     });
     const last = res.value.bars[res.value.bars.length - 1];
@@ -120,14 +125,28 @@ export async function getVnOhlcv(symbol: string, limit = 250): Promise<{ bars: O
       sourceTimestampMs: last?.time ?? res.value.fetchedAt,
       cached: res.cached,
       stale: res.stale,
+      degraded: res.value.degraded,
       note: res.value.note,
       slas: { liveSlaMs: 3_600_000, freshSlaMs: 8 * 3_600_000, delayedSlaMs: 48 * 3_600_000 },
     });
     meta.qualityStatus = res.value.qualityStatus;
+    meta.dataConfidence = res.value.confidence;
     return { bars: res.value.bars, meta };
   } catch {
     return null;
   }
+}
+
+/** Gap ratio: phần thiếu giữa các bar liền kề trên tổng số gaps. */
+function gapRatioOf(bars: OhlcvBar[]): number {
+  if (bars.length < 2) return 0;
+  const DAY = 86_400_000;
+  let gaps = 0;
+  for (let i = 1; i < bars.length; i++) {
+    const diff = bars[i].time - bars[i - 1].time;
+    if (diff > DAY * 1.5) gaps += 1;
+  }
+  return gaps / (bars.length - 1);
 }
 
 export interface VnStockDetail {

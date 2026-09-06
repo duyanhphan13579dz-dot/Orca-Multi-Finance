@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { classifySession, sessionFreshnessHint } from "../vn/sessions";
+import { classifySession, sessionFreshnessHint, vnSlasForSession, type VnSessionState } from "../vn/sessions";
 
 test("sessions: business-day session windows (2026-09-07 is a Monday)", () => {
   const d = "2026-09-07";
@@ -24,4 +24,14 @@ test("sessions: freshness hints are always a non-empty string", () => {
   for (const s of ["pre_open", "morning_continuous", "closing_auction", "closed"] as const) {
     assert.ok(sessionFreshnessHint(s).length > 0);
   }
+});
+
+test("sessions: vnSlasForSession — trading tightest, pre-open/lunch mid, closed widest", () => {
+  const s = (state: VnSessionState) => ({ state, labelVi: "", open: true, trading: state === "morning_continuous" || state === "afternoon_continuous" || state === "opening_auction" || state === "closing_auction", sessionDate: "2026-09-07", checkedAt: "" });
+  const trading = vnSlasForSession(s("morning_continuous"));
+  const lunch = vnSlasForSession(s("lunch_break"));
+  const closed = vnSlasForSession(s("closed"));
+  assert.ok(trading.freshSlaMs < lunch.freshSlaMs);
+  assert.ok(lunch.freshSlaMs < closed.freshSlaMs);
+  assert.ok(closed.freshSlaMs === 24 * 3_600_000);
 });

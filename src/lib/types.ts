@@ -24,6 +24,10 @@ export interface Meta {
   /** reconciliation + output validation introspection (intelligence endpoints) */
   discrepancies?: { check: string; message: string }[];
   outputValidation?: { validated: boolean; unsupportedClaims: number; recovered?: string };
+  /** Phase 2 — data confidence (multi-provider agreement, quality, freshness, fallback) */
+  dataConfidence?: { score: number; level: "high" | "medium" | "low" | "unverified"; factors: string[] } | null;
+  /** Phase 2 — provider source set tham gia resolution (vnstock, vndirect, archive…) */
+  providers?: string[];
 }
 
 export interface ApiOk<T> {

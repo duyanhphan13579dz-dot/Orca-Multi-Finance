@@ -55,6 +55,10 @@ Envelope chuẩn cho mọi endpoint:
 | Endpoint | Mô tả | Nguồn |
 | --- | --- | --- |
 | `GET /api/v1/chart/history?symbol=&assetType=&timeframe=&limit=` | Candles chuẩn hóa + indicators (EMA20/50, BB, VWAP, RSI, MACD, S/R) + markers | engine |
+
+> **Phase 2 — Data Reliability (backward-compatible additions):** các endpoint VN (indices/quotes/ohlcv/detail) trả thêm
+> `meta.dataConfidence` `{ score, level: high|medium|low|unverified, factors[] }` (đa nguồn khớp → high; 1 nguồn tối đa medium;
+> fallback/dữ liệu cũ → low) và `meta.providers` (danh sách nguồn tham gia). Không field nào bị đổi/đi — UI không cần sửa.
 | `GET /api/v1/chart/stream?symbol=&assetType=&timeframe=` | SSE live: `snapshot` / `chart.candle.updated` / `chart.candle.closed` / heartbeat | WS engine |
 
 ## Realtime (Phase 1)

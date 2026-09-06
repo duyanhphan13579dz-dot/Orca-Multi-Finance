@@ -108,6 +108,18 @@ export function allowedDataAgeMs(): number {
   return 18 * 3_600_000; // overnight: closing data is the latest valid truth
 }
 
+/**
+ * SLA động theo phiên (Phase 2): cùng một dữ liệu cũ nhưng độ hợp lệ khác nhau
+ * tuỳ trạng thái thị trường VN. Trong phiên → cửa sổ hẹp (pace realtime);
+ * nghỉ trưa/pre-open → snapshot chốt phiên trước hợp lệ trong giờ;
+ * ngoài phiên → dữ liệu chốt phiên là bản mới nhất hợp lệ (đêm/ngày lễ).
+ */
+export function vnSlasForSession(s: VnSessionInfo = getVnSession()): { liveSlaMs: number; freshSlaMs: number; delayedSlaMs: number } {
+  if (s.trading) return { liveSlaMs: 30_000, freshSlaMs: 3 * 60_000, delayedSlaMs: 10 * 60_000 };
+  if (s.state === "pre_open" || s.state === "lunch_break") return { liveSlaMs: 60 * 60_000, freshSlaMs: 2 * 3_600_000, delayedSlaMs: 18 * 3_600_000 };
+  return { liveSlaMs: 18 * 3_600_000, freshSlaMs: 24 * 3_600_000, delayedSlaMs: 7 * 24 * 3_600_000 };
+}
+
 export function sessionFreshnessHint(state: VnSessionState): string {
   return {
     pre_open: "Chưa vào phiên — dữ liệu snapshot đóng cửa phiên trước là mới nhất",
