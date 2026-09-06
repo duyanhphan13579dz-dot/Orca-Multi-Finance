@@ -10,6 +10,7 @@ import type { OhlcvBar } from "../types";
 import { validateBars, validateQuote } from "../quality";
 import { computeFreshness } from "../freshness";
 import { eventBus } from "../events";
+import { payloadOf } from "../realtime/event-envelope";
 import { candleAggregator } from "../realtime/candles";
 import { analyzeScalp } from "../engines/scalp";
 import { analyzeSeries } from "../technical";
@@ -82,7 +83,7 @@ test("candle aggregator: invalid ticks are dropped, valid ticks emit updates", (
   const sym = `T${Math.floor(Math.random() * 1e6)}USDT`;
   const unsub = candleAggregator.subscribe(sym, "1m");
   const events: unknown[] = [];
-  const off = eventBus.on(`candle.updated:${sym}:1m`, (p) => events.push(p));
+  const off = eventBus.on(`candle.updated:${sym}:1m`, (p) => events.push(payloadOf(p)));
 
   eventBus.emit(`tick:${sym}`, { symbol: sym, price: -1, cumVolume: 10, cumQuoteVolume: 10, ts: 1_700_000_000_000 }); // INVALID
   assert.equal(events.length, 0);
@@ -98,7 +99,7 @@ test("candle aggregator: bucket roll finalizes candle and opens the next (no dup
   const sym = `R${Math.floor(Math.random() * 1e6)}USDT`;
   const unsub = candleAggregator.subscribe(sym, "1m");
   const closed: { candle: ChartCandle }[] = [];
-  const off = eventBus.on(`candle.closed:${sym}:1m`, (p) => closed.push(p as { candle: ChartCandle }));
+  const off = eventBus.on(`candle.closed:${sym}:1m`, (p) => closed.push(payloadOf<{ candle: ChartCandle }>(p)));
   const t0 = 1_700_000_010_000;
 
   eventBus.emit(`tick:${sym}`, { symbol: sym, price: 100, cumVolume: 100, cumQuoteVolume: 100, ts: t0 });

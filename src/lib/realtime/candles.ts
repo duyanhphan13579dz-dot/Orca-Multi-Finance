@@ -2,6 +2,8 @@ import "server-only";
 import { eventBus } from "../events";
 import { TF_MS, type ChartCandle } from "../chart-const";
 import { validateQuote, logQualityEvent } from "../quality";
+import { CHANNEL } from "./channels";
+import { emitEvent, payloadOf } from "./event-envelope";
 import { binanceWs, KLINE_INTERVALS, type KlineCandle } from "./binance-ws";
 
 /**
@@ -60,7 +62,7 @@ class CandleAggregator {
     }
     if ((tfMap.size ?? 0) === 0 && !this.tickOffs.has(sym)) {
       // wire the central tick feed for this symbol (centralized, deduped)
-      this.tickOffs.set(sym, eventBus.on(`tick:${sym}`, (p) => this.feed(p as Tick)));
+      this.tickOffs.set(sym, eventBus.on(CHANNEL.tick(sym), (p) => this.feed(payloadOf<Tick>(p))));
     }
     const firstForTf = (tfMap.get(tf) ?? 0) === 0;
     tfMap.set(tf, (tfMap.get(tf) ?? 0) + 1);
@@ -72,8 +74,8 @@ class CandleAggregator {
     const key = `${sym}|${tf}`;
     if (opts?.crypto && firstForTf && KLINE_INTERVALS.has(tf)) {
       unwantKline = binanceWs.requestKline(sym, tf);
-      offKline = eventBus.on(`kline:${sym}:${tf}`, (p) => {
-        const payload = p as { candle: KlineCandle };
+      offKline = eventBus.on(CHANNEL.kline(sym, tf), (p) => {
+        const payload = payloadOf<{ candle: KlineCandle }>(p);
         const c = payload.candle;
         this.klineActive.add(key);
         const bar: LiveBar = {
@@ -91,10 +93,9 @@ class CandleAggregator {
         };
         this.bars.set(key, bar);
         const out = toCandle(bar);
-        eventBus.emit(`candle.updated:${sym}:${tf}`, { symbol: sym, timeframe: tf, candle: out, quality: "VALID", transport: "binance-ws:kline" });
-        if (c.closed) {
-          eventBus.emit(`candle.closed:${sym}:${tf}`, { symbol: sym, timeframe: tf, candle: out, quality: "VALID", transport: "binance-ws:kline" });
-        }
+        const klinePayload = { symbol: sym, timeframe: tf, candle: out, quality: "VALID", transport: "binance-ws:kline" };
+        emitEvent(CHANNEL.candleUpdated(sym, tf), "candle.updated", klinePayload, { assetType: "crypto", symbol: sym });
+        if (c.closed) emitEvent(CHANNEL.candleClosed(sym, tf), "candle.closed", klinePayload, { assetType: "crypto", symbol: sym });
       });
     }
 
@@ -160,7 +161,7 @@ class CandleAggregator {
       if (bar) {
         const closed = toCandle(bar);
         closed.volume = Math.max(0, bar.lastCum - bar.firstCum);
-        eventBus.emit(`candle.closed:${sym}:${tf}`, { symbol: sym, timeframe: tf, candle: closed, quality: bar.firstCum >= 0 ? quality : "SUSPECT" });
+        emitEvent(CHANNEL.candleClosed(sym, tf), "candle.closed", { symbol: sym, timeframe: tf, candle: closed, quality: bar.firstCum >= 0 ? quality : "SUSPECT" }, { assetType: "crypto", symbol: sym });
       }
       bar = {
         bucket,
@@ -188,7 +189,7 @@ class CandleAggregator {
     const now = Date.now();
     if (now - bar.lastEmit >= EMIT_THROTTLE_MS) {
       bar.lastEmit = now;
-      eventBus.emit(`candle.updated:${sym}:${tf}`, { symbol: sym, timeframe: tf, candle: toCandle(bar), quality });
+      emitEvent(CHANNEL.candleUpdated(sym, tf), "candle.updated", { symbol: sym, timeframe: tf, candle: toCandle(bar), quality }, { assetType: "crypto", symbol: sym });
     }
   }
 

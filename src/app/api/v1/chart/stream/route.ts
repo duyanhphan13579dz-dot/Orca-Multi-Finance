@@ -1,4 +1,5 @@
 import { eventBus } from "@/lib/events";
+import { payloadOf } from "@/lib/realtime/event-envelope";
 import { candleAggregator } from "@/lib/realtime/candles";
 import { ensureBinanceWsStarted } from "@/lib/realtime/binance-ws";
 import { tfsFor, type ChartAssetType } from "@/lib/chart-const";
@@ -45,8 +46,9 @@ export async function GET(req: Request) {
       if (assetType === "crypto") {
         unsubscribe = candleAggregator.subscribe(symbol, timeframe, { crypto: true });
         offFns = [
-          eventBus.on(`candle.updated:${symbol}:${timeframe}`, (p) => send("chart.candle.updated", p)),
-          eventBus.on(`candle.closed:${symbol}:${timeframe}`, (p) => send("chart.candle.closed", p)),
+          // unwrap typed envelopes → keep the public SSE payload contract stable
+          eventBus.on(`candle.updated:${symbol}:${timeframe}`, (p) => send("chart.candle.updated", payloadOf(p))),
+          eventBus.on(`candle.closed:${symbol}:${timeframe}`, (p) => send("chart.candle.closed", payloadOf(p))),
         ];
         const snap = candleAggregator.snapshot(symbol, timeframe);
         send("snapshot", { symbol, timeframe, candle: snap, live: Boolean(snap), note: snap ? undefined : "chờ tick đầu tiên / stream đang kết nối" });

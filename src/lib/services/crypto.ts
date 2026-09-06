@@ -4,7 +4,8 @@ import { buildMeta } from "../freshness";
 import * as binance from "../providers/binance";
 import { binanceWs, ensureBinanceWsStarted } from "../realtime/binance-ws";
 import { candleAggregator } from "../realtime/candles";
-import { eventBus } from "../events";
+import { CHANNEL } from "../realtime/channels";
+import { emitEvent } from "../realtime/event-envelope";
 import { logQualityEvent, validateQuote } from "../quality";
 import { analyzeSeries, detectPatterns } from "../technical";
 import { filterAndSortRows } from "../engines/screener";
@@ -115,13 +116,13 @@ export async function getCryptoMarkets(): Promise<{ rows: CryptoMarketRow[]; sum
           for (const sym of subscribed) {
             const row = bySymbol.get(sym);
             if (!row) continue;
-            eventBus.emit(`tick:${sym}`, {
+            emitEvent(CHANNEL.tick(sym), "tick", {
               symbol: sym,
               price: row.price,
               cumVolume: row.volume ?? 0,
               cumQuoteVolume: row.quoteVolume ?? 0,
               ts: fetchedAt,
-            });
+            }, { assetType: "crypto", symbol: sym, ts: fetchedAt });
           }
         }
         return { rows, fetchedAt, overlaid, invalid, suspect };

@@ -13,6 +13,7 @@ export type BusHandler = (payload: unknown) => void;
 
 class EventBus {
   private channels = new Map<string, Set<BusHandler>>();
+  private any: BusHandler[] = [];
 
   on(channel: string, handler: BusHandler): () => void {
     let set = this.channels.get(channel);
@@ -24,6 +25,15 @@ class EventBus {
     return () => this.off(channel, handler);
   }
 
+  /** Observe every emitted channel (market store / gateway fan-out). */
+  onAny(handler: BusHandler): () => void {
+    this.any.push(handler);
+    return () => {
+      const i = this.any.indexOf(handler);
+      if (i >= 0) this.any.splice(i, 1);
+    };
+  }
+
   off(channel: string, handler: BusHandler) {
     const set = this.channels.get(channel);
     set?.delete(handler);
@@ -32,8 +42,16 @@ class EventBus {
 
   emit(channel: string, payload: unknown) {
     const set = this.channels.get(channel);
-    if (!set) return;
-    for (const h of set) {
+    if (set) {
+      for (const h of set) {
+        try {
+          h(payload);
+        } catch {
+          /* isolate handler failures */
+        }
+      }
+    }
+    for (const h of this.any) {
       try {
         h(payload);
       } catch {

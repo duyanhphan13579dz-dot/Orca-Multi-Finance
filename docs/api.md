@@ -57,6 +57,18 @@ Envelope chuẩn cho mọi endpoint:
 | `GET /api/v1/chart/history?symbol=&assetType=&timeframe=&limit=` | Candles chuẩn hóa + indicators (EMA20/50, BB, VWAP, RSI, MACD, S/R) + markers | engine |
 | `GET /api/v1/chart/stream?symbol=&assetType=&timeframe=` | SSE live: `snapshot` / `chart.candle.updated` / `chart.candle.closed` / heartbeat | WS engine |
 
+## Realtime (Phase 1)
+
+| Endpoint | Mô tả | Nguồn |
+| --- | --- | --- |
+| `GET /api/v1/realtime/stream?topic=market&symbols=BTCUSDT,VNM&assetType=crypto\|stock\|all` | SSE realtime thống nhất multi-asset. Events: `snapshot` / `quote` / `index` / heartbeat. `symbols` trống → tất cả quote đang có trong store | Market Store |
+| `GET /api/v1/realtime/stream?topic=watchlist` | **Auth bắt buộc** — quote realtime cho watchlist của user (+ khởi động VN engine cho cổ phiếu) | watchlist + Market Store |
+| `GET /api/v1/realtime/stream?topic=alerts` | **Auth bắt buộc** — đánh giá alert `price_above/below` + `pct_change` ngay trên từng quote; `alert` event khi trigger + persist `triggeredAt`. RSI/volume_spike đánh giá qua scheduler 5 phút | alerts engine |
+| `GET /api/v1/realtime/stream?topic=candle&symbol=BTCUSDT&assetType=crypto&timeframes=5m,15m,1h,1d` | SSE candle đa timeframe: `snapshot` (history + current) / `candle` / `candle.closed`. Crypto: base 1m từ Binance kline WS + seed REST per TF. VN: 1m live từ engine, 1d seed OHLCV REST | Multi-TF Candle Engine |
+
+Event payload là envelope đã unwrap (payload giữ nguyên contract cũ của đường chart).
+Mọi topic đều có `snapshot` đầu tiên, heartbeat 20s, reconnect do client tự xử lý.
+
 ## Commodities / News / Screener
 
 | Endpoint | Mô tả | Nguồn |

@@ -97,11 +97,16 @@ Data contract per analysis: `{asset, market_data, technical_state, market_state,
 
 ## 8. Roadmap → full event-driven realtime
 
-1. `internal/ws-gateway`: SSE → WebSocket, subscribe theo symbol (lazy subscriptions).
-2. Binance `!ticker@arr` relay → Redis pub/sub channel `crypto.ticker` → broadcast delta JSON patches.
-3. ~~Alert engine~~ — **implemented (2026-09)**: bảng `alerts` + `src/lib/engines/alerts.ts` (pure evaluator: price_above/below, pct_change, RSI, volume_spike) + `src/lib/services/alerts.ts` (CRUD, snapshot, trigger persistence) + `/api/v1/alerts*` + scheduler poll 5 phút. Còn lại: push realtime qua WS gateway (mục 1).
-4. Incremental indicator updates cho crypto/stock engine khi có tick mới.
-5. VN universe scheduler (daily sync HOSE/HNX/UPCOM vào `stock_symbols`) khi VNStock hoạt động ổn định.
+**PHASE 1 — REALTIME CORE (implemented 2026-09-06):**
+
+1. **Unified Event Model** — `src/lib/realtime/event-envelope.ts`: mọi event chạy qua `RealtimeEvent` (id `channel:seq`, ts, assetType, symbol, payload) + `channels.ts` (channel registry). Redis pub/sub bridge tùy chọn (`REDIS_URL`): publish `orca:rt`, subscribe lại + dedupe bằng seen-set — multi-instance fanout không echo. Bus cũ giữ `onAny` cho store/gateway; consumer cũ an toàn qua `payloadOf()`.
+2. **Realtime Market Store** — `src/lib/realtime/market-store.ts`: một store thống nhất cho stock/crypto/forex/commodity/index; `setQuote` validate bằng Data Quality (INVALID bị reject + log), TTL/freshness theo asset class, subscripton dedupe, auto-ingest tick events (không ghi đè quote phong phú của engine VN), snapshot/getMany.
+3. **Multi-TF Candle Engine** — `src/lib/realtime/multi-tf-candles.ts`: base 1m → resample mọi TF (5m/15m/1h/1d…); merge seed REST + live (contribution map theo baseOpen, fast-path O(1) khi bar hiện tại không phải extreme, rebuild khi cần); crypto kline WS + VN 1m frames; `seedTf` seed thẳng bucket đích (VN 1d). Emits `candle.updated`/`candle.closed` chỉ khi có subscriber.
+4. **Incremental Technical Engine** — `src/lib/engines/technical-incremental.ts`: stateful O(1)/tick (SMA window, EMA SMA-seeded, Wilder RSI, MACD(12,26,9), Bollinger σ population, ATR last-N); test đối chiếu full-recompute `technical.ts` tại từng bước (sai số 1e-6).
+5. **SSE Gateway** — `src/app/api/v1/realtime/stream/route.ts`: topic `market` (quote multi-asset + index events) / `watchlist` (auth) / `alerts` (auth, evaluate-on-quote + persist) / `candle` (multi-TF + REST seed). Redis fanout qua event model. Chart stream cũ vẫn giữ contract payload cũ (unwrap envelope).
+6. **VN Market Data Engine** — `src/lib/realtime/vn-market-engine.ts`: session-aware cadence (10s continuous, 15s ATO, 30s ATC/post, 60s pre-open/lunch, dừng + final poll sau close), single-flight, VNStock→VNDirect fallback, ghi store + emit `tick`/`vn.index`, 1m base frame → multi-TF.
+
+Còn lại roadmap: WS nâng cấp từ SSE, delta JSON patches, incremental chạy trực tiếp trên kline của store (đã có engine sẵn sàng), VN universe scheduler.
 
 ## 9. Security
 

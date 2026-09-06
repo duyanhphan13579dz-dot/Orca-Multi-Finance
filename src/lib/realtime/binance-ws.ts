@@ -1,6 +1,7 @@
 import "server-only";
 import { recordFailure, recordSuccess } from "../health";
-import { eventBus } from "../events";
+import { CHANNEL } from "./channels";
+import { emitEvent } from "./event-envelope";
 
 /**
  * CENTRALIZED BINANCE WEBSOCKET INGESTION ENGINE
@@ -195,7 +196,7 @@ class BinanceRealtimeEngine {
             volume: Number(k.v) || 0,
             closed: Boolean(k.x),
           };
-          eventBus.emit(`kline:${sym}:${tf}`, { symbol: sym, timeframe: tf, candle });
+          emitEvent(CHANNEL.kline(sym, tf), "kline", { symbol: sym, timeframe: tf, candle }, { assetType: "crypto", symbol: sym, ts: time });
         } catch {
           /* malformed frame */
         }
@@ -344,13 +345,13 @@ class BinanceRealtimeEngine {
         eventTime,
       });
       // central event bus → candle aggregation engine (only when subscribed)
-      eventBus.emit(`tick:${symbol}`, {
+      emitEvent(CHANNEL.tick(symbol), "tick", {
         symbol,
         price,
         cumVolume: Number(r.v) || 0,
         cumQuoteVolume: Number(r.q) || 0,
         ts: eventTime,
-      });
+      }, { assetType: "crypto", symbol, ts: eventTime });
     }
   }
 

@@ -1,6 +1,7 @@
 import { eq } from "drizzle-orm";
 import { db } from "@/db";
-import { watchlists, watchlistItems } from "@/db/schema";
+import { watchlistItems } from "@/db/schema";
+import { defaultWatchlistId } from "@/lib/services/watchlist";
 import { fail, ok, badRequest } from "@/lib/envelope";
 import { getSessionUser } from "@/lib/auth";
 
@@ -9,13 +10,6 @@ export const runtime = "nodejs";
 
 const ASSET_TYPES = ["stock", "crypto", "forex", "commodity"] as const;
 type ValidAssetType = (typeof ASSET_TYPES)[number];
-
-async function defaultWatchlistId(userId: string): Promise<string> {
-  const [row] = await db.select({ id: watchlists.id }).from(watchlists).where(eq(watchlists.userId, userId)).limit(1);
-  if (row) return row.id;
-  const [created] = await db.insert(watchlists).values({ userId, name: "Default" }).returning({ id: watchlists.id });
-  return created.id;
-}
 
 /** Read the current user's watchlist (server copy). */
 export async function GET() {

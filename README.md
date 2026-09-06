@@ -58,7 +58,7 @@ Không có module nào dùng số liệu giả. Khi provider lỗi: **retry → 
 | Ops/Observability (`/system`) | Implemented | Provider health, latency, circuit, cache stats |
 | VN Stocks: universe/quotes/OHLCV/financials | Implemented (needs key) | Tự kích hoạt khi `VNSTOCK_API_KEY` được cấu hình |
 | VN Screener / CANSLIM / Minervini / heatmap VN | Planned | Phụ thuộc VNStock reachability |
-| WebSocket gateway + Binance WS relay | Planned | REST hiện tại đã realtime ≤15–20s; WS relay nằm trong roadmap `/docs/architecture.md` |
+| Realtime Core (Phase 1) | Implemented | Unified event model + Market Store + Multi-TF candle engine + incremental technical + SSE gateway (`/api/v1/realtime/stream`) + VN session-aware engine — chi tiết `/docs/architecture.md` §8 |
 | Google OAuth, 2FA/TOTP | Planned | |
 | Valuation engines (DCF/DDM/Graham) VN | Planned | Cần financial statements từ VNStock |
 
