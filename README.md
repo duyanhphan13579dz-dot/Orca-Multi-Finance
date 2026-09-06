@@ -58,6 +58,7 @@ Không có module nào dùng số liệu giả. Khi provider lỗi: **retry → 
 | Watchlist + Trade Journal | Implemented | Local-first + server sync (`/api/v1/watchlist`, merge khi đăng nhập) |
 | Alerts | Implemented | CRUD `/api/v1/alerts*` + pure evaluator + scheduler poll 5 phút |
 | Data Reliability (Phase 2) | Implemented | VN multi-provider engine (VNStock⇄VNDirect) + fallback + reconciliation + Data Confidence (`meta.dataConfidence`) + session-aware SLA + async archive (`stock_quotes`/`stock_ohlcv`) — chi tiết `docs/architecture.md` §9 |
+| Market Intelligence (Phase 3) | Implemented (backend) | Breadth · Sector Rotation · Market Regime · Leadership · Smart Alerts · Event Intelligence — 6 engine + `/api/v1/market/*`, ẩn sau UI (không redesign) — chi tiết §10 |
 | Auth (email/password, scrypt, JWT cookie) | Implemented | `/api/v1/auth/*` |
 | Ops/Observability (`/system`) | Implemented | Provider health, latency, circuit, cache stats |
 | VN Stocks: universe/quotes/OHLCV/financials | Implemented (needs key) | Tự kích hoạt khi `VNSTOCK_API_KEY` được cấu hình |

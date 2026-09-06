@@ -81,6 +81,17 @@ Mọi topic đều có `snapshot` đầu tiên, heartbeat 20s, reconnect do clie
 | `GET /api/v1/news?category=&symbol=&sector=&limit=` | Tin tức đã dedupe/tag/validate timestamp | RSS multi-feed |
 | `GET /api/v1/screener?universe=crypto\|vn&minChange=&maxChange=&minQuoteVolume=&exchange=&sector=&limit=&sort=` | Screener rule-based. `vn` cần VNSTOCK_API_KEY; hỗ trợ lọc exchange/sector/symbols | Binance / VNStock |
 
+## Market Intelligence (Phase 3 — backend-enabled, UI chưa hiển thị)
+
+| Endpoint | Mô tả | Nguồn |
+| --- | --- | --- |
+| `GET /api/v1/market/breadth` | Độ rộng VN: advancers/decliners, advance ratio, up/down volume, % trên SMA20/50, new highs/lows 20 phiên, score 0..100 | engine |
+| `GET /api/v1/market/sectors` | Xoay vòng ngành: median % đổi, participation, volume share, RS, rotation score, top/laggard, dispersion | engine |
+| `GET /api/v1/market/state` | Regime thị trường VN (bull/recovery/sideways/correction/bear/unknown) + risk appetite + volatility ratio + evidence | engine |
+| `GET /api/v1/market/leaders?limit=20` | Cổ phiếu dẫn dắt/đuôi (score RS+momentum+volume), limit 1..50 | engine |
+| `GET /api/v1/market/smart-alerts` | 8 quy tắc thị trường (breadth thrust, volume surge, rotation trigger, cụm mã mạnh…) kèm severity + lý do | engine |
+| `GET /api/v1/market/events?limit=20` | Sự kiện phát hiện từ dữ liệu (dedupe 5 phút, ring 100) — scheduler chạy 5 phút | engine |
+
 ## Alerts
 
 | Endpoint | Mô tả | Nguồn |

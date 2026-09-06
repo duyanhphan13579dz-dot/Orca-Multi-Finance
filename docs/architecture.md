@@ -152,7 +152,23 @@ Còn lại roadmap: WS nâng cấp từ SSE, delta JSON patches, incremental ch�
 
 Ràng buộc API: chỉ **thêm** field `meta.dataConfidence`/`meta.providers` — schema response cũ giữ nguyên, UI không đổi.
 
-## 10. Security
+## 10. Market Intelligence (Phase 3)
+
+**Nguyên tắc:** triển khai **ẩn phía sau UI hiện tại**. 6 engine backend + 6 endpoint mới; nếu sau này cần hiển thị → **chỉ bổ sung dữ liệu vào component hiện có, không redesign trang** (§0 vẫn áp dụng).
+
+| Module | Engine (pure) | Endpoint mới | Ý nghĩa |
+| --- | --- | --- | --- |
+| Market Breadth | `engines/breadth.ts` | `GET /api/v1/market/breadth` | advancers/decliners, advance ratio, up/down volume, % trên SMA20/50, new highs/lows 20 phiên (chỉ khi có OHLCV), score 0..100 |
+| Sector Rotation | `engines/sector-rotation.ts` | `GET /api/v1/market/sectors` | median %thay đổi theo ngành (chống outlier), participation, volume share, RS vs thị trường, rotation score + top/laggard + dispersion |
+| Market State (regime) | `engines/market-regime.ts` | `GET /api/v1/market/state` | regime bull_trend/recovery/sideways/correction/bear_trend/unknown, risk appetite 0..100, vol ratio 30/120 phiên, evidence[] có lý do |
+| Leadership | `engines/leadership.ts` | `GET /api/v1/market/leaders?limit=` | score 0..100 = RS (40) + momentum (30) + volume share (30); leaders/laggards |
+| Smart Alerts | `engines/smart-alerts.ts` | `GET /api/v1/market/smart-alerts` | 8 quy tắc cấp thị trường (breadth thrust/capitulation, volume surge, breakout/breakdown, rotation trigger, cụm mã mạnh, new highs, vol expansion) — có severity + lý do |
+| Event Intelligence | `engines/event-intelligence.ts` | `GET /api/v1/market/events` | sự kiện phát hiện từ dữ liệu (index move, sector move, khối lượng, kỷ lục 20 phiên, cụm ngành) — dedupe 5 phút, ring 100 events, scheduler chạy 5 phút |
+
+Nguồn dữ liệu: quotes thật (VN_SECURITIES ≤135 mã, chunk 30), OHLCV top-30 mã thanh khoản (độ sâu breadth), VNINDEX OHLCV (tolerant). Không bao giờ suy diễn khi thiếu dữ liệu — fields null + note.
+Không đổi bất kỳ payload endpoint/UI hiện có; tất cả là endpoint mới + engine mới.
+
+## 11. Security
 
 - API keys chỉ đọc qua `src/lib/env.ts` (module `server-only`), không biến `NEXT_PUBLIC_*`.
 - Auth: scrypt password hash, JWT HS256 trong httpOnly cookie (`/api/v1/auth/*`), audit logs.

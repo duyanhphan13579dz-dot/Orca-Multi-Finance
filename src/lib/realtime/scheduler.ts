@@ -15,6 +15,8 @@ class Scheduler {
   private running = new Set<string>();
   private lastAlertPoll = 0;
   private readonly alertPollMs = 5 * 60_000;
+  private lastIntelCycle = 0;
+  private readonly intelCycleMs = 5 * 60_000;
 
   start() {
     if (this.timer) return;
@@ -75,6 +77,18 @@ class Scheduler {
       void (async () => {
         const { pollActiveAlerts } = await import("../services/alerts");
         await pollActiveAlerts();
+      })();
+    }
+    /* PHASE 3 — MARKET INTELLIGENCE: detect + record events mỗi 5 phút. */
+    if (Date.now() - this.lastIntelCycle >= this.intelCycleMs) {
+      this.lastIntelCycle = Date.now();
+      void (async () => {
+        try {
+          const { runMarketIntelligenceCycle } = await import("../services/market-intelligence");
+          await runMarketIntelligenceCycle();
+        } catch {
+          /* best-effort — retry next cycle */
+        }
       })();
     }
     const cfg = await this.loadCfg();
