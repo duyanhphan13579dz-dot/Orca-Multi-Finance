@@ -33,30 +33,91 @@ function decodeEntities(s: string): string {
     .replace(/&gt;/gi, ">");
 }
 
+/**
+ * Xóa các khối scaffolding của trang (ANTD cssinjs SSR nhúng cả stylesheet vào
+ * HTML/ô bảng — nếu chỉ xóa thẻ thì NỘI DUNG CSS vẫn lọt vào cell).
+ */
+function stripHtmlScaffolding(html: string): string {
+  return html
+    .replace(/<!--[\s\S]*?-->/g, " ")
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, " ")
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, " ")
+    .replace(/<noscript\b[^>]*>[\s\S]*?<\/noscript>/gi, " ")
+    .replace(/<template\b[^>]*>[\s\S]*?<\/template>/gi, " ");
+}
+
+/** Quét nốt CSS rule còn sót (`.css-x19ppn{…}`, `where(…)`, `@media…`). */
+function stripCssText(s: string): string {
+  return s
+    .replace(/\.css-[a-zA-Z0-9_\\-]+\s*\{[^}]*\}/g, " ")
+    .replace(/where\([^)]*\)/gi, " ")
+    .replace(/@media[^{]*\{[\s\S]*?\}\s*\}/g, " ")
+    .replace(/[a-zA-Z0-9_.@#:\-\[\]'"]+\s*\{[^}]*\}/g, " ")
+    .replace(/[\s,;{}:]+$/g, " ")
+    .trim();
+}
+
 function cellText(cell: string): string {
   // giữ ranh giới <br> (name/unit) — chỉ collapse whitespace trong từng dòng
-  return decodeEntities(cell)
-    .replace(/<br\s*\/?>/gi, "\n")
-    .replace(/<[^>]*>/g, " ")
+  return stripCssText(
+    decodeEntities(stripHtmlScaffolding(cell))
+      .replace(/<br\s*\/?>/gi, "\n")
+      .replace(/<[^>]*>/g, " "),
+  )
     .split("\n")
     .map((s) => s.replace(/\s+/g, " ").trim())
     .join("\n")
     .trim();
 }
 
-/** Split HTML into table rows; each row = array of <td> cell texts. */
-export function extractTableRows(html: string): string[][] {
-  const rows: string[][] = [];
-  const trRe = /<tr\b[^>]*>([\s\S]*?)<\/tr>/gi;
-  let m: RegExpExecArray | null;
-  while ((m = trRe.exec(html))) {
-    const tds: string[] = [];
-    const tdRe = /<t[dh]\b[^>]*>([\s\S]*?)<\/t[dh]>/gi;
-    let c: RegExpExecArray | null;
-    while ((c = tdRe.exec(m[1]))) tds.push(cellText(c[1]));
-    if (tds.length) rows.push(tds);
+const isCssJunk = (s: string) => /\.css-|^\{|@media|where\(|ant-typography|font-weight:/.test(s);
+
+/** cell đã cellText() nhưng vẫn lẫn CSS dạng text → trả về "" (không hiện rác). */
+const cleanCell = (s: string | null | undefined): string => {
+  const t = (s ?? "").trim();
+  return isCssJunk(t) ? "" : t;
+};
+
+/** Header tokens nhận diện bảng dữ liệu thật (loại bảng dump CSS). */
+const GOODS_HEADERS = ["Mặt hàng", "Giá", "% Ngày", "Ngày cập nhật"];
+const MACRO_HEADERS = ["Chỉ tiêu", "Kỳ công bố", "Kỳ hiện tại", "Kỳ trước"];
+const RATES_HEADERS = ["Chỉ tiêu", "Kỳ công bố", "Kỳ hiện tại", "Kỳ trước"];
+
+function headerMatches(row: string[], tokens: string[]): boolean {
+  const union = row.join(" ").toLowerCase();
+  const hit = tokens.filter((t) => union.includes(t.toLowerCase())).length;
+  return hit >= 2;
+}
+
+/**
+ * Tách rows từ các BẢNG THẬT (theo header token). Loại bỏ scaffolding + các
+ * bảng chứa CSS dump (bảng đầu tiên của trang SSR có thể là cssinjs critical CSS).
+ */
+export function extractTableRows(html: string, expectedHeaders: string[] = GOODS_HEADERS): string[][] {
+  const out: string[][] = [];
+  const htmlNoScope = stripHtmlScaffolding(html);
+  const tableRe = /<table\b[^>]*>([\s\S]*?)<\/table>/gi;
+  let tm: RegExpExecArray | null;
+  while ((tm = tableRe.exec(htmlNoScope))) {
+    const rows: string[][] = [];
+    const trRe = /<tr\b[^>]*>([\s\S]*?)<\/tr>/gi;
+    let m: RegExpExecArray | null;
+    while ((m = trRe.exec(tm[1]))) {
+      const tds: string[] = [];
+      const tdRe = /<t[dh]\b[^>]*>([\s\S]*?)<\/t[dh]>/gi;
+      let c: RegExpExecArray | null;
+      while ((c = tdRe.exec(m[1]))) tds.push(cellText(c[1]));
+      if (tds.length) rows.push(tds);
+    }
+    if (!rows.length) continue;
+    const first = rows[0];
+    // Chỉ giữ bảng có header khớp dữ liệu thật; bảng CSS (cột đầu là khối
+    // `.css-…`) hoặc bảng khác bị loại.
+    if (headerMatches(first, expectedHeaders) && !first.some((c) => isCssJunk(c))) {
+      out.push(...rows.slice(1));
+    }
   }
-  return rows;
+  return out;
 }
 
 /* ------------------------------ numeric/date ------------------------------ */
@@ -104,15 +165,17 @@ export interface VnbGoodsRow {
 /** Goods table: cell0 = "Name" (with <br> unit), price, %Ngày, %Tháng, %Năm, Ngày cập nhật. */
 export function parseVnbGoodsRows(html: string): VnbGoodsRow[] {
   const out: VnbGoodsRow[] = [];
-  for (const cells of extractTableRows(html)) {
+  for (const cells of extractTableRows(html, GOODS_HEADERS)) {
     if (cells.length < 6) continue;
     const [nameUnit, priceRaw, dRaw, mRaw, yRaw, dateRaw] = cells;
     const parts = nameUnit.split("\n");
-    const name = decodeEntities(parts[0]).trim();
-    const unit = parts.length > 1 ? decodeEntities(parts.slice(1).join(" ")).trim() : "";
-    if (!name || /^(Mặt hàng|Chỉ tiêu)$/i.test(name)) continue; // header row
+    const name = cleanCell(decodeEntities(parts[0]));
+    const unit = cleanCell(parts.length > 1 ? decodeEntities(parts.slice(1).join(" ")) : "");
+    if (!name || /^(Mặt hàng|Chỉ tiêu)$/i.test(name)) continue; // CSS dump / header row
     const price = parseVnbNum(priceRaw);
     if (price == null) continue; // "--" hoặc header → bỏ
+    // nếu cell giá vẫn còn lẫn CSS thì coi như không hợp lệ
+    if (isCssJunk(`${priceRaw} ${dRaw} ${mRaw} ${yRaw} ${dateRaw}`)) continue;
     out.push({
       name,
       unit,
@@ -120,7 +183,7 @@ export function parseVnbGoodsRows(html: string): VnbGoodsRow[] {
       pctDay: parseVnbNum(dRaw),
       pctMonth: parseVnbNum(mRaw),
       pctYear: parseVnbNum(yRaw),
-      date: dateRaw ?? null,
+      date: cleanCell(dateRaw) || null,
       dateTs: parseVnbDate(dateRaw),
     });
   }
@@ -250,18 +313,18 @@ export interface VnbMacroRow {
 /** Macro: Chỉ tiêu | Kỳ công bố | Kỳ hiện tại | Kỳ trước | Ngày công bố tiếp theo */
 export function parseVnbMacroRows(html: string): VnbMacroRow[] {
   const out: VnbMacroRow[] = [];
-  for (const cells of extractTableRows(html)) {
+  for (const cells of extractTableRows(html, MACRO_HEADERS)) {
     if (cells.length < 5) continue;
     const [indicator, period, cur, prev, next] = cells;
-    if (!indicator || /^Chỉ tiêu$/i.test(indicator.trim()) || /kỳ hiện tại/i.test(indicator)) continue;
+    if (!indicator || isCssJunk(indicator) || /^Chỉ tiêu$/i.test(indicator.trim()) || /kỳ hiện tại/i.test(indicator)) continue;
     out.push({
       indicator: indicator.trim(),
-      period: period.trim(),
+      period: cleanCell(period),
       current: parseVnbNum(cur),
-      currentRaw: cur.trim() || null,
+      currentRaw: cleanCell(cur) || null,
       previous: parseVnbNum(prev),
-      previousRaw: prev.trim() || null,
-      nextRelease: next.trim() || null,
+      previousRaw: cleanCell(prev) || null,
+      nextRelease: cleanCell(next) || null,
     });
   }
   return out;
@@ -279,17 +342,17 @@ export interface VnbRateRow {
 /** Rates: Chỉ tiêu | Kỳ công bố | Kỳ hiện tại | Kỳ trước */
 export function parseVnbRatesRows(html: string): VnbRateRow[] {
   const out: VnbRateRow[] = [];
-  for (const cells of extractTableRows(html)) {
+  for (const cells of extractTableRows(html, RATES_HEADERS)) {
     if (cells.length < 4) continue;
     const [indicator, period, cur, prev] = cells;
-    if (!indicator || /^Chỉ tiêu$/i.test(indicator.trim()) || /kỳ hiện tại/i.test(indicator)) continue;
+    if (!indicator || isCssJunk(indicator) || /^Chỉ tiêu$/i.test(indicator.trim()) || /kỳ hiện tại/i.test(indicator)) continue;
     out.push({
       indicator: indicator.trim(),
-      period: period.trim(),
+      period: cleanCell(period),
       current: parseVnbNum(cur),
-      currentRaw: cur.trim() || null,
+      currentRaw: cleanCell(cur) || null,
       previous: parseVnbNum(prev),
-      previousRaw: prev.trim() || null,
+      previousRaw: cleanCell(prev) || null,
     });
   }
   return out;

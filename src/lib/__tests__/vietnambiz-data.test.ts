@@ -210,3 +210,96 @@ test("parseVnbRatesRows: M2/tín dụng/USD/lãi suất LNH đúng giá", () => 
   assert.equal(on?.current, 6.01);
   assert.equal(on?.previous, 1.19);
 });
+
+/* --------------- Regression: ANTD cssinjs SSR CSS lẫn vào bảng ---------------
+ * Trang data.vietnambiz.vn là app Ant Design SSR — stylesheet được nhúng vào
+ * HTML (có thể nằm trong <style> toàn trang, hoặc bên trong ô bảng). Parser
+ * phải loại bỏ NỘI DUNG CSS (không chỉ thẻ) — bug cũ khiến UI hiển thị
+ * nguyên khối `.css-x19ppn{...}where(.css-ls3dc0f){...}` thay cho dữ liệu.
+ */
+
+const CSS_BLOB =
+  `.css-x19ppn{font-weight:800;line-height:1.5714285714285714;font-size:0.875rem;font-weight:500;color:inherit;}` +
+  `,where(.css-ls3dc0f)[class^="ant-typography"],` +
+  `[class^="ant-typography"]:before{content:""}` +
+  `,where(.css-ls3dc0f)[class^="ant-typography"]:after{content:""}` +
+  `,@media (max-width: 768px){.css-abc{display:none}}`;
+
+const CSS_LADEN_HTML = `
+<!DOCTYPE html><html><head>
+<style>${CSS_BLOB}</style>
+<script>window.__DATA__={x:1}</script>
+</head><body>
+<table><tr><th>Mặt hàng</th><th>Giá</th><th>% Ngày</th><th>% Tháng</th><th>% Năm</th><th>Ngày cập nhật</th></tr>
+<tr>
+  <td><style>${CSS_BLOB}</style>Giá heo hơi trong nước<br>Đồng/kg</td>
+  <td>57,833</td><td>--</td><td>--</td><td>--</td><td>04/09/2026</td>
+</tr>
+<tr>
+  <td>Giá vàng trong nước<br>Đồng/lượng</td>
+  <td><style>${CSS_BLOB}</style>147,600</td><td>--</td><td>--</td><td>--</td><td>05/09/2026</td>
+</tr>
+</table>
+<table>
+<tr><th>Chỉ tiêu</th><th>Kỳ công bố</th><th>Kỳ hiện tại</th><th>Kỳ trước</th><th>Ngày công bố tiếp theo</th></tr>
+<tr>
+  <td><style>${CSS_BLOB}</style>Tăng trưởng GDP (YoY)</td>
+  <td>Quý 2/2026</td><td>8.39%</td><td>7.94%</td><td>Ngày 29 tháng cuối cùng của quý</td>
+</tr>
+<tr>
+  <td>PMI</td><td>Tháng 08/2026</td><td>53.3</td><td>52.9</td><td>Ngày 1 hàng tháng</td>
+</tr>
+</table>
+<!-- dump table: header + row toàn CSS (plain text, không thẻ style) -->
+<table>
+<tr><td>${CSS_BLOB}</td><td>${CSS_BLOB}</td></tr>
+<tr><td>${CSS_BLOB}</td><td>${CSS_BLOB}</td></tr>
+</table>
+</body></html>`;
+
+test("REGRESSION: strip <style>/<script> NỘI DUNG — goods không còn CSS trong cell", () => {
+  const rows = parseVnbGoodsRows(CSS_LADEN_HTML);
+  assert.equal(rows.length, 2, "chỉ 2 hàng thật, không có hàng CSS");
+  const heo = rows.find((r) => r.name === "Giá heo hơi trong nước");
+  assert.ok(heo, "tên cleaned (không lẫn .css-…)");
+  assert.equal(heo.price, 57_833);
+  assert.equal(heo.unit, "Đồng/kg");
+  const vang = rows.find((r) => r.name === "Giá vàng trong nước");
+  assert.ok(vang);
+  assert.equal(vang.price, 147_600);
+  assert.ok(!isCssLike(rows.map(r => `${r.name} ${r.unit ?? ""} ${r.price}`)));
+});
+
+test("REGRESSION: macro/rates không còn CSS — indicator + currentRaw sạch", () => {
+  const macro = parseVnbMacroRows(CSS_LADEN_HTML);
+  assert.equal(macro.length, 2);
+  const gdp = macro.find((r) => r.indicator === "Tăng trưởng GDP (YoY)");
+  assert.ok(gdp);
+  assert.equal(gdp.current, 8.39);
+  assert.equal(gdp.currentRaw, "8.39%");
+  assert.equal(gdp.period, "Quý 2/2026");
+  const pmi = macro.find((r) => r.indicator === "PMI");
+  assert.equal(pmi?.current, 53.3);
+  assert.ok(!isCssLike(macro.map((m) => `${m.indicator}${m.currentRaw ?? ""}${m.period}`)));
+
+  const rates = parseVnbRatesRows(
+    `<table><tr><th>Chỉ tiêu</th><th>Kỳ công bố</th><th>Kỳ hiện tại</th><th>Kỳ trước</th></tr>
+     <tr><td><style>${CSS_BLOB}</style>Lãi suất liên ngân hàng ON</td><td>Ngày 03/09/2026</td><td>6.01</td><td>1.19</td></tr></table>`,
+  );
+  assert.equal(rates.length, 1);
+  assert.equal(rates[0].indicator, "Lãi suất liên ngân hàng ON");
+  assert.equal(rates[0].current, 6.01);
+  assert.equal(rates[0].currentRaw, "6.01");
+  assert.equal(rates[0].period, "Ngày 03/09/2026");
+});
+
+test("REGRESSION: extractTableRows bỏ bảng CSS-dump (header không khớp / hàng toàn CSS)", () => {
+  const rows = extractTableRows(CSS_LADEN_HTML, ["Mặt hàng", "Giá", "% Ngày", "Ngày cập nhật"]);
+  assert.equal(rows.length, 2);
+  assert.ok(rows.every((r) => !isCssLike(r)));
+});
+
+export function isCssLike(items: unknown[]): boolean {
+  const s = items.join(" ");
+  return /\.css-|where\(|ant-typography|font-weight:/.test(s);
+}
