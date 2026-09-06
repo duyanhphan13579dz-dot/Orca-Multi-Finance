@@ -68,7 +68,6 @@ export function computeMarkers(candles: ChartCandle[]): ChartSignalMarker[] {
       if (r <= 30 && rPrev > 30) out.push({ time: candles[i].time, type: "rsi-extreme", position: "belowBar", title: `RSI ${r.toFixed(0)}` });
     }
   }
-  // scalp engine signal marker at latest candle (structured, validated)
   const scalp = analyzeScalp(candles as OhlcvBar[], { timeframe: "chart" });
   if (scalp && scalp.direction !== "neutral" && scalp.strength >= 50) {
     const lastCandle = candles[candles.length - 1];
@@ -178,12 +177,11 @@ export function computeIndicators(candles: ChartCandle[]): ChartIndicators | nul
 /* ------------------------------ history core ------------------------------- */
 
 async function cryptoCandles(symbol: string, tf: string, limit: number): Promise<{ candles: ChartCandle[]; source: string; note?: string }> {
-  const bars = await binance.getKlines(symbol, binanceInterval(tf), Math.min(limit, 1000));
+  const bars = await binance.getKlinesDeep(symbol, binanceInterval(tf), Math.min(limit, 3000));
   return { candles: bars.map(toCandle), source: "binance" };
 }
 
 async function forexCandles(pair: string, tf: string, limit: number): Promise<{ candles: ChartCandle[]; source: string; note?: string }> {
-  // PRIMARY: Biquote lacks historical OHLC in this environment → approved public provider
   const cfg = yahooIntervalFor(tf);
   if (!cfg) throw new Error("unsupported forex timeframe");
   const y = await getYahooChart(yahooSymbolForPair(pair), cfg.interval, cfg.range);
@@ -207,7 +205,6 @@ async function stockCandles(symbol: string, tf: string, limit: number): Promise<
 }
 
 async function commodityCandles(symbol: string, tf: string, limit: number): Promise<{ candles: ChartCandle[]; source: string; note?: string }> {
-  // gold spot proxy via Binance PAXG (verified real-time, USD/oz ≈ XAU)
   if (symbol === "XAUUSD" || symbol === "GOLD" || symbol === "XAU") {
     const bars = await binance.getKlines("PAXGUSDT", binanceInterval(tf), Math.min(limit, 1000));
     return { candles: bars.map(toCandle), source: "binance (PAXG ≈ XAU spot)", note: "Vàng thế giới qua PAXG (1:1 gold-ounce, USD) — nguồn thực thị trường 24/7" };
@@ -218,7 +215,7 @@ async function commodityCandles(symbol: string, tf: string, limit: number): Prom
 export async function getChartHistory(args: ChartArgs): Promise<{ data: ChartMarketData; meta: Meta } | null> {
   const symbol = args.symbol.toUpperCase().replace(/[^A-Z0-9]/g, "");
   const tf = args.timeframe;
-  const limit = Math.min(Math.max(args.limit ?? 300, 50), 1000);
+  const limit = Math.min(Math.max(args.limit ?? 500, 50), args.assetType === "crypto" ? 3000 : 1000);
   if (!tfsFor(args.assetType).includes(tf)) return null;
 
   try {
@@ -235,7 +232,6 @@ export async function getChartHistory(args: ChartArgs): Promise<{ data: ChartMar
                 ? await commodityCandles(symbol, tf, limit)
                 : await stockCandles(symbol, tf, limit);
 
-        // DATA QUALITY: per-candle validation (§24), sanitize, log anomalies
         const q = validateBars(raw.candles as OhlcvBar[]);
         if (q.status !== "VALID") void logQualityEvent("chart-engine", `${args.assetType}:${symbol}:${tf}`, q);
         if (q.status === "INVALID") throw new Error("invalid candle series");
@@ -282,5 +278,4 @@ export async function getChartHistory(args: ChartArgs): Promise<{ data: ChartMar
   }
 }
 
-/* technical snapshot reuse for overlays elsewhere */
 export type { TechnicalSnapshot };
