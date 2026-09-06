@@ -28,7 +28,6 @@ const SPOT_HOSTS = [
   "https://data-api.binance.vision",
   "https://api1.binance.com",
   "https://api2.binance.com",
-  "https://api3.binance.com",
   "https://api.binance.com",
 ].filter((h): h is string => Boolean(h));
 
@@ -71,15 +70,9 @@ async function getFromHosts<T>(hosts: string[], startIdx: number, path: string, 
   let lastErr = "unreachable";
   for (let i = 0; i < hosts.length; i++) {
     const idx = (startIdx + i) % hosts.length;
-    const host = hosts[idx];
-    if (!host) continue;
-    const url = `${host}${path}`;
-    // Per-host circuit key so one geo-blocked endpoint cannot lock out all failovers
-    const hostProvider = i === 0 ? provider : `${provider}:h${idx}`;
-    const res = await httpJson<T>(url, { provider: hostProvider, timeoutMs: 8_000, retries: 1 });
-    if (res.ok && res.data != null) {
-      return { data: res.data, hostIdx: idx };
-    }
+    const url = `${hosts[idx]}${path}`;
+    const res = await httpJson<T>(url, { provider, timeoutMs: 8_000, retries: 1 });
+    if (res.ok && res.data != null) return { data: res.data, hostIdx: idx };
     lastErr = res.error ?? "unreachable";
   }
   throw new ProviderError(`${provider}: all hosts failed (${lastErr})`, provider);
