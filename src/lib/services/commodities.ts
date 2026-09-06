@@ -8,18 +8,14 @@ import {
   type RawCommodityQuote,
 } from "../providers/commodities";
 import { getVnbGoodsQuotes } from "../providers/vietnambiz-data";
-import { getYahooChart } from "../providers/yahoo";
 import { env } from "../env";
 import { marketStore } from "../realtime/market-store";
 import { aggregateCandles, TF_MS, type ChartCandle } from "../chart-const";
 import {
   computePerformance,
   commodityFreshness,
-  normalizeHistory,
   buildImpactRows,
-  computeSensitivity,
   type CommodityImpactRow,
-  type HistoricalPoint,
   type PerformanceResult,
   type SensitivityResult,
 } from "../engines/commodity";
@@ -58,8 +54,8 @@ export interface CommodityMarket {
 
 /* ------------------------- nguồn DUY NHẤT: WiFeed --------------------------
  * User directive 2026-09-06: toàn bộ hàng hóa lấy từ data.vietnambiz.vn/goods.
- * Simplize (và Yahoo/MSN/Binance quote) đã bỏ. Yahoo chỉ còn cho chart OHLC
- * lịch sử (getCommodityHistory). Mỗi cycle: 1 request bảng WiFeed → map 66 mục
+ * Simplize/MSN/Binance/Yahoo ĐÃ BỎ hoàn toàn (cả chart OHLC — WiFeed không
+ * công bố lịch sử). Mỗi cycle: 1 request bảng WiFeed → map 66 mục
  * → validate → market store. Cache WiFeed 6h (nguồn chỉ refresh 00:00 hằng ngày);
  * nguồn trực tiếp lỗi → fallback bản ghi cuối ≤48h đã lưu DB (nhãn STALE, không mock).
  */
@@ -314,73 +310,27 @@ async function persistQuotes(rows: CommodityRow[]) {
 
 export interface CommodityHistoryResult {
   symbol: string;
-  points: ReturnType<typeof normalizeHistory>["points"];
+  points: unknown[];
   dropped: number;
   priceType: "OHLC" | "CLOSE_ONLY";
   source: string;
 }
 
-/** Real OHLC lịch sử via Yahoo futures — CHỈ cho chart, không dùng làm quote. */
-async function historyProducer(def: CommodityDef, tf: string, limit: number): Promise<CommodityHistoryResult> {
-  if (!def.yahooSymbol) throw new Error("commodity_history_unavailable");
-  const { interval, range, aggregate4h } = (() => {
-    if (tf === "4h") return { interval: "1h", range: "730d", aggregate4h: true };
-    if (tf === "1w") return { interval: "1wk", range: "10y", aggregate4h: false };
-    if (tf === "1M") return { interval: "1mo", range: "max", aggregate4h: false };
-    if (tf === "1d") return { interval: "1d", range: "10y", aggregate4h: false };
-    if (tf === "1h") return { interval: "60m", range: "730d", aggregate4h: false };
-    throw new Error("commodity_timeframe_unsupported");
-  })();
-  const { candles } = await getYahooChart(def.yahooSymbol, interval, range);
-  let series: ChartCandle[] = candles;
-  if (aggregate4h) series = aggregateCandles(candles, TF_MS["4h"]);
-  const bars: OhlcvBar[] = series.map((c) => ({
-    time: c.time,
-    open: c.open,
-    high: c.high,
-    low: c.low,
-    close: c.close,
-    volume: c.volume ?? 0,
-  }));
-  const q = validateBars(bars);
-  if (q.status !== "VALID") {
-    void logQualityEvent("commodity-history", `${def.key}:${tf}`, q);
-    if (q.status === "INVALID") throw new Error("invalid commodity series");
-  }
-  const norm = normalizeHistory(
-    def.symbol,
-    "Yahoo Finance (futures)",
-    q.cleaned.slice(-Math.min(limit, 1000)).map((c) => ({ timestamp: c.time, open: c.open, high: c.high, low: c.low, close: c.close, volume: c.volume })),
-  );
-  return { symbol: def.symbol, points: norm.points, dropped: norm.dropped, priceType: norm.priceType, source: "Yahoo Finance (futures)" };
-}
-
-export async function getCommodityHistory(needle: string, opts: { timeframe?: string; limit?: number } = {}): Promise<CommodityHistoryResult | null> {
-  const def = defByKeyOrSymbol(needle);
-  if (!def) return null;
-  const tf = opts.timeframe ?? "1d";
-  const limit = Math.min(Math.max(opts.limit ?? 250, 10), 1000);
-  try {
-    return await cached(`commodity:history:${def.key}:${tf}:${limit}`, {
-      ttlMs: 10 * 60_000,
-      staleMs: 24 * 3_600_000,
-      producer: () => historyProducer(def, tf, limit),
-    }).then((r) => r.value);
-  } catch {
-    return null;
-  }
+/** Nguồn DUY NHẤT = /goods (WiFeed) — trang chỉ công bố giá hiện tại + % thay đổi,
+ * KHÔNG có dữ liệu OHLC lịch sử. Tuyệt đối không lấy chuỗi giá từ nguồn khác. */
+export async function getCommodityHistory(_needle?: string, _opts?: { timeframe?: string; limit?: number }): Promise<CommodityHistoryResult | null> {
+  return null;
 }
 
 export async function getCommodityPerformance(needle: string): Promise<{ performance: PerformanceResult[]; providerPerf: Record<string, number | null> | null; basis: "historical" | "provider" } | null> {
   const def = defByKeyOrSymbol(needle);
   if (!def) return null;
   try {
-    // historical first (nearest valid observation), provider metrics as fallback
-    const hist = await getCommodityHistory(needle, { timeframe: "1d", limit: 400 });
-    const histSeries: HistoricalPoint[] = hist ? hist.points.map((p) => ({ timestamp: p.timestamp, price: p.close })) : [];
+    // Không có lịch sử (WiFeed chỉ công bố giá hiện tại + % ngày/tháng/năm):
+    // performance dùng % thay đổi do NGUỒN công bố — không nội suy/tự tính từ nguồn khác.
     const market = await getCommodityMarket();
     const row = market?.data.rows.find((r) => r.symbol === def.symbol || r.id === def.key) ?? null;
-    const perf = computePerformance(histSeries, {
+    const perf = computePerformance([], {
       provider: row?.providerPerf
         ? {
             "1D": { change: row.change ?? 0, changePercent: row.changePercent ?? 0 },
@@ -391,8 +341,7 @@ export async function getCommodityPerformance(needle: string): Promise<{ perform
           }
         : undefined,
     });
-    const basis = perf.some((p) => p.basis === "historical") ? "historical" : "provider";
-    return { performance: perf, providerPerf: row?.providerPerf ?? null, basis };
+    return { performance: perf, providerPerf: row?.providerPerf ?? null, basis: "provider" };
   } catch {
     return null;
   }
@@ -473,10 +422,9 @@ export interface CommodityCorrelationResult {
 }
 
 /**
- * Historical correlation + sensitivity vs VNINDEX (benchmark). Computed from
- * REAL price series only (Yahoo futures history for INTL commodities); VN
- * domestic commodities have no public history series → INSUFFICIENT_DATA.
- * Statistics are NEVER used as causal evidence (note in result).
+ * Historical correlation: KHÔNG tính — nguồn duy nhất /goods chỉ có giá hiện tại
+ * + % thay đổi, không có chuỗi lịch sử; KHÔNG lấy benchmark/chuỗi giá ngoài.
+ * Luôn trả INSUFFICIENT_DATA (số liệu thống kê KHÔNG bao giờ là bằng chứng nhân quả).
  */
 export async function getCommodityCorrelation(needle: string): Promise<CommodityCorrelationResult | null> {
   const def = defByKeyOrSymbol(needle);
@@ -485,24 +433,9 @@ export async function getCommodityCorrelation(needle: string): Promise<Commodity
     benchmark: "^VNINDEX",
     correlation: { r: null, beta: null, observations: obs, window: "1Y", status: "INSUFFICIENT_DATA", note: why },
   });
-  try {
-    const series = (await getCommodityHistory(needle, { timeframe: "1d", limit: 500 }))?.points ?? [];
-    if (series.length < 30) {
-      return insufficient(series.length, "Không có chuỗi lịch sử giá thật đủ dài cho hàng hóa này (nguồn chỉ công bố giá hiện tại) — không ước lượng tương quan");
-    }
-    const indexRes = await cached("commodity:benchmark:^VNINDEX:1d", {
-      ttlMs: 30 * 60_000,
-      staleMs: 24 * 3_600_000,
-      producer: () => getYahooChart("^VNINDEX", "1d", "10y"),
-    }).then((r) => r.value);
-    if (!indexRes.candles.length) return insufficient(0, "Chuỗi chỉ số VNINDEX chưa khả dụng — không ước lượng tương quan");
-    const commodity: HistoricalPoint[] = series.map((p) => ({ timestamp: p.timestamp, price: p.close }));
-    const benchmark: HistoricalPoint[] = indexRes.candles.map((c) => ({ timestamp: c.time, price: c.close }));
-    const correlation = computeSensitivity(commodity, benchmark, "1Y");
-    return { benchmark: "^VNINDEX", correlation };
-  } catch {
-    return insufficient(0, "Không thể tính tương quan (nguồn lịch sử lỗi) — không tự tạo số liệu");
-  }
+  // Nguồn duy nhất WiFeed /goods không có chuỗi lịch sử → không tính tương quan,
+  // KHÔNG lấy benchmark (VNINDEX) hay chuỗi giá từ nguồn ngoài.
+  return insufficient(0, "Nguồn duy nhất WiFeed (/goods) chỉ công bố giá hiện tại + % thay đổi — không có chuỗi lịch sử để tính tương quan; hệ thống không lấy dữ liệu ngoài");
 }
 
 export interface CommodityDetail {

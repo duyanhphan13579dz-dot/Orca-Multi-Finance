@@ -43,11 +43,9 @@ export async function GET(_req: Request, ctx: { params: Promise<{ symbol: string
     market: def.market,
     unit: row.unit,
     currency: row.currency,
-    /** chart khả dụng khi có nguồn OHLC lịch sử thật (Yahoo futures — GC=F/CL=F/…); quote hiện tại từ WiFeed */
-    hasChart: Boolean(def.yahooSymbol),
-    chartNote: def.yahooSymbol
-      ? `Biểu đồ OHLC lịch sử dùng ${def.yahooSymbol} (Yahoo futures); giá hiện tại từ VietnamBiz Data (WiFeed)`
-      : null,
+    /** WiFeed /goods KHÔNG công bố OHLC lịch sử → không có chart (nguồn duy nhất) */
+    hasChart: false,
+    chartNote: null,
     quote: {
       price: row.price,
       change: row.change,

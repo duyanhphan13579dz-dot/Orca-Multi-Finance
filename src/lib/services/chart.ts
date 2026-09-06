@@ -3,7 +3,6 @@ import { cached } from "../cache";
 import { buildMeta } from "../freshness";
 import * as binance from "../providers/binance";
 import { getYahooChart, yahooSymbolForPair, yahooIntervalFor } from "../providers/yahoo";
-import { defByKeyOrSymbol } from "../providers/commodities";
 import { getVnOhlcv, vndirectConfigured } from "./stocks";
 import { marketStore } from "../realtime/market-store";
 import { validateBars, detectGaps, logQualityEvent } from "../quality";
@@ -208,25 +207,9 @@ async function stockCandles(symbol: string, tf: string, limit: number): Promise<
   return { candles: candles.slice(-limit), source: r.meta.source, note: r.meta.note };
 }
 
-async function commodityCandles(symbol: string, tf: string, limit: number): Promise<{ candles: ChartCandle[]; source: string; note?: string }> {
-  const def = defByKeyOrSymbol(symbol);
-  if (!def) throw new Error("commodity_history_unavailable");
-  // Chart data = Yahoo futures OHLC (GC=F, CL=F, NG=F, HG=F, SI=F) — real
-  // listed futures; quote hiện tại lấy từ VietnamBiz Data (WiFeed).
-  if (def.yahooSymbol) {
-    const y = yahooIntervalFor(tf);
-    if (!y) throw new Error("commodity_timeframe_unsupported");
-    const { candles } = await getYahooChart(def.yahooSymbol, y.interval, y.range);
-    let series = candles;
-    if (y.aggregate4h) series = aggregateCandles(candles, TF_MS["4h"]);
-    const sliced = series.slice(-limit);
-    if (!sliced.length) throw new Error("commodity_history_empty");
-    return {
-      candles: sliced,
-      source: "Yahoo Finance (futures) — ticker của Simplize",
-      note: `${def.name}: biểu đồ dùng ${def.yahooSymbol} — cùng symbol mà trang Simplize hiển thị`,
-    };
-  }
+async function commodityCandles(_symbol: string, _tf: string, _limit: number): Promise<{ candles: ChartCandle[]; source: string; note?: string }> {
+  // Nguồn DUY NHẤT = data.vietnambiz.vn/goods (WiFeed) — không công bố OHLC lịch sử;
+  // tuyệt đối không vẽ chart từ Yahoo/Binance/nguồn ngoài.
   throw new Error("commodity_history_unavailable");
 }
 

@@ -25,8 +25,8 @@ export async function GET() {
         symbol: c.symbol,
         unit: c.unit,
         vnImpact: c.vnImpact ?? null,
-        /** chart khả dụng khi có nguồn OHLC lịch sử thật (Yahoo futures); quote hiện tại từ WiFeed */
-        hasChart: Boolean(c.yahooSymbol),
+        /** WiFeed /goods KHÔNG có OHLC lịch sử → không chart (nguồn duy nhất) */
+        hasChart: false as const,
       })),
     },
     r.meta,

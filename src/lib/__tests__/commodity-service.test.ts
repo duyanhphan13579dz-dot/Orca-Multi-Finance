@@ -2,7 +2,9 @@
  * COMMODITY SERVICE — nguồn DUY NHẤT data.vietnambiz.vn/goods (WiFeed).
  * Stub fetch trả HTML bảng /goods 66 dòng THẬT (giá công bố 2026-09-06)
  * + CSS blob dán vào mọi ô giống trang SSR — parser phải rửa sạch hết.
- * Yahoo CHỈ dùng cho chart OHLC lịch sử. Không mock — mọi số là giá WiFeed.
+ * KHÔNG còn Yahoo/Binance/MSN/Simplize — kể cả chart: WiFeed không có OHLC
+ * lịch sử nên getCommodityHistory luôn null, không vẽ từ nguồn khác.
+ * Không mock — mọi số là giá WiFeed.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -19,32 +21,12 @@ function goodsHtml(): string {
   return `<table>${junkGoodsHtml()}</table>`;
 }
 
-function yahooChartBody(symbol: string, price: number, prev: number): unknown {
-  const ts = Math.floor(Date.now() / 1000) - 3600;
-  return {
-    chart: {
-      result: [{
-        meta: { symbol, regularMarketPrice: price, chartPreviousClose: prev, regularMarketTime: ts, currency: "USD" },
-        timestamp: [ts - 3600, ts],
-        indicators: { quote: [{ open: [prev, prev], high: [price, price], low: [prev, prev], close: [prev, price], volume: [0, 100] }] },
-        error: null,
-      }],
-    },
-  };
-}
-
 const origFetch = globalThis.fetch;
 globalThis.fetch = ((input: RequestInfo | URL) => {
   const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
   // duy nhất data.vietnambiz.vn (goods) — mọi host khác fail → không fallback
   if (url.includes("data.vietnambiz.vn") && url.includes("/goods")) {
     return Promise.resolve(new Response(goodsHtml(), { status: 200, headers: { "content-type": "text/html" } }));
-  }
-  if (url.includes("finance.yahoo.com") && url.includes("/v8/finance/chart/")) {
-    const m = url.match(/\/chart\/([^?]+)/);
-    const sym = m ? decodeURIComponent(m[1]) : "GC=F";
-    const body = yahooChartBody(sym, sym === "GC=F" ? 4442.4 : 100, sym === "GC=F" ? 4300 : 99);
-    return Promise.resolve(new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } }));
   }
   return Promise.resolve(new Response("nope", { status: 502 }));
 }) as typeof fetch;
@@ -108,23 +90,20 @@ test("getCommodityDetail: unknown key → null (route 400), không đoán row", 
   assert.equal(await getCommodityDetail("definitely-not-real-xyz"), null);
 });
 
-test("getCommodityHistory: CHỈ Yahoo futures OHLC cho mục có chart (gold GC=F); mục khác null", async () => {
-  const h = await getCommodityHistory("gold", { timeframe: "1d", limit: 100 });
-  assert.ok(h);
-  assert.equal(h.symbol, "GOLD");
-  assert.equal(h.priceType, "OHLC");
-  assert.ok(h.points.length > 0);
-  assert.ok(h.points.every((p) => p.close > 0 && p.source === "Yahoo Finance (futures)"));
-  // mục không có futures (hồ tiêu) → không bịa chart
+test("getCommodityHistory: LUÔN null — WiFeed /goods không có OHLC, không lấy từ nguồn khác", async () => {
+  assert.equal(await getCommodityHistory("gold", { timeframe: "1d", limit: 100 }), null);
+  assert.equal(await getCommodityHistory("wti", { timeframe: "1d" }), null);
   assert.equal(await getCommodityHistory("pepper", { timeframe: "1d" }), null);
+  assert.equal(await getCommodityHistory("nope"), null);
 });
 
-test("intelligence: correlation INSUFFICIENT_DATA (stub 2 điểm, không bịa); news keyword basis", async () => {
+test("intelligence: correlation INSUFFICIENT_DATA (không benchmark ngoài / không lịch sử); news keyword basis", async () => {
   const c = await getCommodityCorrelation("wti");
   assert.ok(c);
-  assert.equal(c.benchmark, "^VNINDEX");
+  assert.equal(c.benchmark, "^VNINDEX"); // giữ tên benchmark mặc định nhưng KHÔNG lấy dữ liệu ngoài
   assert.equal(c.correlation.status, "INSUFFICIENT_DATA");
   assert.equal(c.correlation.r, null);
+  assert.match(c.correlation.note ?? "", /WiFeed|nguồn duy nhất/i);
   const n = await getCommodityNews("wti");
   assert.ok(n);
   assert.equal(n.basis, "keyword-match");

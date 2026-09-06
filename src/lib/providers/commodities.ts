@@ -5,8 +5,8 @@ import type { ImpactDirection, ImpactStrength, RelationshipType } from "../engin
  * Commodity catalog — NGUỒN DUY NHẤT: VietnamBiz Data portal (WiFeed/WiGroup).
  *
  * 2026-09-06 (user directive): chuyển TOÀN BỘ hàng hóa về
- * `https://data.vietnambiz.vn/goods` — bỏ Simplize; Yahoo/MSN/Binance không
- * còn dùng cho quote (chỉ Yahoo còn dùng cho chart OHLC lịch sử — visualization).
+ * `https://data.vietnambiz.vn/goods` — Simplize/MSN/Binance/Yahoo ĐÃ BỎ hoàn toàn
+ * (kể cả chart OHLC lịch sử). Catalog không còn ticker nguồn ngoài.
  * Mỗi mục dưới đây tương ứng ĐÚNG 1 dòng trong bảng /goods (name + unit lấy
  * nguyên văn từ trang). Không quy đổi tiền tệ; SJC là ngoại lệ: trang ghi
  * "Đồng/lượng" nhưng giá 147,600 là NGHÌN đồng/lượng (đối chiếu SJC ~145–150
@@ -76,8 +76,6 @@ export interface CommodityDef {
   currency: string;
   /** giá trị WiFeed → đơn vị catalog (mặc định 1; chỉ SJC ×1000 — xem header) */
   valueScale?: number;
-  /** Yahoo futures ticker — CHỈ cho chart OHLC lịch sử, không dùng làm quote */
-  yahooSymbol?: string;
   /** news-filter keywords cho NEWS & CATALYST engine */
   newsKeywords?: string[];
   /** evidence-based economic exposure (curated; optional) */
@@ -85,9 +83,9 @@ export interface CommodityDef {
 }
 
 /* ----------------------------- catalog (66 rows) -------------------------- */
-/* Mỗi dòng: [key, nameVi (row name trên /goods), group, symbol, unit, yahoo?] */
+/* Mỗi dòng: [key, nameVi (row name trên /goods), group, symbol, unit] */
 
-type Row = [key: string, nameVi: string, group: CommodityGroup, symbol: string, unit: string, yahoo?: string];
+type Row = [key: string, nameVi: string, group: CommodityGroup, symbol: string, unit: string];
 
 const ROWS: Row[] = [
   // ---- Hàng tiêu dùng (15) ----
@@ -113,10 +111,10 @@ const ROWS: Row[] = [
   ["aluminum", "Nhôm Trung Quốc", "metals", "AL", "CNY/tấn"],
   ["copper-cn", "Đồng Trung Quốc", "metals", "CUCN", "CNY/tấn"],
   ["nickel", "Nikken Trung Quốc", "metals", "NI", "CNY/tấn"],
-  ["gold", "Giá vàng", "metals", "GOLD", "USD/oz", "GC=F"],
-  ["sjc-gold", "Giá vàng trong nước", "metals", "SJC", "Đồng/lượng", undefined],
-  ["silver", "Giá bạc", "metals", "AG", "USD/oz", "SI=F"],
-  ["copper", "Giá đồng", "metals", "CU", "USD/lb", "HG=F"],
+  ["gold", "Giá vàng", "metals", "GOLD", "USD/oz"],
+  ["sjc-gold", "Giá vàng trong nước", "metals", "SJC", "Đồng/lượng"],
+  ["silver", "Giá bạc", "metals", "AG", "USD/oz"],
+  ["copper", "Giá đồng", "metals", "CU", "USD/lb"],
   // ---- Hóa chất (7) ----
   ["urea", "Ure Trung Đông", "chemicals", "URE", "USD/tấn"],
   ["sulfur", "Lưu huỳnh Trung Quốc", "chemicals", "SULF", "CNY/tấn"],
@@ -149,8 +147,8 @@ const ROWS: Row[] = [
   // ---- Năng lượng (10) ----
   ["coal", "Than cốc Trung Quốc", "energy", "COAL", "CNY/tấn"],
   ["lpg", "Khí LPG Trung Quốc", "energy", "LPG", "CNY/tấn"],
-  ["wti", "Dầu WTI", "energy", "WTI", "USD/bbl", "CL=F"],
-  ["natgas", "Khí thiên nhiên", "energy", "NG", "USD/MMBtu", "NG=F"],
+  ["wti", "Dầu WTI", "energy", "WTI", "USD/bbl"],
+  ["natgas", "Khí thiên nhiên", "energy", "NG", "USD/MMBtu"],
   ["coal-newcastle", "Than Newcastle", "energy", "NC", "USD/tấn"],
   ["gasoline-95-v", "Xăng RON 95-V", "energy", "G95V", "Nghìn/lít"],
   ["gasoline-95", "Xăng RON 95-II,III", "energy", "G95", "Nghìn/lít"],
@@ -267,7 +265,7 @@ const VN_IMPACT: Record<string, CommodityImpactMap> = {
 
 const KEYS = new Set<string>();
 const SYMBOLS = new Set<string>();
-export const COMMODITY_CATALOG: CommodityDef[] = ROWS.map(([key, nameVi, group, symbol, unit, yahoo]) => {
+export const COMMODITY_CATALOG: CommodityDef[] = ROWS.map(([key, nameVi, group, symbol, unit]) => {
   if (KEYS.has(key)) throw new Error(`duplicate commodity key: ${key}`);
   if (SYMBOLS.has(symbol)) throw new Error(`duplicate symbol: ${symbol}`);
   KEYS.add(key);
@@ -291,7 +289,6 @@ export const COMMODITY_CATALOG: CommodityDef[] = ROWS.map(([key, nameVi, group, 
     unit,
     currency,
     valueScale: key === "sjc-gold" ? 1000 : undefined, // trang ghi nghìn đồng/lượng với nhãn "Đồng/lượng"
-    yahooSymbol: yahoo,
     vnImpact: impact,
   };
 });

@@ -10,7 +10,7 @@ Mọi provider phía sau **Provider Adapter Interface** và bị metadata health
 | stocks (VN) | **VNDirect finfo** (keyless public; env override `VNDIRECT_BASE_URL`) | archive lịch sử tự lưu (OHLCV); ngoài ra UNAVAILABLE minh bạch |
 | crypto | Binance spot REST (`api.binance.com` → `api{1,2}.binance.com` → `data-api.binance.vision`) | Binance fapi cho futures (geo-dependent) |
 | forex | Biquote (env) | Yahoo Finance (FX snapshot + OHLC chart, public no-key); exchangerate-api open latest; Frankfurter/ECB daily history + previous fix |
-| commodities | Vietnambiz (SJC gold board) · Simplize (env key) | MSN Finance quotes (env instrument map) · Yahoo Finance (public futures quotes) · Binance PAXGUSDT (vàng) |
+| commodities | **VietnamBiz Data /goods (WiFeed) — NGUỒN DUY NHẤT** | (không có — Simplize/MSN/Yahoo/Binance đã xóa khỏi flow commodity) |
 | news | CafeF, VnExpress, VietnamBiz, CoinTelegraph RSS | từng feed độc lập; partial-success vẫn được phục vụ kèm note |
 
 ## Interface conventions
@@ -79,7 +79,7 @@ Mọi mục chính thức đều có **trang Simplize công khai** (verified `si
 Một provider lỗi (kể cả circuit breaker) chỉ làm mục đó UNAVAILABLE, không làm
 crash cả trang.
 
-**Ưu tiên nguồn (user-mandated): Simplize → Vietnambiz → Yahoo → MSN → Binance (PAXG).**
+**NGUỒN DUY NHẤT (user-mandated 2026-09-06): VietnamBiz Data `https://data.vietnambiz.vn/goods` — WiFeed/WiGroup.** Simplize/MSN/Yahoo/Binance đã BỎ hoàn toàn khỏi flow hàng hóa (kể cả chart OHLC lịch sử).
 - Simplize: trang công khai SSR `simplize.vn/hang-hoa/{slug}` (verified 200; gold = `/gia-vang/the-gioi`,
   SJC = `/gia-vang/pnj/vang-mieng-sjc-9999-pnj`); parse giá/change/changePercent/prevClose/open/day-range/
   unit/perf 7D/1M/3M/YTD/1Y/5Y/related-stocks — **không có API JSON công khai** (đã verify 404) nên KHÔNG
@@ -89,7 +89,7 @@ crash cả trang.
   `COMMODITY_SNAPSHOT_TTL_MS` mặc định **3000ms** (floor 2000ms) với in-flight dedup + stale-while-revalidate
   (lỗi nguồn → phục vụ bản STALE cũ, không vỡ UI). **Cache PER-SOURCE** để aggregate 3s không đập nguồn:
   Simplize trang **3 phút** (trang chỉ regenerate ~10 phút/lần — verified 13:59:18→14:09:18, giá giữ nguyên),
-  WiFeed portal **3 phút** (dữ liệu cập nhật theo ngày), Yahoo batch **30s**, Binance **15s**; aggregate 3s
+  WiFeed portal **6 giờ** (dữ liệu chỉ refresh 00:00 hằng ngày — user xác nhận), stale 48h; aggregate 3s
   chỉ rebuild từ các cache này → ~10 trang Simplize + 1 portal mỗi phút/nút (thay vì 30 trang/3s).
   UA: **KHÔNG gửi UA bot** cho WiFeed (WAF WiGroup chặn bot UA) — dùng Chrome UA + Accept/Language trình duyệt.
   Quyết định poll 3s là chủ trương user (rủi ro tải lên origin + chính sách thương mại của Simplize đã được
@@ -102,22 +102,17 @@ crash cả trang.
   WTI 91.22, natgas, heo hơi 57,833 đồng/kg, tôm thẻ 91,500 (→ 91.5 nghìn đồng/kg), E5 RON92-II
   22.48, Diesel 27.74 (nghìn/lít). Mapping chỉ giữ hàng KHỚP nghĩa + đơn vị; không map hàng lạ
   (cà phê trong nước ≠ robusta USD/T, gạo TPXK ≠ ZR futures, đường/viải cotton ≠ SB/CT…).
-  Porter chain: **Simplize → VietnamBiz Data (WiFeed) → Vietnambiz articles → Yahoo → MSN → Binance**.
+  Porter chain (hiện chỉ còn 1 nguồn): **VietnamBiz Data (WiFeed /goods)** — nguồn trực tiếp lỗi → bản ghi
+  cuối ≤48h đã lưu DB (dữ liệu WiFeed thật, nhãn STALE); tuyệt đối không fallback nguồn ngoài.
   Macro: `data.vietnambiz.vn/macro-economic` (GDP/CPI/PMI/FDI/xuất nhập khẩu + kỳ công bố & ngày
   phát hành tiếp theo); Rates: `/currency-interest-rate` (M2, tín dụng, tỷ giá trung tâm/NHTM/tự do,
   lãi suất LNH/discount/refinance/huy động). Bản quyền CTCP WiGroup — mọi payload ghi nguồn đầy đủ.
   **UI 2 trang mới:** `/macro` (bảng vĩ mô + Δ kỳ trước + ngày công bố tiếp theo + search) và `/rates`
   (bảng tiền tệ/lãi suất + Δ + search) — cùng style Panel/Badge/FreshnessDot, freshness DELAYED
   (dữ liệu theo kỳ, không gắn LIVE), mỗi dataset lỗi hiển thị Unavailable riêng, phần còn lại vẫn chạy.
-- Vietnambiz (fallback khi Simplize + WiFeed lỗi): board SJC `/gia-vang-hom-nay.htm` cho `sjc-gold`; bài giá NGÀY
-  (URL động, tìm qua chuyên mục ổn định `/hang-hoa.htm` — pattern verify 2026-09-06): xăng dầu
-  (`gasoline-95`/`gasoline-92`/`diesel` — row E5RON92 / E10RON95-III / Diesel 0.05S, đổi đồng/lít →
-  nghìn đồng/lít) và heo hơi (`pig-vn` — dải giá công bố → midpoint, có note nguồn). Tôm thẻ/cá tra/thép:
-  Vietnambiz chỉ có bài rời, không chuẩn ngày → KHÔNG đưa vào fallback (tránh dữ liệu cũ giả mạo "hôm nay").
-- Yahoo: futures quote + chart OHLC (CL=F, NG=F, BZ=F, HG=F, GC=F… — cùng ticker mà chart Simplize tự nhúng,
-  verified `simplize.vn/chart?ticker=CL=F`); chart history mọi mặt hàng có `yahooSymbol`; thiếu OHLC → `CLOSE_ONLY`,
-  không bịa OHLC.
-- MSN/Binance chỉ fallback khi hai nguồn ưu tiên không khả dụng.
+- Vietnambiz articles / Yahoo / MSN / Binance: **ĐÃ XÓA khỏi flow hàng hóa** (directive 2026-09-06).
+  WiFeed /goods là nguồn duy nhất: giá hiện tại + % ngày/tháng/năm + ngày cập nhật. Không có OHLC lịch sử
+  → `getCommodityHistory` luôn null, `hasChart=false`, correlation=INSUFFICIENT_DATA (không lấy chuỗi giá ngoài).
 
 **Unified model (additive, không phá UI contract):** mỗi `CommodityRow` giữ `sourceRecords`, `id/name/nameVi/
 category/subcategory/previousClose/open/high/low/freshness/marketState/freshnessNote/priceType/performance

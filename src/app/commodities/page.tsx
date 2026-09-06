@@ -61,7 +61,7 @@ const DATE_RANGES: { label: string; tf: string; limit: number }[] = [
 export default function CommoditiesPage() {
   const [q, setQ] = useState("");
   const [group, setGroup] = useState("");
-  const [chart, setChart] = useState<string | null>("XAUUSD");
+  const [chart, setChart] = useState<string | null>(null);
   const [range, setRange] = useState(DATE_RANGES[1]); // 1W default
   const [detail, setDetail] = useState<string | null>(null); // selected commodity key → floating overlay
   const { data, meta, isLoading } = useApi<Data>("/api/v1/commodities", { refreshInterval: 3_000 });
@@ -96,7 +96,7 @@ export default function CommoditiesPage() {
 
   const bySymbol = useMemo(() => new Map((data?.rows ?? []).map((r) => [r.symbol, r])), [data]);
   const byUnavailable = useMemo(() => new Map((data?.unavailable ?? []).map((u) => [u.key, u])), [data]);
-  /** chartable = real OHLC source exists (catalog hasChart) — same container, data-driven */
+  /** WiFeed /goods không có OHLC → hasChart=false với mọi mục → không có chart từ nguồn khác */
   const chartable = useMemo(() => new Set((data?.catalog ?? []).filter((d) => d.hasChart).map((d) => d.symbol)), [data]);
   const chartDef = chart ? data?.catalog.find((d) => d.symbol === chart && d.hasChart) : null;
 

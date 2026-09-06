@@ -15,11 +15,12 @@ test("universe: đúng 66 mục — mỗi dòng bảng WiFeed là 1 commodity", 
   assert.equal(new Set(symbols).size, 66, "symbol duy nhất");
 });
 
-test("universe: KHÔNG còn simplizePath / vietnambiz bài ngày / binanceSymbol (đã bỏ Simplize)", () => {
+test("universe: KHÔNG còn simplizePath / vietnambiz bài ngày / binanceSymbol / yahooSymbol (nguồn DUY NHẤT WiFeed)", () => {
   for (const c of COMMODITY_CATALOG) {
     assert.equal("simplizePath" in c, false, `${c.key}: remove simplizePath`);
     assert.equal("vietnambiz" in c, false, `${c.key}: remove article fallback`);
     assert.equal("binanceSymbol" in c, false, `${c.key}: remove PAXG quote`);
+    assert.equal("yahooSymbol" in c, false, `${c.key}: remove Yahoo — kể cả chart`);
     assert.equal("centsQuoted" in c, false, `${c.key}: no USd futures unit`);
   }
 });
@@ -64,10 +65,15 @@ test("universe: mọi mục có market/unit/currency + đơn vị VNĐ ↔ marke
 test("defByKeyOrSymbol: key + symbol đều tra được (không phân biệt hoa thường)", () => {
   assert.equal(defByKeyOrSymbol("wti")?.key, "wti");
   assert.equal(defByKeyOrSymbol("WTI")?.key, "wti");
-  assert.equal(defByKeyOrSymbol("CL")?.key, undefined, "WTI symbol giờ là WTI — CL không tồn tại");
   assert.equal(defByKeyOrSymbol("GOLD")?.key, "gold");
   assert.equal(defByKeyOrSymbol("DO")?.key, "diesel");
   assert.equal(defByKeyOrSymbol("nope"), null);
+});
+
+test("universe: không còn bất kỳ ticker nguồn ngoài nào (GC=F/CL=F/NG=F/HG=F/SI=F…) trong catalog", () => {
+  for (const c of COMMODITY_CATALOG) {
+    assert.ok(!/=F$/.test(c.symbol), `${c.key}: ${c.symbol} là ticker futures ngoài — phải là mã nội bộ kiểu /goods`);
+  }
 });
 
 test("currencyForUnit: WiFeed units (kể cả Nghìn/lít, Yên/tấn, MYR)", () => {

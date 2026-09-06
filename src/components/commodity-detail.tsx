@@ -226,8 +226,9 @@ export default function CommodityDetailView({ symbol, compact = false }: { symbo
       {/* chart — real OHLC only (rendered only when a genuine source exists) */}
       {data.hasChart === false ? (
         <div className="panel p-4 text-[11px] leading-relaxed text-text-muted">
-          <span className="text-text-secondary">Biểu đồ:</span> chưa có nguồn OHLC công khai đáng tin cậy cho {data.nameVi} —
-          hệ thống không dựng chart giả. Giá và biến động vẫn lấy từ nguồn công bố ở trên.
+          <span className="text-text-secondary">Biểu đồ:</span> nguồn duy nhất VietnamBiz Data (WiFeed /goods) chỉ
+          công bố giá hiện tại + % thay đổi — không có dữ liệu OHLC lịch sử nên hệ thống
+          không dựng chart và không lấy chuỗi giá từ nguồn khác.
         </div>
       ) : (
         <div className="panel overflow-hidden">

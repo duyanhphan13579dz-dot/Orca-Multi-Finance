@@ -19,6 +19,6 @@ export async function GET(req: Request, ctx: { params: Promise<{ symbol: string 
   if (!["1h", "4h", "1d", "1w", "1M"].includes(timeframe)) return badRequest("timeframe cho phép: 1h, 4h, 1d, 1w, 1M");
   if (!Number.isFinite(limit) || limit < 10 || limit > 1000) return badRequest("limit 10..1000");
   const r = await getCommodityHistory(clean, { timeframe, limit });
-  if (!r) return unavailable("commodity-history", `Không có lịch sử thực cho ${clean} — nguồn OHLC lịch sử thật (Yahoo futures) chưa khả dụng.`);
+  if (!r) return unavailable("commodity-history", `Không có lịch sử OHLC cho ${clean} — nguồn duy nhất VietnamBiz Data (WiFeed /goods) chỉ công bố giá hiện tại; hệ thống không lấy chuỗi giá từ nguồn khác.`);
   return ok(r);
 }
