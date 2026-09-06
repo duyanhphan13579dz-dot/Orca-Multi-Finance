@@ -2,14 +2,14 @@
 
 /**
  * ORCA FINANCIAL brand system — sticker orca mark + wordmark.
- * Source asset: /brand/orca-mark.png (AI-crafted, navy-optimized).
+ * Source asset: /brand/orca-mark.svg (AI-crafted, navy-optimized).
  */
 
 export function OrcaMark({ size = 32, className = "" }: { size?: number; className?: string }) {
   return (
     // eslint-disable-next-line @next/next/no-img-element
     <img
-      src="/brand/orca-mark.png"
+      src="/brand/orca-mark.svg"
       alt="ORCA Financial"
       width={size}
       height={size}
