@@ -1,22 +1,155 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useApi } from "@/lib/hooks";
 import type { ScalpResult } from "@/lib/services/intelligence";
+import type { ScalpSignal } from "@/lib/engines/scalp-types";
 import { Badge, fmtNum, FreshnessDot, Loading, MetaLine, Panel, priceDigits, Unavailable } from "@/components/ui";
-import { Crosshair, ShieldAlert, Timer, Zap } from "lucide-react";
+import { Crosshair, Radio, ShieldAlert, Timer, Zap } from "lucide-react";
+import type { Meta } from "@/lib/types";
 
 const TF = ["1m", "5m", "15m"] as const;
 
 const DIR_UI: Record<string, { label: string; tone: "up" | "down" | "neutral" }> = {
   "watch-long": { label: "WATCH LONG", tone: "up" },
   "watch-short": { label: "WATCH SHORT", tone: "down" },
-  neutral: { label: "QUAN SÁT", tone: "neutral" },
+  neutral: { label: "QUAN SAT", tone: "neutral" },
 };
+
+type LiveState = "idle" | "connecting" | "live" | "delayed" | "reconnecting";
+
+interface StreamPayload extends ScalpResult {
+  reason?: string;
+  pushedAt?: string;
+  meta?: Partial<Meta> & {
+    source?: string;
+    freshness?: Meta["freshness"];
+    ageMs?: number | null;
+    qualityStatus?: Meta["qualityStatus"];
+  };
+}
 
 export function ScalpPanel({ symbol }: { symbol: string }) {
   const [tf, setTf] = useState<(typeof TF)[number]>("5m");
-  const { data, meta, isLoading } = useApi<ScalpResult>(`/api/v1/crypto/${encodeURIComponent(symbol)}/scalp?tf=${tf}`, { refreshInterval: 15_000 });
+  const { data: restData, meta: restMeta, isLoading, mutate } = useApi<ScalpResult>(
+    `/api/v1/crypto/${encodeURIComponent(symbol)}/scalp?tf=${tf}`,
+    { refreshInterval: 30_000 },
+  );
+
+  const [live, setLive] = useState<ScalpResult | null>(null);
+  const [liveMeta, setLiveMeta] = useState<Meta | null>(null);
+  const [liveState, setLiveState] = useState<LiveState>("idle");
+  const [lastPushAt, setLastPushAt] = useState<number | null>(null);
+  const esRef = useRef<EventSource | null>(null);
+  const tokenRef = useRef(0);
+
+  const stopStream = useCallback(() => {
+    tokenRef.current += 1;
+    esRef.current?.close();
+    esRef.current = null;
+    setLiveState("idle");
+  }, []);
+
+  useEffect(() => {
+    stopStream();
+    setLive(null);
+    setLiveMeta(null);
+    setLastPushAt(null);
+
+    const tk = ++tokenRef.current;
+    setLiveState("connecting");
+
+    const base = `/api/v1/crypto/${encodeURIComponent(symbol)}/scalp/stream?tf=${encodeURIComponent(tf)}`;
+    const url = `${base}&_=${Date.now()}`;
+    const es = new EventSource(url);
+    esRef.current = es;
+
+    const apply = (payload: StreamPayload) => {
+      if (tk !== tokenRef.current) return;
+      const { meta: m, reason: _r, pushedAt, ...result } = payload;
+      if (!result.signal) return;
+      setLive(result as ScalpResult);
+      setLastPushAt(Date.now());
+      setLiveState("live");
+      if (m) {
+        setLiveMeta({
+          source: m.source ?? "binance-ws",
+          sourceTimestamp: null,
+          ingestedAt: pushedAt ?? new Date().toISOString(),
+          freshness: m.freshness ?? "LIVE",
+          ageMs: m.ageMs ?? 0,
+          cached: false,
+          stale: false,
+          qualityStatus: m.qualityStatus,
+        });
+      }
+      void mutate();
+    };
+
+    es.addEventListener("snapshot", (e) => {
+      try {
+        apply(JSON.parse((e as MessageEvent).data as string) as StreamPayload);
+      } catch {
+        /* drop */
+      }
+    });
+    es.addEventListener("scalp.signal", (e) => {
+      try {
+        apply(JSON.parse((e as MessageEvent).data as string) as StreamPayload);
+      } catch {
+        /* drop */
+      }
+    });
+    es.addEventListener("heartbeat", () => {
+      if (tk !== tokenRef.current) return;
+      setLastPushAt((prev) => prev ?? Date.now());
+    });
+
+    es.onerror = () => {
+      if (tk !== tokenRef.current) return;
+      setLiveState("reconnecting");
+      es.close();
+      setTimeout(() => {
+        if (tk !== tokenRef.current) return;
+        const es2 = new EventSource(`${base}&_=${Date.now()}`);
+        esRef.current = es2;
+        es2.addEventListener("snapshot", (ev) => {
+          try {
+            apply(JSON.parse((ev as MessageEvent).data as string) as StreamPayload);
+          } catch {
+            /* drop */
+          }
+        });
+        es2.addEventListener("scalp.signal", (ev) => {
+          try {
+            apply(JSON.parse((ev as MessageEvent).data as string) as StreamPayload);
+          } catch {
+            /* drop */
+          }
+        });
+        es2.onerror = () => {
+          es2.close();
+          setLiveState("delayed");
+        };
+      }, 3_000 + Math.random() * 2_000);
+    };
+
+    return () => {
+      stopStream();
+    };
+  }, [symbol, tf, stopStream, mutate]);
+
+  useEffect(() => {
+    const id = setInterval(() => {
+      if (lastPushAt && Date.now() - lastPushAt > 20_000 && liveState === "live") {
+        setLiveState("delayed");
+      }
+    }, 2_000);
+    return () => clearInterval(id);
+  }, [lastPushAt, liveState]);
+
+  const data = live ?? restData;
+  const meta = liveMeta ?? restMeta;
 
   return (
     <Panel
@@ -25,12 +158,22 @@ export function ScalpPanel({ symbol }: { symbol: string }) {
           <Zap className="size-4 text-accent-primary" /> Scalping Intelligence
           {meta && <FreshnessDot status={meta.freshness} ageMs={meta.ageMs} />}
           {data?.wsLive && <Badge tone="up">WS LIVE</Badge>}
+          {liveState === "live" && (
+            <Badge tone="up">
+              <Radio className="size-3" /> STREAM
+            </Badge>
+          )}
+          {liveState === "connecting" && <Badge tone="neutral">CONNECTING</Badge>}
+          {liveState === "reconnecting" && <Badge tone="neutral">RECONNECTING</Badge>}
+          {liveState === "delayed" && <Badge tone="down">DELAYED</Badge>}
         </span>
       }
       right={
         <div className="seg">
           {TF.map((x) => (
-            <button key={x} data-active={tf === x} onClick={() => setTf(x)}>{x}</button>
+            <button key={x} data-active={tf === x} onClick={() => setTf(x)}>
+              {x}
+            </button>
           ))}
         </div>
       }
@@ -38,18 +181,30 @@ export function ScalpPanel({ symbol }: { symbol: string }) {
       {isLoading && !data ? (
         <Loading rows={4} />
       ) : !data ? (
-        <Unavailable title="Chưa đủ dữ liệu realtime" meta={meta} />
+        <Unavailable title="Chua du du lieu realtime" meta={meta} />
       ) : (
-        <ScalpView result={data} meta={meta} />
+        <ScalpView result={data} meta={meta} liveState={liveState} />
       )}
     </Panel>
   );
 }
 
-function ScalpView({ result, meta }: { result: ScalpResult; meta: ReturnType<typeof useApi<ScalpResult>>["meta"] }) {
-  const s = result.signal;
+function ScalpView({
+  result,
+  meta,
+  liveState,
+}: {
+  result: ScalpResult;
+  meta: ReturnType<typeof useApi<ScalpResult>>["meta"];
+  liveState: LiveState;
+}) {
+  const s = result.signal as ScalpSignal;
   const digits = priceDigits(s.last);
-  const dir = DIR_UI[s.direction];
+  const dir = DIR_UI[s.direction] ?? DIR_UI.neutral;
+  const setup = s.primarySetup;
+  const regime = s.regime;
+  const filter = s.filter;
+
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-3">
@@ -57,46 +212,81 @@ function ScalpView({ result, meta }: { result: ScalpResult; meta: ReturnType<typ
           <span className="text-[12px] font-bold">{dir.label}</span>
         </Badge>
         <span className="num text-[12px] text-text-secondary">
-          strength <b className="text-text-primary">{s.strength}</b>/100 · score {s.score >= 0 ? "+" : ""}{s.score}
+          strength <b className="text-text-primary">{s.strength}</b>/100 · score {s.score >= 0 ? "+" : ""}
+          {s.score}
         </span>
         <span className="flex items-center gap-1 text-[11px] text-text-muted">
           <Timer className="size-3" /> khung {s.timeframe}
         </span>
+        {setup && (
+          <Badge tone={setup.status === "TRIGGERED" ? "up" : "neutral"}>
+            {setup.strategy}:{setup.status}
+          </Badge>
+        )}
+        {regime && <Badge tone="neutral">{regime.market}</Badge>}
+        {filter && <Badge tone={filter.eligible ? "up" : "down"}>tier {filter.tier}</Badge>}
       </div>
 
-      <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
-        <Metric label="VWAP (24h)" value={fmtNum(s.vwap, digits)} hint={s.vwapDistPct != null ? `giá lệch ${s.vwapDistPct >= 0 ? "+" : ""}${s.vwapDistPct.toFixed(2)}%` : undefined} />
-        <Metric label="EMA9 / EMA21" value={s.ema9 != null && s.ema21 != null ? `${fmtNum(s.ema9, digits)} / ${fmtNum(s.ema21, digits)}` : "—"} hint={s.ema9 != null && s.ema21 != null ? (s.ema9 > s.ema21 ? "crossing lên" : "crossing xuống") : undefined} />
-        <Metric label="RSI(7)" value={s.rsi7 != null ? s.rsi7.toFixed(0) : "—"} hint="momentum ngắn" />
-        <Metric label="ATR / biên" value={s.atr != null ? fmtNum(s.atr, digits) : "—"} hint={s.atrPct != null ? `${s.atrPct.toFixed(2)}%/nến` : undefined} />
-        <Metric label="Momentum 3n / 6n" value={`${s.momentum.bars3 != null ? (s.momentum.bars3 >= 0 ? "+" : "") + s.momentum.bars3.toFixed(2) + "%" : "—"} / ${s.momentum.bars6 != null ? (s.momentum.bars6 >= 0 ? "+" : "") + s.momentum.bars6.toFixed(2) + "%" : "—"}`} />
-        <Metric label="Volume" value={s.volume.ratioVsMedian != null ? `x${s.volume.ratioVsMedian.toFixed(1)} median` : "—"} hint={s.volume.spike ? "SPIKE xác nhận" : "chưa có spike"} />
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <Metric label="Last" value={fmtNum(s.last, digits)} />
         <Metric
           label="Entry zone"
-          value={s.entryZone ? `${fmtNum(s.entryZone[1], digits)} → ${fmtNum(s.entryZone[0], digits)}` : "—"}
+          value={s.entryZone ? `${fmtNum(s.entryZone[1], digits)} -> ${fmtNum(s.entryZone[0], digits)}` : "-"}
           tone={dir.tone}
         />
         <Metric
           label="Invalidation"
-          value={s.invalidation != null ? fmtNum(s.invalidation, digits) : "—"}
-          hint={s.invalidation != null && s.atr != null ? `≈ ${(Math.abs(s.last - s.invalidation) / s.atr).toFixed(1)}×ATR` : undefined}
+          value={s.invalidation != null ? fmtNum(s.invalidation, digits) : "-"}
+          hint={
+            s.invalidation != null && s.atr != null
+              ? `~ ${(Math.abs(s.last - s.invalidation) / s.atr).toFixed(1)}xATR`
+              : undefined
+          }
           tone="down"
         />
+        <Metric
+          label="Stream"
+          value={liveState.toUpperCase()}
+          hint={result.wsLive ? "Binance WS + SSE" : "REST fallback"}
+          tone={liveState === "live" ? "up" : liveState === "delayed" ? "down" : "neutral"}
+        />
       </div>
+
+      {setup && (setup.entry != null || setup.stopLoss != null) && (
+        <div className="grid grid-cols-3 gap-2 text-[11px]">
+          <Metric label="Setup entry" value={setup.entry != null ? fmtNum(setup.entry, digits) : "-"} tone="up" />
+          <Metric label="Stop loss" value={setup.stopLoss != null ? fmtNum(setup.stopLoss, digits) : "-"} tone="down" />
+          <Metric
+            label="Take profit"
+            value={setup.takeProfit != null ? fmtNum(setup.takeProfit, digits) : "-"}
+            hint={setup.riskReward != null ? `RR ${setup.riskReward}` : undefined}
+          />
+        </div>
+      )}
 
       {s.micro.resistance.length + s.micro.support.length > 0 && (
         <div className="flex flex-wrap items-center gap-2 text-[11px]">
           <Crosshair className="size-3.5 text-text-muted" />
           <span className="text-text-muted">Micro levels:</span>
-          {s.micro.support.slice(0, 2).map((v) => <span key={`s${v}`} className="num rounded bg-positive/10 px-1.5 py-0.5 text-positive">{fmtNum(v, digits)}</span>)}
+          {s.micro.support.slice(0, 2).map((v) => (
+            <span key={`s${v}`} className="num rounded bg-positive/10 px-1.5 py-0.5 text-positive">
+              {fmtNum(v, digits)}
+            </span>
+          ))}
           <span className="text-text-muted">·</span>
-          {s.micro.resistance.slice(0, 2).map((v) => <span key={`r${v}`} className="num rounded bg-negative/10 px-1.5 py-0.5 text-negative">{fmtNum(v, digits)}</span>)}
+          {s.micro.resistance.slice(0, 2).map((v) => (
+            <span key={`r${v}`} className="num rounded bg-negative/10 px-1.5 py-0.5 text-negative">
+              {fmtNum(v, digits)}
+            </span>
+          ))}
         </div>
       )}
 
       <ul className="space-y-1">
         {s.evidence.map((e, i) => (
-          <li key={i} className="text-[12px] text-text-secondary">▸ {e}</li>
+          <li key={i} className="text-[12px] text-text-secondary">
+            ▸ {e}
+          </li>
         ))}
       </ul>
 
@@ -111,18 +301,32 @@ function ScalpView({ result, meta }: { result: ScalpResult; meta: ReturnType<typ
       )}
 
       <p className="text-[10.5px] text-text-muted">
-        Signal được tính deterministic bởi Quant Engine từ nến realtime (Binance) — không phải khuyến nghị; LLM chỉ giải thích, không tạo tín hiệu.
+        Signal deterministic tu nen realtime Binance (WS kline + SSE stream). Khong phai khuyen nghi.
       </p>
       {meta && <MetaLine meta={meta} />}
     </div>
   );
 }
 
-function Metric({ label, value, hint, tone }: { label: string; value: string; hint?: string; tone?: "up" | "down" | "neutral" }) {
+function Metric({
+  label,
+  value,
+  hint,
+  tone,
+}: {
+  label: string;
+  value: string;
+  hint?: string;
+  tone?: "up" | "down" | "neutral";
+}) {
   return (
     <div className="panel-inset p-2.5">
       <div className="text-[10px] uppercase tracking-wider text-text-muted">{label}</div>
-      <div className={`num mt-0.5 text-[13px] ${tone === "up" ? "text-positive" : tone === "down" ? "text-negative" : "text-text-primary"}`}>{value}</div>
+      <div
+        className={`num mt-0.5 text-[13px] ${tone === "up" ? "text-positive" : tone === "down" ? "text-negative" : "text-text-primary"}`}
+      >
+        {value}
+      </div>
       {hint && <div className="text-[10px] text-text-muted">{hint}</div>}
     </div>
   );
