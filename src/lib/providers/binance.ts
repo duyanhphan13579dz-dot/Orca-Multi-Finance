@@ -160,3 +160,64 @@ export async function getOpenInterest(symbol: string): Promise<{ symbol: string;
   lastGoodFutures = hostIdx;
   return { symbol: data.symbol, openInterest: Number(data.openInterest), time: data.time };
 }
+
+export interface DepthLevel {
+  price: number;
+  qty: number;
+}
+
+export interface OrderBookSnapshot {
+  lastUpdateId: number;
+  bids: DepthLevel[];
+  asks: DepthLevel[];
+}
+
+/** Spot order book depth (REST). limit: 5|10|20|50|100 */
+export async function getOrderBook(symbol: string, limit = 20): Promise<OrderBookSnapshot> {
+  type Raw = { lastUpdateId: number; bids: [string, string][]; asks: [string, string][] };
+  const { data, hostIdx } = await getFromHosts<Raw>(
+    SPOT_HOSTS,
+    lastGoodSpot,
+    `/api/v3/depth?symbol=${encodeURIComponent(symbol)}&limit=${limit}`,
+    BINANCE_SPOT,
+  );
+  lastGoodSpot = hostIdx;
+  return {
+    lastUpdateId: data.lastUpdateId,
+    bids: data.bids.map(([p, q]) => ({ price: Number(p), qty: Number(q) })),
+    asks: data.asks.map(([p, q]) => ({ price: Number(p), qty: Number(q) })),
+  };
+}
+
+export interface AggTrade {
+  id: number;
+  price: number;
+  qty: number;
+  quoteQty: number;
+  time: number;
+  isBuyerMaker: boolean;
+}
+
+/** Recent aggregate trades — large prints for flow proxy. */
+export async function getAggTrades(symbol: string, limit = 80): Promise<AggTrade[]> {
+  type Raw = { a: number; p: string; q: string; f: number; l: number; T: number; m: boolean }[];
+  const { data, hostIdx } = await getFromHosts<Raw>(
+    SPOT_HOSTS,
+    lastGoodSpot,
+    `/api/v3/aggTrades?symbol=${encodeURIComponent(symbol)}&limit=${limit}`,
+    BINANCE_SPOT,
+  );
+  lastGoodSpot = hostIdx;
+  return data.map((t) => {
+    const price = Number(t.p);
+    const qty = Number(t.q);
+    return {
+      id: t.a,
+      price,
+      qty,
+      quoteQty: price * qty,
+      time: t.T,
+      isBuyerMaker: t.m,
+    };
+  });
+}
