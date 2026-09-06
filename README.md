@@ -9,6 +9,9 @@ ORCA Financial được thiết kế xoay quanh thị trường chứng khoán V
 
 ORCA Financial kết nối dữ liệu thị trường thật vào một **Centralized Real-Time Data Engine**, xử lý theo hướng event-driven, rồi phân phối tới Market Dashboard, Stock/Crypto/Forex/Commodity modules, News Engine, Reports, Alerts và AI Research Agent — với nguyên tắc tuyệt đối: **không mock data**, mọi dữ liệu đều gắn nguồn + timestamp + trạng thái độ mới.
 
+> **ORCA UI/UX STABILITY RULE**: `UI = STABLE · Components = PRESERVE · API = BACKWARD COMPATIBLE · Backend = EVOLVE · Data Engine = UPGRADE · Realtime = EXPAND`.
+> Mọi roadmap mặc định là **BACKEND/DATA/REALTIME/INTELLIGENCE UPGRADE ONLY — KEEP CURRENT UI/UX APPEARANCE**; UI chỉ đổi khi người dùng chủ động yêu cầu. Chi tiết: `docs/architecture.md` §0.
+
 ## Data Sources
 
 | Asset          | Primary Source                    | Fallback (real data)                          |

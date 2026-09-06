@@ -1,5 +1,35 @@
 # ORCA Financial — Architecture
 
+## 0. ORCA UI/UX STABILITY RULE (bắt buộc — 2026-09)
+
+```
+UI Appearance        = STABLE
+UI Components        = PRESERVE
+API Contracts        = BACKWARD COMPATIBLE
+Backend              = EVOLVE
+Data Engine          = UPGRADE
+Realtime Capability  = EXPAND
+```
+
+**Nguyên tắc:** giao diện (appearance) và components là **contract đã chốt với người dùng**.
+Mọi roadmap mặc định được hiểu là:
+
+> **BACKEND / DATA / REALTIME / INTELLIGENCE UPGRADE ONLY — KEEP CURRENT UI/UX APPEARANCE.**
+
+### Quy tắc thực thi (review gate)
+
+1. **Không sửa UI trừ khi task chủ động yêu cầu.** Các thay đổi bị cấm mặc định: `src/app/**/page.tsx`, `src/components/**`, `src/chart/**` (client logic), `src/hooks/**`, CSS/theme, layout, sidebar, bảng điều khiển, màu/typography/spacing — kể cả "tinh chỉnh nhỏ".
+2. **API contracts backward compatible:** không đổi tên/ý nghĩa field, không xoá field, không đổi ngữ nghĩa status code/event name của endpoint đã công bố. Cần thêm dữ liệu → **thêm field mới** (optional) hoặc **thêm endpoint mới** (`/api/v1/...`); payload SSE giữ nguyên cấu trúc cũ (unwrap envelope nếu engine nội bộ đổi).
+3. **Backend/Data/Realtime/Intelligence = tự do tiến hoá** trong lớp `src/lib/**` (services, engined, providers, realtime) và route API — miễn không phá mục (1)-(2).
+4. Nếu một task **bắt buộc** đụng UI, agent phải yêu cầu người dùng xác nhận trước khi viết code UI; nếu không có xác nhận → chỉ làm backend và mô tả thay đổi UI cần thiết (không thực thi).
+5. Kiểm chứng mỗi PR: diff không chứa file UI ngoài phần được duyệt; CI (lint/typecheck/test/build) xanh.
+
+### Rà soát tuân thủ (Phase 1 realtime core — commit a0075dd)
+
+- ✅ Không chạm `src/components`, `src/chart`, `src/hooks`, `.tsx`, CSS.
+- ✅ API: chỉ **thêm** `/api/v1/realtime/stream`; các endpoint cũ giữ nguyên; SSE chart stream **giữ nguyên payload** cho client (unwrap envelope phía server).
+- ✅ Backend/Data/Realtime: tiến hoá đúng phạm vi cho phép.
+
 ## 1. Layered design
 
 ```text
