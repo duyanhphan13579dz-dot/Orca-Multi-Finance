@@ -133,10 +133,19 @@ Tĩnh (methodology/định nghĩa/ngưỡng/quy tắc phân loại bằng chứn
 
 | Env | Ý nghĩa |
 |---|---|
-| `AI_PROVIDER_KEY` | **Bật LLM** (bỏ trống → toàn bộ chạy deterministic) |
-| `AI_BASE_URL` | OpenAI-compatible endpoint (mặc định `https://api.openai.com/v1`) |
-| `AI_MODEL` | Model mặc định (`gpt-4o-mini`) |
-| `AI_MODEL_REASONING` / `AI_MODEL_ANALYSIS` / `AI_MODEL_CLASSIFICATION` | Model theo role |
+| `AI_PROVIDER_KEY` | Bật LLM với cloud (bỏ trống + không có `AI_LLM_ENABLED` → deterministic) |
+| `AI_LLM_ENABLED=true` | Bật LLM cho **endpoint local không cần key** (Ollama/vLLM/LM Studio) |
+| `AI_BASE_URL` | OpenAI-compatible endpoint (mặc định `https://api.openai.com/v1`; local VD `http://localhost:11434/v1`) |
+| `AI_MODEL` | Model mặc định — đọc **mọi role** nếu role-specific trống |
+| `AI_MODEL_REASONING` / `AI_MODEL_ANALYSIS` / `AI_MODEL_CLASSIFICATION` | Model theo role (ưu tiên hơn `AI_MODEL`) |
+
+Ví dụ **Qwen3 local (Ollama/vLLM)**:
+```
+AI_BASE_URL=http://localhost:11434/v1
+AI_LLM_ENABLED=true
+AI_MODEL=qwen3.8-27b
+```
+- `buildChatRequest` tự bỏ `Authorization` khi không có key; tự thêm `chat_template_kwargs.enable_thinking=false` khi model/baseUrl chứa `qwen3`/`vllm` (lấy câu trả lời sạch, không kèm chain-of-thought); fallback `reasoning_content` nếu content rỗng.
 
 Đường đi LLM hiện tại:
 - **Pipeline legacy** (`answerQuestion`): `llmChat(role)` → `validateMaybeRepair` (regenerate 1 lần → fallback deterministic).

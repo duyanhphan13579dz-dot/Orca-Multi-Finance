@@ -50,7 +50,7 @@ export async function GET() {
         vndirectConfigured: true, // VNDirect finfo public keyless
         biquoteConfigured: Boolean(process.env.BIQUOTE_API_KEY?.trim()),
         simplizeConfigured: Boolean(process.env.SIMPLIZE_API_KEY?.trim()),
-        llmConfigured: Boolean(process.env.AI_PROVIDER_KEY?.trim()),
+        llmConfigured: Boolean(process.env.AI_PROVIDER_KEY?.trim()) || process.env.AI_LLM_ENABLED === "true",
         /** MSN Finance đã bỏ khỏi flow hàng hóa (directive 2026-09-06) — chỉ nguồn VietnamBiz Data */
         commodityQuotesSource: "VietnamBiz Data (WiFeed)" as const,
         commodityQuoteProviders: ["vietnambiz-data"] as const,

@@ -65,6 +65,8 @@ export const env = {
   aiProviderKey: opt(process.env.AI_PROVIDER_KEY),
   aiBaseUrl: opt(process.env.AI_BASE_URL) ?? "https://api.openai.com/v1",
   aiModel: opt(process.env.AI_MODEL) ?? "gpt-4o-mini",
+  /** bật LLM cho endpoint local không cần key (Ollama/vLLM/LM Studio): "true" */
+  aiLlmEnabled: opt(process.env.AI_LLM_ENABLED) === "true",
 };
 
 export const isProd = env.nodeEnv === "production";
