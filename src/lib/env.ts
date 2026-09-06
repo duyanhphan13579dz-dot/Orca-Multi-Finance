@@ -9,6 +9,13 @@ const opt = (v: string | undefined): string | undefined => {
   return t && t.length > 0 ? t : undefined;
 };
 
+/** Parse a bounded integer env (ms) with a safe default; never NaN/negative. */
+export function parseBoundedIntEnv(raw: string | undefined, fallback: number, min: number, max: number): number {
+  const n = Number(raw?.trim());
+  if (raw === undefined || raw.trim() === "" || !Number.isFinite(n)) return fallback;
+  return Math.min(max, Math.max(min, Math.floor(n)));
+}
+
 /** The built-in fallback secret MUST never be used outside development. */
 export const INSECURE_JWT_SECRET = "orca-dev-insecure-secret-change-in-production";
 
@@ -34,6 +41,10 @@ export const env = {
   vietnambizBaseUrl: opt(process.env.VIETNAMBIZ_BASE_URL) ?? "https://vietnambiz.vn",
   simplizeBaseUrl: opt(process.env.SIMPLIZE_BASE_URL) ?? "https://simplize.vn",
   simplizeApiKey: opt(process.env.SIMPLIZE_API_KEY),
+  /** Snapshot cadence cho commodity quotes (user-mandated 3s polling; floor 2s).
+   *  Lưu ý: trang Simplize SSR chỉ regenerate ~10 phút/lần (verified 2026-09-06),
+   *  nên giá trị có thể lặp lại giữa các lần poll. */
+  commoditySnapshotTtlMs: parseBoundedIntEnv(process.env.COMMODITY_SNAPSHOT_TTL_MS, 3_000, 2_000, 300_000),
 
   /* Vietnam stocks — provider chain (Phase 10 SAFE FALLBACK).
    * Default: VNDirect primary; Simplize = candidate embed-only cho tới khi

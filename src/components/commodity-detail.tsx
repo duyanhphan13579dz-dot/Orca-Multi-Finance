@@ -110,7 +110,7 @@ const DIRECTION_TONE: Record<ImpactRow["direction"], "up" | "down" | "neutral" |
 export default function CommodityDetailView({ symbol, compact = false }: { symbol: string; compact?: boolean }) {
   const key = symbol.toUpperCase();
   const [range, setRange] = useState(DATE_RANGES[1]);
-  const { data, meta, isLoading, error } = useApi<CommodityDetailBody>(`/api/v1/commodities/${key}`);
+  const { data, meta, isLoading, error } = useApi<CommodityDetailBody>(`/api/v1/commodities/${key}`, { refreshInterval: 3_000 });
 
   if (isLoading) return <Loading rows={8} />;
   if (error && !data) return <Unavailable title="Không tải được hàng hóa này" note={error.message} meta={meta} />;

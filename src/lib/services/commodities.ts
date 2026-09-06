@@ -312,7 +312,7 @@ async function fetchAll(): Promise<CommodityMarket> {
 
 export async function getCommodityMarket(): Promise<{ data: CommodityMarket; meta: Meta } | null> {
   try {
-    const res = await cached("commodities:all", { ttlMs: 5 * 60_000, staleMs: 12 * 3_600_000, producer: fetchAll });
+    const res = await cached("commodities:all", { ttlMs: env.commoditySnapshotTtlMs, staleMs: 12 * 3_600_000, producer: fetchAll });
     const allTs = res.value.rows
       .flatMap((r) => r.sourceRecords.map((s) => (s.timestamp ? Date.parse(s.timestamp) : 0)))
       .filter((x) => x > 0);

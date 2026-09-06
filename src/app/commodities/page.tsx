@@ -64,7 +64,7 @@ export default function CommoditiesPage() {
   const [chart, setChart] = useState<string | null>("XAUUSD");
   const [range, setRange] = useState(DATE_RANGES[1]); // 1W default
   const [detail, setDetail] = useState<string | null>(null); // selected commodity key → floating overlay
-  const { data, meta, isLoading } = useApi<Data>("/api/v1/commodities", { refreshInterval: 5 * 60_000 });
+  const { data, meta, isLoading } = useApi<Data>("/api/v1/commodities", { refreshInterval: 3_000 });
 
   // Esc closes the floating landing page; lock body scroll while open
   useEffect(() => {

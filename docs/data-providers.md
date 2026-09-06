@@ -85,6 +85,12 @@ crash cả trang.
   unit/perf 7D/1M/3M/YTD/1Y/5Y/related-stocks — **không có API JSON công khai** (đã verify 404) nên KHÔNG
   dùng `def.key` làm ticker, không ép endpoints không tồn tại. Brent/wheat/aluminum/zinc/cacao → 404 đã verify
   → không có `simplizePath` (honest UNAVAILABLE hoặc fallback).
+- **Snapshot cadence:** client poll 3s (UI `/commodities` + detail) · server cache quote
+  `COMMODITY_SNAPSHOT_TTL_MS` mặc định **3000ms** (floor 2000ms) với in-flight dedup + stale-while-revalidate
+  (lỗi nguồn → phục vụ bản STALE cũ, không vỡ UI). Đã verify 2026-09-06: trang Simplize SSR chỉ regenerate
+  **~10 phút/lần** (timestamp nhảy 13:59:18 → 14:09:18, giá giữ nguyên) nên dữ liệu lặp lại giữa các lần poll
+  là bình thường; quyết định poll 3s là chủ trương user (rủi ro tải lên origin + chính sách thương mại của
+  Simplize đã được nêu rõ trong `docs/simplize-vn-audit.md`).
 - Vietnambiz: board SJC (mua/bán) — chỉ dùng cho `sjc-gold`.
 - Yahoo: futures quote + chart OHLC (CL=F, NG=F, BZ=F, HG=F, GC=F… — cùng ticker mà chart Simplize tự nhúng,
   verified `simplize.vn/chart?ticker=CL=F`); chart history mọi mặt hàng có `yahooSymbol`; thiếu OHLC → `CLOSE_ONLY`,
