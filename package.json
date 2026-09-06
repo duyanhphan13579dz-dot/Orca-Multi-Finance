@@ -1,12 +1,22 @@
 {
-  "name": "nextjs-postgresql-template",
+  "name": "orca-financial",
+  "version": "0.1.0",
   "private": true,
+  "description": "ORCA Financial — real-time, VN-market-first, multi-asset financial intelligence platform",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --require ./test/test-setup/patch-server-only.cjs --test src/lib/__tests__/chart-engine.test.ts src/lib/__tests__/regression.test.ts",
+    "test:watch": "node --import tsx --require ./test/test-setup/patch-server-only.cjs --test --watch src/lib/__tests__/chart-engine.test.ts src/lib/__tests__/regression.test.ts",
+    "check": "npm run typecheck && npm test",
+    "db:push": "drizzle-kit push",
+    "db:generate": "drizzle-kit generate"
+  },
+  "engines": {
+    "node": ">=20.9.0"
   },
   "dependencies": {
     "clsx": "^2.1.1",

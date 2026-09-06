@@ -25,14 +25,22 @@ function findNum(row: Row, aliases: string[]): number | null {
   return null;
 }
 
-/** sort statement rows newest-first using period fields */
+/** extract the report period (year+quarter) of a statement row, if declared */
+function periodOf(row: Row): { year: number; quarter: number } | null {
+  const y = findNum(row, ["year", "nam", "periodyear"]);
+  const q = findNum(row, ["quarter", "quy", "periodquarter"]);
+  if (y == null && q == null) return null;
+  return { year: y ?? 0, quarter: q ?? 0 };
+}
+
+/** sort statement rows newest-first using period fields (rows without a period go last) */
 function newestFirst(rows: Row[]): Row[] {
-  const periodScore = (r: Row): number => {
-    const y = findNum(r, ["year", "nam", "periodyear"]) ?? 0;
-    const q = findNum(r, ["quarter", "quy", "periodquarter", "lengthyear"]) ?? 0;
-    return y * 10 + q;
+  const score = (r: Row): number => {
+    const p = periodOf(r);
+    if (!p) return -1;
+    return p.year * 10 + p.quarter;
   };
-  return [...rows].sort((a, b) => periodScore(b) - periodScore(a));
+  return [...rows].sort((a, b) => score(b) - score(a));
 }
 
 function latest(rows: Row[], aliases: string[]): number | null {
@@ -44,15 +52,36 @@ function latest(rows: Row[], aliases: string[]): number | null {
   return null;
 }
 
+/**
+ * Trailing-12-months aggregation with period integrity:
+ *  - duplicate (year, quarter) rows are collapsed (never sum the same period twice)
+ *  - annual reports (quarter = 0) are NOT summed — latest is returned instead
+ *  - requires >= 2 distinct quarters, otherwise falls back to the latest value
+ */
 function ttm(rows: Row[], aliases: string[]): number | null {
   const sorted = newestFirst(rows);
-  const vals: number[] = [];
-  for (const r of sorted.slice(0, 6)) {
+  const seenPeriods = new Set<string>();
+  const quarterly: number[] = [];
+  let latestVal: number | null = null;
+  let sawQuarter = false;
+
+  for (const r of sorted) {
+    const p = periodOf(r);
+    const key = p ? `${p.year}-${p.quarter}` : null;
+    if (key && seenPeriods.has(key)) continue; // duplicate period → skip
+    if (key) seenPeriods.add(key);
     const v = findNum(r, aliases);
-    if (v != null) vals.push(v);
-    if (vals.length === 4) break;
+    if (v == null) continue;
+    if (latestVal == null) latestVal = v;
+    if (p && p.quarter >= 1 && p.quarter <= 4) {
+      sawQuarter = true;
+      quarterly.push(v);
+      if (quarterly.length === 4) break;
+    }
   }
-  return vals.length >= 2 ? vals.reduce((a, b) => a + b, 0) : latest(rows, aliases);
+
+  if (!sawQuarter || quarterly.length < 2) return latestVal; // annual/insufficient data → latest
+  return quarterly.reduce((a, b) => a + b, 0);
 }
 
 const AL = {
@@ -94,7 +123,7 @@ export interface FinancialHealthResult {
   scores: { profitability: number | null; liquidity: number | null; leverage: number | null; cashflow: number | null; efficiency: number | null; overall: number | null };
   coverage: number;
   warnings: string[];
-  anchors: { revenue: number | null; netProfit: number | null; equity: number | null; totalDebt: number | null; ocfTtm: number | null; fcfTtm: number | null; shares: number | null; epsTtm: number | null; ebitdaTtm: number | null };
+  anchors: { revenue: number | null; netProfit: number | null; equity: number | null; totalDebt: number | null; cash: number | null; ocfTtm: number | null; fcfTtm: number | null; shares: number | null; epsTtm: number | null; ebitdaTtm: number | null };
 }
 
 const div = (a: number | null, b: number | null): number | null => (a != null && b != null && b !== 0 ? a / b : null);
@@ -110,14 +139,19 @@ export function computeFinancialHealth(input: { income: Row[]; balance: Row[]; c
       scores: { profitability: null, liquidity: null, leverage: null, cashflow: null, efficiency: null, overall: null },
       coverage: 0,
       warnings: ["Không có dữ liệu báo cáo tài chính từ provider"],
-      anchors: { revenue: null, netProfit: null, equity: null, totalDebt: null, ocfTtm: null, fcfTtm: null, shares: null, epsTtm: null, ebitdaTtm: null },
+      anchors: { revenue: null, netProfit: null, equity: null, totalDebt: null, cash: null, ocfTtm: null, fcfTtm: null, shares: null, epsTtm: null, ebitdaTtm: null },
     };
   }
 
   const revenue = ttm(income, AL.revenue) ?? latest(income, AL.revenue);
   const grossProfit = ttm(income, AL.grossProfit);
   const ebit = ttm(income, AL.ebit);
-  const ebitdaTtm = ttm(income, AL.ebitda) ?? (ebit != null ? ebit * 1.15 : null);
+  const ebitdaReported = ttm(income, AL.ebitda);
+  const ebitdaEstimated = ebitdaReported == null && ebit != null;
+  const ebitdaTtm = ebitdaReported ?? (ebit != null ? ebit * 1.15 : null);
+  if (ebitdaEstimated) {
+    warnings.push("EBITDA không có trên báo cáo — dùng ước lượng EBIT × 1.15; EV/EBITDA chỉ mang tính tham khảo.");
+  }
   const netProfit = ttm(income, AL.netProfit) ?? latest(income, AL.netProfit);
   const interestExpense = ttm(income, AL.interestExpense);
 
@@ -213,7 +247,7 @@ export function computeFinancialHealth(input: { income: Row[]; balance: Row[]; c
     scores: { ...sc, overall: overall != null ? Math.round(overall) : null },
     coverage: Number(coverage.toFixed(2)),
     warnings,
-    anchors: { revenue, netProfit, equity, totalDebt, ocfTtm, fcfTtm, shares, epsTtm, ebitdaTtm },
+    anchors: { revenue, netProfit, equity, totalDebt, cash, ocfTtm, fcfTtm, shares, epsTtm, ebitdaTtm },
   };
 }
 

@@ -2,6 +2,10 @@
  * VIETNAM SECURITY MASTER — canonical registry for Vietnamese securities.
  * Every module must resolve symbols/exchanges/sectors through this file.
  * Classification: HOSE / HNX / UPCOM · Vietnamese sector taxonomy.
+ *
+ * NOTE: entries are curated manually and reconciled against the official
+ * VNStock universe (src/lib/providers/vnstock.ts#getVnUniverse) — verified
+ * 2026-09-06 via VSD/vietstock/BSC/TradingView for the corrected rows.
  */
 
 export type VnExchange = "HOSE" | "HNX" | "UPCOM";
@@ -67,7 +71,7 @@ export const VN_SECURITIES: VnSecurity[] = [
   S("EIB", "Ngân hàng TMCP Xuất Nhập Khẩu Việt Nam (Eximbank)", "HOSE", "Ngân hàng"),
   S("NAB", "Ngân hàng TMCP Nam Á (Nam A Bank)", "HOSE", "Ngân hàng"),
   S("ABB", "Ngân hàng TMCP An Bình (ABBank)", "HNX", "Ngân hàng"),
-  S("VBB", "Ngân hàng TMCP Việt - Nga Liên doanh (VRB)", "UPCOM", "Ngân hàng"),
+  S("VBB", "Ngân hàng TMCP Việt Nam Thương Tín (Vietbank)", "HOSE", "Ngân hàng"),
   S("KLB", "Ngân hàng TMCP Kiên Long (KLB)", "UPCOM", "Ngân hàng"),
   S("PGB", "Ngân hàng Thịnh vượng và Phát triển (PGBank)", "UPCOM", "Ngân hàng"),
   S("SGB", "Ngân hàng TMCP Sài Gòn Công Thương (SGICB)", "UPCOM", "Ngân hàng"),
@@ -83,7 +87,8 @@ export const VN_SECURITIES: VnSecurity[] = [
   S("MBS", "CTCP Chứng khoán MB", "HOSE", "Chứng khoán"),
   S("BSI", "CTCP Chứng khoán BIDV", "HOSE", "Chứng khoán"),
   S("FTS", "CTCP Chứng khoán FPT", "HOSE", "Chứng khoán"),
-  S("CTS", "CTCP Chứng khoán Kỹ Thương (TCBS)", "HOSE", "Chứng khoán"),
+  S("CTS", "CTCP Chứng khoán VietinBank (VietinBank Securities)", "HOSE", "Chứng khoán"),
+  S("TCX", "CTCP Chứng khoán Kỹ Thương (TCBS)", "HOSE", "Chứng khoán"),
   S("ORS", "CTCP Chứng khoán Thành Phố (HoSE Securities)", "HOSE", "Chứng khoán"),
   S("AGR", "CTCP Chứng khoán Agribank", "HOSE", "Chứng khoán"),
   S("TVS", "CTCP Chứng khoán Thiên Việt", "HOSE", "Chứng khoán"),
@@ -91,7 +96,6 @@ export const VN_SECURITIES: VnSecurity[] = [
   S("BVS", "CTCP Chứng khoán Bảo Việt", "HOSE", "Chứng khoán"),
   S("DSE", "CTCP Chứng khoán DNSE", "HNX", "Chứng khoán"),
   S("PSI", "CTCP Chứng khoán Dầu khí", "HOSE", "Chứng khoán"),
-  S("CTS", "CTCP Chứng khoán Kỹ Thương", "HOSE", "Chứng khoán"),
   S("EVF", "Tổ chức chứng khoán EVF", "HOSE", "Chứng khoán"),
 
   /* ========================== BẢO HIỂM (Insurance) ========================= */
@@ -115,11 +119,11 @@ export const VN_SECURITIES: VnSecurity[] = [
   S("CEO", "CTCP Đầu tư và Phát triển Công trình C.E.O", "UPCOM", "Bất động sản"),
   S("HDG", "Tập đoàn Hà Đô", "HOSE", "Bất động sản"),
   S("DIG", "CTCP Phát triển Hạ tầng (DIC)", "HOSE", "Bất động sản"),
-  S("SCR", "CTCP Tập đoàn Đầu tư Đến trước", "HOSE", "Bất động sản"),
+  S("SCR", "CTCP Địa ốc Sài Gòn Thương Tín (TTC Land)", "HOSE", "Bất động sản"),
   S("TCH", "CTCP Đầu tư Dịch vụ Tài chính Hoàng Huy", "HOSE", "Bất động sản"),
   S("HQC", "CTCP Tư vấn Thương mại Dịch vụ Địa ốc Hoàng Quân", "HOSE", "Bất động sản"),
   S("TDH", "Thuduc House", "HOSE", "Bất động sản"),
-  S("LDG", "CTCP cảng Long An (Lộc Phát)", "HOSE", "Bất động sản"),
+  S("LDG", "CTCP Đầu tư LDG (LDG Investment)", "HOSE", "Bất động sản"),
   S("API", "CTCP Đầu tư Phát triển Xây dựng – Kinh doanh Địa ốc An Phúc", "HOSE", "Bất động sản"),
   S("CRE", "Cên Land", "HOSE", "Bất động sản"),
   S("SJS", "CTCP Đầu tư Phát triển Đô thị và Khu công nghiệp Sông Đà", "HNX", "Bất động sản"),
@@ -142,16 +146,15 @@ export const VN_SECURITIES: VnSecurity[] = [
   S("TLH", "Công ty Thép Tiến Lên", "HOSE", "Thép"),
   S("POM", "Thép Pomina", "HOSE", "Thép"),
   S("TVN", "Thép Việt Nam", "HOSE", "Thép"),
-  S("BTS", "Cao su Bò Rịa", "HOSE", "Xây dựng & Vật liệu"),
   S("HPP", "CTCP Xi măng Holcim/Vicem Hà Bằng", "HOSE", "Xây dựng & Vật liệu"),
   S("BCC", "Xi măng Bỉm Sơn", "HNX", "Xây dựng & Vật liệu"),
-  S("HT1", "Xi măng Hà Tiên 1", "HOSE", "Xây dựng & Vật liệu"),
+  S("HT1", "CTCP Xi măng Vicem Hà Tiên 1", "HOSE", "Xây dựng & Vật liệu"),
   S("VLB", "Vật liệu Xây dựng Làng Đại học", "HNX", "Xây dựng & Vật liệu"),
-  S("CCM", "Cầm Định Thợ", "HNX", "Xây dựng & Vật liệu"),
+  S("CCM", "CTCP Khoáng sản và Xi măng Cần Thơ", "UPCOM", "Xây dựng & Vật liệu"),
   S("DHA", "Công ty Quản lý và Phát triển Nhà Hà Nội", "HOSE", "Xây dựng & Vật liệu"),
   S("YBM", "Khoáng sản Yên Bái", "HNX", "Tài nguyên thiên nhiên"),
   S("KSB", "CTCP Khoáng sản và Luyện kim Bình Dương", "HOSE", "Tài nguyên thiên nhiên"),
-  S("FCN", "CTCP Cơ giới (FC Corporation)", "HOSE", "Xây dựng & Vật liệu"),
+  S("FCN", "CTCP FECON (FECON Corporation)", "HOSE", "Xây dựng & Vật liệu"),
   S("CTD", "CTCP Coteccons", "HOSE", "Xây dựng & Vật liệu", true),
   S("HBC", "CTCP Xây dựng Hòa Bình", "HOSE", "Xây dựng & Vật liệu"),
   S("GCN", "Tập đoàn Công nghiệp Gốm sứ (GHI)", "HOSE", "Xây dựng & Vật liệu"),
@@ -161,7 +164,7 @@ export const VN_SECURITIES: VnSecurity[] = [
   S("CMG", "CTCP Tập đoàn CMC (CMC Corporation)", "HOSE", "Công nghệ"),
   S("ELC", "CTCP Đầu tư Phát triển Công nghệ Điện tử – ELCOM", "HNX", "Công nghệ"),
   S("POT", "CTCP Tổ chức Hỗ trợ Kỹ thuật VinaPhone", "HOSE", "Viễn thông"),
-  S("FOC", "CTCP Viễn thông FPT (Foxconn/PFT)", "HOSE", "Viễn thông"),
+  S("FOC", "CTCP Dịch vụ Trực tuyến FPT (FPT Online)", "HOSE", "Công nghệ"),
   S("VGI", "Viettel Global", "HOSE", "Viễn thông", true),
   S("CTR", "Tổng CTCP Công trình Viettel", "HOSE", "Viễn thông"),
   S("SGT", "CTCP Công nghệ Viễn thông SaiGonTel", "HOSE", "Viễn thông"),
@@ -169,11 +172,11 @@ export const VN_SECURITIES: VnSecurity[] = [
   /* ============================== BÁN LẺ (Retail) =========================== */
   S("MWG", "Tập đoàn Thế Giới Di Động", "HOSE", "Bán lẻ", true),
   S("MSN", "Tập đoàn Masan Group", "HOSE", "Bán lẻ", true),
-  S("MCH", "Masan Consumer (Vinamilk Spinoff)", "HOSE", "Thực phẩm & Đồ uống", true),
+  S("MCH", "CTCP Hàng tiêu dùng Masan (Masan Consumer)", "HOSE", "Thực phẩm & Đồ uống", true),
   S("PNJ", "CTCP Vàng bạc Đá quý Phú Nhuận", "HOSE", "Bán lẻ", true),
   S("DGW", "Thế Giới Số (Digiworld)", "HOSE", "Bán lẻ"),
   S("FRT", "FPT Retail", "HOSE", "Bán lẻ"),
-  S("PET", "Xuất nhập khẩu Petrolimex", "HOSE", "Bán lẻ"),
+  S("PET", "Tổng CTCP Dịch vụ Tổng hợp Dầu khí (Petrosetco)", "HOSE", "Bán lẻ"),
 
   /* ========================= THỰC PHẨM & ĐỒ UỐNG =========================== */
   S("VNM", "Vinamilk", "HOSE", "Thực phẩm & Đồ uống", true),
@@ -188,12 +191,12 @@ export const VN_SECURITIES: VnSecurity[] = [
   S("ASM", "Sao Mai Group", "HOSE", "Thực phẩm & Đồ uống"),
   S("IDI", "IDICO - Đông Đô", "HOSE", "Thực phẩm & Đồ uống"),
   S("ANV", "Công ty Cổ phần Sản xuất Nông nghiệp Anh Vũ", "HOSE", "Thực phẩm & Đồ uống"),
-  S("ACL", "Cà Mau Sựu Thê (Cafeta)", "HOSE", "Nông nghiệp"),
+  S("ACL", "CTCP Xuất nhập khẩu Thủy sản Cà Mau (Casemea)", "HOSE", "Thực phẩm & Đồ uống"),
   S("HAG", "Hoàng Anh Gia Lai", "HOSE", "Nông nghiệp"),
   S("PAN", "Tập đoàn PAN (PAN Group)", "HOSE", "Nông nghiệp"),
   S("DBC", "Dabaco Việt Nam", "HOSE", "Nông nghiệp"),
   S("BAF", "Chăn nuôi An Binh (BAF)", "HOSE", "Nông nghiệp"),
-  S("LTG", "Vĩnh Loc High Tech", "HOSE", "Nông nghiệp"),
+  S("LTG", "CTCP Tập đoàn Lộc Trời (Loc Troi Group)", "HOSE", "Nông nghiệp"),
 
   /* ============================= DẦU KHÍ (Oil & Gas) ======================== */
   S("GAS", "PV Gas", "HOSE", "Dầu khí", true),
@@ -203,10 +206,10 @@ export const VN_SECURITIES: VnSecurity[] = [
   S("PVS", "PTSC - Dịch vụ Kỹ thuật Dầu khí", "HOSE", "Dầu khí"),
   S("PVT", "PetroVietnam Transportation (PVTrans)", "HOSE", "Dầu khí"),
   S("OIL", "PV Oil", "HOSE", "Dầu khí"),
-  S("PVC", "Dịch vụ Xây lắp Dầu khí (PVCC)", "HOSE", "Dầu khí"),
-  S("PVB", "Câu chuyện và Hóa chất Dầu khí (PetroVietnam Coating)", "HOSE", "Dầu khí"),
-  S("PXS", "In ấn Petrolimex", "HOSE", "Dầu khí"),
-  S("POS", "Dịch vụ Xây lắp Máy Tàu thủy Dầu khí (PTSC POS)", "HNX", "Dầu khí"),
+  S("PVC", "Tổng Công ty Hóa chất và Dịch vụ Dầu khí (PVCHEM)", "HNX", "Dầu khí"),
+  S("PVB", "CTCP Bọc ống Dầu khí Việt Nam (PV Coating)", "HNX", "Dầu khí"),
+  S("PXS", "CTCP Kết cấu Kim loại và Lắp máy Dầu khí (PVC-MS)", "UPCOM", "Dầu khí"),
+  S("POS", "CTCP Dịch vụ Lắp đặt, Vận hành và Bảo dưỡng Công trình Dầu khí biển PTSC (PTSC POS)", "UPCOM", "Dầu khí"),
   S("TOS", "Tân Bình Oil", "HNX", "Dầu khí"),
 
   /* ========================== ĐIỆN LỰC (Utilities) ========================== */
@@ -226,11 +229,11 @@ export const VN_SECURITIES: VnSecurity[] = [
   S("DCM", "Đạm Cà Mau (PetroVietnam Fertilizer)", "HOSE", "Hóa chất & Phân bón", true),
   S("DPM", "Đạm Phú Mỹ (Phu My Fertilizer)", "HOSE", "Hóa chất & Phân bón", true),
   S("DGC", "Đức Giang Chemicals", "HOSE", "Hóa chất & Phân bón", true),
-  S("CSV", "Cao su Việt Nam (SVR)", "HOSE", "Hóa chất & Phân bón"),
+  S("CSV", "CTCP Hóa chất Cơ bản Miền Nam", "HOSE", "Hóa chất & Phân bón"),
   S("BFC", "Bình Điền Fertilizer (BINAF)", "HOSE", "Hóa chất & Phân bón"),
   S("LAS", "Phân bón Lâm Thao (Supe LAS)", "HNX", "Hóa chất & Phân bón"),
   S("NET", "NET Nam Châu", "HNX", "Hóa chất & Phân bón"),
-  S("PTC", "Hóa chất Phúc Thạnh (PetroVietnam General Services)", "HOSE", "Hóa chất & Phân bón"),
+  S("PTC", "CTCP Đầu tư Icapital (ICapital JSC)", "HOSE", "Bất động sản"),
   S("APP", "Hóa chất An Phú (Agrophos)", "HNX", "Hóa chất & Phân bón"),
   S("MCC", "Ceramic MCC", "HOSE", "Xây dựng & Vật liệu"),
   S("HSL", "Hóa chất Hue (Hue Chemicals)", "HNX", "Hóa chất & Phân bón"),
@@ -241,14 +244,15 @@ export const VN_SECURITIES: VnSecurity[] = [
   S("DPR", "Cao su Đồng Nai (DC4)", "HOSE", "Cao su"),
   S("TRC", "Tây Ninh Cao su", "HOSE", "Cao su"),
   S("RTB", "Cao su Tân Biên", "UPCOM", "Cao su"),
+  S("BTS", "CTCP Cao su Bà Rịa", "HOSE", "Cao su"),
   S("VJF", "Cao su Việt - Lào", "HNX", "Cao su"),
 
   /* ======================= HÀNG KHÔNG & VẬN TẢI (Aviation) ================== */
   S("ACV", "Tổng Công ty TNHH Cảng hàng không Việt Nam", "UPCOM", "Hàng không & Vận tải", true),
   S("HVN", "Tổng Công ty Cổ phần Hàng không Việt Nam (Vietnam Airlines)", "HOSE", "Hàng không & Vận tải", true),
   S("VJC", "CTCP Hàng không VietJet", "HOSE", "Hàng không & Vận tải", true),
-  S("AST", "CTCP Dịch vụ Hàng hóa Sân bay (TCS & PTSC)", "HOSE", "Hàng không & Vận tải"),
-  S("MAS", "Tập đoàn Địa ốc Hoàng Mai (Masan/Airport)", "HOSE", "Hàng không & Vận tải"),
+  S("AST", "CTCP Dịch vụ Hàng không Taseco (Taseco Airs)", "HOSE", "Hàng không & Vận tải"),
+  S("MAS", "CTCP Dịch vụ Hàng không Sân bay Đà Nẵng (MASCO)", "HNX", "Hàng không & Vận tải"),
   S("NCT", "Nội Phát Cargo", "UPCOM", "Hàng không & Vận tải"),
 
   /* ========================== KHO HẬU CẦN (Logistics) ====================== */
@@ -262,7 +266,8 @@ export const VN_SECURITIES: VnSecurity[] = [
   S("DVP", "Định Vũ Port (DVP)", "HNX", "Kho hậu cần"),
   S("VNL", "Vận tải Logistics Việt Nam (Vinalines)", "UPCOM", "Kho hậu cần"),
   S("HTG", "Hà Tiên Xanh", "HOSE", "Kho hậu cần"),
-  S("TCO", "Taseco Land", "HNX", "Kho hậu cần"),
+  S("TCO", "CTCP Janus Group (Duyên Hải)", "HOSE", "Kho hậu cần"),
+  S("TAL", "CTCP Đầu tư Bất động sản Taseco (Taseco Land)", "UPCOM", "Bất động sản"),
   S("STG", "CTCP Vận tải STP (Sotrans Group)", "HNX", "Kho hậu cần"),
 
   /* ====================== DƯỢC PHẨM & Y TẾ (Pharma) ======================= */
@@ -272,7 +277,6 @@ export const VN_SECURITIES: VnSecurity[] = [
   S("DBD", "Dược Bình Định (Bidiphar)", "UPCOM", "Dược phẩm & Y tế"),
   S("DVN", "Dược Vĩnh Phúc (Vidipha)", "UPCOM", "Dược phẩm & Y tế"),
   S("PMB", "Pharmedic (PMB)", "HNX", "Dược phẩm & Y tế"),
-  S("HT1", "CTS HT1", "HNX", "Dược phẩm & Y tế"),
   S("TNH", "Bệnh viện Việt Nam - Thụy Điển", "HNX", "Dược phẩm & Y tế"),
   S("JVC", "Japan-Vietnam Medical (JVC)", "UPCOM", "Dược phẩm & Y tế"),
   S("MKP", "Mekophar", "HOSE", "Dược phẩm & Y tế"),

@@ -65,7 +65,7 @@ Hiện tại distribution dùng **polling thông minh phía client** (SWR refres
 
 ## 6. Database (Drizzle/PostgreSQL)
 
-24 bảng: auth (users/sessions/audit_logs), watchlists(+items), stock (symbols/quotes/ohlcv/financial_statements), crypto (symbols/quotes/futures_metrics), forex_quotes, commodity_quotes, news, reports, market_snapshots, provider_health, provider_logs, trade_journal, alerts. Tracer fields cho financial data: `source`, `source_timestamp`, `ingested_at`, `period_year/quarter`, `report_type`.
+22 bảng: auth (users/sessions/audit_logs), watchlists(+items), stock (symbols/quotes/ohlcv/financial_statements), crypto (symbols/quotes/futures_metrics), forex_quotes, commodity_quotes, news, reports, market_snapshots, provider_health, provider_logs, trade_journal, user_preferences, alerts. Tracer fields cho financial data: `source`, `source_timestamp`, `ingested_at`, `period_year/quarter`, `report_type`.
 
 Ghi DB ở chế độ **best-effort, fire-and-forget** (không bao giờ chặn request path): provider health upsert, news dedupe insert, commodity canonical records, reports archive.
 
@@ -103,7 +103,7 @@ Data contract per analysis: `{asset, market_data, technical_state, market_state,
 4. Incremental indicator updates cho crypto/stock engine khi có tick mới.
 5. VN universe scheduler (daily sync HOSE/HNX/UPCOM vào `stock_symbols`) khi VNStock hoạt động ổn định.
 
-## 8. Security
+## 9. Security
 
 - API keys chỉ đọc qua `src/lib/env.ts` (module `server-only`), không biến `NEXT_PUBLIC_*`.
 - Auth: scrypt password hash, JWT HS256 trong httpOnly cookie (`/api/v1/auth/*`), audit logs.

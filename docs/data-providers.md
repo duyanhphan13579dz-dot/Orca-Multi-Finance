@@ -9,8 +9,8 @@ Mọi provider phía sau **Provider Adapter Interface** và bị metadata health
 | --- | --- | --- |
 | stocks (VN) | VNStock (env: `VNSTOCK_BASE_URL`, `VNSTOCK_API_KEY`) | — (UNAVAILABLE nếu chưa cấu hình) |
 | crypto | Binance spot REST (`api.binance.com` → `api{1,2}.binance.com` → `data-api.binance.vision`) | Binance fapi cho futures (geo-dependent) |
-| forex | Biquote (env) | exchangerate-api open latest; Frankfurter/ECB daily history + previous fix |
-| commodities | Vietnambiz (SJC gold board) · Simplize (env key) | MSN Finance quotes (env instrument map) · Binance PAXGUSDT (vàng) |
+| forex | Biquote (env) | Yahoo Finance (FX snapshot + OHLC chart, public no-key); exchangerate-api open latest; Frankfurter/ECB daily history + previous fix |
+| commodities | Vietnambiz (SJC gold board) · Simplize (env key) | MSN Finance quotes (env instrument map) · Yahoo Finance (public futures quotes) · Binance PAXGUSDT (vàng) |
 | news | CafeF, VnExpress, VietnamBiz, CoinTelegraph RSS | từng feed độc lập; partial-success vẫn được phục vụ kèm note |
 
 ## Interface conventions

@@ -10,7 +10,7 @@ export const metadata: Metadata = {
   },
   description:
     "Real-time, event-driven, multi-asset financial intelligence platform — VN stocks (VNStock), crypto (Binance), forex (Biquote), commodities (Vietnambiz/Simplize), news, reports and an AI research agent.",
-  icons: { icon: "/icon.png" },
+  icons: { icon: "/icon.svg" },
 };
 
 export const viewport: Viewport = {

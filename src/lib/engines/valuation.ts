@@ -42,22 +42,19 @@ export function computeValuation(input: {
   const notes: string[] = [];
 
   const marketCap = a.shares != null && a.shares > 0 ? price * a.shares : null;
-  const enterpriseValue = marketCap != null && a.totalDebt != null ? marketCap + a.totalDebt * 0 : null; // EV needs cash; refined below
-
-  const ev = (() => {
-    if (marketCap == null || a.totalDebt == null) return null;
-    const cashComp = a.equity != null && a.totalDebt != null && a.ocfTtm != null ? 0 : 0; // cash pulled via anchors.cash if present in health anchors extension
-    return marketCap + a.totalDebt - cashComp;
-  })();
+  // EV = market cap + total debt − cash & equivalents (net-debt convention).
+  const cash = a.cash ?? 0;
+  const enterpriseValue = marketCap != null && a.totalDebt != null ? marketCap + a.totalDebt - cash : null;
 
   const pe = a.epsTtm != null && a.epsTtm > 0 ? price / a.epsTtm : null;
   const pbv = a.equity != null && a.shares != null && a.shares > 0 && a.equity > 0 ? price / (a.equity / a.shares) : null;
-  const evEbitda = ev != null && a.ebitdaTtm != null && a.ebitdaTtm > 0 ? ev / a.ebitdaTtm : null;
-  const evSales = ev != null && a.revenue != null && a.revenue > 0 ? ev / a.revenue : null;
+  const evEbitda = enterpriseValue != null && a.ebitdaTtm != null && a.ebitdaTtm > 0 ? enterpriseValue / a.ebitdaTtm : null;
+  const evSales = enterpriseValue != null && a.revenue != null && a.revenue > 0 ? enterpriseValue / a.revenue : null;
   const fcfYield = a.fcfTtm != null && marketCap != null && marketCap > 0 ? a.fcfTtm / marketCap : null;
   const dividendYield = input.dividendsAnnual != null && input.dividendsAnnual > 0 && marketCap != null ? input.dividendsAnnual / marketCap : null;
 
-  if (enterpriseValue == null && ev == null) notes.push("Thiếu cơ cấu nợ/tiền mặt — EV được ước lượng bằng market cap + nợ.");
+  if (enterpriseValue == null) notes.push("Thiếu market cap (số cổ phiếu) hoặc cơ cấu nợ — không tính được EV.");
+  else if (a.cash == null) notes.push("Thiếu dữ liệu tiền mặt — EV chưa trừ net cash (market cap + nợ tổng).");
   if (pe == null) notes.push("Không đủ EPS/Shares để tính P/E.");
 
   /* DCF — requires positive FCF and share count */
@@ -94,7 +91,7 @@ export function computeValuation(input: {
   return {
     price,
     marketCap,
-    enterpriseValue: ev ?? enterpriseValue,
+    enterpriseValue,
     multiples: {
       pe: pe != null ? Number(pe.toFixed(1)) : null,
       pb: pbv != null ? Number(pbv.toFixed(2)) : null,

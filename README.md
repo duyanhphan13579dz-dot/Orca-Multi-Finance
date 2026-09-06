@@ -15,8 +15,8 @@ ORCA Financial kết nối dữ liệu thị trường thật vào một **Centr
 | -------------- | --------------------------------- | --------------------------------------------- |
 | Vietnam Stocks | **VNStock** (API key, env)        | — (UNAVAILABLE state until configured)        |
 | Crypto         | **Binance** REST/WS, host failover| Official Binance public data hosts            |
-| Forex          | **Biquote** (API key, env)        | exchangerate-api latest + ECB/Frankfurter     |
-| Commodities    | **Vietnambiz** + **Simplize.vn**  | MSN Finance (env map) + Binance PAXG (gold)   |
+| Forex          | **Biquote** (API key, env)        | Yahoo Finance (FX snapshot/OHLC) + exchangerate-api latest + ECB/Frankfurter |
+| Commodities    | **Vietnambiz** + **Simplize.vn**  | MSN Finance (env map) + Yahoo Finance (public futures quotes) + Binance PAXG (gold) |
 | News           | RSS multi-feed (CafeF, VnExpress, VietnamBiz, CoinTelegraph) | per-feed failover |
 
 Không có module nào dùng số liệu giả. Khi provider lỗi: **retry → exponential backoff → circuit breaker → cache STALE gần nhất → trạng thái DEGRADED/UNAVAILABLE hiển thị công khai**.
@@ -112,7 +112,7 @@ git clone <repository-url>
 cd orca-financial
 npm install
 cp .env.example .env        # điền DATABASE_URL + provider keys
-npx drizzle-kit push        # tạo database schema
+npm run db:push             # tạo database schema (drizzle-kit push)
 npm run dev                 # http://localhost:3000
 ```
 
@@ -121,6 +121,12 @@ Production:
 ```bash
 npm run build
 npm run start
+```
+
+Kiểm tra chất lượng trước khi commit:
+
+```bash
+npm run check    # typecheck + test
 ```
 
 Health & diagnostics:
@@ -145,11 +151,14 @@ Chi tiết: [`/docs/api.md`](docs/api.md) · Kiến trúc: [`/docs/architecture.
 src/
   app/                    routes (pages) + api/v1 route handlers
   components/             terminal-grade UI (charts, panels, technical views)
+  db/                     drizzle schema (22 tables) + client
   lib/
     providers/            vnstock · binance · biquote/forex · commodities · news
-    services/             domain engines (crypto, forex, stocks, commodities, news, market, agent, reports)
-    cache.ts health.ts http.ts freshness.ts technical.ts auth.ts env.ts
-  db/                     drizzle schema (24 tables) + client
+    services/             domain services (market, crypto, stocks, forex, news, agent, reports…)
+    engines/              quant engines (market-state, market-condition, fundamental, valuation, scalp)
+    vn/                   Vietnam Security Master (HOSE/HNX/UPCoM taxonomy) + session calendar
+    ai/                   LLM gateway + output validation
+    env.ts auth.ts http.ts cache.ts health.ts freshness.ts technical.ts
 docs/                     architecture · data-providers · api
 ```
 

@@ -32,7 +32,7 @@ export const NEWS_PROVIDER = "rss-news";
 
 /* ------------------------------ tagging dicts ------------------------------ */
 
-export const VN_TICKERS = [
+const VN_TICKERS_RAW = [
   "VCB","BID","CTG","TCB","MBB","VPB","ACB","STB","HDB","VIB","LPB","SHB","MSB","OCB","TPB","EIB","NAB","BAB","ABB","KLB","PGB","VBB","SGB","NVB","BVB","CBB","VAB",
   "HPG","HSG","NKG","SMC","TLH","POM","VGS","VIS","SHA","DTL","TIS","LGC","MCC","ELC","HMC","TVN","KSH","TNI","HLA","VCA","INC","KHB","CST","TMB","NTH","SBA","TDS",
   "GAS","PLX","BSR","PVD","PVS","PVT","OIL","PVC","PVE","PVB","PXS","POS","PTC","TOS","VIP","PMB","PVV","TMB","APP","ASP","BVB","CLX","DDV","DGC","DPM","DCM","CSV","BFC","NET","VAF","SFG","LAS","PCE","HSI","PGR",
@@ -42,7 +42,12 @@ export const VN_TICKERS = [
   "POW","REE","NT2","PPC","GEG","HND","QTP","SJD","VPD","TBC","CHP","VSH","BHA","RIC","SBH","HNA","VCP","TMP","AFS","TTA","S4A","DRL","TV2","SBA","GHC","PGV","HDG",
   "GMD","VSC","HAH","PVP","VTO","STG","TCL","PHP","ILB","CDN","DVP","VGR","SGP","VOS","TCO","MAS","VNL","TMS",
   "PGI","BMI","MIG","BIC","ABI","PVI","BVH","VNR","PRE","PTI","ACI","PAI","OPC","FOC","TNH","PDV","DVN","AMV","JVC","IMP","DBD","DHG","TRA","VMD","SPM","HID","CDP","PMC","PPE","TTB","DP3","MKP","NBC","HT1","BCC","BTS","YBM","QCC","HOM","KSB","VCS","VLB","DHA","CCM",
+  // exchange-traded funds (long tickers — tagging must support these)
+  "FUEVFVND","FUESSVFL",
 ];
+
+/** deduplicated export — some legacy lists above contained repeated codes */
+export const VN_TICKERS = [...new Set(VN_TICKERS_RAW)];
 const VN_TICKER_SET = new Set(VN_TICKERS);
 
 const CRYPTO_MAP: Record<string, string> = {
@@ -81,15 +86,24 @@ const decodeXml = (s: string) =>
 
 const stripTags = (s: string) => s.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
 
-function tag(text: string): { symbols: string[]; sector: string | null } {
+/**
+ * Match a ticker as a standalone token (not inside a longer word/name).
+ * Works for 3-letter codes AND long codes (FUEVFVND, BTCUSDT…), case-insensitive.
+ */
+function hasToken(text: string, token: string): boolean {
+  return new RegExp(`(^|[^A-Z0-9])${token}($|[^A-Z0-9])`).test(text);
+}
+
+/** Symbol/sector tagging over title + summary (exported for tests). */
+export function tag(text: string): { symbols: string[]; sector: string | null } {
   const symbols = new Set<string>();
   const upper = text.toUpperCase();
   for (const t of VN_TICKER_SET) {
-    if (new RegExp(`\\b${t}\\b`, "i").test(upper) && /\b[A-Z]{3}\b/.test(t)) symbols.add(t);
+    if (hasToken(upper, t)) symbols.add(t);
   }
   const lower = text.toLowerCase();
   for (const [kw, sym] of Object.entries(CRYPTO_MAP)) {
-    if (new RegExp(`\\b${kw}\\b`, "i").test(lower)) symbols.add(sym);
+    if (new RegExp(`(^|[^a-z0-9])${kw}($|[^a-z0-9])`).test(lower)) symbols.add(sym);
   }
   let sector: string | null = null;
   for (const [re, name] of SECTOR_KEYWORDS) if (re.test(text)) { sector = name; break; }
