@@ -3,6 +3,7 @@ import { cached } from "../cache";
 import { buildMeta } from "../freshness";
 import * as binance from "../providers/binance";
 import { getYahooChart, yahooSymbolForPair, yahooIntervalFor } from "../providers/yahoo";
+import { defByKeyOrSymbol } from "../providers/commodities";
 import { getVnOhlcv, vndirectConfigured } from "./stocks";
 import { marketStore } from "../realtime/market-store";
 import { validateBars, detectGaps, logQualityEvent } from "../quality";
@@ -208,10 +209,34 @@ async function stockCandles(symbol: string, tf: string, limit: number): Promise<
 }
 
 async function commodityCandles(symbol: string, tf: string, limit: number): Promise<{ candles: ChartCandle[]; source: string; note?: string }> {
-  // gold spot proxy via Binance PAXG (verified real-time, USD/oz ≈ XAU)
-  if (symbol === "XAUUSD" || symbol === "GOLD" || symbol === "XAU") {
-    const bars = await binance.getKlines("PAXGUSDT", binanceInterval(tf), Math.min(limit, 1000));
-    return { candles: bars.map(toCandle), source: "binance (PAXG ≈ XAU spot)", note: "Vàng thế giới qua PAXG (1:1 gold-ounce, USD) — nguồn thực thị trường 24/7" };
+  const def = defByKeyOrSymbol(symbol);
+  if (!def) throw new Error("commodity_history_unavailable");
+  // Gold spot: keep the verified 24/7 PAXG proxy first (≈ XAU/USD, the exact
+  // gauge Simplize charts), Yahoo GC=F only as fallback.
+  if (def.binanceSymbol && (symbol === "XAUUSD" || symbol === "GOLD" || symbol === "XAU")) {
+    try {
+      const bars = await binance.getKlines(def.binanceSymbol, binanceInterval(tf), Math.min(limit, 1000));
+      return { candles: bars.map(toCandle), source: "binance (PAXG ≈ XAU spot)", note: "Vàng thế giới qua PAXG (1:1 gold-ounce, USD) — nguồn thực thị trường 24/7" };
+    } catch {
+      /* fall through to Yahoo futures */
+    }
+  }
+  // Chart data = the same real futures symbol Simplize itself charts (verified:
+  // Simplize commodity pages embed TradingView with Yahoo tickers, e.g. CL=F,
+  // NG=F, SB=F, CBOT:ZR1!, COMEX:HRC1! — no fake/stock ticker injection).
+  if (def.yahooSymbol) {
+    const y = yahooIntervalFor(tf);
+    if (!y) throw new Error("commodity_timeframe_unsupported");
+    const { candles } = await getYahooChart(def.yahooSymbol, y.interval, y.range);
+    let series = candles;
+    if (y.aggregate4h) series = aggregateCandles(candles, TF_MS["4h"]);
+    const sliced = series.slice(-limit);
+    if (!sliced.length) throw new Error("commodity_history_empty");
+    return {
+      candles: sliced,
+      source: "Yahoo Finance (futures) — ticker của Simplize",
+      note: `${def.name}: biểu đồ dùng ${def.yahooSymbol} — cùng symbol mà trang Simplize hiển thị`,
+    };
   }
   throw new Error("commodity_history_unavailable");
 }

@@ -54,10 +54,34 @@ Không còn khái niệm primary/secondary/reconciliation: một source duy nh�
 - Fallback 2: Frankfurter `/v1/{start}..{end}?base=…` — chuỗi ECB hằng ngày (đánh nhãn reference, không giả lập intraday).
 - % thay đổi đối chiếu **bản fix ECB gần nhất** (1 request, cache 6h).
 
-### Commodities (`src/lib/providers/commodities.ts` + aggregator)
+### Commodities (`src/lib/providers/commodities.ts` + `engines/commodity.ts` + `services/commodities.ts`)
 
-Catalog 12 mặt hàng: metals (XAU, XAG), energy (WTI, Brent, NatGas), industrial (copper, steel), agriculture (coffee, sugar, corn, wheat, soybean), vietnam (SJC).
-Nguồn theo ưu tiên từng mã; **mỗi row giữ toàn bộ `sourceRecords`** (multi-source provenance) và map `vnImpact`: commodity → ngành VN → mã liên quan (tham chiếu, không nhân quả).
+Catalog đầy đủ (20+ mặt hàng): metals (XAU/XAG/XPT/XPD), energy (WTI/Brent/NatGas/Than cốc), industrial
+(đồng/nhôm/kẽm/nickel/quặng sắt/thép HRC), agriculture+grain (wheat/corn/soybean/rice/coffee/sugar/cotton),
+fertilizers (URE) và vietnam (SJC).
+
+**Ưu tiên nguồn (user-mandated): Simplize → Vietnambiz → Yahoo → MSN → Binance (PAXG).**
+- Simplize: trang công khai SSR `simplize.vn/hang-hoa/{slug}` (verified 200; gold = `/gia-vang/the-gioi`,
+  SJC = `/gia-vang/pnj/vang-mieng-sjc-9999-pnj`); parse giá/change/changePercent/prevClose/open/day-range/
+  unit/perf 7D/1M/3M/YTD/1Y/5Y/related-stocks — **không có API JSON công khai** (đã verify 404) nên KHÔNG
+  dùng `def.key` làm ticker, không ép endpoints không tồn tại. Brent/wheat/aluminum/zinc/cacao → 404 đã verify
+  → không có `simplizePath` (honest UNAVAILABLE hoặc fallback).
+- Vietnambiz: board SJC (mua/bán) — chỉ dùng cho `sjc-gold`.
+- Yahoo: futures quote + chart OHLC (CL=F, NG=F, BZ=F, HG=F, GC=F… — cùng ticker mà chart Simplize tự nhúng,
+  verified `simplize.vn/chart?ticker=CL=F`); chart history mọi mặt hàng có `yahooSymbol`; thiếu OHLC → `CLOSE_ONLY`,
+  không bịa OHLC.
+- MSN/Binance chỉ fallback khi hai nguồn ưu tiên không khả dụng.
+
+**Unified model (additive, không phá UI contract):** mỗi `CommodityRow` giữ `sourceRecords`, `id/name/nameVi/
+category/subcategory/previousClose/open/high/low/freshness/marketState/freshnessNote/priceType/performance
+{"1D".."1Y"}/relatedStocks/sourceUrl/sourceTimestamp`. Freshness per row (FRESH/DELAYED/STALE/UNAVAILABLE)
+theo timestamp nguồn — nguồn không công bố timestamp → DELAYED (không bao giờ fake LIVE). Quote được
+`validateQuote` (assetClass commodity, stale 300s) trước khi lưu; INVALID → UNAVAILABLE, không lưu rác.
+
+Service: `getCommodityMarket/History/Performance/Impact/Detail` + write-through `marketStore.setQuote`
+(assetType `commodity`) + persist best-effort vào bảng `commodity_quotes`. Impact matrix = economic-exposure
+(cơ chế ngành công khai) + related-source (danh sách nguồn công bố) — correlation KHÔNG dùng làm bằng chứng
+nhân quả. Bounded concurrency 6 khi scrape catalog (~25 trang).
 
 ### News (`src/lib/providers/news.ts`)
 

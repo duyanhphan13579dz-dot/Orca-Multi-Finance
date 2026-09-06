@@ -27,9 +27,12 @@ export const env = {
   biquoteBaseUrl: opt(process.env.BIQUOTE_BASE_URL),
   biquoteApiKey: opt(process.env.BIQUOTE_API_KEY),
 
-  /* Commodities — Vietnambiz + Simplize */
+  /* Commodities — Vietnambiz + Simplize
+   * simplizeBaseUrl = PUBLIC site (https://simplize.vn) where the verified
+   * commodity pages live (/hang-hoa/wti, /gia-vang/the-gioi…). The api.* host
+   * has NO public JSON endpoint for commodities (verified 404). */
   vietnambizBaseUrl: opt(process.env.VIETNAMBIZ_BASE_URL) ?? "https://vietnambiz.vn",
-  simplizeBaseUrl: opt(process.env.SIMPLIZE_BASE_URL) ?? "https://api.simplize.vn",
+  simplizeBaseUrl: opt(process.env.SIMPLIZE_BASE_URL) ?? "https://simplize.vn",
   simplizeApiKey: opt(process.env.SIMPLIZE_API_KEY),
 
   /* Optional MSN Finance instrument map for world commodities (JSON: {"GOLD":"id",...}) */

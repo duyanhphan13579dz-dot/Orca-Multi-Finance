@@ -4,26 +4,38 @@ import { httpJson, httpText } from "../http";
 import { ProviderError } from "./binance";
 
 /**
- * Commodity data providers + aggregator.
- * Sources (priority per spec): Vietnambiz → Simplize → MSN Finance (env
- * instrument map) → Binance PAXG (gold cross-source). Every record carries
- * source + timestamp; unit/currency normalization lives here.
+ * Commodity data providers — REAL public sources only.
+ *
+ * Priority per product requirement: Simplize (public commodity pages, SSR,
+ * real published values + published "related stocks") → Vietnambiz (SJC gold
+ * board) → Yahoo Finance futures (chart + fallback quote) → MSN Finance →
+ * Binance PAXG (gold spot cross-check). Every record carries source + real
+ * timestamps when the source publishes them; otherwise freshness stays
+ * DELAYED (never fake LIVE). No endpoint here is invented: the Simplize
+ * public page URLs below were verified live (page 200, real values).
  */
 
-export const VIETNAMBIZ = "vietnambiz";
 export const SIMPLIZE = "simplize";
+export const VIETNAMBIZ = "vietnambiz";
 export const MSN_FINANCE = "msn-finance";
 export const BINANCE_PAXG = "binance-paxg";
+export const YAHOO_FUTURES = "yahoo-futures";
 
 export interface RawCommodityQuote {
   source: string;
   price: number;
   change?: number | null;
   changePercent?: number | null;
+  previousClose?: number | null;
+  open?: number | null;
   high?: number | null;
   low?: number | null;
   unit?: string | null;
   currency?: string | null;
+  /** provider-published performance (NOT hard-coded) */
+  perf?: Partial<Record<"1W" | "1M" | "3M" | "YTD" | "1Y" | "5Y", number>>;
+  relatedStocks?: string[];
+  /** provider-published source timestamp (millis) */
   timestamp: number | null;
   url?: string | null;
 }
@@ -32,67 +44,363 @@ export interface RawCommodityQuote {
 
 export type CommodityGroup = "metals" | "energy" | "industrial" | "agriculture" | "vietnam";
 
+export type CommodityCategory =
+  | "precious-metals"
+  | "industrial-metals"
+  | "energy"
+  | "agriculture"
+  | "soft-commodities"
+  | "fertilizers"
+  | "other";
+
 export interface CommodityDef {
   key: string;
   name: string;
   nameVi: string;
   group: CommodityGroup;
+  category: CommodityCategory;
+  subcategory?: string;
   symbol: string;
   unit: string;
   currency: string;
-  msnKey?: string; // key inside MSN_COMMODITY_MAP env var
-  binanceSymbol?: string;
-  /** Yahoo futures/spot ticker — approved public reference source */
+  /** public Simplize commodity page path (verified live) */
+  simplizePath?: string;
+  /** Yahoo futures ticker used for chart + fallback quote (real, documented) */
   yahooSymbol?: string;
-  /** provider quotes in US cents (KC/SB/ZC/ZS/ZW) → normalize to USD unit */
+  /** Binance spot proxy for 24/7 gold */
+  binanceSymbol?: string;
+  /** provider quotes in US cents (KC/SB/ZC/ZS) → keep as displayed (USd/…) */
   centsQuoted?: boolean;
-  vietnambiz?: "sjc-gold"; // scrape strategy
+  /** Vietnambiz scrape strategy */
+  vietnambiz?: "sjc-gold";
+  /** verified economic exposure (mechanism from public industry descriptions) */
   vnImpact?: { sector: string; stocks: string[]; mechanism: string };
+  /** display aid: source page URL for provenance */
+  sourceUrl?: string;
 }
 
 export const COMMODITY_CATALOG: CommodityDef[] = [
   {
-    key: "gold", name: "Gold", nameVi: "Vàng thế giới", group: "metals", symbol: "XAUUSD", unit: "USD/oz", currency: "USD", yahooSymbol: "GC=F",
-    msnKey: "GOLD", binanceSymbol: "PAXGUSDT",
-  },
-  { key: "silver", name: "Silver", nameVi: "Bạc", group: "metals", symbol: "XAGUSD", unit: "USD/oz", currency: "USD", yahooSymbol: "SI=F", msnKey: "SILVER" },
-  {
-    key: "wti", name: "WTI Crude Oil", nameVi: "Dầu thô WTI", group: "energy", symbol: "CL", unit: "USD/bbl", currency: "USD", yahooSymbol: "CL=F", msnKey: "WTI",
-    vnImpact: { sector: "Dầu khí", stocks: ["GAS", "PLX", "BSR", "PVD", "PVS"], mechanism: "Giá dầu tác động trực tiếp doanh thu khai thác, vận tải và phân phối" },
+    key: "gold", name: "Gold", nameVi: "Vàng thế giới", group: "metals", category: "precious-metals", subcategory: "Bullion",
+    symbol: "XAUUSD", unit: "USD/oz", currency: "USD", simplizePath: "/gia-vang/the-gioi",
+    yahooSymbol: "GC=F", binanceSymbol: "PAXGUSDT",
   },
   {
-    key: "brent", name: "Brent Crude Oil", nameVi: "Dầu Brent", group: "energy", symbol: "BZ", unit: "USD/bbl", currency: "USD", yahooSymbol: "BZ=F", msnKey: "BRENT",
+    key: "silver", name: "Silver", nameVi: "Bạc", group: "metals", category: "precious-metals", subcategory: "Bullion",
+    symbol: "XAGUSD", unit: "USD/oz", currency: "USD", simplizePath: "/gia-bac-the-gioi", yahooSymbol: "SI=F",
+  },
+  {
+    key: "platinum", name: "Platinum", nameVi: "Platinum", group: "metals", category: "precious-metals", subcategory: "Bullion",
+    symbol: "XPTUSD", unit: "USD/oz", currency: "USD", yahooSymbol: "PL=F",
+  },
+  {
+    key: "palladium", name: "Palladium", nameVi: "Palladium", group: "metals", category: "precious-metals", subcategory: "Bullion",
+    symbol: "XPDUSD", unit: "USD/oz", currency: "USD", yahooSymbol: "PA=F",
+  },
+  {
+    key: "wti", name: "WTI Crude Oil", nameVi: "Dầu thô WTI", group: "energy", category: "energy", subcategory: "Crude",
+    symbol: "CL", unit: "USD/bbl", currency: "USD", simplizePath: "/hang-hoa/wti", yahooSymbol: "CL=F",
+    vnImpact: { sector: "Dầu khí", stocks: ["GAS", "PLX", "BSR", "PVD", "PVS", "PVT"], mechanism: "Giá dầu tác động trực tiếp doanh thu khai thác, vận tải và phân phối" },
+  },
+  {
+    key: "brent", name: "Brent Crude Oil", nameVi: "Dầu Brent", group: "energy", category: "energy", subcategory: "Crude",
+    symbol: "BZ", unit: "USD/bbl", currency: "USD", yahooSymbol: "BZ=F",
     vnImpact: { sector: "Dầu khí", stocks: ["GAS", "PLX", "BSR", "OIL"], mechanism: "Chuẩn giá dầu tham chiếu cho hợp đồng khu vực" },
   },
-  { key: "natgas", name: "Natural Gas", nameVi: "Khí thiên nhiên", group: "energy", symbol: "NG", unit: "USD/MMBtu", currency: "USD", yahooSymbol: "NG=F", msnKey: "NATGAS",
-    vnImpact: { sector: "Điện & Phân bón", stocks: ["GAS", "POW", "DCM", "DPM"], mechanism: "Chi phí đầu vào cho điện lực và phân bón" } },
   {
-    key: "copper", name: "Copper", nameVi: "Đồng", group: "industrial", symbol: "HG", unit: "USD/lb", currency: "USD", yahooSymbol: "HG=F", msnKey: "COPPER",
-    vnImpact: { sector: "Kim loại", stocks: ["HSG", "NKG", "HPG"], mechanism: "Chỉ báo chu kỳ kim loại công nghiệp" },
+    key: "natgas", name: "Natural Gas", nameVi: "Khí thiên nhiên", group: "energy", category: "energy", subcategory: "Gas",
+    symbol: "NG", unit: "USD/MMBtu", currency: "USD", simplizePath: "/hang-hoa/khi-thien-nhien", yahooSymbol: "NG=F",
+    vnImpact: { sector: "Điện & Phân bón", stocks: ["GAS", "POW", "DCM", "DPM", "CNG", "PGD", "NT2"], mechanism: "Chi phí đầu vào cho điện lực, phân bón và kinh doanh khí" },
   },
   {
-    key: "steel", name: "Steel", nameVi: "Thép", group: "industrial", symbol: "HRC", unit: "CNY/tấn", currency: "CNY", msnKey: "STEEL",
-    vnImpact: { sector: "Thép", stocks: ["HPG", "HSG", "NKG", "SMC"], mechanism: "Giá thép quyết định biên lợi nhuận doanh nghiệp thép" },
+    key: "coal", name: "Coking Coal", nameVi: "Than cốc", group: "energy", category: "energy", subcategory: "Coal",
+    symbol: "COAL", unit: "USD/T", currency: "USD", simplizePath: "/hang-hoa/than-coc",
   },
   {
-    key: "coffee", name: "Coffee", nameVi: "Cà phê", group: "agriculture", symbol: "KC", unit: "USD/lb", currency: "USD", yahooSymbol: "KC=F", centsQuoted: true, msnKey: "COFFEE",
+    key: "copper", name: "Copper", nameVi: "Đồng", group: "industrial", category: "industrial-metals", subcategory: "Base Metals",
+    symbol: "HG", unit: "USD/lb", currency: "USD", simplizePath: "/hang-hoa/gia-dong", yahooSymbol: "HG=F",
+    vnImpact: { sector: "Kim loại", stocks: ["HSG", "NKG", "HPG"], mechanism: "Chỉ báo chu kỳ kim loại công nghiệp, ảnh hưởng giá nguyên liệu ngành thép" },
+  },
+  {
+    key: "aluminum", name: "Aluminum", nameVi: "Nhôm", group: "industrial", category: "industrial-metals", subcategory: "Base Metals",
+    symbol: "AL", unit: "USD/T", currency: "USD",
+  },
+  {
+    key: "zinc", name: "Zinc", nameVi: "Kẽm", group: "industrial", category: "industrial-metals", subcategory: "Base Metals",
+    symbol: "ZN", unit: "USD/T", currency: "USD",
+  },
+  {
+    key: "nickel", name: "Nickel", nameVi: "Nickel", group: "industrial", category: "industrial-metals", subcategory: "Base Metals",
+    symbol: "NI", unit: "USD/T", currency: "USD", simplizePath: "/hang-hoa/gia-nickel",
+  },
+  {
+    key: "iron-ore", name: "Iron Ore", nameVi: "Quặng sắt", group: "industrial", category: "industrial-metals", subcategory: "Bulk",
+    symbol: "IO", unit: "USD/T", currency: "USD", simplizePath: "/hang-hoa/gia-quang-sat",
+    vnImpact: { sector: "Thép", stocks: ["HPG", "HSG", "NKG"], mechanism: "Chi phí nguyên liệu đầu vào quyết định biên lợi nhuận thép" },
+  },
+  {
+    key: "steel", name: "Steel HRC", nameVi: "Thép HRC", group: "industrial", category: "industrial-metals", subcategory: "Steel",
+    symbol: "HRC", unit: "USD/T", currency: "USD", simplizePath: "/hang-hoa/gia-thep-hrc",
+    vnImpact: { sector: "Thép", stocks: ["HPG", "HSG", "NKG", "SMC", "TLH", "VGS", "TVN"], mechanism: "Giá thép quyết định biên lợi nhuận doanh nghiệp thép" },
+  },
+  {
+    key: "wheat", name: "Wheat", nameVi: "Lúa mì", group: "agriculture", category: "agriculture", subcategory: "Grains",
+    symbol: "ZW", unit: "USd/bu", currency: "USD", yahooSymbol: "ZW=F", centsQuoted: true,
+  },
+  {
+    key: "corn", name: "Corn", nameVi: "Ngô", group: "agriculture", category: "agriculture", subcategory: "Grains",
+    symbol: "ZC", unit: "USd/bu", currency: "USD", simplizePath: "/hang-hoa/gia-ngo", yahooSymbol: "ZC=F", centsQuoted: true,
+    vnImpact: { sector: "Chăn nuôi", stocks: ["DBC", "BAF", "HAG"], mechanism: "Chi phí thức ăn chăn nuôi" },
+  },
+  {
+    key: "soybean", name: "Soybean", nameVi: "Đậu tương", group: "agriculture", category: "agriculture", subcategory: "Grains",
+    symbol: "ZS", unit: "USd/bu", currency: "USD", simplizePath: "/hang-hoa/gia-dau-nanh", yahooSymbol: "ZS=F", centsQuoted: true,
+    vnImpact: { sector: "Chăn nuôi", stocks: ["DBC", "BAF"], mechanism: "Chi phí thức ăn chăn nuôi" },
+  },
+  {
+    key: "rice", name: "Rough Rice", nameVi: "Gạo", group: "agriculture", category: "agriculture", subcategory: "Grains",
+    symbol: "ZR", unit: "USD/cwt", currency: "USD", simplizePath: "/hang-hoa/gia-gao", yahooSymbol: "ZR=F",
+    vnImpact: { sector: "Nông nghiệp & Lương thực", stocks: ["PAN", "AFX", "LTG", "VSF"], mechanism: "Giá gạo tác động doanh thu xuất khẩu và chế biến lương thực" },
+  },
+  {
+    key: "coffee", name: "Coffee (Arabica)", nameVi: "Cà phê", group: "agriculture", category: "soft-commodities", subcategory: "Beverages",
+    symbol: "KC", unit: "US cent/lb", currency: "USD", simplizePath: "/hang-hoa/gia-ca-phe-arabica", yahooSymbol: "KC=F", centsQuoted: true,
     vnImpact: { sector: "Nông nghiệp", stocks: ["VNM", "PAN"], mechanism: "Việt Nam là nước xuất khẩu robusta lớn thứ hai thế giới" },
   },
-  { key: "sugar", name: "Sugar", nameVi: "Đường", group: "agriculture", symbol: "SB", unit: "USD/lb", currency: "USD", yahooSymbol: "SB=F", centsQuoted: true, msnKey: "SUGAR",
-    vnImpact: { sector: "Nông nghiệp", stocks: ["QNS", "LSS", "SBT"], mechanism: "Giá đường thế giới chi phối giá mía đường nội địa" } },
-  { key: "corn", name: "Corn", nameVi: "Ngô", group: "agriculture", symbol: "ZC", unit: "USD/bu", currency: "USD", yahooSymbol: "ZC=F", centsQuoted: true, msnKey: "CORN",
-    vnImpact: { sector: "Chăn nuôi", stocks: ["DBC", "BAF", "HAG"], mechanism: "Chi phí thức ăn chăn nuôi" } },
-  { key: "wheat", name: "Wheat", nameVi: "Lúa mì", group: "agriculture", symbol: "ZW", unit: "USD/bu", currency: "USD", yahooSymbol: "ZW=F", centsQuoted: true, msnKey: "WHEAT" },
-  { key: "soybean", name: "Soybean", nameVi: "Đậu tương", group: "agriculture", symbol: "ZS", unit: "USD/bu", currency: "USD", yahooSymbol: "ZS=F", centsQuoted: true, msnKey: "SOYBEAN",
-    vnImpact: { sector: "Chăn nuôi", stocks: ["DBC", "BAF"], mechanism: "Chi phí thức ăn chăn nuôi" } },
   {
-    key: "sjc-gold", name: "SJC Gold (VN)", nameVi: "Vàng SJC", group: "vietnam", symbol: "SJC", unit: "VND/lượng", currency: "VND",
-    vietnambiz: "sjc-gold",
+    key: "sugar", name: "Sugar", nameVi: "Đường", group: "agriculture", category: "soft-commodities", subcategory: "Beverages",
+    symbol: "SB", unit: "USd/lb", currency: "USD", simplizePath: "/hang-hoa/gia-duong", yahooSymbol: "SB=F", centsQuoted: true,
+    vnImpact: { sector: "Nông nghiệp", stocks: ["QNS", "LSS", "SBT", "KTS", "SLS", "CBS"], mechanism: "Giá đường thế giới chi phối giá mía đường nội địa" },
+  },
+  {
+    key: "cotton", name: "Cotton", nameVi: "Bông", group: "agriculture", category: "soft-commodities", subcategory: "Textiles",
+    symbol: "CT", unit: "US cent/lb", currency: "USD", yahooSymbol: "CT=F", centsQuoted: true,
+  },
+  {
+    key: "urea", name: "Urea", nameVi: "Phân URE", group: "agriculture", category: "fertilizers", subcategory: "Nitrogen",
+    symbol: "URE", unit: "USD/T", currency: "USD", simplizePath: "/hang-hoa/gia-phan-ure",
+    vnImpact: { sector: "Phân bón", stocks: ["DCM", "DPM", "SFG", "LAS"], mechanism: "Giá ure nhập khẩu quyết định giá thành phân bón nội địa" },
+  },
+  {
+    key: "sjc-gold", name: "SJC Gold (VN)", nameVi: "Vàng SJC", group: "vietnam", category: "precious-metals", subcategory: "Domestic (VN)",
+    symbol: "SJC", unit: "VNĐ/Lượng", currency: "VND", simplizePath: "/gia-vang/pnj/vang-mieng-sjc-9999-pnj", vietnambiz: "sjc-gold",
     vnImpact: { sector: "Tài sản nội", stocks: [], mechanism: "Kênh trú ẩn tài sản trong nước, ảnh hưởng tâm lý thị trường" },
   },
 ];
 
-/* -------------------------------- MSN Finance ------------------------------ */
+/** Legacy MSN key mapping kept for the MSN fallback provider. */
+export const MSN_KEY_BY_KEY: Record<string, string> = {
+  gold: "GOLD", silver: "SILVER", wti: "WTI", brent: "BRENT", natgas: "NATGAS",
+  copper: "COPPER", steel: "STEEL", coffee: "COFFEE", sugar: "SUGAR", corn: "CORN",
+  wheat: "WHEAT", soybean: "SOYBEAN",
+};
+
+export function defByKeyOrSymbol(needle: string): CommodityDef | null {
+  const q = needle.toUpperCase();
+  return COMMODITY_CATALOG.find((d) => d.key.toUpperCase() === q || d.symbol.toUpperCase() === q) ?? null;
+}
+
+/* ------------------------------ number utils ------------------------------ */
+
+/** "1,226" → 1226; "15.87" → 15.87; "+ 0.18" → 0.18 (thousands sep = ",", "." = decimal) */
+export function parseDecimal(s: string): number {
+  const v = Number(s.replace(/,/g, "").replace(/\s+/g, "").trim());
+  return Number.isFinite(v) ? v : NaN;
+}
+
+/* ------------------------------ Simplize page ------------------------------ */
+
+export interface SimplizeParsed {
+  price: number;
+  change: number | null;
+  changePercent: number | null;
+  previousClose: number | null;
+  open: number | null;
+  high: number | null;
+  low: number | null;
+  unit: string | null;
+  perf: Partial<Record<"1W" | "1M" | "3M" | "YTD" | "1Y" | "5Y", number>>;
+  relatedStocks: string[];
+  timestamp: number | null;
+}
+
+const PERF_KEYS: { label: string; key: "1W" | "1M" | "3M" | "YTD" | "1Y" | "5Y" }[] = [
+  { label: "7D", key: "1W" },
+  { label: "1M", key: "1M" },
+  { label: "3M", key: "3M" },
+  { label: "YTD", key: "YTD" },
+  { label: "1Y", key: "1Y" },
+  { label: "5Y", key: "5Y" },
+];
+
+const stripTags = (s: string) =>
+  s
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<[^>]*>/g, " ")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&#\d+;/g, " ")
+    .replace(/&[a-z]+;/gi, " ")
+    .replace(/\s+/g, " ");
+
+function pct(s: string): number | null {
+  const m = s.replace(/[%\s]/g, "").match(/^([+-]?[\d.,]+)$/);
+  if (!m) return null;
+  const v = parseDecimal(m[1]);
+  return Number.isFinite(v) ? v : null;
+}
+
+/**
+ * Parse the stripped text of a Simplize commodity detail page (verified live
+ * structure: "Giá hiện tại", "Giá đóng cửa hôm trước", "Giá mở cửa",
+ * "Biên độ ngày", "Biên độ 52 tuần", "Đơn vị tính", "% 7D/1M/3M/YTD/1Y/5Y",
+ * "Cổ phiếu liên quan", and optionally "Cập nhật lúc … ngày …").
+ */
+export function parseSimplizePage(text: string): SimplizeParsed | null {
+  const t = stripTags(text);
+  const priceM = t.match(/Giá\s*hiện\s*tại\s*:?\s*([\d.,]+)/);
+  if (!priceM) return null;
+  const price = parseDecimal(priceM[1]);
+  if (!Number.isFinite(price) || price <= 0) return null;
+
+  // change block: "<price> <±change> <±pct>". Real pages render 3 variants:
+  // 1) joined  "+1,200,000 0.81%"   2) split sign  "+ 0.18 0.20%"
+  // 3) flat     "- 0.00%"            → try them in order, never guess.
+  const after = t.slice(priceM.index! + priceM[0].length, priceM.index! + priceM[0].length + 120);
+  let change: number | null = null;
+  let changePercent: number | null = null;
+  const joined = after.match(/^\s*([+-]?[\d.,]+)\s*([+-]?[\d.,]+%)/);
+  // flat must be checked BEFORE splitSign: "- 0.00%" (sign node + pct only)
+  // must not be re-interpreted as change=-0.00 with pct from the same token.
+  const flat = !joined ? after.match(/^\s*-\s*([+-]?[\d.,]+%)/) : null;
+  const splitSign = !joined && !flat ? after.match(/^\s*([+-])\s*([\d.,]+)\s*([+-]?[\d.,]+%)/) : null;
+  if (joined) {
+    const v = parseDecimal(joined[1]);
+    change = Number.isFinite(v) ? v : null;
+    changePercent = pct(joined[2]);
+  } else if (flat) {
+    change = 0;
+    changePercent = pct(flat[1]);
+  } else if (splitSign) {
+    const v = parseDecimal(splitSign[2]);
+    change = Number.isFinite(v) ? (splitSign[1] === "-" ? -v : v) : null;
+    changePercent = pct(splitSign[3]);
+  }
+
+  const numAfter = (label: string) => {
+    const m = t.match(new RegExp(`${label}\\s*([\\d.,]+)`));
+    return m ? parseDecimal(m[1]) : null;
+  };
+  const rangeAfter = (label: string): [number, number] | null => {
+    const m = t.match(new RegExp(`${label}\\s*([\\d.,]+)\\s*-\\s*([\\d.,]+)`));
+    if (!m) return null;
+    const a = parseDecimal(m[1]);
+    const b = parseDecimal(m[2]);
+    return Number.isFinite(a) && Number.isFinite(b) ? [a, b] : null;
+  };
+
+  const previousClose = numAfter("Giá\\s*đóng\\s*cửa\\s*hôm\\s*trước");
+  const open = numAfter("Giá\\s*mở\\s*cửa");
+  const day = rangeAfter("Biên\\s*độ\\s*ngày");
+  const unitM = t.match(/Đơn\s*vị\s*tính\s*[:：]?\s*([^\s,;]+)/);
+  const unit = unitM ? unitM[1] : null;
+
+  const perf: SimplizeParsed["perf"] = {};
+  for (const { label, key } of PERF_KEYS) {
+    const m = t.match(new RegExp(`%\\s*${label}\\s*[:：]?\\s*([+-]?[\\d.,]+%)`));
+    if (m) {
+      const v = pct(m[1]);
+      if (v != null) perf[key] = v;
+    }
+  }
+  // gold-world page uses "Từ đầu năm" and "1 năm" instead of "% YTD"/"% 1Y"
+  if (perf.YTD == null) {
+    const m = t.match(/Từ\s*đầu\s*năm\s*[:：]?\s*([+-]?[\d.,]+%)/);
+    if (m) {
+      const v = pct(m[1]);
+      if (v != null) perf.YTD = v;
+    }
+  }
+  if (perf["1Y"] == null) {
+    const m = t.match(/1\s*năm\s*[:：]?\s*([+-]?[\d.,]+%)/);
+    if (m) {
+      const v = pct(m[1]);
+      if (v != null) perf["1Y"] = v;
+    }
+  }
+
+  // related stocks: section between "Cổ phiếu liên quan" and following section
+  const relStart = t.search(/Cổ\s*phiếu\s*liên\s*quan/);
+  let relText = "";
+  if (relStart >= 0) {
+    const tail = t.slice(relStart, relStart + 4000);
+    const stop = tail.search(/Tin\s*tức\s*hàng\s*hoá|Chỉ\s*số\s*chứng\s*khoán|Tổng\s*quan/);
+    relText = stop >= 0 ? tail.slice(0, stop) : tail;
+  }
+  const relatedStocks: string[] = [];
+  if (relText) {
+    const re = /\b([A-Z]{2,5})\s*\((HOSE|HNX|UPCOM)\)/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(relText)) !== null) {
+      if (!relatedStocks.includes(m[1])) relatedStocks.push(m[1]);
+      if (relatedStocks.length >= 12) break;
+    }
+  }
+
+  // provider-published update time (gold page: "Cập nhật lúc 12:24:17, ngày 06/09/2026")
+  let timestamp: number | null = null;
+  const tsM = t.match(/Cập\s*nhật\s*lúc\s*(\d{1,2}):(\d{2}):(\d{2})[,\s]+ngày\s*(\d{2})\/(\d{2})\/(\d{4})/);
+  if (tsM) {
+    const [, hh, mm, ss, dd, mo, yy] = tsM;
+    const parsed = new Date(Number(yy), Number(mo) - 1, Number(dd), Number(hh), Number(mm), Number(ss));
+    if (!Number.isNaN(parsed.getTime())) timestamp = parsed.getTime();
+  }
+
+  return {
+    price,
+    change,
+    changePercent,
+    previousClose: previousClose != null && Number.isFinite(previousClose) ? previousClose : null,
+    open: open != null && Number.isFinite(open) ? open : null,
+    high: day ? day[1] : null,
+    low: day ? day[0] : null,
+    unit,
+    perf,
+    relatedStocks,
+    timestamp,
+  };
+}
+
+/** Fetch + parse a public Simplize commodity page (SSR — real published values). */
+export async function getSimplizeCommodityPage(path: string): Promise<RawCommodityQuote> {
+  const base = env.simplizeBaseUrl.replace(/\/$/, "");
+  const url = `${base}${path.startsWith("/") ? path : `/${path}`}`;
+  const res = await httpText(url, { provider: SIMPLIZE, timeoutMs: 9_000, retries: 1 });
+  if (!res.ok || !res.text) throw new ProviderError(`simplize: ${res.error ?? "unreachable"}`, SIMPLIZE);
+  const p = parseSimplizePage(res.text);
+  if (!p) throw new ProviderError("simplize: page parse failed (structure changed?)", SIMPLIZE);
+  // units are published on the page: USD/* → USD; VNĐ/Lượng → VND (SJC board)
+  const unitUpper = (p.unit ?? "").toUpperCase();
+  const currency = unitUpper.includes("VNĐ") || unitUpper.includes("VND") ? "VND" : "USD";
+  return {
+    source: "Simplize",
+    price: p.price,
+    change: p.change,
+    changePercent: p.changePercent,
+    previousClose: p.previousClose,
+    open: p.open,
+    high: p.high,
+    low: p.low,
+    unit: p.unit,
+    currency,
+    perf: p.perf,
+    relatedStocks: p.relatedStocks,
+    timestamp: p.timestamp,
+    url,
+  };
+}
+
+/* ------------------------------- MSN Finance ------------------------------- */
 
 type MsnQuote = {
   price?: number;
@@ -101,8 +409,6 @@ type MsnQuote = {
   priceDayHigh?: number;
   priceDayLow?: number;
   timeLastTraded?: string;
-  displayName?: string;
-  symbol?: string;
   instrumentId?: string;
 };
 
@@ -135,7 +441,7 @@ export async function getMsnQuotes(ids: string[]): Promise<Record<string, RawCom
 const strip = (s: string) => s.replace(/<[^>]*>/g, " ").replace(/&[a-z#0-9]+;/gi, " ").replace(/\s+/g, " ");
 
 /**
- * SJC gold price from Vietnambiz gold page (real scraped numbers).
+ * SJC gold price from Vietnambiz gold board (real scraped numbers).
  * Fragile by nature of scraping → returns ProviderError on any anomaly.
  */
 export async function getVietnambizSjcGold(): Promise<RawCommodityQuote> {
@@ -166,32 +472,5 @@ export async function getVietnambizSjcGold(): Promise<RawCommodityQuote> {
     currency: "VND",
     timestamp: Number.isFinite(ts) ? ts : null,
     url,
-  };
-}
-
-/* --------------------------------- Simplize -------------------------------- */
-
-/** Simplize commodity board — requires SIMPLIZE_API_KEY + reachable contract. */
-export async function getSimplizeCommodity(key: string): Promise<RawCommodityQuote> {
-  if (!env.simplizeApiKey) throw new ProviderError("SIMPLIZE_API_KEY not configured", SIMPLIZE);
-  const path = process.env.SIMPLIZE_COMMODITY_PATH ?? "/api/commodity/price/current";
-  const res = await httpJson<unknown>(`${env.simplizeBaseUrl.replace(/\/$/, "")}${path}?ticker=${encodeURIComponent(key)}`, {
-    provider: SIMPLIZE,
-    headers: { Authorization: `Bearer ${env.simplizeApiKey}`, "x-api-key": env.simplizeApiKey },
-    timeoutMs: 8_000,
-    retries: 1,
-  });
-  if (!res.ok || res.data == null) throw new ProviderError(`simplize: ${res.error ?? "unreachable"}`, SIMPLIZE);
-  const d = res.data as Record<string, unknown>;
-  const price = Number(d.price ?? d.close ?? d.value);
-  if (!Number.isFinite(price)) throw new ProviderError("simplize: no price field", SIMPLIZE);
-  const tsRaw = d.timestamp ?? d.time ?? d.updatedAt;
-  const ts = typeof tsRaw === "number" ? (tsRaw > 1e12 ? tsRaw : tsRaw * 1000) : Date.parse(String(tsRaw ?? ""));
-  return {
-    source: "Simplize",
-    price,
-    change: d.change != null ? Number(d.change) : null,
-    changePercent: d.changePercent != null ? Number(d.changePercent) : null,
-    timestamp: Number.isFinite(ts) ? ts : null,
   };
 }

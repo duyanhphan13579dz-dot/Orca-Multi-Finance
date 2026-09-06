@@ -1,10 +1,13 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { useApi } from "@/lib/hooks";
 import { OrcaChart } from "@/components/orca-chart";
+import CommodityDetailView from "@/components/commodity-detail";
 import type { CommodityMarket } from "@/lib/services/commodities";
 import type { CommodityDef } from "@/lib/providers/commodities";
+import type { FreshnessStatus } from "@/lib/types";
 import { Badge, Chg, fmtNum, FreshnessDot, Loading, MetaLine, Panel, Unavailable } from "@/components/ui";
 import { AddToWatchlist } from "@/components/watchlist-button";
 import { Boxes, CalendarDays, LineChart, Search, X } from "lucide-react";
@@ -13,9 +16,28 @@ import { Boxes, CalendarDays, LineChart, Search, X } from "lucide-react";
  * COMMODITIES — sleek world-class UI/UX:
  * command-style search, polished date-range picker on the gold chart,
  * uniform cards, honest per-source provenance.
+ *
+ * UI/UX STABLE CONTRACT — appearance is frozen. Data flow upgrades only:
+ * price + change come from Simplize → Vietnambiz (real, verified pages);
+ * chọn/chạm một hàng hóa → mở LANDING PAGE NỔI (floating overlay) với chi tiết
+ * đầy đủ (quote, performance, chart, provenance, tác động ngành) — cùng dữ
+ * liệu với route /commodities/:key. Nhấn Esc / nền tối / X để đóng.
  */
 
-type Data = CommodityMarket & { catalog: { key: string; name: string; nameVi: string; group: string; symbol: string; unit: string; vnImpact: CommodityDef["vnImpact"] }[] };
+type Data = CommodityMarket & {
+  catalog: {
+    key: string;
+    name: string;
+    nameVi: string;
+    group: string;
+    category: string;
+    subcategory: string | null;
+    symbol: string;
+    unit: string;
+    hasChart: boolean;
+    vnImpact: CommodityDef["vnImpact"];
+  }[];
+};
 
 const GROUPS: { key: string; title: string; desc: string }[] = [
   { key: "", title: "Tất cả", desc: "" },
@@ -27,23 +49,33 @@ const GROUPS: { key: string; title: string; desc: string }[] = [
 ];
 
 const DATE_RANGES: { label: string; tf: string; limit: number }[] = [
-  { label: "1D", tf: "15m", limit: 96 },
-  { label: "1W", tf: "1h", limit: 168 },
+  { label: "1D", tf: "1h", limit: 96 },
+  { label: "1W", tf: "4h", limit: 168 },
   { label: "1M", tf: "1d", limit: 32 },
   { label: "3M", tf: "1d", limit: 95 },
   { label: "1Y", tf: "1d", limit: 250 },
 ];
-
-const CHARTABLE: Record<string, { symbol: string; title: string }> = {
-  XAUUSD: { symbol: "XAUUSD", title: "Gold · PAXG spot (Binance)" },
-};
 
 export default function CommoditiesPage() {
   const [q, setQ] = useState("");
   const [group, setGroup] = useState("");
   const [chart, setChart] = useState<string | null>("XAUUSD");
   const [range, setRange] = useState(DATE_RANGES[1]); // 1W default
+  const [detail, setDetail] = useState<string | null>(null); // selected commodity key → floating overlay
   const { data, meta, isLoading } = useApi<Data>("/api/v1/commodities", { refreshInterval: 5 * 60_000 });
+
+  // Esc closes the floating landing page; lock body scroll while open
+  useEffect(() => {
+    if (!detail) return;
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setDetail(null);
+    document.addEventListener("keydown", onKey);
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.body.style.overflow = prev;
+    };
+  }, [detail]);
 
   const catalog = useMemo(() => {
     let defs = data?.catalog ?? [];
@@ -61,7 +93,9 @@ export default function CommoditiesPage() {
   }, [data, group, q]);
 
   const bySymbol = useMemo(() => new Map((data?.rows ?? []).map((r) => [r.symbol, r])), [data]);
-  const chartDef = chart ? CHARTABLE[chart] : null;
+  /** chartable = real OHLC source exists (catalog hasChart) — same container, data-driven */
+  const chartable = useMemo(() => new Set((data?.catalog ?? []).filter((d) => d.hasChart).map((d) => d.symbol)), [data]);
+  const chartDef = chart ? data?.catalog.find((d) => d.symbol === chart && d.hasChart) : null;
 
   if (isLoading && !data) return <Loading rows={10} />;
 
@@ -109,12 +143,12 @@ export default function CommoditiesPage() {
         </div>
       </div>
 
-      {/* gold chart with polished date range picker */}
+      {/* commodity chart with polished date range picker (same container) */}
       {chartDef && (
         <div className="panel overflow-hidden">
           <div className="flex flex-wrap items-center gap-2 border-b border-border-subtle px-3.5 py-2.5">
             <LineChart className="size-4 text-accent-primary" />
-            <span className="text-[13px] font-semibold">{chartDef.title}</span>
+            <span className="text-[13px] font-semibold">{chartDef.nameVi} · {chartDef.symbol}</span>
             <div className="ml-auto flex items-center gap-1 rounded-lg border border-border-subtle bg-surface-elevated p-1">
               <CalendarDays className="ml-1 size-3.5 text-text-muted" />
               {DATE_RANGES.map((r) => (
@@ -137,7 +171,7 @@ export default function CommoditiesPage() {
               assetType="commodity"
               defaultTimeframe={range.tf}
               height={380}
-              title="XAU/USD"
+              title={chartDef.symbol}
             />
           </div>
         </div>
@@ -151,6 +185,7 @@ export default function CommoditiesPage() {
           {catalog.map((d) => {
             const row = bySymbol.get(d.symbol);
             const groupMeta = GROUPS.find((x) => x.key === d.group);
+            const openDetail = () => setDetail(d.key);
             if (!row) {
               return (
                 <div key={d.key} className="panel flex items-center justify-between p-3 opacity-60">
@@ -164,23 +199,29 @@ export default function CommoditiesPage() {
             }
             const dgt = row.price >= 1000 ? 0 : 2;
             const up = (row.changePercent ?? 0) > 0;
-            const hasChart = Boolean(CHARTABLE[d.symbol]);
+            const hasChart = chartable.has(d.symbol);
             return (
-              <div key={d.key} className="panel hover-lift relative overflow-hidden p-3">
+              <div
+                key={d.key}
+                className="panel hover-lift relative overflow-hidden p-3 cursor-pointer"
+                onClick={openDetail}
+                aria-label={`Xem chi tiết ${d.nameVi}`}
+              >
                 <div className={`pointer-events-none absolute inset-y-0 left-0 w-[3px] ${up ? "bg-positive" : (row.changePercent ?? 0) < 0 ? "bg-negative" : "bg-border-default"}`} />
                 <div className="flex items-start justify-between gap-2 pl-1.5">
                   <div className="min-w-0">
                     <div className="flex items-center gap-2">
                       <span className="text-[13.5px] font-semibold">{d.nameVi}</span>
                       <span className="text-[9.5px] uppercase tracking-wider text-text-muted">{groupMeta?.title}</span>
+                      {row.freshness && <FreshnessDot status={row.freshness as FreshnessStatus} />}
                     </div>
                     <div className="text-[10px] text-text-muted">{d.symbol} · {row.unit}</div>
                   </div>
                   <div className="flex shrink-0 items-center gap-1">
-                    <AddToWatchlist assetType="commodity" symbol={d.symbol} />
+                    <span onClick={(e) => e.stopPropagation()}><AddToWatchlist assetType="commodity" symbol={d.symbol} /></span>
                     {hasChart && (
                       <button
-                        onClick={() => setChart(chart === d.symbol ? null : d.symbol)}
+                        onClick={(e) => { e.stopPropagation(); setChart(chart === d.symbol ? null : d.symbol); }}
                         className={`rounded-md border p-1 ${chart === d.symbol ? "border-accent-primary/50 text-accent-primary" : "border-border-subtle text-text-muted hover:text-text-primary"}`}
                         aria-label="Mở chart"
                       >
@@ -221,9 +262,34 @@ export default function CommoditiesPage() {
 
       {data && data.unavailable.length > 0 && (
         <p className="text-[11px] text-text-muted">
-          {data.unavailable.length} mặt hàng chưa có nguồn (Vietnambiz / SIMPLIZE_API_KEY / MSN_COMMODITY_MAP) — hệ thống không mock data.
+          {data.unavailable.length} mặt hàng chưa có nguồn (Simplize / Vietnambiz / Yahoo) — hệ thống không mock data.
         </p>
       )}
+
+      {/* LANDING PAGE NỔI — floating overlay khi chọn/chạm một hàng hóa */}
+      {detail && <CommodityLandingOverlay symbol={detail} onClose={() => setDetail(null)} />}
+    </div>
+  );
+}
+
+/** Floating landing-page overlay: same content as /commodities/:key, fits the design. */
+function CommodityLandingOverlay({ symbol, onClose }: { symbol: string; onClose: () => void }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/60 p-3 backdrop-blur-sm sm:p-6" role="dialog" aria-modal="true" aria-label={`Chi tiết ${symbol}`} onClick={onClose}>
+      <div className="panel relative my-auto w-full max-w-3xl rounded-2xl p-3 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="sticky top-0 z-10 -mx-1 flex items-center justify-between rounded-t-xl bg-surface-base/95 px-1 pb-2 pt-1 backdrop-blur">
+          <span className="text-[11px] uppercase tracking-wider text-text-muted">Landing · {symbol}</span>
+          <div className="flex items-center gap-2">
+            <Link href={`/commodities/${symbol.toLowerCase()}`} className="inline-flex items-center rounded-md border border-border-subtle px-2 py-1 text-[10.5px] text-text-muted hover:text-text-primary" onClick={onClose}>
+              Mở trang đầy đủ
+            </Link>
+            <button onClick={onClose} className="rounded-md border border-border-subtle p-1 text-text-muted hover:text-text-primary" aria-label="Đóng">
+              <X className="size-3.5" />
+            </button>
+          </div>
+        </div>
+        <CommodityDetailView symbol={symbol} compact />
+      </div>
     </div>
   );
 }

@@ -166,8 +166,33 @@ export interface CommodityRow extends Quote {
   commodity: string;
   group: "metals" | "energy" | "industrial" | "agriculture" | "vietnam";
   sourceRecords: { source: string; price: number; timestamp: string | null; url?: string | null }[];
+  /** Phase Commodities — unified model (additive) */
+  id?: string;
+  name?: string;
+  nameVi?: string;
+  category?: string;
+  subcategory?: string | null;
+  previousClose?: number | null;
+  open?: number | null;
+  /** per-row honest freshness */
+  freshness?: FreshnessStatus;
+  marketState?: "OPEN" | "CLOSED" | "UNKNOWN";
+  freshnessNote?: string | null;
+  priceType?: "OHLC" | "CLOSE_ONLY";
+  /** provider-published performance (source truth, not computed by us) */
+  providerPerf?: Record<string, number | null> | null;
+  relatedStocks?: string[];
+  sourceUrl?: string | null;
+  /** provider-quote timestamp */
+  sourceTimestamp?: string | null;
+  performance?: {
+    "1D": { change: number | null; changePercent: number | null; basis: string };
+    "1W": { change: number | null; changePercent: number | null; basis: string };
+    "1M": { change: number | null; changePercent: number | null; basis: string };
+    "1Q": { change: number | null; changePercent: number | null; basis: string };
+    "1Y": { change: number | null; changePercent: number | null; basis: string };
+  } | null;
 }
-
 /* --------------------------------- Provider -------------------------------- */
 
 export interface ProviderStatus {
