@@ -86,6 +86,16 @@ export function ScalpPanel({ symbol }: { symbol: string }) {
       void mutate();
     };
 
+    const applyPrice = (price: number) => {
+      if (tk !== tokenRef.current || !Number.isFinite(price)) return;
+      setLive((prev) => {
+        if (!prev?.signal) return prev;
+        return { ...prev, signal: { ...prev.signal, last: price } };
+      });
+      setLastPushAt(Date.now());
+      setLiveState("live");
+    };
+
     es.addEventListener("snapshot", (e) => {
       try {
         apply(JSON.parse((e as MessageEvent).data as string) as StreamPayload);
@@ -96,6 +106,14 @@ export function ScalpPanel({ symbol }: { symbol: string }) {
     es.addEventListener("scalp.signal", (e) => {
       try {
         apply(JSON.parse((e as MessageEvent).data as string) as StreamPayload);
+      } catch {
+        /* drop */
+      }
+    });
+    es.addEventListener("scalp.price", (e) => {
+      try {
+        const { price } = JSON.parse((e as MessageEvent).data as string) as { price: number };
+        applyPrice(price);
       } catch {
         /* drop */
       }
@@ -123,6 +141,14 @@ export function ScalpPanel({ symbol }: { symbol: string }) {
         es2.addEventListener("scalp.signal", (ev) => {
           try {
             apply(JSON.parse((ev as MessageEvent).data as string) as StreamPayload);
+          } catch {
+            /* drop */
+          }
+        });
+        es2.addEventListener("scalp.price", (ev) => {
+          try {
+            const { price } = JSON.parse((ev as MessageEvent).data as string) as { price: number };
+            applyPrice(price);
           } catch {
             /* drop */
           }
