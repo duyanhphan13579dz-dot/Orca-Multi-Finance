@@ -187,9 +187,14 @@ function buildRows(quotes: Map<string, FxQuote>, prev: PrevRates | null, provide
   }).filter((x): x is ForexRow => x !== null);
 }
 
-/** Thêm USDVND từ mô hình Vietnam FX (Vietcombank/VietnamBiz) nếu còn thiếu. */
-function appendVnFx(rows: ForexRow[], vnFx: VnFxModel | null, prev: PrevRates | null): ForexRow[] {
-  if (!vnFx?.rate || rows.some((r) => r.pair === "USDVND")) return rows;
+/**
+ * USD/VND là domain riêng (Vietnam FX): row USDVND LUÔN lấy từ mô hình
+ * Vietnam FX (VCB sell → transfer → reference; fallback VietnamBiz) khi có —
+ * ghi đè giá Yahoo/ER-API để không hiển thị tỷ giá tham chiếu trái với
+ * giá ngân hàng VN. Nguồn không có → giữ nguyên row provider (honest).
+ */
+function applyVnFx(rows: ForexRow[], vnFx: VnFxModel | null, prev: PrevRates | null): ForexRow[] {
+  if (!vnFx?.rate) return rows;
   const def = PAIRS.find((p) => p.pair === "USDVND")!;
   const prevRate = prev ? deriveRate(def, prev.rates) : null;
   const row: ForexRow = {
@@ -208,7 +213,8 @@ function appendVnFx(rows: ForexRow[], vnFx: VnFxModel | null, prev: PrevRates | 
     updatedAt: vnFx.updatedAt ? new Date(vnFx.updatedAt).toISOString() : null,
     provider: `vietnam-fx (${vnFx.source})`,
   };
-  return [...rows, row];
+  const exists = rows.some((r) => r.pair === "USDVND");
+  return exists ? rows.map((r) => (r.pair === "USDVND" ? row : r)) : [...rows, row];
 }
 
 export interface ForexMarket {
@@ -229,7 +235,8 @@ export async function getForexMarkets(): Promise<{ data: ForexMarket; meta: Meta
     const { rates, ts } = await getBiquoteQuotes(fxPairs.map((p) => p.pair));
     const quotes = new Map<string, FxQuote>(Object.entries(rates).map(([pair, rate]) => [pair, { rate, ts }]));
     let rows = buildRows(quotes, prev, "biquote");
-    rows = appendVnFx(rows, vnFx, prev);
+    if (!rows.length) throw new Error("biquote: no quotes");
+    rows = applyVnFx(rows, vnFx, prev);
     if (rows.length) {
       ingestRows(rows, "biquote+vietnam-fx");
       const meta = buildMeta({
@@ -262,7 +269,8 @@ export async function getForexMarkets(): Promise<{ data: ForexMarket; meta: Meta
       r.value.entries.filter((e) => Number.isFinite(e.mid) && e.mid > 0).map((e) => [e.pair, { rate: e.mid, ts: e.ts, bid: e.bid, ask: e.ask }]),
     );
     let rows = buildRows(quotes, prev, SWISSQUOTE);
-    rows = appendVnFx(rows, vnFx, prev);
+    if (!rows.length) throw new Error("swissquote: no quotes");
+    rows = applyVnFx(rows, vnFx, prev);
     if (rows.length) {
       ingestRows(rows, `${SWISSQUOTE}+vietnam-fx`);
       const newest = rows.map((x) => (x.updatedAt ? Date.parse(x.updatedAt) : 0)).reduce((a, b) => Math.max(a, b), 0);
@@ -303,7 +311,8 @@ export async function getForexMarkets(): Promise<{ data: ForexMarket; meta: Meta
       }
     }
     let rows = buildRows(quotes, prev, "yahoo-fx");
-    rows = appendVnFx(rows, vnFx, prev);
+    if (!rows.length) throw new Error("yahoo-fx: no quotes");
+    rows = applyVnFx(rows, vnFx, prev);
     if (rows.length) {
       // ưu tiên change/prevClose từ chính provider (real daily) khi có
       rows = rows.map((r) => {
@@ -353,7 +362,8 @@ export async function getForexMarkets(): Promise<{ data: ForexMarket; meta: Meta
       if (rate != null) quotes.set(def.pair, { rate, ts: latest.value.ts });
     }
     let rows = buildRows(quotes, prev, latest.value.source);
-    rows = appendVnFx(rows, vnFx, prev);
+    if (!rows.length) throw new Error("er-api: no quotes");
+    rows = applyVnFx(rows, vnFx, prev);
     if (!rows.length) return null;
     ingestRows(rows, `${latest.value.source}+vietnam-fx`);
     const meta = buildMeta({
