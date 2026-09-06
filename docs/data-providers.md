@@ -103,6 +103,9 @@ crash cả trang.
   Macro: `data.vietnambiz.vn/macro-economic` (GDP/CPI/PMI/FDI/xuất nhập khẩu + kỳ công bố & ngày
   phát hành tiếp theo); Rates: `/currency-interest-rate` (M2, tín dụng, tỷ giá trung tâm/NHTM/tự do,
   lãi suất LNH/discount/refinance/huy động). Bản quyền CTCP WiGroup — mọi payload ghi nguồn đầy đủ.
+  **UI 2 trang mới:** `/macro` (bảng vĩ mô + Δ kỳ trước + ngày công bố tiếp theo + search) và `/rates`
+  (bảng tiền tệ/lãi suất + Δ + search) — cùng style Panel/Badge/FreshnessDot, freshness DELAYED
+  (dữ liệu theo kỳ, không gắn LIVE), mỗi dataset lỗi hiển thị Unavailable riêng, phần còn lại vẫn chạy.
 - Vietnambiz (fallback khi Simplize + WiFeed lỗi): board SJC `/gia-vang-hom-nay.htm` cho `sjc-gold`; bài giá NGÀY
   (URL động, tìm qua chuyên mục ổn định `/hang-hoa.htm` — pattern verify 2026-09-06): xăng dầu
   (`gasoline-95`/`gasoline-92`/`diesel` — row E5RON92 / E10RON95-III / Diesel 0.05S, đổi đồng/lít →

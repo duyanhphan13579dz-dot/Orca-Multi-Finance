@@ -81,7 +81,9 @@ Mọi topic đều có `snapshot` đầu tiên, heartbeat 20s, reconnect do clie
 | --- | --- | --- |
 | `GET /api/v1/commodities` | Catalog + rows đa nguồn (Simplize→VietnamBiz Data WiFeed→Vietnambiz→Yahoo→MSN→Binance) + unavailable list (kèm reason per source) + `hasChart` + provenance | multi |
 | `GET /api/v1/commodities/:symbol` | Chi tiết (unified): quote/performance/freshness/provenance + `market/subgroup` + `hasChart` + `correlation` (r, β vs VNINDEX) + `latestNews/catalysts` | multi |
-| `GET /api/v1/vietnambiz-data` | Snapshot trực tiếp data.vietnambiz.vn: `goods` (bảng giá đầy đủ incl. nhôm/kẽm + mapping theo catalog key), `macro` (GDP/CPI/PMI/FDI…), `rates` (M2/tín dụng/tỷ giá/lãi suất) — mỗi section `{ok,data,error}` độc lập, kèm nguồn WiFeed/WiGroup + url | WiFeed |
+| `GET /api/v1/vietnambiz-data` | Snapshot trực tiếp data.vietnambiz.vn: `goods` (bảng giá đầy đủ incl. nhôm/kẽm + mapping theo catalog key), `macro` (GDP/CPI/PMI/FDI…), `rates` (M2/tín dụng/tỷ giá/lãi suất) — mỗi section `{ok,data,error}` độc lập, meta `sections`/`partial`/`degraded`, kèm nguồn WiFeed/WiGroup + url | WiFeed |
+| `GET /macro` | **UI** — Kinh tế vĩ mô Việt Nam (bảng chỉ tiêu: kỳ, hiện tại/kỳ trước, Δ, ngày công bố tiếp theo; search lọc; nguồn + bản quyền WiGroup) | WiFeed |
+| `GET /rates` | **UI** — Lãi suất & tiền tệ (M2/tín dụng/tỷ giá/lãi suất LNH/huy động; search lọc; nguồn + bản quyền WiGroup) | WiFeed |
 | `GET /api/v1/commodities/:symbol/history?timeframe=1h/4h/1d/1w/1M&limit=10..1000` | Lịch sử thật futures (Yahoo, cùng ticker Simplize); OHLC hoặc CLOSE_ONLY | yahoo |
 | `GET /api/v1/commodities/:symbol/performance` | 1D/1W/1M/1Q/1Y — historical (nearest valid observation) + provider-published | engine+yahoo |
 | `GET /api/v1/commodities/:symbol/impact` | Impact matrix evidence-based: per-stock relationshipType/direction/strength/channel/confidence (exposure + related-source, không nhân quả) | engine |

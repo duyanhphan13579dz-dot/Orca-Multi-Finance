@@ -5,7 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import {
   Bell, Bot, Boxes, CandlestickChart, ChevronsLeft, ChevronsRight, Coins, DollarSign,
-  Eye, FlaskConical, GaugeCircle, Globe2, Grid2x2, Home, LogOut, Menu, Newspaper, NotebookPen, Settings, X,
+  Eye, FlaskConical, GaugeCircle, Globe2, Grid2x2, Home, LogOut, Menu, Newspaper, NotebookPen, Percent, Settings, TrendingUp, X,
 } from "lucide-react";
 import { TickerTape } from "@/components/ticker-tape";
 import { GlobalSearch } from "@/components/search";
@@ -31,6 +31,8 @@ const NAV_SECTIONS: { title: string; items: { href: string; label: string; icon:
     items: [
       { href: "/heatmap", label: "Heatmap", icon: Grid2x2 },
       { href: "/screener", label: "Screener", icon: FlaskConical },
+      { href: "/macro", label: "Kinh tế vĩ mô", icon: TrendingUp },
+      { href: "/rates", label: "Lãi suất & tiền tệ", icon: Percent },
       { href: "/news", label: "Tin tức", icon: Newspaper },
       { href: "/reports", label: "Bản tin", icon: Globe2 },
       { href: "/agent", label: "AI Agent", icon: Bot },
@@ -200,7 +202,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           {children}
         </main>
         <footer className="border-t border-border-subtle px-4 py-2.5 text-[10.5px] leading-relaxed text-text-muted">
-          ORCA Financial · dữ liệu phục vụ nghiên cứu — không phải khuyến nghị đầu tư · nguồn: VNDirect · Binance · Biquote · Vietnambiz · Simplize · RSS · mọi dữ liệu gắn nhãn LIVE/FRESH/DELAYED/STALE/DEGRADED/UNAVAILABLE
+          ORCA Financial · dữ liệu phục vụ nghiên cứu — không phải khuyến nghị đầu tư · nguồn: VNDirect · Binance · Biquote · Vietnambiz (WiFeed) · Simplize · RSS · mọi dữ liệu gắn nhãn LIVE/FRESH/DELAYED/STALE/DEGRADED/UNAVAILABLE
         </footer>
       </div>
     </div>
