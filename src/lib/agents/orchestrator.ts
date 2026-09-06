@@ -4,6 +4,7 @@ import { buildMeta, worstFreshness } from "../freshness";
 import { qualityToLabel } from "../quality";
 import { runStockAnalyst, runStockAnalystWithLLM, extractStockSymbol } from "./stock-analyst";
 import { runPersonalFinance, runBudgetPlanner, looksLikeBudgetQuestion } from "./personal-finance";
+import { synthesizeRun } from "./llm-synth";
 import { runWealthManager } from "./wealth-manager";
 import type { AgentId, AgentRun } from "./agent-types";
 import type { FinancialProfile } from "../finance/financial-profile";
@@ -88,10 +89,13 @@ export async function runFinancialOrchestrator(
       const run = agentCtx.llm ? await runStockAnalystWithLLM(symbol, { llm: true }) : await runStockAnalyst(symbol);
       runs.push(run);
     }
-    if (cls.intents.includes("wealth-manager")) runs.push(await runWealthManager(agentCtx));
+    if (cls.intents.includes("wealth-manager")) {
+      const run = await runWealthManager(agentCtx);
+      runs.push(agentCtx.llm ? await synthesizeRun(run, { question }) : run);
+    }
     if (cls.intents.includes("personal-finance")) {
-      if (cls.kind === "budget-plan") runs.push(await runBudgetPlanner(question));
-      else runs.push(await runPersonalFinance(agentCtx));
+      const run = cls.kind === "budget-plan" ? await runBudgetPlanner(question) : await runPersonalFinance(agentCtx);
+      runs.push(agentCtx.llm ? await synthesizeRun(run, { question }) : run);
     }
 
     const freshnesses = runs.map((r) => r.freshness);

@@ -128,8 +128,24 @@ Tĩnh (methodology/định nghĩa/ngưỡng/quy tắc phân loại bằng chứn
 | `PUT/GET/DELETE /api/v1/agent/profile` | Financial Memory có consent + auth |
 | `npm run eval:ai` | benchmark nội bộ 4 khối |
 
-### 2.8 Anti-hallucination (`src/lib/ai/validate.ts` — tái sử dụng từ hệ thống cũ)
-`collectFactNumbers(contract)` → `validateOutput(text, facts)`: số trong answer phải trace về contract; sai → regenerate 1 lần → fallback deterministic. Agent sections phân loại `FACT / DATA-DRIVEN / MODEL-INFERENCE / SCENARIO / OPINION`.
+### 2.8 LLM Gateway & Synthesis — `src/lib/ai/gateway.ts`, `src/lib/agents/llm-synth.ts`
+**Có thể gọi LLM để trả lời.** Gateway OpenAI-compatible, **optional** (deterministic là nguồn chính thức khi chưa cấu hình):
+
+| Env | Ý nghĩa |
+|---|---|
+| `AI_PROVIDER_KEY` | **Bật LLM** (bỏ trống → toàn bộ chạy deterministic) |
+| `AI_BASE_URL` | OpenAI-compatible endpoint (mặc định `https://api.openai.com/v1`) |
+| `AI_MODEL` | Model mặc định (`gpt-4o-mini`) |
+| `AI_MODEL_REASONING` / `AI_MODEL_ANALYSIS` / `AI_MODEL_CLASSIFICATION` | Model theo role |
+
+Đường đi LLM hiện tại:
+- **Pipeline legacy** (`answerQuestion`): `llmChat(role)` → `validateMaybeRepair` (regenerate 1 lần → fallback deterministic).
+- **Stock Analyst**: `runStockAnalystWithLLM` — LLM viết tổng hợp từ sections, validate chặt.
+- **Personal Finance / Wealth / Budget** (mới): `synthesizeRun(run, {question})` — cùng guard: `collectFactNumbers(sections[].data)` → `validateOutput(text, facts)`; số lạ → regenerate 1 lần → vẫn sai → **giữ nguyên narrative deterministic**; trace `llm:<model>[:regenerated]` / `llm:fallback-deterministic` / `llm:not-configured`.
+- Kiểm tra trạng thái: `/api/v1/system/info` (hoặc `llmRegistryInfo`).
+
+### 2.9 Anti-hallucination (`src/lib/ai/validate.ts` — tái sử dụng từ hệ thống cũ)
+`collectFactNumbers(contract)` → `validateOutput(text, facts)`: số trong answer phải trace về contract; sai → regenerate 1 lần → fallback deterministic. Parser hỗ trợ vi-VN `1.234,56`, `26,255`, `500.000` (chấm hàng nghìn) và en-US `1,234.56`. Agent sections phân loại `FACT / DATA-DRIVEN / MODEL-INFERENCE / SCENARIO / OPINION`.
 
 ---
 
@@ -151,7 +167,7 @@ Văn phong: analyst VN tự nhiên, thesis → bằng chứng → phân tích �
 
 | Hạng mục | Kết quả |
 |---|---|
-| `npm test` | **311/311 pass** (252 cũ + 59 mới: finance-math 26, profile 5, finance-tools 8, agents 8, ai-eval 12) |
+| `npm test` | **327/327 pass** (252 cũ + mới: finance-math 26, profile 5, finance-tools 8, agents 8, ai-eval 12, budget 11, llm-synth 5) |
 | `npm run typecheck` | PASS |
 | `npm run lint` | 0 errors (18 warnings pre-existing) |
 | `npm run build` | PASS (22 pages) |

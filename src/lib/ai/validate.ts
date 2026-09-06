@@ -15,7 +15,7 @@ export interface NumericClaim {
 
 function parseLocalNumber(raw: string): number | null {
   let s = raw.replace(/\s/g, "");
-  // vi-VN: 1.234,56 | en-US: 1,234.56 | plain: 123.45
+  const isDotGrouped = /^\d{1,3}(\.\d{3})+$/.test(s); // "500.000" / "1.250.000" (VN thousands)
   const hasComma = s.includes(",");
   const hasDot = s.includes(".");
   if (hasComma && hasDot) {
@@ -25,6 +25,9 @@ function parseLocalNumber(raw: string): number | null {
   } else if (hasComma) {
     // "79,591" (thousands) vs "45,3" (decimal)
     s = /,\d{1,2}$/.test(s) && !/,\d{3}$/.test(s) ? s.replace(",", ".") : s.replace(/,/g, "");
+  } else if (isDotGrouped) {
+    // "500.000" → 500000 (vi-VN dùng chấm làm dấu phân cách hàng nghìn)
+    s = s.replace(/\./g, "");
   }
   const n = Number(s);
   return Number.isFinite(n) ? n : null;
