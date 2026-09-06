@@ -71,19 +71,13 @@ async function getFromHosts<T>(hosts: string[], startIdx: number, path: string, 
   let lastErr = "unreachable";
   for (let i = 0; i < hosts.length; i++) {
     const idx = (startIdx + i) % hosts.length;
-    const url = `${hosts[idx]}${path}`;
+    const host = hosts[idx];
+    if (!host) continue;
+    const url = `${host}${path}`;
     // Per-host circuit key so one geo-blocked endpoint cannot lock out all failovers
     const hostProvider = i === 0 ? provider : `${provider}:h${idx}`;
     const res = await httpJson<T>(url, { provider: hostProvider, timeoutMs: 8_000, retries: 1 });
     if (res.ok && res.data != null) {
-      if (i > 0) {
-        try {
-          const { recordSuccess } = await import("../health");
-          recordSuccess(provider, res.latencyMs ?? 0);
-        } catch {
-          /* ignore */
-        }
-      }
       return { data: res.data, hostIdx: idx };
     }
     lastErr = res.error ?? "unreachable";
