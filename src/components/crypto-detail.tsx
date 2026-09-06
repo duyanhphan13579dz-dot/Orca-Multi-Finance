@@ -31,7 +31,7 @@ const INTERVALS = ["15m", "1h", "4h", "1d"] as const;
 
 export function CryptoDetailPage({ symbol }: { symbol: string }) {
   const { settings } = useSettings();
-  const { fmtUsd } = usePrefCurrency();
+  usePrefCurrency();
   const [interval, setInterval] = useState<(typeof INTERVALS)[number]>(
     (INTERVALS as readonly string[]).includes(settings.dashboard.defaultTimeframe)
       ? (settings.dashboard.defaultTimeframe as (typeof INTERVALS)[number])
