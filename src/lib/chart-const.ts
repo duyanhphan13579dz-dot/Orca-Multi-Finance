@@ -14,7 +14,7 @@ export interface ChartCandle {
   volume?: number;
 }
 
-export type ChartAssetType = "crypto" | "forex" | "stock" | "commodity";
+export type ChartAssetType = "crypto" | "forex" | "stock" | "commodity" | "metal";
 
 export const TF_MS: Record<string, number> = {
   "1m": 60_000,
@@ -33,12 +33,16 @@ export const TF_MS: Record<string, number> = {
 };
 
 export const CRYPTO_TFS = ["1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "12h", "1d", "1w", "1M"] as const;
-export const FOREX_TFS = ["5m", "15m", "30m", "1h", "4h", "1d", "1w", "1M"] as const;
+/** Forex intraday/daily — 1m trực tiếp từ provider (Yahoo `1m`, range 7d) */
+export const FOREX_TFS = ["1m", "5m", "15m", "30m", "1h", "4h", "1d", "1w", "1M"] as const;
+/** Kim loại (XAU/XAG/XPT/XPD) — cùng dải timeframes forex: 1m..1M (4h = aggregate 1h) */
+export const METALS_TFS = ["1m", "5m", "15m", "30m", "1h", "4h", "1d", "1w", "1M"] as const;
 export const STOCK_TFS = ["1d", "1w", "1M"] as const;
 
 export function tfsFor(asset: ChartAssetType): readonly string[] {
   if (asset === "crypto") return CRYPTO_TFS;
   if (asset === "forex") return FOREX_TFS;
+  if (asset === "metal") return METALS_TFS;
   if (asset === "commodity") return ["1h", "4h", "1d", "1w", "1M"];
   return STOCK_TFS;
 }

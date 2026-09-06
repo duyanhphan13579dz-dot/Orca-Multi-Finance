@@ -19,7 +19,7 @@ export async function GET(req: Request) {
   const limit = Number(url.searchParams.get("limit") ?? 300);
 
   if (!/^[A-Za-z0-9]{2,20}$/.test(symbol)) return badRequest("symbol không hợp lệ");
-  if (!["crypto", "forex", "stock", "commodity"].includes(assetType)) return badRequest("assetType không hợp lệ");
+  if (!["crypto", "forex", "stock", "commodity", "metal"].includes(assetType)) return badRequest("assetType không hợp lệ");
   if (!tfsFor(assetType).includes(timeframe)) return badRequest(`timeframe không hỗ trợ cho ${assetType} (cho phép: ${tfsFor(assetType).join(", ")})`);
   if (!Number.isFinite(limit) || limit < 50 || limit > 1000) return badRequest("limit 50..1000");
 

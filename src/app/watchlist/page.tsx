@@ -7,8 +7,9 @@ import { loadWatchlist, saveWatchlist, type WatchItem } from "@/components/watch
 import { pullWatchlist, mergeWatchlists } from "@/lib/watchlist-sync";
 import { DEFAULT_VN_WATCHLIST } from "@/lib/vn/master";
 import type { CryptoSummary } from "@/lib/services/crypto";
-import type { CryptoMarketRow, ForexRow } from "@/lib/types";
+import type { CryptoMarketRow, ForexRow, MetalRow } from "@/lib/types";
 import type { ForexMarket } from "@/lib/services/forex";
+import type { MetalsMarket } from "@/lib/services/metals";
 import { Badge, Chg, fmtNum, Panel, priceDigits } from "@/components/ui";
 import { ArrowDown, ArrowUp, Eye, Plus, Trash2 } from "lucide-react";
 
@@ -38,9 +39,11 @@ export default function WatchlistPage() {
 
   const { data: crypto } = useApi<CryptoData>("/api/v1/crypto/markets?limit=300", { refreshInterval: 20_000 });
   const { data: forex } = useApi<ForexMarket>("/api/v1/forex/markets", { refreshInterval: 60_000 });
+  const { data: metals } = useApi<MetalsMarket>("/api/v1/metals/markets", { refreshInterval: 60_000 });
 
   const cryptoMap = useMemo(() => new Map((crypto?.rows ?? []).map((r) => [r.symbol, r])), [crypto]);
   const forexMap = useMemo(() => new Map((forex?.rows ?? []).map((r) => [r.pair, r])), [forex]);
+  const metalsMap = useMemo(() => new Map((metals?.rows ?? []).map((r) => [r.symbol, r])), [metals]);
 
   const add = () => {
     const raw = input.trim().toUpperCase().replace(/[^A-Z0-9/]/g, "");
@@ -93,7 +96,8 @@ export default function WatchlistPage() {
             {items.map((it, idx) => {
               const c = it.assetType === "crypto" ? cryptoMap.get(it.symbol) : null;
               const f = it.assetType === "forex" ? forexMap.get(it.symbol) : null;
-              const href = it.assetType === "crypto" ? `/crypto/${it.symbol}` : it.assetType === "forex" ? `/forex/${it.symbol}` : it.assetType === "stock" ? `/stocks/${it.symbol}` : "/commodities";
+              const m = it.assetType === "metal" ? metalsMap.get(it.symbol) : null;
+              const href = it.assetType === "crypto" ? `/crypto/${it.symbol}` : it.assetType === "forex" ? `/forex/${it.symbol}` : it.assetType === "metal" ? `/metals/${it.symbol}` : it.assetType === "stock" ? `/stocks/${it.symbol}` : "/commodities";
               return (
                 <li key={`${it.assetType}-${it.symbol}`} className="row-hover flex items-center gap-2 px-3.5 py-2.5">
                   <div className="flex flex-col gap-0.5">
@@ -102,7 +106,7 @@ export default function WatchlistPage() {
                   </div>
                   <div className="min-w-0 flex-1">
                     <Link href={href} className="text-[13px] font-semibold hover:text-accent">{it.symbol}</Link>
-                    <span className="ml-2 text-[10px] text-ink-3">{it.assetType === "crypto" ? "Crypto" : it.assetType === "forex" ? "Forex" : it.assetType === "stock" ? "Cổ phiếu VN" : "Hàng hóa"}</span>
+                    <span className="ml-2 text-[10px] text-ink-3">{it.assetType === "crypto" ? "Crypto" : it.assetType === "forex" ? "Forex" : it.assetType === "metal" ? "Kim loại" : it.assetType === "stock" ? "Cổ phiếu VN" : "Hàng hóa"}</span>
                   </div>
                   {c ? (
                     <div className="text-right">
@@ -113,6 +117,11 @@ export default function WatchlistPage() {
                     <div className="text-right">
                       <div className="num text-[13px]">{f.price >= 100 ? f.price.toFixed(2) : f.price.toFixed(4)}</div>
                       <Chg value={f.changePercent} className="text-[11px]" arrow={false} />
+                    </div>
+                  ) : m ? (
+                    <div className="text-right">
+                      <div className="num text-[13px]">{m.price >= 1000 ? m.price.toLocaleString("vi-VN", { maximumFractionDigits: 2 }) : m.price.toFixed(2)}</div>
+                      <Chg value={m.changePercent} className="text-[11px]" arrow={false} />
                     </div>
                   ) : it.assetType === "stock" ? (
                     <Badge tone="warn">chờ VNDirect</Badge>

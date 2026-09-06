@@ -2,7 +2,7 @@
 
 export type FreshnessStatus = "LIVE" | "FRESH" | "DELAYED" | "STALE" | "DEGRADED" | "UNAVAILABLE";
 
-export type AssetClass = "stock" | "crypto" | "forex" | "commodity" | "index";
+export type AssetClass = "stock" | "crypto" | "forex" | "commodity" | "index" | "metal";
 
 export type QualityStatus = "VALID" | "SUSPECT" | "INVALID" | "STALE";
 
@@ -157,6 +157,27 @@ export interface ForexRow extends Quote {
   baseCurrency?: string;
   quoteCurrency?: string;
   previousClose?: number | null;
+  /** Multi-source metadata (additive) — provider cung cấp BBO thì hiển thị */
+  bid?: number | null;
+  ask?: number | null;
+  provider?: string;
+}
+
+/* --------------------------------- Metals --------------------------------- */
+
+export interface MetalRow extends Quote {
+  assetClass: "metal";
+  symbol: string;
+  name: string;
+  unit: string;
+  group: "precious" | "platinum";
+  base: string;
+  quote: string;
+  bid?: number | null;
+  ask?: number | null;
+  previousClose?: number | null;
+  /** providers đã đóng góp cho row (phân tách để ghi nguồn trung thực) */
+  provider?: string;
 }
 
 /* ------------------------------- Commodities ------------------------------- */

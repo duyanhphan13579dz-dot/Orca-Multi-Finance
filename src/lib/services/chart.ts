@@ -213,9 +213,36 @@ async function commodityCandles(_symbol: string, _tf: string, _limit: number): P
   throw new Error("commodity_history_unavailable");
 }
 
+/** Metals (XAU/XAG/XPT/XPD): OHLC thật từ Yahoo public (spot ưu tiên → futures failover). */
+async function metalCandles(symbol: string, tf: string, limit: number): Promise<{ candles: ChartCandle[]; source: string; note?: string }> {
+  const { metalDef } = await import("./metals");
+  const def = metalDef(symbol);
+  if (!def) throw new Error("unknown metal symbol");
+  const cfg = yahooIntervalFor(tf);
+  if (!cfg) throw new Error("unsupported metal timeframe");
+  let lastErr = "unreachable";
+  for (const y of def.yahooSymbols) {
+    try {
+      const res = await getYahooChart(y, cfg.interval, cfg.range);
+      let candles = res.candles;
+      if (cfg.aggregate4h) candles = aggregateCandles(candles, TF_MS["4h"]);
+      if (candles.length) {
+        return {
+          candles: candles.slice(-limit),
+          source: `yahoo-fx (${y})`,
+          note: `OHLC thật từ Yahoo Finance public (${y}); 4h = aggregate từ 1h — không nội suy.`,
+        };
+      }
+    } catch (e) {
+      lastErr = e instanceof Error ? e.message : "unreachable";
+    }
+  }
+  throw new Error(`metal history unavailable (${lastErr})`);
+}
+
 /** How long a stored candle series is considered fresh (providers not re-called). */
 function chartFreshMs(assetType: ChartAssetType, tf: string): number {
-  return assetType === "crypto" ? 18_000 : assetType === "forex" ? 45_000 : 60_000;
+  return assetType === "crypto" ? 18_000 : assetType === "forex" || assetType === "metal" ? 45_000 : 60_000;
 }
 
 export async function getChartHistory(args: ChartArgs): Promise<{ data: ChartMarketData; meta: Meta } | null> {
@@ -247,9 +274,11 @@ export async function getChartHistory(args: ChartArgs): Promise<{ data: ChartMar
             ? await cryptoCandles(symbol, tf, limit)
             : args.assetType === "forex"
               ? await forexCandles(symbol, tf, limit)
-              : args.assetType === "commodity"
-                ? await commodityCandles(symbol, tf, limit)
-                : await stockCandles(symbol, tf, limit);
+              : args.assetType === "metal"
+                ? await metalCandles(symbol, tf, limit)
+                : args.assetType === "commodity"
+                  ? await commodityCandles(symbol, tf, limit)
+                  : await stockCandles(symbol, tf, limit);
 
         // DATA QUALITY: per-candle validation (§24), sanitize, log anomalies
         const q = validateBars(raw.candles as OhlcvBar[]);

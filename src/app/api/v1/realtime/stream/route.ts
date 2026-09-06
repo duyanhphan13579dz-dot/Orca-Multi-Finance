@@ -48,7 +48,7 @@ function parseParams(url: URL): { ok: true; p: Params } | { ok: false; msg: stri
     .filter((s) => /^[A-Z0-9._-]{2,20}$/.test(s))
     .slice(0, 200);
   const assetType = url.searchParams.get("assetType") ?? "all";
-  if (!["all", "crypto", "stock", "forex", "commodity", "index"].includes(assetType)) return { ok: false, msg: "assetType không hợp lệ" };
+  if (!["all", "crypto", "stock", "forex", "commodity", "index", "metal"].includes(assetType)) return { ok: false, msg: "assetType không hợp lệ" };
   const timeframes = (url.searchParams.get("timeframes") ?? "5m,15m,1h,1d")
     .split(",")
     .map((t) => t.trim())
@@ -148,7 +148,7 @@ async function startMarket(send: (e: string, d: unknown) => void, wire: Wire, sy
     if (stockSyms.length) vnMarketEngine.start(stockSyms);
   }
   attachQuoteFanout(send, wire, symbols.length ? symbols : null);
-  const quotes = symbols.length ? marketStore.getMany(symbols) : marketStore.snapshot(assetType === "all" ? undefined : (assetType as "crypto" | "stock" | "forex" | "commodity" | "index"));
+  const quotes = symbols.length ? marketStore.getMany(symbols) : marketStore.snapshot(assetType === "all" ? undefined : (assetType as "crypto" | "stock" | "forex" | "commodity" | "index" | "metal"));
   send("snapshot", {
     topic: "market",
     symbols: symbols.length ? symbols : undefined,

@@ -5,7 +5,7 @@ import { Eye, EyeOff } from "lucide-react";
 import { pushWatchlist } from "@/lib/watchlist-sync";
 
 export interface WatchItem {
-  assetType: "stock" | "crypto" | "forex" | "commodity";
+  assetType: "stock" | "crypto" | "forex" | "commodity" | "metal";
   symbol: string;
   addedAt: number;
 }

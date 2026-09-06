@@ -47,12 +47,29 @@ Không còn khái niệm primary/secondary/reconciliation: một source duy nh�
 - `GET /fapi/v1/premiumIndex`, `/fapi/v1/openInterest` — funding/OI (có thể geo-blocked; UI gắn badge `geo-blocked` thay vì ẩn).
 - Host failover lưu `lastGood*` giữa các lần gọi.
 
-### Forex (`src/lib/providers/forex.ts` + `services/forex.ts`)
+### Forex (`src/lib/providers/swissquote.ts` + `providers/forex.ts` + `services/forex.ts` + `providers/vietcombank.ts` + `services/vnfx.ts`)
 
-- Biquote: `GET {BIQUOTE_BASE_URL}/v1/quotes?symbols=…` (env, chuẩn hóa nhiều dạng payload).
-- Fallback 1: exchangerate-api `/v6/latest/USD` → cross pairs tính toán từ rates USD-based có timestamp provider.
-- Fallback 2: Frankfurter `/v1/{start}..{end}?base=…` — chuỗi ECB hằng ngày (đánh nhãn reference, không giả lập intraday).
-- % thay đổi đối chiếu **bản fix ECB gần nhất** (1 request, cache 6h).
+Multi-source, ưu tiên public/free/direct — một provider lỗi KHÔNG làm mất dịch vụ:
+
+1. **Biquote** (env `BIQUOTE_BASE_URL/API_KEY`): `GET {base}/v1/quotes?symbols=…` — feed chuyên nghiệp khi được cấu hình.
+2. **Swissquote public BBO** (no key — verified live 2026-09-06): `GET https://forex-data-feed.swissquote.com/public-quotes/bboquotes/instrument/{BASE}/{QUOTE}` → `spreadProfilePrices[]` (chọn profile spread nhỏ nhất, mid = (bid+ask)/2, ts ms). Dùng cho FX majors/crosses **và** metals `XAU/USD, XAG/USD, XPT/USD, XPD/USD`.
+3. **Yahoo Finance** (public chart/quote, spot `EURUSD=X`; metals spot `XAUUSD=X` → futures `GC=F…` failover): snapshot + OHLC chart + change/prevClose.
+4. **exchangerate-api** `/v6/latest/USD` → cross pairs tính toán từ rates USD-based có timestamp provider.
+5. **Frankfurter/ECB** `/v1/{start}..{end}?base=…` — chuỗi hằng ngày (reference fallback cho series khi Yahoo OHLC fail; o=h=l=c, không giả lập intraday).
+6. **Vietcombank** (public, no key): `GET https://www.vietcombank.com.vn/api/exchangerates?date=YYYY-MM-DD` — USD/VND buy cash / transfer / sell (bắt buộc `date`; cuối tuần trả phiên gần nhất + `UpdatedDate` → không coi là provider error).
+7. **VietnamBiz Data** `/currency-interest-rate` (WiFeed): Tỷ giá trung tâm SBV + NHTM bán ra + USD tự do bán — dùng làm reference/sell cho mô hình USD/VND và override VND cho currency converter.
+
+- % thay đổi đối chiếu **bản fix ECB gần nhất** (cache 6h); khi Yahoo cung cấp prevClose thì ưu tiên change của chính provider.
+- Universe: 7 majors + 8 crosses (EURJPY, EURGBP, GBPJPY, AUDJPY, EURCHF, EURAUD, GBPCHF, AUDCAD) + USDVND.
+- USD/VND là **domain riêng** (`services/vnfx.ts`): reference/buyCash/buyTransfer/sell/freeSell; sell ưu tiên VCB → VietnamBiz NHTM bán; mức nguồn không công bố → `null` (không suy diễn).
+
+### Metals (`src/lib/services/metals.ts` + `providers/swissquote.ts` + `providers/yahoo.ts`)
+
+- Kim loại là **tradable instrument riêng** (XAUUSD/XAGUSD/XPTUSD/XPDUSD), tách hẳn commodities (VietnamBiz /goods giữ nguyên).
+- Quote: Swissquote BBO (direct realtime) → Yahoo (spot → futures failover); change/prevClose từ Yahoo daily reference.
+- History: Yahoo OHLC thật (spot `XAUUSD=X`/`XAGUSD=X` → futures `GC=F`/`SI=F`/`PL=F`/`PA=F`); 4h = aggregate 1h (không nội suy).
+- Performance 1D/1W/1M/1Q/1Y: tính trên nến daily thật theo mốc lịch (`lib/performance.ts`), thiếu dữ liệu → null.
+- Multi-timeframe chart: `1m/5m/15m/30m/1h/4h/1d/1w/1M` (1m = Yahoo 7d; 5m/15m/30m = 60d; 1h/4h = 730d; 1d = 2y–10y; 1w/1M = 10y/max).
 
 ### Commodities (`src/lib/providers/commodities.ts` + `engines/commodity.ts` + `services/commodities.ts`)
 

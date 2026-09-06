@@ -33,7 +33,7 @@ export function combineQuality(parts: QualityResult[]): QualityResult {
 
 /* --------------------------------- quotes --------------------------------- */
 
-const DEVIATION_LIMITS: Record<string, number> = { crypto: 35, forex: 8, stock: 25, commodity: 25, index: 15 };
+const DEVIATION_LIMITS: Record<string, number> = { crypto: 35, forex: 8, stock: 25, commodity: 25, index: 15, metal: 15 };
 
 export function validateQuote(
   q: Pick<Quote, "price" | "open" | "high" | "low" | "volume" | "changePercent" | "updatedAt">,

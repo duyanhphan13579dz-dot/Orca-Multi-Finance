@@ -17,7 +17,7 @@ import { validateQuote, validateBars, logQualityEvent } from "../quality";
 import type { ChartCandle } from "../chart-const";
 import type { FreshnessStatus, OhlcvBar, QualityStatus } from "../types";
 
-export type StoredAssetType = "stock" | "crypto" | "forex" | "commodity" | "index";
+export type StoredAssetType = "stock" | "crypto" | "forex" | "commodity" | "index" | "metal";
 
 export interface StoredQuote {
   assetType: StoredAssetType;
@@ -82,6 +82,7 @@ const STALE_MS: Record<StoredAssetType, number> = {
   forex: 300_000,
   commodity: 300_000,
   index: 120_000,
+  metal: 300_000,
 };
 
 /** Entry freshness SLA: FRESH ≤ ½ stale-window, DELAYED ≤ stale-window, else STALE. */
@@ -91,6 +92,7 @@ export const ENTRY_FRESH_MS: Record<StoredAssetType, number> = {
   forex: 150_000,
   commodity: 150_000,
   index: 60_000,
+  metal: 150_000,
 };
 
 const PRUNE_MS = 30 * 60_000; // drop entries older than this

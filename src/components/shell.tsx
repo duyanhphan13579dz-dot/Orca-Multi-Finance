@@ -5,7 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import {
   Bell, Bot, Boxes, CandlestickChart, ChevronsLeft, ChevronsRight, Coins, DollarSign,
-  Eye, FlaskConical, GaugeCircle, Globe2, Grid2x2, Home, LogOut, Menu, Newspaper, NotebookPen, Percent, Settings, TrendingUp, X,
+  Eye, FlaskConical, GaugeCircle, Gem, Globe2, Grid2x2, Home, LogOut, Menu, Newspaper, NotebookPen, Percent, Settings, TrendingUp, X,
 } from "lucide-react";
 import { TickerTape } from "@/components/ticker-tape";
 import { GlobalSearch } from "@/components/search";
@@ -23,6 +23,7 @@ const NAV_SECTIONS: { title: string; items: { href: string; label: string; icon:
       { href: "/stocks", label: "Cổ phiếu VN", icon: CandlestickChart, core: true },
       { href: "/crypto", label: "Crypto", icon: Coins },
       { href: "/forex", label: "Forex", icon: DollarSign },
+      { href: "/metals", label: "Kim loại", icon: Gem },
       { href: "/commodities", label: "Hàng hóa", icon: Boxes },
     ],
   },
