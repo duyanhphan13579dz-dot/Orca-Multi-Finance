@@ -6,7 +6,7 @@ import {
   defByKeyOrSymbol,
   getSimplizeCommodityPage,
   getMsnQuotes,
-  getVietnambizSjcGold,
+  getVietnambizQuote,
   MSN_KEY_BY_KEY,
   type CommodityDef,
   type RawCommodityQuote,
@@ -168,7 +168,7 @@ async function fetchAll(): Promise<CommodityMarket> {
         try {
           let q: RawCommodityQuote | null = null;
           if (kind === "simplize") q = await simplizeRecord(def);
-          else if (kind === "vietnambiz") q = await getVietnambizSjcGold();
+          else if (kind === "vietnambiz") q = await getVietnambizQuote(def);
           else if (kind === "yahoo") q = yahooRecord(def, yahooByTicker);
           else if (kind === "msn" && msnIds[def.key] && msnById[msnIds[def.key]]) q = msnById[msnIds[def.key]];
           else if (kind === "binance" && def.binanceSymbol) q = await paxgQuote(def.binanceSymbol);

@@ -6,7 +6,7 @@
  */
 import test from "node:test";
 import assert from "node:assert/strict";
-import { parseSimplizePage, defByKeyOrSymbol, COMMODITY_CATALOG, MSN_KEY_BY_KEY, currencyForUnit } from "../providers/commodities";
+import { parseSimplizePage, defByKeyOrSymbol, COMMODITY_CATALOG, MSN_KEY_BY_KEY, currencyForUnit, parseVnbFuel, parseVnbPig, findVnbArticlePath } from "../providers/commodities";
 
 /** stripped-text (as produced by parseSimplizePage's stripTags) — WTI page, real values */
 const WTI_TEXT = [
@@ -170,4 +170,70 @@ test("universe: mọi commodity chính thức có Simplize path + market + curre
 test("MSN_KEY_BY_KEY remains only a fallback map — never primary for chart/change", () => {
   assert.equal(MSN_KEY_BY_KEY.gold, "GOLD");
   assert.equal(MSN_KEY_BY_KEY.wti, "WTI");
+});
+
+/* --------------------- Vietnambiz fallback (fuel/pig) ----------------------
+ * Fixtures = real values published in Vietnambiz articles (search-verified
+ * 2026-09-06): xăng dầu 26/8 (E5RON92 21.833, E10RON95-III 22.668, diesel
+ * 28.543 đồng/lít), heo hơi 20/8 (56.000–58.000 đồng/kg). */
+
+const VNB_FUEL_REAL = [
+  "Giá xăng dầu hôm nay 26/8: Giảm hơn 3% xuống đáy một tuần",
+  "06:45 | 26/08/2026",
+  "## Giá xăng dầu trong nước hôm nay",
+  "| Mặt hàng | Giá bán tối đa | Mức tăng/giảm |",
+  "| Xăng E5RON92 | 21.833 đồng/lít | +598 đồng/lít |",
+  "| Xăng E10RON95-III | 22.668 đồng/lít | +549 đồng/lít |",
+  "| Dầu diesel 0.05S | 28.543 đồng/lít | +1.310 đồng/lít |",
+].join(" \n ");
+
+const VNB_PIG_REAL = [
+  "Giá heo hơi hôm nay 20/8: Giữ đà tăng trên cả ba miền",
+  "06:45 | 20/08/2026",
+  "Theo ghi nhận mới nhất, heo hơi tại cả ba miền đang được giao dịch với giá trong khoảng 56.000 - 58.000 đồng/kg.",
+].join(" \n ");
+
+test("parseVnbFuel: RON95/RON92/DO trích giá + change + % + timestamp (đơn vị nghìn đồng/lít)", () => {
+  assert.deepEqual(parseVnbFuel(VNB_FUEL_REAL, "RON92"), { price: 21.833, change: 0.598, changePercent: null, timestamp: Date.parse("2026-08-26T00:00:00+07:00") });
+  const r95 = parseVnbFuel(VNB_FUEL_REAL, "RON95");
+  assert.equal(r95.price, 22.668);
+  assert.equal(r95.change, 0.549);
+  const do1 = parseVnbFuel(VNB_FUEL_REAL, "DO");
+  assert.equal(do1.price, 28.543);
+  assert.equal(do1.change, 1.31);
+});
+
+test("parseVnbFuel: thiếu row → ProviderError (không đoán giá)", () => {
+  assert.throws(() => parseVnbFuel("Bài không có bảng giá", "RON95"), /row RON95 not found/);
+});
+
+test("parseVnbPig: dải giá công bố → midpoint, không bịa", () => {
+  const p = parseVnbPig(VNB_PIG_REAL);
+  assert.equal(p.price, 57_000);
+  assert.equal(p.timestamp, Date.parse("2026-08-20T00:00:00+07:00"));
+});
+
+test("parseVnbPig: không có dải giá → ProviderError", () => {
+  assert.throws(() => parseVnbPig("Không có dữ liệu giá heo hơi hôm nay"), /pig range not found/);
+});
+
+test("findVnbArticlePath: tìm bài giá xăng dầu/heo hơi trong trang chuyên mục (slug động)", () => {
+  const cat = [
+    '<a href="/bang-gia-vang-hom-nay-69-vang-sjc-20269518562836.htm">Bảng giá vàng</a>',
+    '<a href="/gia-xang-dau-hom-nay-268-giam-hon-3-xuong-day-mot-tuan-202682674924302.htm">Giá xăng dầu hôm nay</a>',
+    '<a href="/gia-heo-hoi-hom-nay-208-giu-da-tang-tren-ca-ba-mien-202682064549460.htm">Giá heo hơi hôm nay</a>',
+  ].join("");
+  assert.match(findVnbArticlePath(cat, "gia-xang-dau-hom-nay"), /^\/gia-xang-dau-hom-nay-268-.*\.htm$/);
+  assert.match(findVnbArticlePath(cat, "gia-heo-hoi-hom-nay"), /^\/gia-heo-hoi-hom-nay-208-.*\.htm$/);
+  assert.throws(() => findVnbArticlePath(cat, "gia-tom-hom-nay"), /article "gia-tom-hom-nay" not found/);
+});
+
+test("universe: fuel/pig có chain Simplize → Vietnambiz (fallback thật)", () => {
+  for (const key of ["gasoline-95", "gasoline-92", "diesel", "pig-vn"]) {
+    const d = COMMODITY_CATALOG.find((x) => x.key === key);
+    assert.ok(d, key);
+    assert.ok(d.simplizePath, `${key}: Simplize primary`);
+    assert.ok(d.vietnambiz, `${key}: Vietnambiz fallback`);
+  }
+  assert.equal(COMMODITY_CATALOG.find((x) => x.key === "sjc-gold")?.vietnambiz, "sjc-gold");
 });

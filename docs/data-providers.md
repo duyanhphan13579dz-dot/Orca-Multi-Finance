@@ -91,7 +91,11 @@ crash cả trang.
   **~10 phút/lần** (timestamp nhảy 13:59:18 → 14:09:18, giá giữ nguyên) nên dữ liệu lặp lại giữa các lần poll
   là bình thường; quyết định poll 3s là chủ trương user (rủi ro tải lên origin + chính sách thương mại của
   Simplize đã được nêu rõ trong `docs/simplize-vn-audit.md`).
-- Vietnambiz: board SJC (mua/bán) — chỉ dùng cho `sjc-gold`.
+- Vietnambiz (fallback khi Simplize lỗi): board SJC `/gia-vang-hom-nay.htm` cho `sjc-gold`; bài giá NGÀY
+  (URL động, tìm qua chuyên mục ổn định `/hang-hoa.htm` — pattern verify 2026-09-06): xăng dầu
+  (`gasoline-95`/`gasoline-92`/`diesel` — row E5RON92 / E10RON95-III / Diesel 0.05S, đổi đồng/lít →
+  nghìn đồng/lít) và heo hơi (`pig-vn` — dải giá công bố → midpoint, có note nguồn). Tôm thẻ/cá tra/thép:
+  Vietnambiz chỉ có bài rời, không chuẩn ngày → KHÔNG đưa vào fallback (tránh dữ liệu cũ giả mạo "hôm nay").
 - Yahoo: futures quote + chart OHLC (CL=F, NG=F, BZ=F, HG=F, GC=F… — cùng ticker mà chart Simplize tự nhúng,
   verified `simplize.vn/chart?ticker=CL=F`); chart history mọi mặt hàng có `yahooSymbol`; thiếu OHLC → `CLOSE_ONLY`,
   không bịa OHLC.

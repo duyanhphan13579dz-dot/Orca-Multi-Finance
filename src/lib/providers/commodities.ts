@@ -1,5 +1,6 @@
 import "server-only";
 import { env } from "../env";
+import { cached } from "../cache";
 import { httpJson, httpText } from "../http";
 import { ProviderError } from "./binance";
 import type { ImpactDirection, ImpactStrength, RelationshipType } from "../engines/commodity";
@@ -99,7 +100,7 @@ export interface CommodityDef {
   /** provider quotes in US cents (KC/SB/ZC/ZS) → keep as displayed (USd/…) */
   centsQuoted?: boolean;
   /** Vietnambiz scrape strategy */
-  vietnambiz?: "sjc-gold";
+  vietnambiz?: "sjc-gold" | "fuel" | "pig";
   /** news-filter keywords for the NEWS & CATALYST engine (title/summary match) */
   newsKeywords?: string[];
   /** verified economic exposure (mechanism from public industry descriptions) */
@@ -292,7 +293,7 @@ export const COMMODITY_CATALOG: CommodityDef[] = [
   },
   {
     key: "gasoline-95", name: "Gasoline RON95 (VN)", nameVi: "Xăng RON95", group: "energy", category: "energy", subcategory: "Gasoline", subgroup: "Gasoline",
-    market: "VN", symbol: "RON95", unit: "Nghìn đồng/lít", currency: "VND", simplizePath: "/hang-hoa/gia-xang-ron95",
+    market: "VN", symbol: "RON95", unit: "Nghìn đồng/lít", currency: "VND", simplizePath: "/hang-hoa/gia-xang-ron95", vietnambiz: "fuel",
     newsKeywords: ["xăng", "giá xăng dầu", "dầu"],
     vnImpact: {
       sector: "Dầu khí & Vận tải", stocks: ["PLX", "OIL", "VIP", "VTO", "GMD"],
@@ -308,7 +309,7 @@ export const COMMODITY_CATALOG: CommodityDef[] = [
   },
   {
     key: "gasoline-92", name: "Gasoline RON92 (VN)", nameVi: "Xăng RON92", group: "energy", category: "energy", subcategory: "Gasoline", subgroup: "Gasoline",
-    market: "VN", symbol: "RON92", unit: "Nghìn đồng/lít", currency: "VND", simplizePath: "/hang-hoa/gia-xang-ron92",
+    market: "VN", symbol: "RON92", unit: "Nghìn đồng/lít", currency: "VND", simplizePath: "/hang-hoa/gia-xang-ron92", vietnambiz: "fuel",
     newsKeywords: ["xăng", "giá xăng dầu", "dầu"],
     vnImpact: {
       sector: "Dầu khí & Vận tải", stocks: ["PLX", "OIL", "VIP", "VTO", "GMD"],
@@ -324,7 +325,7 @@ export const COMMODITY_CATALOG: CommodityDef[] = [
   },
   {
     key: "diesel", name: "Diesel DO (VN)", nameVi: "Dầu DO", group: "energy", category: "energy", subcategory: "Diesel", subgroup: "Diesel",
-    market: "VN", symbol: "DO", unit: "Nghìn đồng/lít", currency: "VND", simplizePath: "/hang-hoa/gia-dau-diesel",
+    market: "VN", symbol: "DO", unit: "Nghìn đồng/lít", currency: "VND", simplizePath: "/hang-hoa/gia-dau-diesel", vietnambiz: "fuel",
     newsKeywords: ["dầu", "diesel", "xăng dầu"],
     vnImpact: {
       sector: "Vận tải & Logistics", stocks: ["GMD", "VTO", "VIP", "PLX", "OIL"],
@@ -340,7 +341,7 @@ export const COMMODITY_CATALOG: CommodityDef[] = [
   },
   {
     key: "pig-vn", name: "Live Hog North VN", nameVi: "Heo hơi miền Bắc", group: "livestock", category: "livestock", subcategory: "Hogs — VN", subgroup: "Hogs — VN",
-    market: "VN", symbol: "PIGVN", unit: "VNĐ/kg", currency: "VND", simplizePath: "/hang-hoa/gia-heo-hoi-mien-bac",
+    market: "VN", symbol: "PIGVN", unit: "VNĐ/kg", currency: "VND", simplizePath: "/hang-hoa/gia-heo-hoi-mien-bac", vietnambiz: "pig",
     newsKeywords: ["heo hơi", "thịt heo", "chăn nuôi", "lợn"],
     vnImpact: {
       sector: "Chăn nuôi & Thực phẩm", stocks: ["DBC", "BAF", "HAG", "MML"],
@@ -690,6 +691,147 @@ export async function getSimplizeCommodityPage(path: string): Promise<RawCommodi
     timestamp: p.timestamp,
     url,
   };
+}
+
+/* ------------------- Vietnambiz fallback (fuel / pig) ----------------------
+ * Vietnambiz publishes daily price articles with DYNAMIC URLs (e.g.
+ * /gia-xang-dau-hom-nay-268-…-202682674924302.htm). Discovery: stable category
+ * page /hang-hoa.htm → first link matching the daily slug → parse article.
+ * Patterns verified 2026-09-06 (search + category page live). */
+
+const VNB_FUEL_LABELS: Record<string, RegExp> = {
+  RON95: /Xăng\s*E10RON95(?:-III)?/i,
+  RON92: /Xăng\s*E5RON92/i,
+  DO: /Dầu\s*diesel(?:\s*0[.,]?\s*05S)?/i,
+};
+
+function vnbToNum(s: string): number {
+  const n = Number(s.replace(/\./g, "").replace(",", "."));
+  if (!Number.isFinite(n)) throw new ProviderError(`vietnambiz: bad number "${s}"`, VIETNAMBIZ);
+  return n;
+}
+
+function vnbDate(text: string): number | null {
+  const m = strip(text).match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if (!m) return null;
+  const ts = Date.parse(`${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}T00:00:00+07:00`);
+  return Number.isFinite(ts) ? ts : null;
+}
+
+/** Parse the daily "Giá xăng dầu hôm nay" table (real published values). */
+export function parseVnbFuel(text: string, symbol: string): { price: number; change: number | null; changePercent: number | null; timestamp: number | null } {
+  const t = strip(text);
+  const label = VNB_FUEL_LABELS[symbol];
+  if (!label) throw new ProviderError(`vietnambiz: no fuel label for ${symbol}`, VIETNAMBIZ);
+  const idx = t.search(label);
+  if (idx < 0) throw new ProviderError(`vietnambiz: row ${symbol} not found`, VIETNAMBIZ);
+  const win = t.slice(idx, idx + 320);
+  const priceM = win.match(/(\d{1,3}(?:\.\d{3})*)\s*đồng\s*\/?\s*lít/i);
+  if (!priceM) throw new ProviderError(`vietnambiz: price parse failed for ${symbol}`, VIETNAMBIZ);
+  const changeM = win.match(/([+-])\s*(\d{1,3}(?:\.\d{3})*)\s*đồng\s*\/?\s*lít/i);
+  const pctM = win.match(/([+-])\s*(\d{1,2}(?:,\d{1,2})?)\s*%/i);
+  const dong = vnbToNum(priceM[1]);
+  return {
+    price: dong / 1000, // đồng/lít → Nghìn đồng/lít (catalog unit)
+    change: changeM ? (changeM[1] === "-" ? -1 : 1) * vnbToNum(changeM[2]) / 1000 : null,
+    changePercent: pctM ? (pctM[1] === "-" ? -1 : 1) * Number(pctM[2].replace(",", ".")) : null,
+    timestamp: vnbDate(text),
+  };
+}
+
+/** Parse the daily "Giá heo hơi hôm nay" article: published national range → midpoint. */
+export function parseVnbPig(text: string): { price: number; timestamp: number | null } {
+  const t = strip(text);
+  const rangeM = t.match(/(\d{2,3}(?:\.\d{3})+)\s*[-–]\s*(\d{2,3}(?:\.\d{3})+)\s*đồng\s*\/?\s*kg/i);
+  if (!rangeM) throw new ProviderError("vietnambiz: pig range not found", VIETNAMBIZ);
+  const lo = vnbToNum(rangeM[1]);
+  const hi = vnbToNum(rangeM[2]);
+  if (!(lo > 10_000 && hi >= lo)) throw new ProviderError("vietnambiz: pig range invalid", VIETNAMBIZ);
+  return { price: (lo + hi) / 2, timestamp: vnbDate(text) };
+}
+
+export async function getVietnambizCategoryText(): Promise<string> {
+  const base = env.vietnambizBaseUrl.replace(/\/$/, "");
+  const res = await cached("vietnambiz:category:hang-hoa", {
+    ttlMs: 10 * 60_000,
+    staleMs: 60 * 60_000,
+    producer: async () => {
+      const r = await httpText(`${base}/hang-hoa.htm`, { provider: VIETNAMBIZ, timeoutMs: 9_000, retries: 1 });
+      if (!r.ok || !r.text) throw new ProviderError(`vietnambiz: ${r.error ?? "unreachable"}`, VIETNAMBIZ);
+      return r.text;
+    },
+  });
+  return res.value;
+}
+
+export function findVnbArticlePath(categoryText: string, slug: string): string {
+  const re = new RegExp(String.raw`/${slug}[^"\s]*\.htm`, "i");
+  const m = categoryText.match(re);
+  if (!m) throw new ProviderError(`vietnambiz: article "${slug}" not found in category`, VIETNAMBIZ);
+  return m[0];
+}
+
+export async function getVnbArticleText(path: string): Promise<{ text: string; url: string }> {
+  const base = env.vietnambizBaseUrl.replace(/\/$/, "");
+  const url = `${base}${path.startsWith("/") ? path : `/${path}`}`;
+  const res = await cached(`vietnambiz:article:${path}`, {
+    ttlMs: 30 * 60_000,
+    staleMs: 6 * 3_600_000,
+    producer: async () => {
+      const r = await httpText(url, { provider: VIETNAMBIZ, timeoutMs: 9_000, retries: 1 });
+      if (!r.ok || !r.text) throw new ProviderError(`vietnambiz: ${r.error ?? "unreachable"}`, VIETNAMBIZ);
+      return r.text;
+    },
+  });
+  return { text: res.value, url };
+}
+
+async function getVnbFuelQuote(symbol: string): Promise<RawCommodityQuote> {
+  const cat = await getVietnambizCategoryText();
+  const path = await findVnbArticlePath(cat, "gia-xang-dau-hom-nay");
+  const { text, url } = await getVnbArticleText(path);
+  const p = parseVnbFuel(text, symbol);
+  return {
+    source: "VietnamBiz",
+    price: p.price,
+    change: p.change,
+    changePercent: p.changePercent,
+    unit: "Nghìn đồng/lít",
+    currency: "VND",
+    timestamp: p.timestamp,
+    url,
+  };
+}
+
+async function getVnbPigQuote(): Promise<RawCommodityQuote> {
+  const cat = await getVietnambizCategoryText();
+  const path = await findVnbArticlePath(cat, "gia-heo-hoi-hom-nay");
+  const { text, url } = await getVnbArticleText(path);
+  const p = parseVnbPig(text);
+  return {
+    source: "VietnamBiz",
+    price: p.price,
+    change: null,
+    changePercent: null,
+    unit: "VNĐ/kg",
+    currency: "VND",
+    timestamp: p.timestamp,
+    url,
+  };
+}
+
+/** Dispatcher: Vietnambiz fallback per commodity strategy. */
+export async function getVietnambizQuote(def: CommodityDef): Promise<RawCommodityQuote> {
+  switch (def.vietnambiz) {
+    case "sjc-gold":
+      return getVietnambizSjcGold();
+    case "fuel":
+      return getVnbFuelQuote(def.symbol);
+    case "pig":
+      return getVnbPigQuote();
+    default:
+      throw new ProviderError(`vietnambiz: no strategy for ${def.key}`, VIETNAMBIZ);
+  }
 }
 
 /* ------------------------------- MSN Finance ------------------------------- */
