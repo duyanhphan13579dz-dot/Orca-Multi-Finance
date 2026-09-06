@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "arena/**"]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
+        env:
+          # The build imports src/db (throws without DATABASE_URL) and
+          # next.config.ts conditional headers; dummy values are enough here
+          # because build-time pages never open a real connection.
+          DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/ci_build
+          JWT_SECRET: ci-only-jwt-secret-0123456789abcdef0123456789abcdef
