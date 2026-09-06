@@ -2,25 +2,23 @@
 
 /**
  * ORCA FINANCIAL CHART — unified realtime chart for all asset classes.
- * Rendering is delegated to official Lightweight Charts v5; data flows ONLY
- * from the internal Chart Data Engine (validated, normalized), live updates
- * via the centralized subscription manager + SSE event bus.
+ * Client-safe: types from chart-const only (never services/chart server-only).
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  createChart, ColorType, CrosshairMode, LineStyle, PriceScaleMode,
-  type IChartApi, type MouseEventParams,
+  createChart,
+  ColorType,
+  CrosshairMode,
+  type IChartApi,
 } from "lightweight-charts";
 import { useApi } from "@/lib/hooks";
 import { useSettings } from "@/lib/settings";
-import { tfsFor, TF_LABEL, type ChartAssetType, type ChartCandle, type ChartMarketData } from "@/lib/chart-const";
+import { tfsFor, TF_LABEL, type ChartAssetType, type ChartMarketData } from "@/lib/chart-const";
 import type { Meta } from "@/lib/types";
 import { SeriesManager } from "./series-manager";
 import { ChartLiveManager } from "./live-manager";
-import { attachMarkers } from "./markers";
-import { CHART_KIND_LABEL, ORCA_CHART_THEME as T, type ChartKind, type LiveState, type SignalMarker } from "./theme";
-import { Badge, fmtNum, Loading } from "@/components/ui";
-import { Camera, Crosshair, Expand, LineChart, Maximize2, Minus, RotateCcw, Shrink, Trash2 } from "lucide-react";
+import { ORCA_CHART_THEME as T, type ChartKind, type LiveState } from "./theme";
+import { Badge, Loading } from "@/components/ui";
 
 interface Props {
   symbol: string;
@@ -36,30 +34,25 @@ interface HistResp {
   meta: Meta;
 }
 
-export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height = 430, title, extraLevels }: Props) {
-  const { settings, update } = useSettings();
+export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height = 430, title }: Props) {
+  const { settings } = useSettings();
   const prefs = settings.chart;
   const tfs = useMemo(() => tfsFor(assetType), [assetType]);
   const [tf, setTf] = useState(() => {
     const pref = defaultTimeframe ?? settings.dashboard.defaultTimeframe;
-    return tfs.includes(pref) ? pref : (tfs.includes("1h") ? "1h" : tfs[0]);
+    return tfs.includes(pref) ? pref : tfs.includes("1h") ? "1h" : tfs[0];
   });
-  const [fullscreen, setFullscreen] = useState(false);
-  const [drawMode, setDrawMode] = useState(false);
   const [live, setLive] = useState<LiveState>({ state: "connecting", ageMs: null });
 
-  const wrapRef = useRef<HTMLDivElement>(null);
   const hostRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const mgrRef = useRef<SeriesManager | null>(null);
   const liveMgrRef = useRef<ChartLiveManager | null>(null);
-  const markersRef = useRef<{ setMarkers: (m: unknown[]) => void } | null>(null);
-  const drawLinesRef = useRef<{ remove: () => void }[]>([]);
   const lastTimeRef = useRef(0);
-  const kindRef = useRef<ChartKind>(prefs.chartType as ChartKind);
+  const kindRef = useRef<ChartKind>((prefs.chartType as ChartKind) || "candle");
   const loadSeqRef = useRef(0);
 
-  const { data, meta, isLoading, mutate } = useApi<HistResp>(
+  const { data, isLoading, mutate } = useApi<HistResp>(
     `/api/v1/chart/history?symbol=${encodeURIComponent(symbol)}&assetType=${assetType}&timeframe=${tf}&limit=320`,
   );
 
@@ -72,7 +65,6 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
         textColor: T.text,
         fontSize: 11,
         fontFamily: "ui-monospace, Menlo, Consolas, monospace",
-        attributionLogo: true,
       },
       grid: {
         vertLines: { color: T.grid },
@@ -81,8 +73,6 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
       crosshair: { mode: CrosshairMode.Normal },
       rightPriceScale: { borderVisible: false, scaleMargins: { top: 0.08, bottom: 0.18 } },
       timeScale: { borderVisible: false, timeVisible: true, secondsVisible: false },
-      handleScroll: { mouseWheel: true, pressedMouseMove: true },
-      handleScale: { axisPressedMouseMove: true, mouseWheel: true, pinch: true },
     });
     chartRef.current = chart;
     mgrRef.current = new SeriesManager(chart);
@@ -112,12 +102,7 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
 
     const candles = data.data.candles;
     lastTimeRef.current = candles[candles.length - 1]?.time ?? 0;
-    mgr.setKind(kindRef.current);
-    mgr.setData(candles);
-    if (data.data.indicators) mgr.setIndicators(data.data.indicators);
-    if (data.data.markers?.length) {
-      markersRef.current = attachMarkers(chart, mgr.mainSeries(), data.data.markers as SignalMarker[]);
-    }
+    mgr.setHistory(candles, kindRef.current);
     chart.timeScale().fitContent();
   }, [data]);
 
@@ -145,49 +130,13 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
     return () => mgr.stop();
   }, [symbol, tf, assetType, mutate]);
 
-  const rebuildDrawings = useCallback(() => {
-    const mgr = mgrRef.current;
-    if (!mgr) return;
-    for (const l of drawLinesRef.current) l.remove();
-    drawLinesRef.current = [];
-    const levels = settings.chart.drawingHorizontals[symbol] ?? [];
-    for (const lv of levels) {
-      const pl = mgr.mainSeries()?.createPriceLine?.({
-        price: lv.price,
-        color: lv.color ?? T.line,
-        lineWidth: 1,
-        lineStyle: LineStyle.Dashed,
-        axisLabelVisible: true,
-        title: lv.label,
-      });
-      if (pl) drawLinesRef.current.push(pl);
-    }
-    if (extraLevels) {
-      for (const lv of extraLevels) {
-        const pl = mgr.mainSeries()?.createPriceLine?.({
-          price: lv.price,
-          color: lv.color,
-          lineWidth: 1,
-          lineStyle: LineStyle.SparseDotted,
-          axisLabelVisible: true,
-          title: lv.label,
-        });
-        if (pl) drawLinesRef.current.push(pl);
-      }
-    }
-  }, [settings.chart.drawingHorizontals, symbol, extraLevels]);
-
-  useEffect(() => {
-    rebuildDrawings();
-  }, [rebuildDrawings, data]);
-
   return (
-    <div ref={wrapRef} className={`relative rounded-xl border border-border-subtle bg-background-secondary ${fullscreen ? "fixed inset-0 z-50 rounded-none" : ""}`}>
+    <div className="relative rounded-xl border border-border-subtle bg-background-secondary">
       <div className="flex flex-wrap items-center gap-2 border-b border-border-subtle px-3 py-2">
         <span className="text-[13px] font-medium text-text-primary">{title ?? symbol}</span>
         <div className="seg ml-auto">
           {tfs.map((x) => (
-            <button key={x} data-active={tf === x} onClick={() => setTf(x)}>
+            <button key={x} data-active={tf === x} onClick={() => setTf(x)} type="button">
               {TF_LABEL[x] ?? x}
             </button>
           ))}
