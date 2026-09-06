@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useApi } from "@/lib/hooks";
-import type { CandlePattern, CryptoMarketRow, TechnicalSnapshot } from "@/lib/types";
+import type { CandlePattern, CryptoMarketRow, NewsArticle, TechnicalSnapshot } from "@/lib/types";
 
 /** Client-local shape — never import from server-only services into client components. */
 interface CryptoDetail {
@@ -17,6 +17,12 @@ interface CryptoDetail {
   openInterest: { openInterest: number; time: number } | null;
   fundingStatus: "ok" | "unavailable";
 }
+
+interface NewsPayload {
+  articles: NewsArticle[];
+  errors: string[];
+}
+
 import { Badge, Chg, fmtCompact, fmtNum, FreshnessDot, Loading, MetaLine, Panel, priceDigits, Unavailable } from "@/components/ui";
 import { OrcaChart } from "@/components/orca-chart";
 import { TechnicalPanel } from "@/components/technical-panel";
@@ -24,14 +30,12 @@ import { ScalpPanel } from "@/components/scalp-panel";
 import { CryptoTradeDesk } from "@/components/crypto-trade-desk";
 import { AddToWatchlist } from "@/components/watchlist-button";
 import { useSettings } from "@/lib/settings";
-import { usePrefCurrency } from "@/lib/fx-pref";
-import { Flame, Fuel } from "lucide-react";
+import { Brain, Layers, Newspaper, ExternalLink } from "lucide-react";
 
 const INTERVALS = ["15m", "1h", "4h", "1d"] as const;
 
 export function CryptoDetailPage({ symbol }: { symbol: string }) {
   const { settings } = useSettings();
-  usePrefCurrency();
   const [interval, setInterval] = useState<(typeof INTERVALS)[number]>(
     (INTERVALS as readonly string[]).includes(settings.dashboard.defaultTimeframe)
       ? (settings.dashboard.defaultTimeframe as (typeof INTERVALS)[number])
@@ -54,13 +58,6 @@ export function CryptoDetailPage({ symbol }: { symbol: string }) {
   const t = data.ticker;
   const tech = data.technical;
   const digits = priceDigits(t.price);
-  const fundingTone = data.funding
-    ? data.funding.fundingRate > 0.0005
-      ? "up"
-      : data.funding.fundingRate < -0.0005
-        ? "down"
-        : "neutral"
-    : "neutral";
 
   return (
     <div className="space-y-3">
@@ -109,74 +106,17 @@ export function CryptoDetailPage({ symbol }: { symbol: string }) {
           />
         </div>
 
-        <div className="col-span-12 space-y-3 xl:col-span-4">
-          <Panel
-            title={
-              <span className="flex items-center gap-2">
-                <Fuel className="size-4 text-accent" /> Futures context
-              </span>
-            }
-          >
-            {data.fundingStatus === "ok" && data.funding ? (
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="text-[12px] text-ink-3">Funding rate</span>
-                  <Badge tone={fundingTone as "up" | "down" | "neutral"}>
-                    {(data.funding.fundingRate * 100).toFixed(4)}%
-                  </Badge>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-[12px] text-ink-3">Open interest</span>
-                  <span className="num text-[14px]">
-                    {data.openInterest ? fmtCompact(data.openInterest.openInterest) : "—"}
-                  </span>
-                </div>
-                <p className="pt-1 text-[11px] leading-relaxed text-ink-3">
-                  Funding dương cao = phe Long đang trả phí cho Short (định giá đòn bẩy nóng); funding âm sâu thường đi kèm
-                  kỳ vọng hồi.
-                </p>
-              </div>
-            ) : (
-              <Unavailable
-                title="Dữ liệu futures tạm giới hạn"
-                note="Binance futures (fapi) chặn theo vùng địa lý tại máy chủ hiện tại. Spot & kỹ thuật vẫn cập nhật bình thường."
-              />
-            )}
-          </Panel>
-
-          <Panel
-            title={
-              <span className="flex items-center gap-2">
-                <Flame className="size-4 text-accent" /> Đọc nhanh
-              </span>
-            }
-          >
-            <ul className="space-y-1.5 text-[12px] leading-relaxed text-ink-2">
-              <li>
-                Vol 24h quy đổi đạt <b className="num">${fmtCompact(t.quoteVolume ?? 0)}</b> —{" "}
-                {(t.quoteVolume ?? 0) > 1e9
-                  ? "thanh khoản rất dày"
-                  : (t.quoteVolume ?? 0) > 1e8
-                    ? "thanh khoản tốt"
-                    : "thanh khoản trung bình"}
-                .
-              </li>
-              {tech?.rsi14 != null && (
-                <li>
-                  RSI(14) ở <b className="num">{tech.rsi14.toFixed(0)}</b> —{" "}
-                  {tech.rsi14 >= 70 ? "vùng quá mua" : tech.rsi14 <= 30 ? "vùng quá bán" : "vùng trung tính"}.
-                </li>
-              )}
-              {tech && (
-                <li>
-                  Giá đang {t.price >= (tech.sma.sma50 ?? 0) ? "trên" : "dưới"} SMA50,{" "}
-                  {t.price >= (tech.sma.sma200 ?? 0) ? "trên" : "dưới"} SMA200.
-                </li>
-              )}
-              {data.patterns.length > 0 && <li>Mô hình nến: {data.patterns.map((p) => p.nameVi).join(", ")}.</li>}
-              <li className="text-ink-3">Phân tích thuần định lượng từ dữ liệu Binance — không phải khuyến nghị.</li>
-            </ul>
-          </Panel>
+        {/* Left: sentiment → patterns → news (~1/3 each) */}
+        <div className="col-span-12 flex flex-col gap-3 xl:col-span-4">
+          <div className="min-h-0 flex-1">
+            <SentimentPanel ticker={t} tech={tech} />
+          </div>
+          <div className="min-h-0 flex-1">
+            <CandlePatternsPanel patterns={data.patterns} />
+          </div>
+          <div className="min-h-0 flex-1">
+            <CryptoNewsPanel symbol={data.symbol} baseAsset={data.baseAsset} />
+          </div>
         </div>
 
         <div className="col-span-12 xl:col-span-8">
@@ -193,6 +133,239 @@ export function CryptoDetailPage({ symbol }: { symbol: string }) {
       </div>
     </div>
   );
+}
+
+function SentimentPanel({ ticker, tech }: { ticker: CryptoMarketRow; tech: TechnicalSnapshot | null }) {
+  const s = useMemo(() => computeSentiment(ticker, tech), [ticker, tech]);
+
+  return (
+    <Panel
+      title={
+        <span className="flex items-center gap-2">
+          <Brain className="size-4 text-accent-primary" /> Tâm lý thị trường
+        </span>
+      }
+    >
+      <div className="space-y-2.5">
+        <div className="flex items-center justify-between gap-2">
+          <Badge tone={s.tone}>
+            <span className="font-bold">{s.label}</span>
+          </Badge>
+          <span className="num text-[18px] font-semibold text-text-primary">
+            {s.score > 0 ? "+" : ""}
+            {s.score}
+          </span>
+        </div>
+
+        <div className="relative h-2 overflow-hidden rounded-full bg-background-secondary">
+          <div className="absolute inset-y-0 left-1/2 w-px bg-border-subtle" />
+          <div
+            className={`absolute inset-y-0 ${s.score >= 0 ? "left-1/2 bg-positive/70" : "right-1/2 bg-negative/70"}`}
+            style={{ width: `${Math.min(50, Math.abs(s.score) / 2)}%` }}
+          />
+        </div>
+
+        <ul className="space-y-1 text-[11.5px] leading-relaxed text-text-secondary">
+          {s.factors.map((f, i) => (
+            <li key={i} className="flex items-start gap-1.5">
+              <span className={f.w >= 0 ? "text-positive" : "text-negative">{f.w >= 0 ? "▲" : "▼"}</span>
+              <span>{f.text}</span>
+            </li>
+          ))}
+        </ul>
+        <p className="text-[10px] text-text-muted">Điểm tổng hợp từ biến động 24h, RSI, trend SMA — không phải khuyến nghị.</p>
+      </div>
+    </Panel>
+  );
+}
+
+function computeSentiment(t: CryptoMarketRow, tech: TechnicalSnapshot | null) {
+  let score = 0;
+  const factors: { w: number; text: string }[] = [];
+
+  const chg = t.changePercent ?? 0;
+  if (chg > 3) {
+    score += 28;
+    factors.push({ w: 1, text: `Giá +${chg.toFixed(2)}% /24h — momentum tăng mạnh` });
+  } else if (chg > 0.5) {
+    score += 14;
+    factors.push({ w: 1, text: `Giá +${chg.toFixed(2)}% /24h — bias nhẹ tăng` });
+  } else if (chg < -3) {
+    score -= 28;
+    factors.push({ w: -1, text: `Giá ${chg.toFixed(2)}% /24h — áp lực bán rõ` });
+  } else if (chg < -0.5) {
+    score -= 14;
+    factors.push({ w: -1, text: `Giá ${chg.toFixed(2)}% /24h — bias nhẹ giảm` });
+  } else {
+    factors.push({ w: 0, text: `Giá ${chg.toFixed(2)}% /24h — biên độ hẹp` });
+  }
+
+  if (tech?.rsi14 != null) {
+    if (tech.rsi14 >= 70) {
+      score -= 18;
+      factors.push({ w: -1, text: `RSI ${tech.rsi14.toFixed(0)} — vùng quá mua` });
+    } else if (tech.rsi14 <= 30) {
+      score += 18;
+      factors.push({ w: 1, text: `RSI ${tech.rsi14.toFixed(0)} — vùng quá bán` });
+    } else if (tech.rsi14 >= 55) {
+      score += 8;
+      factors.push({ w: 1, text: `RSI ${tech.rsi14.toFixed(0)} — nghiêng mua` });
+    } else if (tech.rsi14 <= 45) {
+      score -= 8;
+      factors.push({ w: -1, text: `RSI ${tech.rsi14.toFixed(0)} — nghiêng bán` });
+    } else {
+      factors.push({ w: 0, text: `RSI ${tech.rsi14.toFixed(0)} — trung tính` });
+    }
+  }
+
+  if (tech?.trend) {
+    const map: Record<string, number> = {
+      "strong-up": 22,
+      up: 12,
+      sideways: 0,
+      down: -12,
+      "strong-down": -22,
+    };
+    const w = map[tech.trend.label] ?? 0;
+    score += w;
+    const labelVi: Record<string, string> = {
+      "strong-up": "xu hướng tăng mạnh",
+      up: "xu hướng tăng",
+      sideways: "đi ngang",
+      down: "xu hướng giảm",
+      "strong-down": "xu hướng giảm mạnh",
+    };
+    factors.push({ w, text: `Trend: ${labelVi[tech.trend.label] ?? tech.trend.label} (score ${tech.trend.score})` });
+  }
+
+  if (tech?.sma.sma50 != null) {
+    if (t.price >= tech.sma.sma50) {
+      score += 8;
+      factors.push({ w: 1, text: "Giá trên SMA50 — cấu trúc trung hạn ủng hộ" });
+    } else {
+      score -= 8;
+      factors.push({ w: -1, text: "Giá dưới SMA50 — cấu trúc trung hạn yếu" });
+    }
+  }
+
+  score = Math.max(-100, Math.min(100, Math.round(score)));
+  let label = "TRUNG LẬP";
+  let tone: "up" | "down" | "neutral" = "neutral";
+  if (score >= 35) {
+    label = "LẠC QUAN";
+    tone = "up";
+  } else if (score >= 12) {
+    label = "HƠI LẠC QUAN";
+    tone = "up";
+  } else if (score <= -35) {
+    label = "BI QUAN";
+    tone = "down";
+  } else if (score <= -12) {
+    label = "HƠI BI QUAN";
+    tone = "down";
+  }
+
+  return { score, label, tone, factors: factors.slice(0, 5) };
+}
+
+function CandlePatternsPanel({ patterns }: { patterns: CandlePattern[] }) {
+  return (
+    <Panel
+      title={
+        <span className="flex items-center gap-2">
+          <Layers className="size-4 text-accent-primary" /> Nhận diện mẫu hình nến
+        </span>
+      }
+    >
+      {!patterns.length ? (
+        <p className="text-[12px] leading-relaxed text-text-muted">
+          Không có mô hình đáng chú ý trong 5 nến gần nhất — thị trường đang vận động theo cấu trúc thông thường.
+        </p>
+      ) : (
+        <div className="max-h-[200px] space-y-2 overflow-y-auto">
+          {patterns.map((p) => (
+            <div key={p.name} className="panel-inset space-y-1 p-2.5">
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="text-[12px] font-medium text-text-primary">{p.nameVi}</span>
+                <Badge tone={p.type === "bullish" ? "up" : p.type === "bearish" ? "down" : "neutral"}>
+                  {p.type === "bullish" ? "Tăng" : p.type === "bearish" ? "Giảm" : "Trung lập"}
+                </Badge>
+                <Badge tone="neutral">{p.reliability}</Badge>
+              </div>
+              <p className="text-[11px] leading-relaxed text-text-secondary">{p.description}</p>
+            </div>
+          ))}
+        </div>
+      )}
+    </Panel>
+  );
+}
+
+function CryptoNewsPanel({ symbol, baseAsset }: { symbol: string; baseAsset: string }) {
+  const { data, meta, isLoading } = useApi<NewsPayload>(`/api/v1/news?category=crypto&limit=12`, {
+    refreshInterval: 120_000,
+  });
+
+  const articles = useMemo(() => {
+    const list = data?.articles ?? [];
+    const base = baseAsset.toUpperCase();
+    const sym = symbol.toUpperCase();
+    const related = list.filter(
+      (a) =>
+        a.relatedSymbols?.some((s) => s.toUpperCase().includes(base) || s.toUpperCase() === sym) ||
+        a.title.toUpperCase().includes(base) ||
+        (a.summary ?? "").toUpperCase().includes(base),
+    );
+    return (related.length ? related : list).slice(0, 5);
+  }, [data, symbol, baseAsset]);
+
+  return (
+    <Panel
+      title={
+        <span className="flex items-center gap-2">
+          <Newspaper className="size-4 text-accent-primary" /> Tin tức
+          {meta && <FreshnessDot status={meta.freshness} ageMs={meta.ageMs} />}
+        </span>
+      }
+    >
+      {isLoading && !data ? (
+        <Loading rows={3} />
+      ) : !articles.length ? (
+        <p className="text-[12px] text-text-muted">Chưa có tin crypto liên quan — nguồn RSS tạm trống.</p>
+      ) : (
+        <ul className="max-h-[200px] space-y-2 overflow-y-auto">
+          {articles.map((a) => (
+            <li key={a.id || a.url} className="border-b border-border-subtle/60 pb-2 last:border-0 last:pb-0">
+              <a
+                href={a.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="group flex items-start gap-1.5 text-[12px] font-medium leading-snug text-text-primary hover:text-accent-primary"
+              >
+                <span className="line-clamp-2 flex-1">{a.title}</span>
+                <ExternalLink className="mt-0.5 size-3 shrink-0 opacity-40 group-hover:opacity-80" />
+              </a>
+              <div className="mt-0.5 flex flex-wrap items-center gap-2 text-[10px] text-text-muted">
+                <span>{a.source}</span>
+                <span>·</span>
+                <span>{formatAge(a.publishedAt)}</span>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Panel>
+  );
+}
+
+function formatAge(iso: string): string {
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return "";
+  const mins = Math.max(0, Math.round((Date.now() - t) / 60_000));
+  if (mins < 60) return `${mins}p trước`;
+  const h = Math.round(mins / 60);
+  if (h < 48) return `${h}h trước`;
+  return `${Math.round(h / 24)}d trước`;
 }
 
 function HeadStat({ label, value }: { label: string; value: string }) {
