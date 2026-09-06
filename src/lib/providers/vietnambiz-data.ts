@@ -2,7 +2,7 @@ import "server-only";
 import { env } from "../env";
 import { cached } from "../cache";
 import { httpText } from "../http";
-import { currencyForUnit, type RawCommodityQuote } from "./commodities";
+import { COMMODITY_CATALOG, currencyForUnit, type RawCommodityQuote } from "./commodities";
 
 /**
  * VietnamBiz DATA PORTAL (data.vietnambiz.vn) — WiFeed/WiGroup tables.
@@ -83,7 +83,7 @@ function stripCssText(raw: string): string {
       .replace(/where\([^)]*\)/gi, " ")
       .replace(/\[[^\]]{0,160}\]/g, " ")
       .replace(/\.css-[a-zA-Z0-9_-]+/g, " ")
-      .replace(/@media[^{;]*/gi, " ")
+      .replace(/@(?:media|supports|keyframes|-webkit-keyframes)[^{;]*/gi, " ")
       .replace(/(?:font-weight|font-family|font-size|line-height|box-sizing|color|content|background|border|text-[\w-]+)\s*:\s*[^,;{}]+[;,]/gi, " ")
       .replace(/(?:font-weight|font-family|font-size|line-height|box-sizing|color|content|background)\s*:\s*[^,;{}]+/gi, " ")
       .replace(/(?::|::)(?:before|after|first-child|last-child|not)\b/gi, " ")
@@ -117,6 +117,25 @@ const cleanCell = (s: string | null | undefined): string => {
   // cắt bỏ nhưng không đụng dấu phẩy TRONG tên ("RON 95-II,III", "30x30cm, L=18m").
   return t.replace(/^[\s,;:.\-–•|]+/, "").replace(/[\s,;:.\-–•|]+$/, "").replace(/\s+/g, " ").trim();
 };
+
+/** Bản THÔ đã strip tối đa nhưng KHÔNG zero-out khi còn rác — dùng cho vòng map 2/3. */
+const softCleanCell = (s: string | null | undefined): string => {
+  const t = stripCssText((s ?? "").trim());
+  return t.replace(/^[\s,;:.\-–•|]+/, "").replace(/[\s,;:.\-–•|]+$/, "").replace(/\s+/g, " ").trim();
+};
+
+/** Giá lenient: khi cell giá còn rác CSS, chỉ tin số có dấu nghìn (CSS không có
+ *  dạng "57,833") hoặc số sạch sau khi strip. Không bao giờ lấy "14px" làm giá. */
+function parsePriceLenient(raw: string | null | undefined): number | null {
+  const t = stripCssText(stripHtmlScaffolding(raw ?? "").replace(/<[^>]*>/g, " ")).replace(/\s+/g, " ").trim();
+  if (!t) return null;
+  if (isCssJunk(t)) {
+    const m = t.match(/\d{1,3}(?:,\d{3})+(?:\.\d+)?/);
+    return m ? parseVnbNum(m[0]) : null;
+  }
+  const m = t.match(/[+-]?\d[\d.,]*/);
+  return m ? parseVnbNum(m[0]) : null;
+}
 
 /** Header tokens nhận diện bảng dữ liệu thật (loại bảng dump CSS). */
 const GOODS_HEADERS = ["Mặt hàng", "Giá", "% Ngày", "Ngày cập nhật"];
@@ -190,7 +209,10 @@ export function parseVnbDate(s: string | null | undefined): number | null {
 /* --------------------------------- Goods ---------------------------------- */
 
 export interface VnbGoodsRow {
+  /** tên đã rửa CSS sạch (có thể "" nếu cell tên còn rác không rửa được) */
   name: string;
+  /** bản thô đã strip tối đa — phương án 2/3 khi name bị rác */
+  rawName: string;
   unit: string;
   price: number | null;
   pctDay: number | null;
@@ -207,15 +229,17 @@ export function parseVnbGoodsRows(html: string): VnbGoodsRow[] {
     if (cells.length < 6) continue;
     const [nameUnit, priceRaw, dRaw, mRaw, yRaw, dateRaw] = cells;
     const parts = nameUnit.split("\n");
+    const rawName = softCleanCell(decodeEntities(parts[0] ?? ""));
     const name = cleanCell(decodeEntities(parts[0]));
     const unit = cleanCell(parts.length > 1 ? decodeEntities(parts.slice(1).join(" ")) : "");
-    if (!name || /^(Mặt hàng|Chỉ tiêu)$/i.test(name)) continue; // CSS dump / header row
-    const price = parseVnbNum(priceRaw);
-    if (price == null) continue; // "--" hoặc header → bỏ
-    // nếu cell giá vẫn còn lẫn CSS thì coi như không hợp lệ
-    if (isCssJunk(`${priceRaw} ${dRaw} ${mRaw} ${yRaw} ${dateRaw}`)) continue;
+    // KHÔNG drop khi tên bẩn (CSS sót / wrapper lạ): giữ rawName để map vòng 2-3
+    // khớp lại; chỉ bỏ header/CSS-dump hoàn toàn (rawName rỗng hoặc là "Mặt hàng").
+    if (!rawName || /^(Mặt hàng|Chỉ tiêu)$/i.test(rawName)) continue;
+    const price = parseVnbNum(priceRaw) ?? parsePriceLenient(priceRaw);
+    if (price == null) continue; // "--" / header → bỏ
     out.push({
       name,
+      rawName,
       unit,
       price,
       pctDay: parseVnbNum(dRaw),
@@ -231,17 +255,33 @@ export function parseVnbGoodsRows(html: string): VnbGoodsRow[] {
 /**
  * Mapping WiFeed row → catalog key — 66 dòng = TOÀN BỘ bảng /goods
  * (user directive 2026-09-06: nguồn duy nhất). Không quy đổi tiền tệ:
- * unit/currency lấy NGUYÊN VĂN từ trang. scale 1000 chỉ cho SJC (trang ghi
- * "Đồng/lượng" nhưng giá 147,600 là nghìn đồng/lượng — đối chiếu SJC thực tế).
+ * unit/currency ưu tiên NGUYÊN VĂN từ trang; khi cell đơn vị bị rác → dùng
+ * unit/currency của catalog (không còn hiện "USD" cho hàng Việt Nam).
+ * scale 1000 chỉ cho SJC (trang ghi "Đồng/lượng" nhưng giá 147,600 là
+ * nghìn đồng/lượng — đối chiếu SJC thực tế).
  */
 interface VnbGoodsMap {
   rx: RegExp;
   key: string;
+  /** tên gốc (canonical) — dùng cho fuzzy, KHÔNG lấy từ rx.source (chứa meta regex) */
+  name: string;
+  unit: string;
   scale?: number;
 }
 
+/** def theo key (unit/currency chuẩn catalog) — không tạo cycle (commodities không import vietnambiz-data). */
+const DEF_BY_KEY = new Map<string, { unit: string; currency: string }>(
+  COMMODITY_CATALOG.map((d) => [d.key, { unit: d.unit, currency: d.currency }]),
+);
+
 const RX = (s: string) => new RegExp(`^${s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`);
-const R = (name: string, key: string, scale?: number): VnbGoodsMap => ({ rx: RX(name), key, scale });
+const R = (name: string, key: string, scale?: number): VnbGoodsMap => ({
+  rx: RX(name),
+  key,
+  name,
+  unit: DEF_BY_KEY.get(key)?.unit ?? "",
+  scale,
+});
 
 export const VNB_GOODS_MAP: VnbGoodsMap[] = [
   // Hàng tiêu dùng (15)
@@ -289,7 +329,7 @@ export const VNB_GOODS_MAP: VnbGoodsMap[] = [
   R("Đá Hộc", "aggregate-boulder"),
   R("Tôn lạnh màu Hoa Sen 0,45mm", "sheet-color"),
   R("Tôn lạnh Hoa Sen 0,45mm", "sheet"),
-  { rx: /^Bê tông nhựa mịn\s*:\s*Carboncor Asphalt - CA 9\.5$/, key: "asphalt" },
+  { rx: /^Bê tông nhựa mịn\s*:\s*Carboncor Asphalt - CA 9\.5$/, key: "asphalt", name: "Bê tông nhựa mịn : Carboncor Asphalt - CA 9.5", unit: DEF_BY_KEY.get("asphalt")?.unit ?? "" },
   R("Ống nhựa 27 x 1.8mm", "pipe-27"),
   R("Ống nhựa 60 x 2mm", "pipe-60"),
   R("Ống nhựa 90 x 2,9mm", "pipe-90"),
@@ -330,42 +370,106 @@ function normGoods(s: string): string {
 }
 
 /** khớp dài nhất trước (để "Giá vàng trong nước" → sjc-gold, không trúng "gold"). */
-const FUZZY = [...VNB_GOODS_MAP].sort((a, b) => normGoods(b.rx.source).length - normGoods(a.rx.source).length);
+const FUZZY = [...VNB_GOODS_MAP].sort((a, b) => normGoods(b.name).length - normGoods(a.name).length);
+
+/** fuzzy containment trên TÊN GỐC (không dùng rx.source — tránh meta regex như \s). */
+function matchFuzzy(text: string): VnbGoodsMap | null {
+  const n = normGoods(text);
+  if (n.length < 3) return null;
+  const hits = FUZZY.filter((m) => {
+    const k = normGoods(m.name);
+    return k.length >= 3 && n.includes(k);
+  });
+  if (!hits.length) return null;
+  hits.sort((a, b) => normGoods(b.name).length - normGoods(a.name).length);
+  const best = normGoods(hits[0].name).length;
+  const top = hits.filter((m) => normGoods(m.name).length === best);
+  return top.length === 1 ? top[0] : null; // nhiều ứng viên dài bằng nhau → để positional lo
+}
 
 export function matchVnbGoods(name: string): VnbGoodsMap | null {
   // 1) chính xác (nhanh, không sai)
   for (const m of VNB_GOODS_MAP) if (m.rx.test(name)) return m;
-  // 2) bền: cho phép rác CSS còn sót ở đầu/cuối hoặc label đổi nhẹ (containment)
-  const n = normGoods(name);
-  if (!n) return null;
-  for (const m of FUZZY) {
-    const k = normGoods(m.rx.source.replace(/^\^/, "").replace(/\$$/, ""));
-    // đòi hỏi khớp cả TÊN (không phải chỉ unit) để tránh false-positive
-    if (k.length >= 4 && n.includes(k)) return m;
-  }
-  return null;
+  // 2) bền: rác sót đầu/cuối, label đổi nhẹ → containment theo tên gốc
+  return matchFuzzy(name);
 }
 
-/** Map parsed WiFeed rows → quotes theo catalog key (mỗi key lấy hàng ĐẦU TIÊN khớp). */
+/** Đơn vị tương đương (trang "USD/ounce" == catalog "USD/oz", "USD/thùng" == "USD/bbl"…). */
+const UNIT_EQ: Record<string, string> = {
+  "usd/oz": "usd/ounce",
+  "usd/lb": "usd/pound",
+  "usd/bbl": "usd/thung",
+};
+function normUnit(u: string | null | undefined): string {
+  const s = (u ?? "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, "")
+    .replace(/[^a-z0-9/]/g, "");
+  return UNIT_EQ[s] ?? s;
+}
+function unitCompatible(rowUnit: string | null | undefined, defUnit: string): boolean {
+  if (!rowUnit || !rowUnit.trim()) return true; // cell đơn vị bị rác → tin catalog
+  return normUnit(rowUnit) === normUnit(defUnit) || defUnit === "";
+}
+
+/** Map parsed WiFeed rows → quotes theo catalog key.
+ *  Vòng 1: exact/fuzzy theo name · Vòng 2: fuzzy theo rawName (tên bị rác CSS)
+ *  · Vòng 3: POSITIONAL — bảng /goods cố định 66 dòng, zip theo thứ tự + đơn vị. */
 export function mapVnbGoodsRows(rows: VnbGoodsRow[]): Map<string, RawCommodityQuote> {
+  return mapVnbGoodsRowsDetailed(rows).mapped;
+}
+
+export function mapVnbGoodsRowsDetailed(rows: VnbGoodsRow[]): { mapped: Map<string, RawCommodityQuote>; unmatched: VnbGoodsRow[] } {
   const out = new Map<string, RawCommodityQuote>();
-  for (const row of rows) {
-    const m = matchVnbGoods(row.name);
-    if (!m || out.has(m.key)) continue;
+  const claimed = new Set<number>();
+
+  const bind = (i: number, m: VnbGoodsMap): boolean => {
+    if (out.has(m.key) || claimed.has(i)) return false;
+    const row = rows[i];
     const price = row.price == null ? null : row.price * (m.scale ?? 1);
-    if (price == null || price <= 0) continue;
+    if (price == null || price <= 0) return false;
+    // unit ưu tiên nguyên văn trang; rác/trống → def catalog (sửa "USD" cho hàng VN)
+    const unit = row.unit && row.unit.trim() ? row.unit : m.unit;
     out.set(m.key, {
       source: VN_DATA_SOURCE,
       price,
       change: null,
       changePercent: row.pctDay,
-      unit: row.unit,
-      currency: currencyForUnit(row.unit),
+      unit,
+      currency: currencyForUnit(unit),
       timestamp: row.dateTs,
       url: `${env.vietnambizDataBaseUrl.replace(/\/$/, "")}/goods`,
     });
+    claimed.add(i);
+    return true;
+  };
+
+  // Vòng 1: tên sạch
+  rows.forEach((row, i) => {
+    const m = matchVnbGoods(row.name);
+    if (m) bind(i, m);
+  });
+  // Vòng 2: tên thô (cell còn rác → name="")
+  rows.forEach((row, i) => {
+    if (claimed.has(i)) return;
+    const m = matchVnbGoods(row.rawName);
+    if (m) bind(i, m);
+  });
+  // Vòng 3: positional — zip hàng chưa claim với key chưa map theo đúng thứ tự bảng
+  const freeRows = rows.map((r, i) => ({ r, i })).filter((x) => !claimed.has(x.i));
+  const freeMaps = VNB_GOODS_MAP.filter((m) => !out.has(m.key));
+  for (let k = 0; k < Math.min(freeRows.length, freeMaps.length); k++) {
+    if (!unitCompatible(freeRows[k].r.unit, freeMaps[k].unit)) continue;
+    bind(freeRows[k].i, freeMaps[k]);
   }
-  return out;
+  return { mapped: out, unmatched: rows.filter((_, i) => !claimed.has(i)) };
+}
+
+/** Hàng KHÔNG bind được sau cả 3 vòng (chẩn đoán — /api/v1/vietnambiz-data + lỗi provider). */
+export function unmatchedVnbGoodsRows(rows: VnbGoodsRow[]): VnbGoodsRow[] {
+  return mapVnbGoodsRowsDetailed(rows).unmatched;
 }
 
 export async function getVnbDatasetText(dataset: "goods" | "macro-economic" | "currency-interest-rate"): Promise<string> {
@@ -412,12 +516,12 @@ export async function getVnbGoodsQuotes(): Promise<Map<string, RawCommodityQuote
   const rows = parseVnbGoodsRows(html);
   const mapped = mapVnbGoodsRows(rows);
   if (mapped.size === 0) {
-    const sample = rows
-      .slice(0, 8)
-      .map((r) => `${r.name} [${r.unit}] ${r.price}`)
+    const unmatched = unmatchedVnbGoodsRows(rows)
+      .slice(0, 10)
+      .map((r) => `"${r.rawName || r.name || "?"}" [${r.unit || "?"}] ${r.price}`)
       .join(" | ");
     throw new VnbDataError(
-      `vietnambiz-data: goods page parse failed (structure changed?) — rows=${rows.length}, htmlChars=${html.length}, sample=${sample.slice(0, 400)}`,
+      `vietnambiz-data: goods page parse failed (structure changed?) — rows=${rows.length}, mapped=0, htmlChars=${html.length}, unmatched=${unmatched.slice(0, 400)}`,
       VN_DATA_PROVIDER,
     );
   }
@@ -425,12 +529,16 @@ export async function getVnbGoodsQuotes(): Promise<Map<string, RawCommodityQuote
 }
 
 /** Raw snapshot (tất cả hàng WiFeed) + mapped quotes — cho API diagnostics. */
-export async function getVnbGoodsSnapshot(): Promise<{ rows: VnbGoodsRow[]; mapped: Record<string, RawCommodityQuote> }> {
+export async function getVnbGoodsSnapshot(): Promise<{ rows: VnbGoodsRow[]; mapped: Record<string, RawCommodityQuote>; unmatched: { name: string; rawName: string; unit: string; price: number | null }[] }> {
   const html = await getVnbDatasetText("goods");
   const rows = parseVnbGoodsRows(html);
   const mapped: Record<string, RawCommodityQuote> = {};
   for (const [k, q] of mapVnbGoodsRows(rows)) mapped[k] = q;
-  return { rows, mapped };
+  return {
+    rows,
+    mapped,
+    unmatched: unmatchedVnbGoodsRows(rows).map((r) => ({ name: r.name, rawName: r.rawName, unit: r.unit, price: r.price })),
+  };
 }
 
 /* ------------------------- Macro / currency & rates ------------------------ */

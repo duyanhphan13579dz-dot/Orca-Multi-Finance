@@ -19,6 +19,7 @@ import {
   parseVnbGoodsRows,
   mapVnbGoodsRows,
   matchVnbGoods,
+  unmatchedVnbGoodsRows,
   VNB_GOODS_KEYS,
   parseVnbMacroRows,
   parseVnbRatesRows,
@@ -382,4 +383,47 @@ test("REGRESSION 2: CSS-as-text trong cell — goods name/unit/price sạch", ()
   const mapped = mapVnbGoodsRows(rows);
   assert.equal(mapped.get("aluminum")?.price, 24_373);
   assert.equal(mapped.get("pig-vn")?.price, 57_833);
+});
+
+
+test("REGRESSION 4 (live 06/09): tên cell rác không rửa được → KHÔNG drop; map vòng 2 + unit/currency theo catalog", () => {
+  const hard = ".css-unclosed{"; // stripCssText không xử lý hết → cleanCell trả ""
+  const html = cssTextTable(
+    `<tr><td>${hard}Lúa<br>Đồng/kg</td><td>7,550</td><td>--</td><td>--</td><td>--</td><td>27/08/2026</td></tr>
+     <tr><td>${hard}Đá 0-4<br>Đồng/m3</td><td>109,200</td><td>--</td><td>--</td><td>--</td><td>01/07/2026</td></tr>
+     <tr><td>${hard}Bê tông nhựa mịn : Carboncor Asphalt - CA 9.5<br>Đồng/tấn</td><td>4,146,000</td><td>--</td><td>--</td><td>--</td><td>01/07/2026</td></tr>
+     <tr><td>Đá Hộc<br>${hard}Đồng/m3</td><td>172,000</td><td>--</td><td>--</td><td>--</td><td>01/07/2026</td></tr>`,
+    ["Mặt hàng", "Giá", "% Ngày", "% Tháng", "% Năm", "Ngày cập nhật"],
+  );
+  const rows = parseVnbGoodsRows(html);
+  assert.equal(rows.length, 4, "không drop dòng nào dù name hoặc unit bẩn");
+  const mapped = mapVnbGoodsRows(rows);
+  assert.equal(mapped.size, 4);
+  assert.equal(mapped.get("paddy")?.price, 7_550);
+  assert.equal(mapped.get("paddy")?.unit, "Đồng/kg");
+  assert.equal(mapped.get("aggregate-04")?.price, 109_200);
+  assert.equal(mapped.get("aggregate-04")?.unit, "Đồng/m3");
+  assert.equal(mapped.get("asphalt")?.price, 4_146_000);
+  assert.equal(mapped.get("asphalt")?.unit, "Đồng/tấn");
+  // Đá Hộc: name sạch nhưng unit cell rác → unit/currency từ catalog (KHÔNG còn "USD")
+  assert.equal(mapped.get("aggregate-boulder")?.price, 172_000);
+  assert.equal(mapped.get("aggregate-boulder")?.unit, "Đồng/m3");
+  assert.equal(mapped.get("aggregate-boulder")?.currency, "VND");
+});
+
+test("REGRESSION 5 (positional): mọi name là rác (không còn tên) → vẫn map 66/66 theo thứ tự bảng + đơn vị", () => {
+  // thay toàn bộ tên hàng bằng "xyz" (không khớp fuzzy), giữ nguyên unit/giá/ngày
+  const html = GOODS_HTML.replace(/<td>([^<]*?)<br>/g, "<td>xyz<br>");
+  const rows = parseVnbGoodsRows(html);
+  assert.equal(rows.length, 66);
+  const mapped = mapVnbGoodsRows(rows);
+  assert.equal(mapped.size, 66, "positional: 66/66 dòng vẫn map đúng");
+  assert.equal(mapped.get("paddy")?.price, 7_550);
+  assert.equal(mapped.get("aggregate-04")?.price, 109_200);
+  assert.equal(mapped.get("asphalt")?.price, 4_146_000);
+  assert.equal(mapped.get("gold")?.price, 4_442.4);
+  assert.equal(mapped.get("gold")?.currency, "USD");
+  assert.equal(mapped.get("sjc-gold")?.price, 147_600_000, "SJC scale vẫn áp dụng khi positional");
+  assert.equal(mapped.get("aggregate-boulder")?.currency, "VND");
+  assert.equal(unmatchedVnbGoodsRows(rows).length, 0);
 });
