@@ -11,6 +11,7 @@ import {
   type CommodityDef,
   type RawCommodityQuote,
 } from "../providers/commodities";
+import { getVnbGoodsQuotes, VNB_GOODS_KEYS } from "../providers/vietnambiz-data";
 import { getSpotTicker } from "../providers/binance";
 import { getYahooQuotes, getYahooChart } from "../providers/yahoo";
 import { env } from "../env";
@@ -78,12 +79,17 @@ async function paxgQuote(symbol: string): Promise<RawCommodityQuote> {
   };
 }
 
-type SourceKind = "simplize" | "vietnambiz" | "yahoo" | "msn" | "binance";
+type SourceKind = "simplize" | "vnbData" | "vietnambiz" | "yahoo" | "msn" | "binance";
 
-/** User-mandated priority: Simplize → Vietnambiz, then real fallbacks. */
+/**
+ * User-mandated priority: Simplize (trang đầy đủ: perf/relatedStocks/timestamp
+ * nội ngày) → VietnamBiz Data portal WiFeed (1 request batch — nguồn CHÍNH cho
+ * nhôm/kẽm & mọi mục Simplize không parse) → Vietnambiz articles → real fallbacks.
+ */
 function priorityFor(def: CommodityDef): SourceKind[] {
   const order: SourceKind[] = [];
   if (def.simplizePath) order.push("simplize");
+  if (VNB_GOODS_KEYS.has(def.key)) order.push("vnbData");
   if (def.vietnambiz) order.push("vietnambiz");
   if (def.yahooSymbol) order.push("yahoo");
   if (MSN_KEY_BY_KEY[def.key]) order.push("msn");
@@ -142,6 +148,15 @@ async function fetchAll(): Promise<CommodityMarket> {
     errors.push(e instanceof Error ? e.message : "yahoo error");
   }
 
+  // VietnamBiz Data portal (WiFeed) — 1 request cho TOÀN BỘ mặt hàng khớp mapping
+  let vnbDataByKey = new Map<string, RawCommodityQuote>();
+  try {
+    vnbDataByKey = await getVnbGoodsQuotes();
+    if (vnbDataByKey.size) sourcesUsed.add("VietnamBiz Data (WiFeed)");
+  } catch (e) {
+    errors.push(`vietnambiz-data: ${e instanceof Error ? e.message : String(e)}`);
+  }
+
   const rows: CommodityRow[] = [];
   const unavailable: CommodityUnavailable[] = [];
 
@@ -168,6 +183,7 @@ async function fetchAll(): Promise<CommodityMarket> {
         try {
           let q: RawCommodityQuote | null = null;
           if (kind === "simplize") q = await simplizeRecord(def);
+          else if (kind === "vnbData") q = vnbDataByKey.get(def.key) ?? null;
           else if (kind === "vietnambiz") q = await getVietnambizQuote(def);
           else if (kind === "yahoo") q = yahooRecord(def, yahooByTicker);
           else if (kind === "msn" && msnIds[def.key] && msnById[msnIds[def.key]]) q = msnById[msnIds[def.key]];

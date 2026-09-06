@@ -1,12 +1,14 @@
 /**
- * COMMODITY SERVICE — priority (Simplize → Vietnambiz → fallback), real-data
- * only, and crash-safety.
+ * COMMODITY SERVICE — priority (Simplize → VietnamBiz Data WiFeed →
+ * Vietnambiz → real fallbacks), real-data only, and crash-safety.
  *
  * Stubs fetch with REAL provider payload shapes:
  * - Simplize public page (server-rendered text — WTI fixture, real values)
+ * - VietnamBiz Data portal (data.vietnambiz.vn/goods — giá thật 2026-09-06:
+ *   nhôm 24,373 · kẽm 26,633 · vàng 4,442.4 · WTI 91.22 · heo hơi 57,833)
  * - Yahoo Finance quotes + chart JSON (real shapes)
  * - Vietnambiz SJC gold board (real published values)
- * All other sources fail → assert degrade, never crash, never fake.
+ * Other sources fail → assert degrade, never crash, never fake.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -78,6 +80,19 @@ globalThis.fetch = ((input: RequestInfo | URL) => {
     const body = yahooChartBody(sym, sym === "CL=F" ? 91.48 : 100, sym === "CL=F" ? 91.3 : 99);
     return Promise.resolve(new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } }));
   }
+  // VietnamBiz DATA portal — giá thật công bố 2026-09-06 (trước check vietnambiz.vn)
+  if (url.includes("data.vietnambiz.vn")) {
+    const html = [
+      "<table><tr><th>Mặt hàng</th><th>Giá</th><th>% Ngày</th><th>% Tháng</th><th>% Năm</th><th>Ngày cập nhật</th></tr>",
+      "<tr><td>Giá vàng<br>USD/ounce</td><td>4,442.4</td><td>--</td><td>--</td><td>--</td><td>05/09/2026</td></tr>",
+      "<tr><td>Giá heo hơi trong nước<br>Đồng/kg</td><td>57,833</td><td>--</td><td>--</td><td>--</td><td>04/09/2026</td></tr>",
+      "<tr><td>Dầu WTI<br>USD/thùng</td><td>91.22</td><td>--</td><td>--</td><td>--</td><td>05/09/2026</td></tr>",
+      "<tr><td>Nhôm Trung Quốc<br>CNY/tấn</td><td>24,373</td><td>--</td><td>--</td><td>--</td><td>05/09/2026</td></tr>",
+      "<tr><td>Kẽm Trung Quốc<br>CNY/tấn</td><td>26,633</td><td>--</td><td>--</td><td>--</td><td>05/09/2026</td></tr>",
+      "</table>",
+    ].join("");
+    return Promise.resolve(new Response(html, { status: 200, headers: { "content-type": "text/html" } }));
+  }
   if (url.includes("vietnambiz.vn")) {
     return Promise.resolve(new Response("<html>KHONG CO</html>", { status: 404 }));
   }
@@ -114,20 +129,29 @@ test("getCommodityMarket: Simplize is the PRIMARY source (wti row + provenance)"
   const brent = r.data.rows.find((x) => x.symbol === "BZ");
   assert.ok(brent);
   assert.equal(brent.sourceRecords[0].source, "Yahoo Finance (futures)");
-  // commodities with NO source at all (aluminum/zinc) → UNAVAILABLE, never invented
-  assert.equal(r.data.rows.find((x) => x.symbol === "AL"), undefined);
-  assert.ok(r.data.unavailable.some((u) => u.key === "aluminum"));
-  assert.ok(r.data.unavailable.some((u) => u.key === "zinc"));
+  // aluminum/zinc giờ KHÔNG còn UNAVAILABLE — nguồn trực tiếp data.vietnambiz.vn (WiFeed)
+  const al = r.data.rows.find((x) => x.symbol === "AL");
+  assert.ok(al, "Nhôm có row từ WiFeed");
+  assert.equal(al.price, 24_373);
+  assert.equal(al.unit, "CNY/T");
+  assert.equal(al.currency, "CNY");
+  assert.match(al.sourceRecords[0].source, /VietnamBiz Data/);
+  const zn = r.data.rows.find((x) => x.symbol === "ZN");
+  assert.ok(zn, "Kẽm có row từ WiFeed");
+  assert.equal(zn.price, 26_633);
+  assert.ok(!r.data.unavailable.some((u) => u.key === "aluminum" || u.key === "zinc"));
+  assert.ok(r.data.sourcesUsed.includes("VietnamBiz Data (WiFeed)"));
   // wti must NOT have been replaced by the yahoo fallback (simplize is primary)
   assert.equal(wti.sourceRecords[0].source, "Simplize");
 });
 
-test("getCommodityMarket: meta honest — DEGRADED + partial when unavailable non-empty", async () => {
+test("getCommodityMarket: meta honest — nguồn WiFeed+Simplize, không còn partial khi đủ nguồn", async () => {
   const r = await getCommodityMarket();
   assert.ok(r);
-  assert.equal(r.meta.freshness, "DEGRADED");
-  assert.equal(r.meta.partial, true);
+  assert.equal(r.meta.partial, false);
   assert.ok(r.meta.source.includes("Simplize"));
+  assert.ok(r.meta.source.includes("VietnamBiz Data (WiFeed)"));
+  assert.equal(r.data.unavailable.length, 0);
 });
 
 test("getCommodityDetail: resolves row + def for a chartable commodity", async () => {

@@ -39,6 +39,8 @@ export const env = {
    * commodity pages live (/hang-hoa/wti, /gia-vang/the-gioi…). The api.* host
    * has NO public JSON endpoint for commodities (verified 404). */
   vietnambizBaseUrl: opt(process.env.VIETNAMBIZ_BASE_URL) ?? "https://vietnambiz.vn",
+  /** VietnamBiz Data portal (WiFeed/WiGroup) — goods/macro/rates tables (user-provided 2026-09-06) */
+  vietnambizDataBaseUrl: opt(process.env.VIETNAMBIZ_DATA_BASE_URL) ?? "https://data.vietnambiz.vn",
   simplizeBaseUrl: opt(process.env.SIMPLIZE_BASE_URL) ?? "https://simplize.vn",
   simplizeApiKey: opt(process.env.SIMPLIZE_API_KEY),
   /** Snapshot cadence cho commodity quotes (user-mandated 3s polling; floor 2s).

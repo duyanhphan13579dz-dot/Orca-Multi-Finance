@@ -91,7 +91,19 @@ crash cả trang.
   **~10 phút/lần** (timestamp nhảy 13:59:18 → 14:09:18, giá giữ nguyên) nên dữ liệu lặp lại giữa các lần poll
   là bình thường; quyết định poll 3s là chủ trương user (rủi ro tải lên origin + chính sách thương mại của
   Simplize đã được nêu rõ trong `docs/simplize-vn-audit.md`).
-- Vietnambiz (fallback khi Simplize lỗi): board SJC `/gia-vang-hom-nay.htm` cho `sjc-gold`; bài giá NGÀY
+- **VietnamBiz Data portal (WiFeed/WiGroup)** — `data.vietnambiz.vn/goods` (user cung cấp,
+  verified live 2026-09-06): 1 request SSR bảng giá cho TOÀN BỘ mặt hàng (kể cả **Nhôm Trung Quốc
+  24,373 CNY/tấn** & **Kẽm Trung Quốc 26,633** — 2 mục trước đây KHÔNG có nguồn nào). Cũng là nguồn
+  trực tiếp cho gold 4,442.4 USD/oz, SJC 147,600 nghìn đồng/lượng (×1000 → VNĐ), silver, copper
+  6.58 USD/lb, iron-ore/HRC/nickel/coal (CNY/T đổi đơn vị source — KHÔNG quy đổi tiền tệ), urea,
+  WTI 91.22, natgas, heo hơi 57,833 đồng/kg, tôm thẻ 91,500 (→ 91.5 nghìn đồng/kg), E5 RON92-II
+  22.48, Diesel 27.74 (nghìn/lít). Mapping chỉ giữ hàng KHỚP nghĩa + đơn vị; không map hàng lạ
+  (cà phê trong nước ≠ robusta USD/T, gạo TPXK ≠ ZR futures, đường/viải cotton ≠ SB/CT…).
+  Porter chain: **Simplize → VietnamBiz Data (WiFeed) → Vietnambiz articles → Yahoo → MSN → Binance**.
+  Macro: `data.vietnambiz.vn/macro-economic` (GDP/CPI/PMI/FDI/xuất nhập khẩu + kỳ công bố & ngày
+  phát hành tiếp theo); Rates: `/currency-interest-rate` (M2, tín dụng, tỷ giá trung tâm/NHTM/tự do,
+  lãi suất LNH/discount/refinance/huy động). Bản quyền CTCP WiGroup — mọi payload ghi nguồn đầy đủ.
+- Vietnambiz (fallback khi Simplize + WiFeed lỗi): board SJC `/gia-vang-hom-nay.htm` cho `sjc-gold`; bài giá NGÀY
   (URL động, tìm qua chuyên mục ổn định `/hang-hoa.htm` — pattern verify 2026-09-06): xăng dầu
   (`gasoline-95`/`gasoline-92`/`diesel` — row E5RON92 / E10RON95-III / Diesel 0.05S, đổi đồng/lít →
   nghìn đồng/lít) và heo hơi (`pig-vn` — dải giá công bố → midpoint, có note nguồn). Tôm thẻ/cá tra/thép:
