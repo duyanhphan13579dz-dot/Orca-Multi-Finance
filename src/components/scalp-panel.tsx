@@ -2,11 +2,40 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useApi } from "@/lib/hooks";
-import type { ScalpResult } from "@/lib/services/intelligence";
-import type { ScalpSignal } from "@/lib/engines/scalp-types";
 import { Badge, fmtNum, FreshnessDot, Loading, MetaLine, Panel, priceDigits, Unavailable } from "@/components/ui";
 import { Crosshair, Radio, ShieldAlert, Timer, Zap } from "lucide-react";
-import type { Meta } from "@/lib/types";
+import type { Meta, QualityStatus } from "@/lib/types";
+
+/** Client-local shapes — avoid importing server-only modules into the browser bundle. */
+interface ScalpSignalView {
+  timeframe: string;
+  direction: "watch-long" | "watch-short" | "neutral" | string;
+  strength: number;
+  score: number;
+  last: number;
+  atr: number | null;
+  entryZone: [number, number] | null;
+  invalidation: number | null;
+  micro: { support: number[]; resistance: number[] };
+  riskNotes: string[];
+  evidence: string[];
+  primarySetup?: {
+    strategy: string;
+    status: string;
+    entry: number | null;
+    stopLoss: number | null;
+    takeProfit: number | null;
+    riskReward: number | null;
+  } | null;
+  regime?: { market: string } | null;
+  filter?: { eligible: boolean; tier: string } | null;
+}
+
+interface ScalpResult {
+  signal: ScalpSignalView;
+  quality: QualityStatus;
+  wsLive: boolean;
+}
 
 const TF = ["1m", "5m", "15m"] as const;
 
@@ -61,7 +90,13 @@ export function ScalpPanel({ symbol }: { symbol: string }) {
 
     const base = `/api/v1/crypto/${encodeURIComponent(symbol)}/scalp/stream?tf=${encodeURIComponent(tf)}`;
     const url = `${base}&_=${Date.now()}`;
-    const es = new EventSource(url);
+    let es: EventSource;
+    try {
+      es = new EventSource(url);
+    } catch {
+      setLiveState("delayed");
+      return () => stopStream();
+    }
     esRef.current = es;
 
     const apply = (payload: StreamPayload) => {
@@ -127,37 +162,10 @@ export function ScalpPanel({ symbol }: { symbol: string }) {
       if (tk !== tokenRef.current) return;
       setLiveState("reconnecting");
       es.close();
+      // Fall back to REST only — do not tight-loop EventSource reconnect (page jank)
       setTimeout(() => {
-        if (tk !== tokenRef.current) return;
-        const es2 = new EventSource(`${base}&_=${Date.now()}`);
-        esRef.current = es2;
-        es2.addEventListener("snapshot", (ev) => {
-          try {
-            apply(JSON.parse((ev as MessageEvent).data as string) as StreamPayload);
-          } catch {
-            /* drop */
-          }
-        });
-        es2.addEventListener("scalp.signal", (ev) => {
-          try {
-            apply(JSON.parse((ev as MessageEvent).data as string) as StreamPayload);
-          } catch {
-            /* drop */
-          }
-        });
-        es2.addEventListener("scalp.price", (ev) => {
-          try {
-            const { price } = JSON.parse((ev as MessageEvent).data as string) as { price: number };
-            applyPrice(price);
-          } catch {
-            /* drop */
-          }
-        });
-        es2.onerror = () => {
-          es2.close();
-          setLiveState("delayed");
-        };
-      }, 3_000 + Math.random() * 2_000);
+        if (tk === tokenRef.current) setLiveState("delayed");
+      }, 2_000);
     };
 
     return () => {
@@ -167,10 +175,10 @@ export function ScalpPanel({ symbol }: { symbol: string }) {
 
   useEffect(() => {
     const id = setInterval(() => {
-      if (lastPushAt && Date.now() - lastPushAt > 20_000 && liveState === "live") {
+      if (lastPushAt && Date.now() - lastPushAt > 25_000 && liveState === "live") {
         setLiveState("delayed");
       }
-    }, 2_000);
+    }, 3_000);
     return () => clearInterval(id);
   }, [lastPushAt, liveState]);
 
@@ -224,7 +232,7 @@ function ScalpView({
   meta: ReturnType<typeof useApi<ScalpResult>>["meta"];
   liveState: LiveState;
 }) {
-  const s = result.signal as ScalpSignal;
+  const s = result.signal;
   const digits = priceDigits(s.last);
   const dir = DIR_UI[s.direction] ?? DIR_UI.neutral;
   const setup = s.primarySetup;
@@ -290,17 +298,17 @@ function ScalpView({
         </div>
       )}
 
-      {s.micro.resistance.length + s.micro.support.length > 0 && (
+      {s.micro?.resistance?.length + s.micro?.support?.length > 0 && (
         <div className="flex flex-wrap items-center gap-2 text-[11px]">
           <Crosshair className="size-3.5 text-text-muted" />
           <span className="text-text-muted">Micro levels:</span>
-          {s.micro.support.slice(0, 2).map((v) => (
+          {(s.micro?.support ?? []).slice(0, 2).map((v) => (
             <span key={`s${v}`} className="num rounded bg-positive/10 px-1.5 py-0.5 text-positive">
               {fmtNum(v, digits)}
             </span>
           ))}
           <span className="text-text-muted">·</span>
-          {s.micro.resistance.slice(0, 2).map((v) => (
+          {(s.micro?.resistance ?? []).slice(0, 2).map((v) => (
             <span key={`r${v}`} className="num rounded bg-negative/10 px-1.5 py-0.5 text-negative">
               {fmtNum(v, digits)}
             </span>
@@ -309,14 +317,14 @@ function ScalpView({
       )}
 
       <ul className="space-y-1">
-        {s.evidence.map((e, i) => (
+        {(s.evidence ?? []).map((e, i) => (
           <li key={i} className="text-[12px] text-text-secondary">
             ▸ {e}
           </li>
         ))}
       </ul>
 
-      {s.riskNotes.length > 0 && (
+      {(s.riskNotes ?? []).length > 0 && (
         <div className="space-y-1 rounded-lg border border-warning/25 bg-warning/5 p-2.5">
           {s.riskNotes.map((r, i) => (
             <div key={i} className="flex items-start gap-1.5 text-[11.5px] text-text-secondary">
