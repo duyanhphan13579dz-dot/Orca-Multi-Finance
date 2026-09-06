@@ -7,13 +7,11 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 /**
- * REALTIME SCALP SIGNAL STREAM (SSE)
+ * REALTIME SCALP SIGNAL STREAM (SSE) — compute-light
  *
- * GET /api/v1/crypto/{symbol}/scalp/stream?tf=5m
- *
- * - Subscribes centralized Binance kline WS via candleAggregator (M15/M5/M1)
- * - Recomputes quant scalp signal on candle close (and throttled updates)
- * - Events: snapshot, scalp.signal, heartbeat
+ * Full quant rebuild only on: init + candle close (M15/M5/M1).
+ * Tick updates push last price only (no multi-TF REST).
+ * Heartbeat carries price + ws state without recomputing signal.
  */
 
 const TF = new Set(["1m", "5m", "15m"]);
@@ -42,8 +40,9 @@ export async function GET(req: Request, ctx: { params: Promise<{ symbol: string 
   const unsubs: (() => void)[] = [];
   const offFns: (() => void)[] = [];
   let heartbeat: ReturnType<typeof setInterval> | null = null;
-  let lastPush = 0;
+  let lastFull = 0;
   let computing = false;
+  let lastResult: unknown = null;
 
   const stream = new ReadableStream({
     async start(controller) {
@@ -56,16 +55,16 @@ export async function GET(req: Request, ctx: { params: Promise<{ symbol: string 
         }
       };
 
-      const pushSignal = async (reason: string) => {
+      const pushFull = async (reason: string) => {
         if (closed || computing) return;
-        const now = Date.now();
-        if (reason !== "close" && now - lastPush < 2_500) return;
+        if (reason === "close" && Date.now() - lastFull < 1_200) return;
         computing = true;
         try {
           const r = await buildScalpSignal(sym, tf);
           if (!r || closed) return;
-          lastPush = Date.now();
+          lastFull = Date.now();
           const wsLive = Boolean(binanceWs.getTicker(sym, 10_000)) || r.result.wsLive;
+          lastResult = r.result;
           send(reason === "init" ? "snapshot" : "scalp.signal", {
             ...r.result,
             wsLive,
@@ -79,7 +78,7 @@ export async function GET(req: Request, ctx: { params: Promise<{ symbol: string 
             },
           });
         } catch {
-          /* keep stream alive */
+          /* keep alive */
         } finally {
           computing = false;
         }
@@ -94,19 +93,21 @@ export async function GET(req: Request, ctx: { params: Promise<{ symbol: string 
       for (const interval of ["15m", "5m", "1m"] as const) {
         offFns.push(
           eventBus.on(`candle.closed:${sym}:${interval}`, () => {
-            void pushSignal("close");
+            void pushFull("close");
           }),
         );
-        if (interval === tf) {
-          offFns.push(
-            eventBus.on(`candle.updated:${sym}:${interval}`, () => {
-              void pushSignal("tick");
-            }),
-          );
-        }
       }
 
-      await pushSignal("init");
+      offFns.push(
+        eventBus.on(`tick:${sym}`, (p) => {
+          if (closed || !lastResult) return;
+          const tick = p as { price: number };
+          if (!Number.isFinite(tick.price)) return;
+          send("scalp.price", { symbol: sym, price: tick.price, t: Date.now() });
+        }),
+      );
+
+      await pushFull("init");
 
       heartbeat = setInterval(() => {
         if (closed) return;
@@ -125,7 +126,7 @@ export async function GET(req: Request, ctx: { params: Promise<{ symbol: string 
         } catch {
           /* closed */
         }
-      }, 12_000);
+      }, 15_000);
       heartbeat.unref?.();
     },
     cancel() {
