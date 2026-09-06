@@ -8,9 +8,10 @@ import {
   AreaSeries, BarSeries, BaselineSeries, CandlestickSeries, HistogramSeries, LineSeries,
   LineStyle, type IChartApi, type ISeriesApi, type IPriceLine, type Time, type UTCTimestamp,
 } from "lightweight-charts";
-import type { ChartIndicators, ChartCandle } from "@/lib/chart-const";
+import type { ChartIndicators, ChartCandle, ChartSignalMarker } from "@/lib/chart-const";
 import type { ChartKind } from "./theme";
 import { ORCA_CHART_THEME as T } from "./theme";
+import { attachMarkers } from "./markers";
 
 export const toSec = (ms: number) => Math.floor(ms / 1000) as UTCTimestamp as Time;
 
@@ -51,27 +52,19 @@ export class SeriesManager {
         this.baseSeries.line = this.chart.addSeries(LineSeries, { color: T.accent, lineWidth: 2, ...opts }, 0);
         break;
       case "baseline":
-        this.baseSeries.baseline = this.chart.addSeries(
-          BaselineSeries,
-          { topLineColor: T.up, topFillColor1: "rgba(46,194,126,0.18)", topFillColor2: "rgba(46,194,126,0.03)", bottomLineColor: T.down, bottomFillColor1: "rgba(238,95,117,0.04)", bottomFillColor2: "rgba(238,95,117,0.16)", lineWidth: 2, ...opts },
-          0,
-        );
+        this.baseSeries.baseline = this.chart.addSeries(BaselineSeries, { topLineColor: T.up, bottomLineColor: T.down, topFillColor1: "rgba(46,194,126,0.2)", topFillColor2: "rgba(46,194,126,0.02)", bottomFillColor1: "rgba(238,95,117,0.2)", bottomFillColor2: "rgba(238,95,117,0.02)", baseValue: { type: "price", price: 0 }, ...opts }, 0);
         break;
       case "bar":
-        this.baseSeries.bar = this.chart.addSeries(BarSeries, { upColor: T.up, downColor: T.down, openVisible: true, ...opts }, 0);
+        this.baseSeries.bar = this.chart.addSeries(BarSeries, { upColor: T.up, downColor: T.down, ...opts }, 0);
         break;
     }
   }
 
-  switchKind(next: ChartKind) {
-    this.createBase(next);
+  private base() {
+    return (this.baseSeries.candles || this.baseSeries.bar) as ISeriesApi<"Candlestick"> | undefined;
   }
 
-  base(): ISeriesApi<"Candlestick"> | null {
-    return (this.baseSeries.candles as ISeriesApi<"Candlestick"> | undefined) ?? null;
-  }
-
-  ensureVolume() {
+  private ensureVolume() {
     if (!this.volumeSeries) {
       this.volumeSeries = this.chart.addSeries(HistogramSeries, { priceScaleId: "volume", priceFormat: { type: "volume" } }, 0);
       this.chart.priceScale("volume").applyOptions({ scaleMargins: { top: 0.84, bottom: 0 } });
@@ -231,6 +224,16 @@ export class SeriesManager {
           title: lv.label,
         }),
       );
+    }
+  }
+
+  applyMarkers(markers: ChartSignalMarker[]) {
+    const c = this.baseSeries.candles;
+    if (!c || !markers?.length) return;
+    try {
+      attachMarkers(c as Parameters<typeof attachMarkers>[0], markers as Parameters<typeof attachMarkers>[1]);
+    } catch {
+      /* marker plugin optional */
     }
   }
 
