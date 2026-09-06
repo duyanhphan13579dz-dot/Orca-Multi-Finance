@@ -5,6 +5,7 @@ import type { ForexDetail } from "@/lib/services/forex";
 import { Badge, Chg, FreshnessDot, Loading, MetaLine, Panel, Unavailable } from "@/components/ui";
 import { OrcaChart } from "@/components/orca-chart";
 import { TechnicalPanel } from "@/components/technical-panel";
+import { ForexScalpPanel } from "@/components/forex-scalp-panel";
 import { AddToWatchlist } from "@/components/watchlist-button";
 
 export function ForexDetailPage({ pair }: { pair: string }) {
@@ -28,7 +29,13 @@ export function ForexDetailPage({ pair }: { pair: string }) {
             </div>
             {price != null && (
               <div className="num mt-1 flex items-baseline gap-3">
-                <span className="text-[28px] font-semibold">{price >= 1000 ? price.toLocaleString("vi-VN", { maximumFractionDigits: 0 }) : price >= 100 ? price.toFixed(2) : price.toFixed(4)}</span>
+                <span className="text-[28px] font-semibold">
+                  {price >= 1000
+                    ? price.toLocaleString("vi-VN", { maximumFractionDigits: 0 })
+                    : price >= 100
+                      ? price.toFixed(2)
+                      : price.toFixed(4)}
+                </span>
                 {cur && <Chg value={cur.changePercent} className="text-[14px]" />}
               </div>
             )}
@@ -37,11 +44,15 @@ export function ForexDetailPage({ pair }: { pair: string }) {
         </div>
       </Panel>
 
-      {/* unified chart engine — forex intraday/daily candles */}
-      <OrcaChart symbol={pair} assetType="forex" defaultTimeframe="1h" height={400} title={`${data.base}/${data.quote}`} />
+      <OrcaChart symbol={pair} assetType="forex" defaultTimeframe="15m" height={400} title={`${data.base}/${data.quote}`} />
+
+      <ForexScalpPanel pair={pair} />
 
       <Panel pad={false} title="Ghi chú phương pháp">
-        <p className="text-[11px] leading-relaxed text-ink-3">{data.referenceNote} Intraday candles từ public data provider được phê duyệt khi Biquote chưa cấu hình — cùng pipeline validation + normalization của Chart Data Engine.</p>
+        <p className="text-[11px] leading-relaxed text-ink-3">
+          {data.referenceNote} Scalping M15→M5→M1 dung nen public (Yahoo) khi Biquote chua co intraday; filter
+          session/spread bat buoc theo dac ta Forex.
+        </p>
       </Panel>
 
       <TechnicalPanel tech={data.technical} patterns={[]} />
