@@ -1,24 +1,19 @@
 "use client";
 
 /**
- * ORCA FINANCIAL CHART — unified realtime chart for all asset classes.
- * Client-safe: types from chart-const only (never services/chart server-only).
+ * ORCA FINANCIAL CHART — history-only mode (live SSE temporarily disabled
+ * to avoid renderer crashes from EventSource reconnect storms).
+ * Types from chart-const only — never import server-only services.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
-import {
-  createChart,
-  ColorType,
-  CrosshairMode,
-  type IChartApi,
-} from "lightweight-charts";
+import { createChart, ColorType, CrosshairMode, type IChartApi } from "lightweight-charts";
 import { useApi } from "@/lib/hooks";
 import { useSettings } from "@/lib/settings";
 import { tfsFor, TF_LABEL, type ChartAssetType, type ChartMarketData } from "@/lib/chart-const";
 import type { Meta } from "@/lib/types";
 import { SeriesManager } from "./series-manager";
-import { ChartLiveManager } from "./live-manager";
-import { ORCA_CHART_THEME as T, type ChartKind, type LiveState } from "./theme";
-import { Badge, Loading } from "@/components/ui";
+import { ORCA_CHART_THEME as T, type ChartKind } from "./theme";
+import { Loading } from "@/components/ui";
 
 interface Props {
   symbol: string;
@@ -42,41 +37,42 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
     const pref = defaultTimeframe ?? settings.dashboard.defaultTimeframe;
     return tfs.includes(pref) ? pref : tfs.includes("1h") ? "1h" : tfs[0];
   });
-  const [live, setLive] = useState<LiveState>({ state: "connecting", ageMs: null });
 
   const hostRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const mgrRef = useRef<SeriesManager | null>(null);
-  const liveMgrRef = useRef<ChartLiveManager | null>(null);
-  const lastTimeRef = useRef(0);
   const kindRef = useRef<ChartKind>((prefs.chartType as ChartKind) || "candle");
   const loadSeqRef = useRef(0);
 
-  const { data, isLoading, mutate } = useApi<HistResp>(
+  const { data, isLoading } = useApi<HistResp>(
     `/api/v1/chart/history?symbol=${encodeURIComponent(symbol)}&assetType=${assetType}&timeframe=${tf}&limit=320`,
   );
 
   useEffect(() => {
     if (!hostRef.current) return;
-    const chart = createChart(hostRef.current, {
-      height,
-      layout: {
-        background: { type: ColorType.Solid, color: "transparent" },
-        textColor: T.text,
-        fontSize: 11,
-        fontFamily: "ui-monospace, Menlo, Consolas, monospace",
-      },
-      grid: {
-        vertLines: { color: T.grid },
-        horzLines: { color: T.grid },
-      },
-      crosshair: { mode: CrosshairMode.Normal },
-      rightPriceScale: { borderVisible: false, scaleMargins: { top: 0.08, bottom: 0.18 } },
-      timeScale: { borderVisible: false, timeVisible: true, secondsVisible: false },
-    });
+    let chart: IChartApi;
+    try {
+      chart = createChart(hostRef.current, {
+        height,
+        layout: {
+          background: { type: ColorType.Solid, color: "transparent" },
+          textColor: T.text,
+          fontSize: 11,
+          fontFamily: "ui-monospace, Menlo, Consolas, monospace",
+        },
+        grid: {
+          vertLines: { color: T.grid },
+          horzLines: { color: T.grid },
+        },
+        crosshair: { mode: CrosshairMode.Normal },
+        rightPriceScale: { borderVisible: false, scaleMargins: { top: 0.08, bottom: 0.18 } },
+        timeScale: { borderVisible: false, timeVisible: true, secondsVisible: false },
+      });
+    } catch {
+      return;
+    }
     chartRef.current = chart;
     mgrRef.current = new SeriesManager(chart);
-    liveMgrRef.current = new ChartLiveManager();
 
     const ro = new ResizeObserver(() => {
       if (hostRef.current) chart.applyOptions({ width: hostRef.current.clientWidth });
@@ -85,9 +81,11 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
 
     return () => {
       ro.disconnect();
-      liveMgrRef.current?.stop();
-      liveMgrRef.current = null;
-      chart.remove();
+      try {
+        chart.remove();
+      } catch {
+        /* noop */
+      }
       chartRef.current = null;
       mgrRef.current = null;
     };
@@ -99,36 +97,13 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
     const chart = chartRef.current;
     if (!mgr || !chart || !data?.data?.candles?.length) return;
     if (seq !== loadSeqRef.current) return;
-
-    const candles = data.data.candles;
-    lastTimeRef.current = candles[candles.length - 1]?.time ?? 0;
-    mgr.setHistory(candles, kindRef.current);
-    chart.timeScale().fitContent();
+    try {
+      mgr.setHistory(data.data.candles, kindRef.current);
+      chart.timeScale().fitContent();
+    } catch {
+      /* keep page alive if series fails */
+    }
   }, [data]);
-
-  useEffect(() => {
-    const mgr = liveMgrRef.current;
-    if (!mgr) return;
-    mgr.start(
-      symbol,
-      tf,
-      {
-        onCandle: (c, closed) => {
-          const sm = mgrRef.current;
-          if (!sm || c.time < lastTimeRef.current) return;
-          sm.updateLive(c);
-          sm.updateIncremental(c.close, c.time);
-          if (closed) void mutate();
-        },
-        onResyncNeeded: () => {
-          void mutate();
-        },
-        onLiveState: setLive,
-      },
-      assetType,
-    );
-    return () => mgr.stop();
-  }, [symbol, tf, assetType, mutate]);
 
   return (
     <div className="relative rounded-xl border border-border-subtle bg-background-secondary">
@@ -141,9 +116,6 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
             </button>
           ))}
         </div>
-        {live.state === "live" && <Badge tone="up">LIVE</Badge>}
-        {live.state === "delayed" && <Badge tone="down">DELAYED</Badge>}
-        {live.state === "reconnecting" && <Badge tone="neutral">RECONNECTING</Badge>}
       </div>
       <div ref={hostRef} className="w-full" style={{ height }} />
       {isLoading && !data && (
