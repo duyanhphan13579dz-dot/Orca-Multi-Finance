@@ -60,6 +60,19 @@ test("tool layer: tool needs profile, không có → CONSENT_REQUIRED", async ()
   assert.equal(r.code, "CONSENT_REQUIRED");
 });
 
+test("personal finance tools: trả SỐ (không phải object) cho mọi field tiền", async () => {
+  const cf = await executeTool("cash_flow", {}, ctx);
+  assert.equal(cf.ok, true);
+  const c = cf.data as { income: number | null; expenses: number | null; freeCashFlow: number | null };
+  assert.equal(typeof c.income, "number");
+  assert.equal(typeof c.freeCashFlow, "number");
+  const nw = await executeTool("net_worth", {}, ctx);
+  assert.equal(nw.ok, true);
+  const n = nw.data as { totalAssets: number | null; totalLiabilities: number | null; netWorth: number | null };
+  assert.equal(typeof n.netWorth, "number");
+  assert.equal(n.netWorth, 800_000_000);
+});
+
 test("personal finance tools: tính đúng từ profile", async () => {
   const savings = await executeTool("savings_rate", {}, ctx);
   assert.equal(savings.ok, true);

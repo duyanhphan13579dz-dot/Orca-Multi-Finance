@@ -85,13 +85,18 @@ export function parseBudgetQuestion(text: string): ParsedBudget {
   const firstMoney = amounts[0]?.value ?? null;
   const totalAmount = firstMoney;
 
-  // chu kỳ: ưu tiên "N tuần" đầu tiên, rồi "N tháng" (→ 4.33 tuần), rồi "N ngày" (→ /7)
+  // chu kỳ: ưu tiên "N tuần" → "N tháng" (→ 4.33 tuần) → cụm từ không số
+  // ("cuối tháng", "tháng này", "hết tuần"…) → "N ngày" (→ /7)
   let weeks: number | null = null;
   const weekMatch = text.match(/(\d+(?:[.,]\d+)?)\s*(tuần|week)/i);
   const monthMatch = text.match(/(\d+(?:[.,]\d+)?)\s*(tháng|month)/i);
   const dayMatch = text.match(/(\d+(?:[.,]\d+)?)\s*(ngày|day)/i);
+  const monthPhrase = /(cuối|hết|cả|trong|này|nay)\s*tháng|tháng\s*(này|tới|sau)|một tháng|1 tháng/i;
+  const weekPhrase = /(cuối|hết)\s*(tuần|tuần này|tuần tới|tuần sau)|tuần\s*(này|tới|sau)/i;
   if (weekMatch) weeks = Number(weekMatch[1].replace(",", "."));
   else if (monthMatch) weeks = Math.round(Number(monthMatch[1].replace(",", ".")) * 43.3) / 10;
+  else if (monthPhrase.test(text)) weeks = 4.33; // "sống đến cuối tháng" ≈ 1 tháng
+  else if (weekPhrase.test(text)) weeks = 1;
   else if (dayMatch) weeks = Math.round((Number(dayMatch[1].replace(",", ".")) / 7) * 100) / 100;
   if (weeks != null && (!Number.isFinite(weeks) || weeks <= 0)) weeks = null;
 

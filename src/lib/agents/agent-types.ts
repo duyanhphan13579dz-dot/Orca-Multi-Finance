@@ -45,7 +45,7 @@ export interface AgentContext {
   llm?: boolean;
 }
 
-export const numVn = (n: number | null | undefined): string => (n == null ? "—" : n.toLocaleString("vi-VN"));
+export const numVn = (n: number | null | undefined): string => (n == null ? "—" : Math.round(n).toLocaleString("vi-VN"));
 export const pctVn = (n: number | null | undefined, digits = 2): string => (n == null ? "—" : `${n >= 0 ? "+" : ""}${n.toFixed(digits)}%`);
 
 export function toolMsg(r: ToolResult): string {

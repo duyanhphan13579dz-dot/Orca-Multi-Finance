@@ -33,8 +33,10 @@ export function classifyFinancial(question: string): {
   const hasMoney = /(\d[\d.,]*\s*(triệu|tỷ|tỉ|tr|m|ty|vnd|đ))/i.test(question) || /mua|đầu tư|invest/i.test(q);
   const symbol = extractStockSymbol(question);
 
-  const wealthIntent = /danh mục|portfolio|phân bổ|tỷ trọng|đa dạng hóa|tái cân bằng|rủi ro danh mục|drawdown|concentration|phơi nhiễm/i.test(q);
-  const pfIntent = /thu nhập|chi tiêu|tiết kiệm|nợ|tài chính cá nhân|khẩn cấp|dòng tiền|dti|sức khỏe tài chính|mục tiêu tài chính|tiền mua|ngân sách|budget/i.test(q);
+  // WEALTH: cần ngữ cảnh danh mục/đầu tư — KHÔNG dùng "phân bổ" đơn lẻ
+  // (câu "500k phân bổ chi phí" là budget, không phải danh mục).
+  const wealthIntent = /danh mục|portfolio|tỷ trọng|đa dạng hóa|tái cân bằng|rủi ro danh mục|drawdown|concentration|phơi nhiễm|phân bổ (tài sản|danh mục|vốn|cổ phiếu)|tài sản đầu tư|đầu tư của tôi/i.test(q);
+  const pfIntent = /thu nhập|chi tiêu|tiết kiệm|nợ|tài chính cá nhân|khẩn cấp|dòng tiền|dti|sức khỏe tài chính|mục tiêu tài chính|tiền mua|ngân sách|budget|kế hoạch tài chính/i.test(q);
   const stockIntent = /phân tích|định giá|cổ phiếu|stock|báo cáo tài chính|pe\b|p\/e|kỹ thuật|triển vọng|đầu tư (vào|hp|vnm|...)/i.test(q) || !!symbol;
 
   if (symbol && hasMoney && (stockIntent || /mua HP|bỏ tiền|đầu tư/i.test(q))) {
@@ -42,8 +44,9 @@ export function classifyFinancial(question: string): {
     return { intents: ["stock-analyst", "wealth-manager", "personal-finance"], symbol, kind: "stock-budget" };
   }
   if (symbol && stockIntent) return { intents: ["stock-analyst"], symbol, kind: "stock-analysis" };
-  // BUDGET: hỏi ngân sách tiêu (có số tiền + từ khóa chi tiêu) → Budget Planner
-  // (trước wealth/pf để không rơi về pipeline thị trường legacy)
+  // BUDGET: có số tiền + ngữ cảnh tiêu/sống/chi phí (kể cả kỳ không số như
+  // "đến cuối tháng") → Budget Planner; ưu tiên TRƯỚC wealth/pf để câu
+  // "500k sống đến cuối tháng, phân bổ chi phí" không rơi về wealth-manager.
   if (looksLikeBudgetQuestion(question)) return { intents: ["personal-finance"], kind: "budget-plan" };
   if (wealthIntent) return { intents: ["wealth-manager"], kind: "wealth" };
   if (pfIntent) return { intents: ["personal-finance"], kind: "personal-finance" };

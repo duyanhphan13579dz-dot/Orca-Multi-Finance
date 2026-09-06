@@ -129,3 +129,51 @@ test("budget routing: số tiền + từ khóa là điều kiện bắt buộc",
   assert.equal(classifyFinancial("phân chia tiền thế nào?").intents.length, 0); // không số
   assert.equal(classifyFinancial("100k là bao nhiêu đô?").kind, "unknown"); // không từ khóa tiêu
 });
+
+/* ------------ đa dạng câu hỏi: "sống đến cuối tháng" (screenshot) ----------- */
+
+test("budget: parse kỳ 'đến cuối tháng' không số → ≈ 4.33 tuần", () => {
+  const p = parseBudgetQuestion("Bây giờ tôi có 500k sống đến cuối tháng, tôi nên phân bổ chi phí như thế nào?");
+  assert.equal(p.totalAmount, 500_000);
+  assert.equal(p.weeks, 4.33);
+  assert.equal(p.fixedExpenses.length, 0);
+});
+
+test("budget routing: '500k sống đến cuối tháng, phân bổ chi phí' → budget-plan, KHÔNG phải wealth", () => {
+  const cls = classifyFinancial("Bây giờ tôi có 500k sống đến cuối tháng, tôi nên phân bổ chi phí như thế nào?");
+  assert.deepEqual(cls, { intents: ["personal-finance"], kind: "budget-plan" });
+  assert.equal(looksLikeBudgetQuestion("Bây giờ tôi có 500k sống đến cuối tháng, tôi nên phân bổ chi phí như thế nào?"), true);
+});
+
+test("budget agent e2e: '500k sống đến cuối tháng' trả kế hoạch tháng, không UNAVAILABLE", async () => {
+  const { result } = await runFinancialOrchestrator(
+    "Bây giờ tôi có 500k sống đến cuối tháng, tôi nên phân bổ chi phí như thế nào?",
+    { depth: "standard" },
+  );
+  const r = result as { intent: string; answer: string; agents: string[] };
+  assert.equal(r.intent, "financial:budget-plan");
+  assert.deepEqual(r.agents, ["personal-finance"]);
+  assert.ok(r.answer.includes("500.000"));
+  assert.ok(r.answer.includes("115.473")); // 500k / 4.33 tuần ≈ 115.474
+  assert.ok(!r.answer.includes("Chưa có dữ liệu danh mục"));
+});
+
+test("budget routing: 'phân bổ' đơn lẻ KHÔNG kéo budget; danh mục vẫn → wealth", () => {
+  // có tiền + danh mục (không chi tiêu/sống) → wealth
+  assert.equal(classifyFinancial("500k nên phân bổ vào danh mục thế nào?").kind, "wealth");
+  // không số tiền, "phân bổ tài sản" → wealth
+  assert.equal(classifyFinancial("phân bổ tài sản của tôi thế nào?").kind, "wealth");
+  // có tiền + "chi phí" → budget (không lẫn wealth dù có từ "phân bổ")
+  assert.equal(classifyFinancial("500k phân bổ chi phí tháng này thế nào?").kind, "budget-plan");
+});
+
+test("budget routing: các biến thể đa dạng cùng trỏ budget-plan", () => {
+  for (const q of [
+    "tháng này tôi có 2 triệu ăn tiêu thế nào cho đủ?",
+    "1 tuần 200k thì chi tiêu sao cho hợp lý?",
+    "mỗi ngày 50k tiêu thế nào để hết tháng còn dư?",
+    "500k mua đồ ăn cả tuần, chia thế nào?",
+  ]) {
+    assert.equal(classifyFinancial(q).kind, "budget-plan", `sai cho: ${q}`);
+  }
+});

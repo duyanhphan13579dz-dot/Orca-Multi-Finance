@@ -13,8 +13,9 @@ import { parseBudgetQuestion } from "../finance/budget-parser";
 export function looksLikeBudgetQuestion(question: string): boolean {
   const q = question.toLowerCase();
   const hasMoney = /(\d[\d.,]*\s*(k|nghìn|ngàn|tr|triệu|tỷ|tỉ|vnd|đ))/i.test(q);
-  const budgetWords = /(ngân sách|budget|tiêu trong|phân chia|chia như|chi phí sinh hoạt|tiền ăn|xăng|ăn quán|đổ xăng|đủ tiêu|đủ tiền|tiêu\b|chi tiêu)/i.test(q);
-  return hasMoney && budgetWords;
+  const spending = /(ngân sách|budget|tiêu trong|phân chia|chia như|phân bổ chi phí|chi phí (sinh hoạt|ăn|sống|hàng)|sinh hoạt|tiền ăn|xăng|ăn quán|ăn tiêu|đổ xăng|đủ tiêu|đủ tiền|đủ sống|sống đến|sống\b|chi tiêu|tiêu\b)/i.test(q);
+  const period = /(cuối|hết|cả|này|nay)\s*(tuần|tháng)|(trong|mỗi)\s*\d*\s*(tuần|tháng|ngày)|tuần (này|tới|sau)|tháng (này|tới|sau)/i.test(q);
+  return hasMoney && (spending || period);
 }
 
 export async function runBudgetPlanner(question: string): Promise<AgentRun> {
@@ -85,12 +86,13 @@ export async function runBudgetPlanner(question: string): Promise<AgentRun> {
     note: string;
   };
 
-  // FACT — ngân sách user nhập
+  // FACT — ngân sách user nhập (kỳ "cuối tháng" hiển thị ≈ 1 tháng)
+  const weeksLabel = plan.weeks >= 4 && plan.weeks <= 4.6 ? "≈ 1 tháng (4,3 tuần)" : `${plan.weeks} tuần`;
   sections.push({
     id: "budget-input",
     title: "Ngân sách bạn đưa ra",
     label: "FACT",
-    body: `Tổng ${numVn(plan.totalAmount)} trong ${plan.weeks} tuần → ngân sách trung bình ${numVn(plan.weeklyBudget)}/tuần.`,
+    body: `Tổng ${numVn(plan.totalAmount)} cho ${weeksLabel} → ngân sách trung bình ${numVn(plan.weeklyBudget)}/tuần.`,
     data: { totalAmount: plan.totalAmount, weeks: plan.weeks, weeklyBudget: plan.weeklyBudget },
     sources: ["user-question"],
   });
@@ -132,7 +134,7 @@ export async function runBudgetPlanner(question: string): Promise<AgentRun> {
   // OPINION — lời khuyên thực tế có điều kiện (không số liệu mới)
   sections.push({
     id: "budget-tips",
-    title: "Cách theo dõi trong 2 tuần",
+    title: `Cách theo dõi trong ${plan.weeks >= 4 && plan.weeks <= 4.6 ? "kỳ này" : plan.weeks + " tuần"}`,
     label: "OPINION",
     body: "Chia tiền mặt theo từng tuần ngay đầu tuần (một phong bì/túi riêng cho linh hoạt) để không lố; ghi lại mỗi khoản chi cuối ngày; nếu tuần đầu hụt, ưu tiên cắt phần tự do 30% trước, sau đó mới điều chỉnh ăn uống — đừng cắt xăng vì đó là chi phí đi lại cố định. Nếu tuần đầu còn dư, chuyển phần dư sang tuần sau thay vì tiêu hết.",
     data: null,

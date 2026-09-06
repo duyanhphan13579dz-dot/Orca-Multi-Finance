@@ -35,7 +35,12 @@ export const personalFinanceTools: ToolHandler[] = [
       const r = requireProfile(ctx);
       if ("error" in r) return r.error;
       const d = r.profile.derive;
-      return fmtToolResult({ income: d.cashFlow.income, expenses: d.cashFlow.expenses, freeCashFlow: d.cashFlow.freeCashFlow });
+      // unwrap Value<T> → number|null (tool contract là số, không phải object)
+      return fmtToolResult({
+        income: d.cashFlow.income.value,
+        expenses: d.cashFlow.expenses.value,
+        freeCashFlow: d.cashFlow.freeCashFlow.value,
+      });
     },
   },
   {
@@ -52,7 +57,9 @@ export const personalFinanceTools: ToolHandler[] = [
       const r = requireProfile(ctx);
       if ("error" in r) return r.error;
       const p = r.profile.inputs;
-      return fmtToolResult({ totalAssets: p.totalAssets, totalLiabilities: p.totalLiabilities, netWorth: r.profile.derive.netWorth.value });
+      // unwrap Value<T> → number|null
+      const nw = r.profile.derive.netWorth.value;
+      return fmtToolResult({ totalAssets: p.totalAssets, totalLiabilities: p.totalLiabilities, netWorth: nw.value });
     },
   },
   {
