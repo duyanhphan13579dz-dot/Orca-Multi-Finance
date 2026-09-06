@@ -41,7 +41,9 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
   const hostRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const mgrRef = useRef<SeriesManager | null>(null);
-  const kindRef = useRef<ChartKind>((prefs.chartType as ChartKind) || "candle");
+  const kindRef = useRef<ChartKind>(
+    ((prefs.chartType as string) === "candle" ? "candles" : (prefs.chartType as ChartKind)) || "candles",
+  );
   const loadSeqRef = useRef(0);
 
   const { data, isLoading } = useApi<HistResp>(
@@ -73,6 +75,7 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
     }
     chartRef.current = chart;
     mgrRef.current = new SeriesManager(chart);
+    mgrRef.current.createBase(kindRef.current);
 
     const ro = new ResizeObserver(() => {
       if (hostRef.current) chart.applyOptions({ width: hostRef.current.clientWidth });
