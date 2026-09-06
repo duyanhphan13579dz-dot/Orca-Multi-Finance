@@ -141,6 +141,8 @@ export interface CryptoMarketRow extends Quote {
   baseAsset: string;
   trades24h?: number | null;
   fundingRate?: number | null;
+  /** Phase 6 — provider previous close (Binance prevClosePrice) khi có */
+  previousClose?: number | null;
 }
 
 /* --------------------------------- Forex ---------------------------------- */
@@ -151,6 +153,10 @@ export interface ForexRow extends Quote {
   base: string;
   quote: string;
   group: "major" | "minor" | "exotic";
+  /** Phase 6 — normalized schema aliases (additive, UI hiện tại vẫn dùng base/quote) */
+  baseCurrency?: string;
+  quoteCurrency?: string;
+  previousClose?: number | null;
 }
 
 /* ------------------------------- Commodities ------------------------------- */

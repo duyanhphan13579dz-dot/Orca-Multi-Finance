@@ -54,6 +54,20 @@ export interface RealtimeStats {
 /** Binance-supported kline intervals */
 export const KLINE_INTERVALS = new Set(["1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "8h", "12h", "1d", "3d", "1w", "1M"]);
 
+/**
+ * Reconnect backoff (pure — unit-tested).
+ * spot/futures: min(2000·2^n, 20s) for n≤4, then 60s plateau. kline: same base
+ * with 30s cap. Jitter injected for tests (default Math.random).
+ */
+export function backoffBaseMs(attempts: number, capMs = 20_000): number {
+  const n = Math.max(1, attempts);
+  return n <= 4 ? Math.min(2000 * 2 ** n, capMs) : 60_000;
+}
+
+export function reconnectDelayMs(attempts: number, capMs = 20_000, jitter = () => Math.random() * 1500): number {
+  return backoffBaseMs(attempts, capMs) + jitter();
+}
+
 export interface KlineCandle {
   time: number;
   open: number;
@@ -211,7 +225,7 @@ class BinanceRealtimeEngine {
         if (this.klineRefs.size) {
           const st = this.kline;
           st.reconnectAttempts += 1;
-          const delay = Math.min(2000 * 2 ** Math.min(st.reconnectAttempts, 5), 30_000) + Math.random() * 1000;
+          const delay = reconnectDelayMs(st.reconnectAttempts, 30_000, () => Math.random() * 1000);
           st.state = "retrying";
           setTimeout(() => {
             if (this.klineRefs.size) this.rebuildKlineStream();
@@ -299,8 +313,7 @@ class BinanceRealtimeEngine {
   private scheduleReconnect(kind: "spot" | "futures", url: string) {
     const st = this.stats(kind);
     st.reconnectAttempts += 1;
-    const base = st.reconnectAttempts <= 4 ? Math.min(2000 * 2 ** st.reconnectAttempts, 20_000) : 60_000;
-    const delay = base + Math.random() * 1500;
+    const delay = reconnectDelayMs(st.reconnectAttempts);
     st.state = "retrying";
     const timer = setTimeout(() => this.connect(kind, url), delay);
     timer.unref?.();

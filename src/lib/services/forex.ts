@@ -27,6 +27,13 @@ function ingestRows(rows: ForexRow[], source: string): void {
   }
 }
 
+/** Phase 6 — partial honesty: cặp provider không trả → meta.errors. */
+function missingPairErrors(rows: ForexRow[]): NonNullable<Meta["errors"]> {
+  const got = new Set(rows.map((r) => r.pair));
+  const missing = PAIRS.map((p) => p.pair).filter((pair) => !got.has(pair));
+  return missing.length ? [{ component: "quote", status: "PARTIAL", message: `Provider không trả: ${missing.join(", ")}` }] : [];
+}
+
 /**
  * Forex domain service.
  * Priority: Biquote (when configured) → exchangerate-api latest → crosses
@@ -115,18 +122,26 @@ export async function getForexMarkets(): Promise<{ data: ForexMarket; meta: Meta
     const rows = PAIRS.map((def): ForexRow | null => {
       const rate = rates[def.pair];
       if (rate == null) return null;
+      const prevRate = prev ? deriveRate(def, prev.rates) : null;
       return {
         pair: def.pair, base: def.base, quote: def.quote, group: def.group,
+        baseCurrency: def.base, quoteCurrency: def.quote,
         symbol: `${def.base}/${def.quote}`, assetClass: "forex" as const,
         price: rate,
-        change: prev ? rate - (deriveRate(def, prev.rates) ?? rate) : null,
-        changePercent: prev && deriveRate(def, prev.rates) ? (rate / (deriveRate(def, prev.rates) as number) - 1) * 100 : null,
+        change: prevRate != null ? rate - prevRate : null,
+        changePercent: prevRate ? (rate / prevRate - 1) * 100 : null,
+        previousClose: prevRate,
         updatedAt: ts ? new Date(ts).toISOString() : null,
       } satisfies ForexRow;
     }).filter((x): x is ForexRow => x !== null);
     if (rows.length) {
       ingestRows(rows, "biquote");
-      const meta = buildMeta({ source: "biquote", sourceTimestampMs: ts, note: prev ? undefined : "Không lấy được mức tham chiếu ngày trước (ECB) — thiếu cột change" });
+      const meta = buildMeta({
+        source: "biquote",
+        sourceTimestampMs: ts,
+        note: prev ? undefined : "Không lấy được mức tham chiếu ngày trước (ECB) — thiếu cột change",
+        errors: missingPairErrors(rows),
+      });
       return { data: { rows, usdStrengthNote: usdNote(rows) }, meta };
     }
   } catch {
@@ -150,8 +165,11 @@ export async function getForexMarkets(): Promise<{ data: ForexMarket; meta: Meta
       const changePercent = prevRate ? (q.price / prevRate - 1) * 100 : null;
       return {
         pair: def.pair, base: def.base, quote: def.quote, group: def.group,
+        baseCurrency: def.base, quoteCurrency: def.quote,
         symbol: `${def.base}/${def.quote}`, assetClass: "forex" as const,
         price: q.price, change, changePercent,
+        open: q.previousClose, high: q.dayHigh, low: q.dayLow,
+        previousClose: q.previousClose,
         updatedAt: q.marketTime ? new Date(q.marketTime).toISOString() : null,
       };
     }).filter((x): x is ForexRow => x !== null);
@@ -164,6 +182,7 @@ export async function getForexMarkets(): Promise<{ data: ForexMarket; meta: Meta
         stale: yahoo.stale,
         note: "Biquote chưa cấu hình → nguồn FX snapshot tham chiếu; % thay đổi so với fix ECB gần nhất",
         slas: { liveSlaMs: 120_000, freshSlaMs: 30 * 60_000, delayedSlaMs: 24 * 3_600_000 },
+        errors: missingPairErrors(rows),
       });
       ingestRows(rows, "yahoo-fx");
       return { data: { rows, usdStrengthNote: usdNote(rows) }, meta };
@@ -187,8 +206,10 @@ export async function getForexMarkets(): Promise<{ data: ForexMarket; meta: Meta
       const changePercent = prevRate ? (rate / prevRate - 1) * 100 : null;
       return {
         pair: def.pair, base: def.base, quote: def.quote, group: def.group,
+        baseCurrency: def.base, quoteCurrency: def.quote,
         symbol: `${def.base}/${def.quote}`, assetClass: "forex" as const,
         price: rate, change, changePercent,
+        previousClose: prevRate,
         updatedAt: new Date(latest.value.ts).toISOString(),
       } satisfies ForexRow;
     }).filter((x): x is ForexRow => x !== null);
@@ -201,6 +222,7 @@ export async function getForexMarkets(): Promise<{ data: ForexMarket; meta: Meta
       stale: latest.stale,
       note: "Nguồn chính Biquote không khả dụng — dùng tỷ giá tham chiếu realtime từ exchangerate-api; % thay đổi so với fix ECB gần nhất",
       slas: { liveSlaMs: 3_600_000, freshSlaMs: 6 * 3_600_000, delayedSlaMs: 30 * 3_600_000 },
+      errors: missingPairErrors(rows),
     });
     return { data: { rows, usdStrengthNote: usdNote(rows) }, meta };
   } catch {
@@ -280,7 +302,7 @@ export async function getForexDetail(pairRaw: string): Promise<{ detail: ForexDe
   const meta = buildMeta({
     source: hasSeries ? "frankfurter-ecb" : "forex-quote",
     sourceTimestampMs: hasSeries ? seriesTs : current?.updatedAt ? Date.parse(current.updatedAt) : null,
-    partial: errors.length > 0 || !hasSeries,
+    partial: errors.length > 0 || !hasSeries || !hasQuote,
     note: !hasQuote && !hasSeries
       ? "Không có dữ liệu nào (quote + series đều unavailable)"
       : !hasSeries

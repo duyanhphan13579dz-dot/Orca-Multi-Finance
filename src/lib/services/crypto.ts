@@ -28,7 +28,7 @@ interface AllMarket {
   suspect: number;
 }
 
-function toRow(t: binance.BinanceTicker24h): CryptoMarketRow | null {
+export function toRow(t: binance.BinanceTicker24h): CryptoMarketRow | null {
   if (!t.symbol.endsWith("USDT") || LEVERAGED_RE.test(t.symbol)) return null;
   const base = t.symbol.replace(/USDT$/, "");
   if (EXCLUDED_BASES.has(base)) return null;
@@ -47,6 +47,7 @@ function toRow(t: binance.BinanceTicker24h): CryptoMarketRow | null {
     volume: Number(t.volume),
     quoteVolume: Number(t.quoteVolume),
     trades24h: t.count ?? null,
+    previousClose: t.prevClosePrice != null && Number.isFinite(Number(t.prevClosePrice)) ? Number(t.prevClosePrice) : null,
     updatedAt: t.closeTime ? new Date(t.closeTime).toISOString() : null,
   };
 }

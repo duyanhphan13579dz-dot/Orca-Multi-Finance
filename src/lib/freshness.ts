@@ -69,7 +69,8 @@ export function buildMeta(args: {
     stale: args.stale ?? f.status === "STALE",
     latencyMs: args.latencyMs,
     note: args.note,
-    partial: args.partial,
+    // Phase 6 — errors luôn nghĩa là partial response, kể cả khi caller quên set
+    partial: args.partial ?? (args.errors?.length ? true : undefined),
     sections: args.sections,
     errors: args.errors,
   };
