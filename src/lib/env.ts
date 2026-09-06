@@ -34,18 +34,16 @@ export const env = {
   biquoteBaseUrl: opt(process.env.BIQUOTE_BASE_URL),
   biquoteApiKey: opt(process.env.BIQUOTE_API_KEY),
 
-  /* Commodities — Vietnambiz + Simplize
-   * simplizeBaseUrl = PUBLIC site (https://simplize.vn) where the verified
-   * commodity pages live (/hang-hoa/wti, /gia-vang/the-gioi…). The api.* host
-   * has NO public JSON endpoint for commodities (verified 404). */
+  /* Commodities — VietnamBiz Data DUY NHẤT (data.vietnambiz.vn/goods).
+   * Simplize đã bỏ khỏi flow hàng hóa (directive 2026-09-06); các biến Simplize
+   * còn dùng cho VN STOCK provider chain (ngoài phạm vi commodity). */
   vietnambizBaseUrl: opt(process.env.VIETNAMBIZ_BASE_URL) ?? "https://vietnambiz.vn",
   /** VietnamBiz Data portal (WiFeed/WiGroup) — goods/macro/rates tables (user-provided 2026-09-06) */
   vietnambizDataBaseUrl: opt(process.env.VIETNAMBIZ_DATA_BASE_URL) ?? "https://data.vietnambiz.vn",
   simplizeBaseUrl: opt(process.env.SIMPLIZE_BASE_URL) ?? "https://simplize.vn",
   simplizeApiKey: opt(process.env.SIMPLIZE_API_KEY),
   /** Snapshot cadence cho commodity quotes (user-mandated 3s polling; floor 2s).
-   *  Lưu ý: trang Simplize SSR chỉ regenerate ~10 phút/lần (verified 2026-09-06),
-   *  nên giá trị có thể lặp lại giữa các lần poll. */
+   *  Nguồn WiFeed cập nhật theo ngày — cache dữ liệu 3 phút (xem vietnambiz-data). */
   commoditySnapshotTtlMs: parseBoundedIntEnv(process.env.COMMODITY_SNAPSHOT_TTL_MS, 3_000, 2_000, 300_000),
 
   /* Vietnam stocks — provider chain (Phase 10 SAFE FALLBACK).
@@ -56,18 +54,6 @@ export const env = {
   simplizeWidgetUrlTemplate: opt(process.env.SIMPLIZE_WIDGET_URL_TEMPLATE),
   /** provider order: "vndirect,simplize" (vndirect luôn primary hiện tại) */
   vnProviderOrder: opt(process.env.VN_PROVIDER_ORDER) ?? "vndirect,simplize",
-
-  /* Optional MSN Finance instrument map for world commodities (JSON: {"GOLD":"id",...}) */
-  msnCommodityMap: (() => {
-    try {
-      return process.env.MSN_COMMODITY_MAP ? (JSON.parse(process.env.MSN_COMMODITY_MAP) as Record<string, string>) : {};
-    } catch {
-      return {} as Record<string, string>;
-    }
-  })(),
-  msnApiKey:
-    opt(process.env.MSN_FINANCE_API_KEY) ??
-    "0QfOX3Vn51YCzitbLaRkTTBadtWpgTN8NZLW0C1SEM", // public web key used by MSN frontend
 
   /* Platform */
   redisUrl: opt(process.env.REDIS_URL),

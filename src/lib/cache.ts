@@ -119,6 +119,15 @@ export async function cached<T>(
   return task;
 }
 
+/**
+ * Chỉ dùng trong TEST: xóa hot cache + in-flight, để test lại producer thật
+ * (vd. mô phỏng nguồn WiFeed down sau khi một test khác đã cache dữ liệu).
+ */
+export function clearCacheForTests(): void {
+  mem.clear();
+  inflight.clear();
+}
+
 export function peekStale<T>(key: string): CacheResult<T> | null {
   const e = mem.get(key);
   if (!e) return null;

@@ -18,7 +18,7 @@ import { Boxes, CalendarDays, LineChart, Search, X } from "lucide-react";
  * uniform cards, honest per-source provenance.
  *
  * UI/UX STABLE CONTRACT — appearance is frozen. Data flow upgrades only:
- * price + change come from Simplize → Vietnambiz (real, verified pages);
+ * price + change come from VietnamBiz Data (data.vietnambiz.vn/goods — WiFeed);
  * chọn/chạm một hàng hóa → mở LANDING PAGE NỔI (floating overlay) với chi tiết
  * đầy đủ (quote, performance, chart, provenance, tác động ngành) — cùng dữ
  * liệu với route /commodities/:key. Nhấn Esc / nền tối / X để đóng.
@@ -264,7 +264,7 @@ export default function CommoditiesPage() {
 
       {data && data.unavailable.length > 0 && (
         <p className="text-[11px] text-text-muted">
-          {data.unavailable.length} mặt hàng chưa có nguồn (Simplize / Vietnambiz / Yahoo) — hệ thống không mock data.
+          {data.unavailable.length} mặt hàng chưa có nguồn (VietnamBiz Data / WiFeed) — hệ thống không mock data.
         </p>
       )}
 

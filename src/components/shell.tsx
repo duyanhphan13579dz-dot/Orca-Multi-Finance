@@ -202,7 +202,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           {children}
         </main>
         <footer className="border-t border-border-subtle px-4 py-2.5 text-[10.5px] leading-relaxed text-text-muted">
-          ORCA Financial · dữ liệu phục vụ nghiên cứu — không phải khuyến nghị đầu tư · nguồn: VNDirect · Binance · Biquote · Vietnambiz (WiFeed) · Simplize · RSS · mọi dữ liệu gắn nhãn LIVE/FRESH/DELAYED/STALE/DEGRADED/UNAVAILABLE
+          ORCA Financial · dữ liệu phục vụ nghiên cứu — không phải khuyến nghị đầu tư · nguồn: VNDirect · Binance · Biquote · VietnamBiz Data (WiFeed) · RSS · mọi dữ liệu gắn nhãn LIVE/FRESH/DELAYED/STALE/DEGRADED/UNAVAILABLE
         </footer>
       </div>
     </div>

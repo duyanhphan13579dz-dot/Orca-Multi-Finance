@@ -211,19 +211,8 @@ async function stockCandles(symbol: string, tf: string, limit: number): Promise<
 async function commodityCandles(symbol: string, tf: string, limit: number): Promise<{ candles: ChartCandle[]; source: string; note?: string }> {
   const def = defByKeyOrSymbol(symbol);
   if (!def) throw new Error("commodity_history_unavailable");
-  // Gold spot: keep the verified 24/7 PAXG proxy first (≈ XAU/USD, the exact
-  // gauge Simplize charts), Yahoo GC=F only as fallback.
-  if (def.binanceSymbol && (symbol === "XAUUSD" || symbol === "GOLD" || symbol === "XAU")) {
-    try {
-      const bars = await binance.getKlines(def.binanceSymbol, binanceInterval(tf), Math.min(limit, 1000));
-      return { candles: bars.map(toCandle), source: "binance (PAXG ≈ XAU spot)", note: "Vàng thế giới qua PAXG (1:1 gold-ounce, USD) — nguồn thực thị trường 24/7" };
-    } catch {
-      /* fall through to Yahoo futures */
-    }
-  }
-  // Chart data = the same real futures symbol Simplize itself charts (verified:
-  // Simplize commodity pages embed TradingView with Yahoo tickers, e.g. CL=F,
-  // NG=F, SB=F, CBOT:ZR1!, COMEX:HRC1! — no fake/stock ticker injection).
+  // Chart data = Yahoo futures OHLC (GC=F, CL=F, NG=F, HG=F, SI=F) — real
+  // listed futures; quote hiện tại lấy từ VietnamBiz Data (WiFeed).
   if (def.yahooSymbol) {
     const y = yahooIntervalFor(tf);
     if (!y) throw new Error("commodity_timeframe_unsupported");

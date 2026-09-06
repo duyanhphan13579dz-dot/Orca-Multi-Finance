@@ -4,16 +4,11 @@ import { buildMeta } from "../freshness";
 import {
   COMMODITY_CATALOG,
   defByKeyOrSymbol,
-  getSimplizeCommodityPage,
-  getMsnQuotes,
-  getVietnambizQuote,
-  MSN_KEY_BY_KEY,
   type CommodityDef,
   type RawCommodityQuote,
 } from "../providers/commodities";
-import { getVnbGoodsQuotes, VNB_GOODS_KEYS } from "../providers/vietnambiz-data";
-import { getSpotTicker } from "../providers/binance";
-import { getYahooQuotes, getYahooChart } from "../providers/yahoo";
+import { getVnbGoodsQuotes } from "../providers/vietnambiz-data";
+import { getYahooChart } from "../providers/yahoo";
 import { env } from "../env";
 import { marketStore } from "../realtime/market-store";
 import { aggregateCandles, TF_MS, type ChartCandle } from "../chart-const";
@@ -33,7 +28,7 @@ import { validateBars, validateQuote, logQualityEvent } from "../quality";
 import type { CommodityRow, Meta, NewsArticle, OhlcvBar } from "../types";
 
 /**
- * Commodity domain service — Simplize → Vietnambiz priority, real data only.
+ * Commodity domain service — nguồn DUY NHẤT VietnamBiz Data (WiFeed /goods).
  *
  * Every row carries: unified fields, per-row freshness (LIVE/FRESH/DELAYED/
  * STALE/UNAVAILABLE), market state (OPEN/CLOSED), provider-published
@@ -61,287 +56,142 @@ export interface CommodityMarket {
   errors: string[];
 }
 
-/* ------------------------------ provider prep ------------------------------ */
-
-async function paxgQuote(symbol: string): Promise<RawCommodityQuote> {
-  // cache 15s — tránh poll 3s đập Binance liên tục
-  const t = await cached(`commodities:binance:${symbol}`, {
-    ttlMs: 15_000,
-    staleMs: 30 * 60_000,
-    producer: () => getSpotTicker(symbol),
-  }).then((r) => r.value);
-  return {
-    source: "Binance (PAXG ≈ XAU)",
-    price: Number(t.lastPrice),
-    change: Number(t.priceChange),
-    changePercent: Number(t.priceChangePercent),
-    high: Number(t.highPrice),
-    low: Number(t.lowPrice),
-    unit: "USD/oz",
-    currency: "USD",
-    timestamp: t.closeTime ?? Date.now(),
-    url: null,
-  };
-}
-
-type SourceKind = "simplize" | "vnbData" | "vietnambiz" | "yahoo" | "msn" | "binance";
-
-/**
- * User-mandated priority: Simplize (trang đầy đủ: perf/relatedStocks/timestamp
- * nội ngày) → VietnamBiz Data portal WiFeed (1 request batch — nguồn CHÍNH cho
- * nhôm/kẽm & mọi mục Simplize không parse) → Vietnambiz articles → real fallbacks.
+/* ------------------------- nguồn DUY NHẤT: WiFeed --------------------------
+ * User directive 2026-09-06: toàn bộ hàng hóa lấy từ data.vietnambiz.vn/goods.
+ * Simplize (và Yahoo/MSN/Binance quote) đã bỏ. Yahoo chỉ còn cho chart OHLC
+ * lịch sử (getCommodityHistory). Mỗi cycle: 1 request bảng WiFeed → map 66 mục
+ * → validate → market store. Cache WiFeed 3 phút (dữ liệu cập nhật theo ngày).
  */
-function priorityFor(def: CommodityDef): SourceKind[] {
-  const order: SourceKind[] = [];
-  if (def.simplizePath) order.push("simplize");
-  if (VNB_GOODS_KEYS.has(def.key)) order.push("vnbData");
-  if (def.vietnambiz) order.push("vietnambiz");
-  if (def.yahooSymbol) order.push("yahoo");
-  if (MSN_KEY_BY_KEY[def.key]) order.push("msn");
-  if (def.binanceSymbol) order.push("binance");
-  return order;
-}
-
-/**
- * Cache per-page Simplize 3 phút (trang chỉ regenerate ~10 phút/lần —
- * verified) → aggregate 3s KHÔNG tải lại 30 trang mỗi 3 giây; provider không
- * bị rate-limit/throttle. STALE trên 24h khi nguồn lỗi.
- */
-function simplizeRecord(def: CommodityDef): Promise<RawCommodityQuote> {
-  const path = def.simplizePath as string;
-  return cached(`simplize:page:${path}`, {
-    ttlMs: 3 * 60_000,
-    staleMs: 24 * 3_600_000,
-    producer: () => getSimplizeCommodityPage(path),
-  }).then((r) => r.value);
-}
-
-function yahooRecord(def: CommodityDef, yahooByTicker: Map<string, Awaited<ReturnType<typeof getYahooQuotes>> extends Map<string, infer V> ? V : never>): RawCommodityQuote | null {
-  const y = def.yahooSymbol ? yahooByTicker.get(def.yahooSymbol) : null;
-  if (!y || !Number.isFinite(y.price) || y.price <= 0) return null;
-  return {
-    source: "Yahoo Finance (futures)",
-    price: y.price,
-    change: y.change,
-    changePercent: y.changePercent,
-    previousClose: y.previousClose,
-    high: y.dayHigh,
-    low: y.dayLow,
-    unit: def.unit,
-    currency: def.currency,
-    timestamp: y.marketTime,
-    url: null,
-  };
-}
-
-/* -------------------------------- fetch all -------------------------------- */
 
 async function fetchAll(): Promise<CommodityMarket> {
-  const msnIds: Record<string, string> = {};
-  for (const def of COMMODITY_CATALOG) {
-    const msnKey = MSN_KEY_BY_KEY[def.key];
-    if (msnKey && env.msnCommodityMap[msnKey]) msnIds[def.key] = env.msnCommodityMap[msnKey];
-  }
-  let msnById: Record<string, RawCommodityQuote> = {};
   const errors: string[] = [];
   const sourcesUsed = new Set<string>();
-  if (Object.keys(msnIds).length) {
-    try {
-      msnById = await getMsnQuotes(Object.values(msnIds));
-      sourcesUsed.add("MSN Finance");
-    } catch (e) {
-      errors.push(e instanceof Error ? e.message : "msn error");
-    }
-  }
+  const rows: CommodityRow[] = [];
+  const unavailable: CommodityUnavailable[] = [];
 
-  const yahooTickers = COMMODITY_CATALOG.filter((d) => d.yahooSymbol).map((d) => d.yahooSymbol as string);
-  let yahooByTicker = new Map<string, Awaited<ReturnType<typeof getYahooQuotes>> extends Map<string, infer V> ? V : never>();
-  try {
-    // batch 30s — futures không đổi mỗi 3s; aggregate 3s đọc cache.
-    const yahooRes = await cached("commodities:yahoo:quotes", {
-      ttlMs: 30_000,
-      staleMs: 3 * 3_600_000,
-      producer: () => getYahooQuotes(yahooTickers),
-    });
-    yahooByTicker = yahooRes.value;
-    if (yahooByTicker.size) sourcesUsed.add("Yahoo Finance (futures)");
-  } catch (e) {
-    errors.push(e instanceof Error ? e.message : "yahoo error");
-  }
-
-  // VietnamBiz Data portal (WiFeed) — 1 request cho TOÀN BỘ mặt hàng khớp mapping
-  let vnbDataByKey = new Map<string, RawCommodityQuote>();
-  let vnbDataError: string | null = null;
+  let vnbDataByKey: Map<string, RawCommodityQuote> | null = null;
   try {
     vnbDataByKey = await getVnbGoodsQuotes();
     if (vnbDataByKey.size) sourcesUsed.add("VietnamBiz Data (WiFeed)");
   } catch (e) {
-    vnbDataError = `vietnambiz-data: ${e instanceof Error ? e.message : String(e)}`;
-    errors.push(vnbDataError);
+    errors.push(`vietnambiz-data: ${e instanceof Error ? e.message : String(e)}`);
   }
 
-  const rows: CommodityRow[] = [];
-  const unavailable: CommodityUnavailable[] = [];
-
-  // bounded concurrency — the catalog fetches ~25 public Simplize pages;
-  // never hammer a third-party site with unbounded parallel requests.
-  const CONCURRENCY = 6;
-  let cursor = 0;
-  async function worker() {
-    while (cursor < COMMODITY_CATALOG.length) {
-      const def = COMMODITY_CATALOG[cursor++];
-      await fetchOne(def);
+  for (const def of COMMODITY_CATALOG) {
+    const best = vnbDataByKey?.get(def.key) ?? null;
+    if (!best || !Number.isFinite(best.price) || best.price <= 0) {
+      const reason = errors.length
+        ? `Nguồn duy nhất (VietnamBiz Data) lỗi — ${errors.slice(0, 2).join(" | ")}`
+        : `Không có dòng "${def.nameVi}" trên data.vietnambiz.vn/goods — không dùng dữ liệu giả`;
+      unavailable.push({ key: def.key, name: def.name, nameVi: def.nameVi, group: def.group, reason, freshness: "UNAVAILABLE" });
+      continue;
     }
-  }
-  async function fetchOne(def: CommodityDef) {
-    const priority = priorityFor(def);
-      if (!priority.length) {
-        unavailable.push({ key: def.key, name: def.name, nameVi: def.nameVi, group: def.group, reason: "Không có nguồn công khai đáng tin cậy — không dùng dữ liệu giả", freshness: "UNAVAILABLE" });
-        return;
-      }
-      const records: { kind: SourceKind; q: RawCommodityQuote }[] = [];
-      const failures: string[] = [];
-      // try in priority order; first success is primary; keep up to 3 for provenance
-      for (const kind of priority) {
-        try {
-          let q: RawCommodityQuote | null = null;
-          if (kind === "simplize") q = await simplizeRecord(def);
-          else if (kind === "vnbData") q = vnbDataByKey.get(def.key) ?? null;
-          else if (kind === "vietnambiz") q = await getVietnambizQuote(def);
-          else if (kind === "yahoo") q = yahooRecord(def, yahooByTicker);
-          else if (kind === "msn" && msnIds[def.key] && msnById[msnIds[def.key]]) q = msnById[msnIds[def.key]];
-          else if (kind === "binance" && def.binanceSymbol) q = await paxgQuote(def.binanceSymbol);
-          if (q && Number.isFinite(q.price) && q.price > 0) {
-            records.push({ kind, q });
-            if (records.length >= 3) break;
-          } else if (kind === "vnbData" && vnbDataError) {
-            failures.push(`${kind}: ${vnbDataError}`);
-          } else {
-            failures.push(`${kind}: không có giá hợp lệ`);
-          }
-        } catch (e) {
-          // degrade to next priority — never crash the module; keep the reason
-          failures.push(`${kind}: ${e instanceof Error ? e.message : String(e)}`);
-        }
-      }
-      const best = records[0]?.q ?? null;
-      if (!best) {
-        const reason = failures.length
-          ? `Tất cả nguồn ưu tiên thất bại — ${failures.slice(0, 3).join(" | ")}`
-          : "Không có nguồn công khai đáng tin cậy — không dùng dữ liệu giả";
-        const un = { key: def.key, name: def.name, nameVi: def.nameVi, group: def.group, reason, freshness: "UNAVAILABLE" as const };
-        unavailable.push(un);
-        errors.push(`${def.key}: ${reason}`);
-        return;
-      }
-      for (const r of records) sourcesUsed.add(r.q.source);
 
-      const freshness = commodityFreshness(best.timestamp, { hasData: true });
-      const providerPerf: Record<string, number | null> = {
-        "1W": best.perf?.["1W"] ?? null,
-        "1M": best.perf?.["1M"] ?? null,
-        "3M": best.perf?.["3M"] ?? null,
-        YTD: best.perf?.YTD ?? null,
-        "1Y": best.perf?.["1Y"] ?? null,
-        "5Y": best.perf?.["5Y"] ?? null,
+    const freshness = commodityFreshness(best.timestamp, { hasData: true });
+    const providerPerf: Record<string, number | null> = {
+      "1W": best.perf?.["1W"] ?? null,
+      "1M": best.perf?.["1M"] ?? null,
+      "3M": best.perf?.["3M"] ?? null,
+      YTD: best.perf?.YTD ?? null,
+      "1Y": best.perf?.["1Y"] ?? null,
+      "5Y": best.perf?.["5Y"] ?? null,
+    };
+    const performance = (() => {
+      const r = computePerformance([], {
+        provider: {
+          "1D": { change: best.change ?? 0, changePercent: best.changePercent ?? 0 },
+          "1W": { change: 0, changePercent: best.perf?.["1W"] ?? 0 },
+          "1M": { change: 0, changePercent: best.perf?.["1M"] ?? 0 },
+          "1Q": { change: 0, changePercent: best.perf?.["3M"] ?? 0 },
+          "1Y": { change: 0, changePercent: best.perf?.["1Y"] ?? 0 },
+        },
+      });
+      const pick = (w: "1D" | "1W" | "1M" | "1Q" | "1Y") => {
+        const p = r.find((x) => x.window === w);
+        return { change: p?.change ?? null, changePercent: p?.changePercent ?? null, basis: p?.basis ?? "insufficient" };
       };
-      const performance = (() => {
-        const r = computePerformance([], {
-          provider: {
-            "1D": { change: best.change ?? 0, changePercent: best.changePercent ?? 0 },
-            "1W": { change: 0, changePercent: best.perf?.["1W"] ?? 0 },
-            "1M": { change: 0, changePercent: best.perf?.["1M"] ?? 0 },
-            "1Q": { change: 0, changePercent: best.perf?.["3M"] ?? 0 },
-            "1Y": { change: 0, changePercent: best.perf?.["1Y"] ?? 0 },
-          },
-        });
-        const pick = (w: "1D" | "1W" | "1M" | "1Q" | "1Y") => {
-          const p = r.find((x) => x.window === w);
-          return { change: p?.change ?? null, changePercent: p?.changePercent ?? null, basis: p?.basis ?? "insufficient" };
-        };
-        return { "1D": pick("1D"), "1W": pick("1W"), "1M": pick("1M"), "1Q": pick("1Q"), "1Y": pick("1Y") };
-      })();
+      return { "1D": pick("1D"), "1W": pick("1W"), "1M": pick("1M"), "1Q": pick("1Q"), "1Y": pick("1Y") };
+    })();
 
-      const row: CommodityRow = {
-        commodity: def.name,
+    const row: CommodityRow = {
+      commodity: def.name,
+      symbol: def.symbol,
+      group: def.group,
+      assetClass: "commodity",
+      price: best.price,
+      change: best.change ?? null,
+      changePercent: best.changePercent ?? null,
+      open: best.open ?? null,
+      high: best.high ?? null,
+      low: best.low ?? null,
+      unit: best.unit ?? def.unit,
+      currency: best.currency ?? def.currency,
+      updatedAt: best.timestamp ? new Date(best.timestamp).toISOString() : null,
+      sourceRecords: [{
+        source: best.source,
+        price: best.price,
+        timestamp: best.timestamp ? new Date(best.timestamp).toISOString() : null,
+        url: best.url ?? null,
+      }],
+      id: def.key,
+      name: def.name,
+      nameVi: def.nameVi,
+      category: def.category,
+      subcategory: def.subcategory ?? null,
+      subgroup: def.subgroup ?? def.subcategory ?? null,
+      market: def.market,
+      previousClose: best.previousClose ?? (best.change != null ? best.price - best.change : null),
+      freshness: freshness.status,
+      marketState: freshness.marketState,
+      freshnessNote: freshness.note ?? null,
+      priceType: "CLOSE_ONLY",
+      providerPerf,
+      relatedStocks: best.relatedStocks ?? [],
+      sourceUrl: best.url ?? null,
+      sourceTimestamp: best.timestamp ? new Date(best.timestamp).toISOString() : null,
+      performance,
+    };
+
+    // validation before storage: quote must be sane (never store garbage)
+    const quoteCheck = validateQuote(
+      {
+        price: best.price,
+        open: best.open ?? null,
+        high: best.high ?? null,
+        low: best.low ?? null,
+        volume: null,
+        changePercent: best.changePercent ?? null,
+        updatedAt: best.timestamp ? new Date(best.timestamp).toISOString() : null,
+      },
+      { assetClass: "commodity", staleMs: 300_000, sourceTimestampMs: best.timestamp ?? null },
+    );
+    if (quoteCheck.status === "INVALID") {
+      void logQualityEvent("commodity-service", `quote:${def.key}`, quoteCheck);
+      unavailable.push({ key: def.key, name: def.name, nameVi: def.nameVi, group: def.group, reason: "Giá nguồn không hợp lệ (quality check INVALID) — không lưu dữ liệu lỗi", freshness: "UNAVAILABLE" });
+      continue;
+    }
+    if (quoteCheck.status !== "VALID") void logQualityEvent("commodity-service", `quote:${def.key}`, quoteCheck);
+    rows.push(row);
+
+    // best-effort realtime store write-through (shared with all readers)
+    try {
+      marketStore.setQuote({
+        assetType: "commodity",
         symbol: def.symbol,
-        group: def.group,
-        assetClass: "commodity",
         price: best.price,
         change: best.change ?? null,
         changePercent: best.changePercent ?? null,
         open: best.open ?? null,
         high: best.high ?? null,
         low: best.low ?? null,
-        unit: best.unit ?? def.unit,
-        currency: best.currency ?? def.currency,
-        updatedAt: best.timestamp ? new Date(best.timestamp).toISOString() : null,
-        sourceRecords: records
-          .filter((r) => Number.isFinite(r.q.price) && r.q.price > 0)
-          .map((r) => ({ source: r.q.source, price: r.q.price, timestamp: r.q.timestamp ? new Date(r.q.timestamp).toISOString() : null, url: r.q.url ?? null })),
-        // unified model (additive)
-        id: def.key,
-        name: def.name,
-        nameVi: def.nameVi,
-        category: def.category,
-        subcategory: def.subcategory ?? null,
-        subgroup: def.subgroup ?? def.subcategory ?? null,
-        market: def.market,
-        previousClose: best.previousClose ?? (best.change != null ? best.price - best.change : null),
-        freshness: freshness.status,
-        marketState: freshness.marketState,
-        freshnessNote: freshness.note ?? null,
-        priceType: "CLOSE_ONLY",
-        providerPerf,
-        relatedStocks: best.relatedStocks ?? [],
-        sourceUrl: best.url ?? null,
-        sourceTimestamp: best.timestamp ? new Date(best.timestamp).toISOString() : null,
-        performance,
-      };
-
-      // validation before storage: quote must be sane (never store garbage)
-      // staleMs: commodity 300s per market-store contract; provider timestamps
-      // often the page update time, so DELAYED/STALE is reported honestly.
-      const quoteCheck = validateQuote(
-        {
-          price: best.price,
-          open: best.open ?? null,
-          high: best.high ?? null,
-          low: best.low ?? null,
-          volume: null,
-          changePercent: best.changePercent ?? null,
-          updatedAt: best.timestamp ? new Date(best.timestamp).toISOString() : null,
-        },
-        { assetClass: "commodity", staleMs: 300_000, sourceTimestampMs: best.timestamp ?? null },
-      );
-      if (quoteCheck.status === "INVALID") {
-        void logQualityEvent("commodity-service", `quote:${def.key}`, quoteCheck);
-        unavailable.push({ key: def.key, name: def.name, nameVi: def.nameVi, group: def.group, reason: "Giá nguồn không hợp lệ (quality check INVALID) — không lưu dữ liệu lỗi", freshness: "UNAVAILABLE" });
-        return;
-      }
-      if (quoteCheck.status !== "VALID") void logQualityEvent("commodity-service", `quote:${def.key}`, quoteCheck);
-      rows.push(row);
-      // best-effort realtime store write-through (shared with all readers)
-      try {
-        marketStore.setQuote({
-          assetType: "commodity",
-          symbol: def.symbol,
-          price: best.price,
-          change: best.change ?? null,
-          changePercent: best.changePercent ?? null,
-          open: best.open ?? null,
-          high: best.high ?? null,
-          low: best.low ?? null,
-          previousClose: best.previousClose ?? null,
-          source: best.source,
-          ts: best.timestamp ?? Date.now(),
-        });
-      } catch {
-        /* store is best-effort */
-      }
+        previousClose: best.previousClose ?? null,
+        source: best.source,
+        ts: best.timestamp ?? Date.now(),
+      });
+    } catch {
+      /* store is best-effort */
+    }
   }
-
-  await Promise.all(Array.from({ length: CONCURRENCY }, () => worker()));
 
   rows.sort(
     (a, b) =>
@@ -411,7 +261,7 @@ export interface CommodityHistoryResult {
   source: string;
 }
 
-/** Real OHLC via Yahoo (the same futures symbols Simplize's own charts use). */
+/** Real OHLC lịch sử via Yahoo futures — CHỈ cho chart, không dùng làm quote. */
 async function historyProducer(def: CommodityDef, tf: string, limit: number): Promise<CommodityHistoryResult> {
   if (!def.yahooSymbol) throw new Error("commodity_history_unavailable");
   const { interval, range, aggregate4h } = (() => {

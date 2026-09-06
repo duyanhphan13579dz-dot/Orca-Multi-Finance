@@ -26,41 +26,72 @@ import {
 const GOODS_HTML = `
 <table>
 <tr><th>Mặt hàng</th><th>Giá</th><th>% Ngày</th><th>% Tháng</th><th>% Năm</th><th>Ngày cập nhật</th></tr>
-<tr><td>Giá heo hơi trong nước<br>Đồng/kg</td><td>57,833</td><td>--</td><td>--</td><td>--</td><td>04/09/2026</td></tr>
+<tr><td>Giá heo hơi  trong nước<br>Đồng/kg</td><td>57,833</td><td>--</td><td>--</td><td>--</td><td>04/09/2026</td></tr>
+<tr><td>Vải cotton Trung Quốc<br>CNY/tấn</td><td>16,820</td><td>--</td><td>--</td><td>--</td><td>04/09/2026</td></tr>
+<tr><td>Sợi cotton Trung Quốc<br>CNY/tấn</td><td>22,830</td><td>--</td><td>--</td><td>--</td><td>04/09/2026</td></tr>
+<tr><td>Dầu cọ  Malaysia<br>MYR/tấn</td><td>4,602</td><td>--</td><td>--</td><td>--</td><td>06/09/2026</td></tr>
+<tr><td>Giấy gợn sóng  Trung Quốc<br>CNY/tấn</td><td>3,075</td><td>--</td><td>--</td><td>--</td><td>05/09/2026</td></tr>
+<tr><td>Đường<br>USD/tấn</td><td>523.1</td><td>--</td><td>--</td><td>--</td><td>04/09/2026</td></tr>
+<tr><td>Cà phê <br>USD/tấn</td><td>295.6</td><td>--</td><td>--</td><td>--</td><td>04/09/2026</td></tr>
 <tr><td>Giá cà phê trong nước<br>Đồng/kg</td><td>94,700</td><td>--</td><td>--</td><td>--</td><td>05/09/2026</td></tr>
-<tr><td>Tôm thẻ<br>Đồng/kg</td><td>91,500</td><td>--</td><td>--</td><td>--</td><td>28/08/2026</td></tr>
-</table>
-<table>
-<tr><th>Mặt hàng</th><th>Giá</th><th>% Ngày</th><th>% Tháng</th><th>% Năm</th><th>Ngày cập nhật</th></tr>
-<tr><td>Quặng sắt Trung Quốc<br>CNY/tấn</td><td>718.89</td><td>--</td><td>--</td><td>--</td><td>05/09/2026</td></tr>
+<tr><td>Hồ tiêu<br>Đồng/kg</td><td>137,000</td><td>--</td><td>--</td><td>--</td><td>05/09/2026</td></tr>
+<tr><td>Vải cotton Mỹ <br>USD/tấn</td><td>86.33</td><td>--</td><td>--</td><td>--</td><td>04/09/2026</td></tr>
+<tr><td>Gạo TPXK <br>Đồng/kg</td><td>10,200</td><td>--</td><td>--</td><td>--</td><td>27/08/2026</td></tr>
+<tr><td>Tôm thẻ <br>Đồng/kg</td><td>91,500</td><td>--</td><td>--</td><td>--</td><td>28/08/2026</td></tr>
+<tr><td>Lúa <br>Đồng/kg</td><td>7,550</td><td>--</td><td>--</td><td>--</td><td>27/08/2026</td></tr>
+<tr><td>Gạo nguyên liệu <br>Đồng/kg</td><td>10,350</td><td>--</td><td>--</td><td>--</td><td>27/08/2026</td></tr>
+<tr><td>Phụ phẩm lúa gạo <br>Đồng/kg</td><td>8,475</td><td>--</td><td>--</td><td>--</td><td>27/08/2026</td></tr>
+<tr><td>Quặng sắt  Trung Quốc<br>CNY/tấn</td><td>718.89</td><td>--</td><td>--</td><td>--</td><td>05/09/2026</td></tr>
+<tr><td>Chì Trung Quốc<br>CNY/tấn</td><td>16,115</td><td>--</td><td>--</td><td>--</td><td>04/09/2026</td></tr>
 <tr><td>Kẽm Trung Quốc<br>CNY/tấn</td><td>26,633</td><td>--</td><td>--</td><td>--</td><td>05/09/2026</td></tr>
 <tr><td>Nhôm Trung Quốc<br>CNY/tấn</td><td>24,373</td><td>--</td><td>--</td><td>--</td><td>05/09/2026</td></tr>
 <tr><td>Đồng Trung Quốc<br>CNY/tấn</td><td>110,032</td><td>--</td><td>--</td><td>--</td><td>05/09/2026</td></tr>
 <tr><td>Nikken Trung Quốc<br>CNY/tấn</td><td>129,117</td><td>--</td><td>--</td><td>--</td><td>05/09/2026</td></tr>
-<tr><td>Giá vàng<br>USD/ounce</td><td>4,442.4</td><td>--</td><td>--</td><td>--</td><td>05/09/2026</td></tr>
+<tr><td>Giá vàng <br>USD/ounce</td><td>4,442.4</td><td>--</td><td>--</td><td>--</td><td>05/09/2026</td></tr>
 <tr><td>Giá vàng trong nước<br>Đồng/lượng</td><td>147,600</td><td>--</td><td>--</td><td>--</td><td>05/09/2026</td></tr>
-<tr><td>Giá bạc<br>USD/ounce</td><td>65.48</td><td>--</td><td>--</td><td>--</td><td>05/09/2026</td></tr>
+<tr><td>Giá bạc <br>USD/ounce</td><td>65.48</td><td>--</td><td>--</td><td>--</td><td>05/09/2026</td></tr>
 <tr><td>Giá đồng<br>USD/pound</td><td>6.58</td><td>--</td><td>--</td><td>--</td><td>05/09/2026</td></tr>
-</table>
-<table>
-<tr><th>Mặt hàng</th><th>Giá</th><th>% Ngày</th><th>% Tháng</th><th>% Năm</th><th>Ngày cập nhật</th></tr>
-<tr><td>Ure Trung Đông<br>USD/tấn</td><td>443.25</td><td>--</td><td>--</td><td>--</td><td>05/09/2026</td></tr>
-<tr><td>Phân Ure Phú Mỹ<br>Đồng/kg</td><td>11,700</td><td>--</td><td>--</td><td>--</td><td>28/08/2026</td></tr>
-</table>
-<table>
-<tr><th>Mặt hàng</th><th>Giá</th><th>% Ngày</th><th>% Tháng</th><th>% Năm</th><th>Ngày cập nhật</th></tr>
-<tr><td>Thép phế Anh<br>USD/tấn</td><td>388.5</td><td>--</td><td>--</td><td>--</td><td>04/09/2026</td></tr>
-<tr><td>HRC Trung Quốc<br>CNY/tấn</td><td>3,388</td><td>--</td><td>--</td><td>--</td><td>06/09/2026</td></tr>
-</table>
-<table>
-<tr><th>Mặt hàng</th><th>Giá</th><th>% Ngày</th><th>% Tháng</th><th>% Năm</th><th>Ngày cập nhật</th></tr>
-<tr><td>Than cốc Trung Quốc<br>CNY/tấn</td><td>2,125</td><td>--</td><td>--</td><td>--</td><td>06/09/2026</td></tr>
-<tr><td>Dầu WTI<br>USD/thùng</td><td>91.22</td><td>--</td><td>--</td><td>--</td><td>05/09/2026</td></tr>
-<tr><td>Khí thiên nhiên<br>USD/Mmbtu</td><td>2.94</td><td>--</td><td>--</td><td>--</td><td>05/09/2026</td></tr>
-<tr><td>Than Newcastle<br>USD/tấn</td><td>147</td><td>--</td><td>--</td><td>--</td><td>03/09/2026</td></tr>
+<tr><td>Ure Trung Đông <br>USD/tấn</td><td>443.25</td><td>--</td><td>--</td><td>--</td><td>05/09/2026</td></tr>
+<tr><td>Lưu huỳnh  Trung Quốc<br>CNY/tấn</td><td>8,639</td><td>--</td><td>--</td><td>--</td><td>06/09/2026</td></tr>
+<tr><td>Phốt pho  vàng Trung Quốc<br>CNY/tấn</td><td>28,029</td><td>--</td><td>--</td><td>--</td><td>05/09/2026</td></tr>
+<tr><td>Xút (NaOH) Trung Quốc<br>CNY/tấn</td><td>637</td><td>--</td><td>--</td><td>--</td><td>05/09/2026</td></tr>
+<tr><td>Phân Urea Trung Quốc <br>CNY/tấn</td><td>1,813</td><td>--</td><td>--</td><td>--</td><td>04/09/2026</td></tr>
+<tr><td>Phân Ure  Phú Mỹ<br>Đồng/kg</td><td>11,700</td><td>--</td><td>--</td><td>--</td><td>28/08/2026</td></tr>
+<tr><td>Phân Ure Cà Mau<br>Đồng/kg</td><td>12,150</td><td>--</td><td>--</td><td>--</td><td>28/08/2026</td></tr>
+<tr><td>Thép phế Anh <br>USD/tấn</td><td>388.5</td><td>--</td><td>--</td><td>--</td><td>04/09/2026</td></tr>
+<tr><td>Thép thanh Anh <br>USD/tấn</td><td>595</td><td>--</td><td>--</td><td>--</td><td>04/09/2026</td></tr>
+<tr><td>HRC Trung Quốc <br>CNY/tấn</td><td>3,388</td><td>--</td><td>--</td><td>--</td><td>06/09/2026</td></tr>
+<tr><td>Đá 0-4 <br>Đồng/m3</td><td>109,200</td><td>--</td><td>--</td><td>--</td><td>01/07/2026</td></tr>
+<tr><td>Đá mi sàng <br>Đồng/m3</td><td>111,200</td><td>--</td><td>--</td><td>--</td><td>01/07/2026</td></tr>
+<tr><td>Đá 1x2 <br>Đồng/m3</td><td>169,200</td><td>--</td><td>--</td><td>--</td><td>01/07/2026</td></tr>
+<tr><td>Đá Hộc <br>Đồng/m3</td><td>172,000</td><td>--</td><td>--</td><td>--</td><td>01/07/2026</td></tr>
+<tr><td>Tôn lạnh màu  Hoa Sen 0,45mm<br>Đồng/m2</td><td>127,600</td><td>--</td><td>--</td><td>--</td><td>06/09/2026</td></tr>
+<tr><td>Tôn lạnh  Hoa Sen 0,45mm<br>Đồng/m2</td><td>121,000</td><td>--</td><td>--</td><td>--</td><td>06/09/2026</td></tr>
+<tr><td>Bê tông nhựa mịn : Carboncor Asphalt - CA 9.5<br>Đồng/tấn</td><td>4,146,000</td><td>--</td><td>--</td><td>--</td><td>01/07/2026</td></tr>
+<tr><td>Ống nhựa 27 x 1.8mm <br>Đồng/m</td><td>13,900</td><td>--</td><td>--</td><td>--</td><td>01/07/2026</td></tr>
+<tr><td>Ống nhựa 60 x 2mm <br>Đồng/m</td><td>43,300</td><td>--</td><td>--</td><td>--</td><td>01/07/2026</td></tr>
+<tr><td>Ống nhựa 90 x 2,9mm <br>Đồng/m</td><td>68,900</td><td>--</td><td>--</td><td>--</td><td>01/07/2026</td></tr>
+<tr><td>Sơn lót kháng kiềm  cao cấp<br>Đồng/lít</td><td>117,090</td><td>--</td><td>--</td><td>--</td><td>01/02/2026</td></tr>
+<tr><td>Sơn nội thất  tiêu chuẩn STANDARD<br>Đồng/lít</td><td>50,000</td><td>--</td><td>--</td><td>--</td><td>01/02/2026</td></tr>
+<tr><td>Sơn ngoại thất  STANDARD<br>Đồng/lít</td><td>70,909</td><td>--</td><td>--</td><td>--</td><td>01/02/2026</td></tr>
+<tr><td>Xi măng  - Vicem Hà Tiên PCB 40 - bao 50kg<br>Đồng/kg</td><td>1,717.59</td><td>--</td><td>--</td><td>--</td><td>01/07/2026</td></tr>
+<tr><td>Bê tông  thương phẩm - Mác 300<br>Đồng/m3</td><td>1,586,869</td><td>--</td><td>--</td><td>--</td><td>01/07/2026</td></tr>
+<tr><td>Gạch đất sét nung  - Gạch ống 4 lỗ 80x80x80<br>Đồng/viên</td><td>1,825</td><td>--</td><td>--</td><td>--</td><td>01/02/2026</td></tr>
+<tr><td>Cọc bê tông  dự ứng lực - Cọc 30x30cm, L=18m<br>Đồng/cọc</td><td>7,416,667</td><td>--</td><td>--</td><td>--</td><td>01/07/2026</td></tr>
+<tr><td>Than cốc  Trung Quốc<br>CNY/tấn</td><td>2,125</td><td>--</td><td>--</td><td>--</td><td>06/09/2026</td></tr>
+<tr><td>Khí LPG Trung Quốc <br>CNY/tấn</td><td>6,531</td><td>--</td><td>--</td><td>--</td><td>04/09/2026</td></tr>
+<tr><td>Dầu WTI <br>USD/thùng</td><td>91.22</td><td>--</td><td>--</td><td>--</td><td>05/09/2026</td></tr>
+<tr><td>Khí thiên nhiên <br>USD/Mmbtu</td><td>2.94</td><td>--</td><td>--</td><td>--</td><td>05/09/2026</td></tr>
+<tr><td>Than Newcastle <br>USD/tấn</td><td>147</td><td>--</td><td>--</td><td>--</td><td>03/09/2026</td></tr>
 <tr><td>Xăng RON 95-V<br>Nghìn/lít</td><td>25.05</td><td>--</td><td>--</td><td>--</td><td>29/05/2026</td></tr>
+<tr><td>Xăng RON 95-II,III<br>Nghìn/lít</td><td>24.15</td><td>--</td><td>--</td><td>--</td><td>29/05/2026</td></tr>
 <tr><td>Xăng sinh học E5 RON 92-II<br>Nghìn/lít</td><td>22.48</td><td>--</td><td>--</td><td>--</td><td>04/09/2026</td></tr>
 <tr><td>Xăng Diezen<br>Nghìn/lít</td><td>27.74</td><td>--</td><td>--</td><td>--</td><td>04/09/2026</td></tr>
+<tr><td>Dầu hoả<br>Nghìn/lít</td><td>26.73</td><td>--</td><td>--</td><td>--</td><td>04/09/2026</td></tr>
+<tr><td>Cao su  Nhật Bản<br>Yên/tấn</td><td>429.3</td><td>--</td><td>--</td><td>--</td><td>04/09/2026</td></tr>
+<tr><td>PET Trung Quốc<br>CNY/tấn</td><td>8,258.75</td><td>--</td><td>--</td><td>--</td><td>06/09/2026</td></tr>
+<tr><td>Hạt nhựa PVC  Trung Quốc<br>CNY/tấn</td><td>4,835</td><td>--</td><td>--</td><td>--</td><td>06/09/2026</td></tr>
+<tr><td>Hạt nhựa PP  Trung Quốc<br>CNY/tấn</td><td>9,633.33</td><td>--</td><td>--</td><td>--</td><td>06/09/2026</td></tr>
 </table>
 `;
 
@@ -106,7 +137,7 @@ test("parseVnbDate: DD/MM/YYYY → midnight +07:00", () => {
 
 test("extractTableRows + parseVnbGoodsRows: đọc được mọi hàng giá hợp lệ (header/-- bỏ)", () => {
   const rows = parseVnbGoodsRows(GOODS_HTML);
-  assert.ok(rows.length >= 20);
+  assert.equal(rows.length, 66, "toàn bộ 66 dòng bảng /goods");
   const heo = rows.find((r) => r.name === "Giá heo hơi trong nước");
   assert.ok(heo);
   assert.equal(heo.price, 57_833);
@@ -117,64 +148,117 @@ test("extractTableRows + parseVnbGoodsRows: đọc được mọi hàng giá h�
   assert.equal(nhom?.unit, "CNY/tấn");
 });
 
-test("mapVnbGoodsRows: phủ toàn bộ catalog key khớp + đơn vị/scale đúng (không quy đổi tiền tệ)", () => {
+test("mapVnbGoodsRows: 66/66 dòng /goods → catalog đúng key; unit/currency NGUYÊN VĂN; SJC ×1000", () => {
   const mapped = mapVnbGoodsRows(parseVnbGoodsRows(GOODS_HTML));
+  assert.equal(mapped.size, 66, "map đủ 66 mục — không mất hàng nào");
   const get = (k: string) => mapped.get(k);
 
+  // Kim loại & phi kim — unit giữ NGUYÊN VĂN trang (không đổi "CNY/tấn"→"CNY/T")
   assert.equal(get("gold")?.price, 4_442.4);
-  assert.equal(get("gold")?.unit, "USD/oz");
-  assert.equal(get("sjc-gold")?.price, 147_600_000); // 147,600 nghìn đồng/lượng → VNĐ
-  assert.equal(get("sjc-gold")?.unit, "VNĐ/Lượng");
+  assert.equal(get("gold")?.unit, "USD/ounce");
+  assert.equal(get("sjc-gold")?.price, 147_600_000); // trang ghi nghìn đồng/lượng → ×1000
+  assert.equal(get("sjc-gold")?.unit, "Đồng/lượng");
   assert.equal(get("silver")?.price, 65.48);
   assert.equal(get("copper")?.price, 6.58);
-  assert.equal(get("copper")?.unit, "USD/lb");
-
+  assert.equal(get("copper")?.unit, "USD/pound");
+  assert.equal(get("copper-cn")?.price, 110_032);
+  assert.equal(get("copper-cn")?.unit, "CNY/tấn");
+  assert.equal(get("copper-cn")?.currency, "CNY");
   assert.equal(get("aluminum")?.price, 24_373);
-  assert.equal(get("aluminum")?.unit, "CNY/T");
+  assert.equal(get("aluminum")?.unit, "CNY/tấn");
   assert.equal(get("aluminum")?.currency, "CNY");
   assert.equal(get("zinc")?.price, 26_633);
-  assert.equal(get("zinc")?.unit, "CNY/T");
+  assert.equal(get("lead")?.price, 16_115);
   assert.equal(get("iron-ore")?.price, 718.89);
-  assert.equal(get("iron-ore")?.unit, "CNY/T");
   assert.equal(get("nickel")?.price, 129_117);
-  assert.equal(get("nickel")?.unit, "CNY/T");
-  assert.equal(get("steel")?.price, 3_388);
-  assert.equal(get("steel")?.unit, "CNY/T");
 
-  assert.equal(get("urea")?.price, 443.25);
-  assert.equal(get("coal")?.price, 2_125);
-  assert.equal(get("wti")?.price, 91.22);
-  assert.equal(get("natgas")?.price, 2.94);
-
+  // Tiêu dùng — tôm KHÔNG scale nữa (giữ Đồng/kg 91,500 của trang)
   assert.equal(get("pig-vn")?.price, 57_833);
-  assert.equal(get("shrimp-vn")?.price, 91.5); // 91,500 đồng/kg → nghìn đồng/kg
-  assert.equal(get("gasoline-95")?.price, 25.05);
+  assert.equal(get("pig-vn")?.unit, "Đồng/kg");
+  assert.equal(get("shrimp-vn")?.price, 91_500);
+  assert.equal(get("coffee-robusta")?.price, 94_700);
+  assert.equal(get("pepper")?.price, 137_000);
+  assert.equal(get("rice")?.price, 10_200);
+  assert.equal(get("paddy")?.price, 7_550);
+  assert.equal(get("rice-raw")?.price, 10_350);
+  assert.equal(get("rice-byproduct")?.price, 8_475);
+  assert.equal(get("sugar")?.price, 523.1);
+  assert.equal(get("coffee")?.price, 295.6);
+  assert.equal(get("cotton-fabric-us")?.price, 86.33);
+
+  // Hóa chất
+  assert.equal(get("urea")?.price, 443.25);
+  assert.equal(get("sulfur")?.price, 8_639);
+  assert.equal(get("yellow-phosphorus")?.price, 28_029);
+  assert.equal(get("caustic-soda")?.price, 637);
+  assert.equal(get("urea-cn")?.price, 1_813);
+  assert.equal(get("urea-phu-my")?.price, 11_700);
+  assert.equal(get("urea-ca-mau")?.price, 12_150);
+
+  // Vật liệu xây dựng (20 mục — cả asphalt có space trước ':')
+  assert.equal(get("steel-scrap")?.price, 388.5);
+  assert.equal(get("steel-rebar")?.price, 595);
+  assert.equal(get("steel")?.price, 3_388);
+  assert.equal(get("aggregate-04")?.price, 109_200);
+  assert.equal(get("aggregate-sieve")?.price, 111_200);
+  assert.equal(get("aggregate-1x2")?.price, 169_200);
+  assert.equal(get("aggregate-boulder")?.price, 172_000);
+  assert.equal(get("sheet-color")?.price, 127_600);
+  assert.equal(get("sheet")?.price, 121_000);
+  assert.equal(get("asphalt")?.price, 4_146_000);
+  assert.equal(get("pipe-27")?.price, 13_900);
+  assert.equal(get("pipe-60")?.price, 43_300);
+  assert.equal(get("pipe-90")?.price, 68_900);
+  assert.equal(get("paint-primer")?.price, 117_090);
+  assert.equal(get("paint-interior")?.price, 50_000);
+  assert.equal(get("paint-exterior")?.price, 70_909);
+  assert.equal(get("cement")?.price, 1_717.59);
+  assert.equal(get("concrete")?.price, 1_586_869);
+  assert.equal(get("brick")?.price, 1_825);
+  assert.equal(get("pile")?.price, 7_416_667);
+
+  // Năng lượng
+  assert.equal(get("coal")?.price, 2_125);
+  assert.equal(get("lpg")?.price, 6_531);
+  assert.equal(get("wti")?.price, 91.22);
+  assert.equal(get("wti")?.unit, "USD/thùng");
+  assert.equal(get("natgas")?.price, 2.94);
+  assert.equal(get("coal-newcastle")?.price, 147);
+  assert.equal(get("gasoline-95-v")?.price, 25.05);
+  assert.equal(get("gasoline-95")?.price, 24.15, "RON 95-II,III tách key riêng");
   assert.equal(get("gasoline-92")?.price, 22.48);
   assert.equal(get("diesel")?.price, 27.74);
+  assert.equal(get("kerosene")?.price, 26.73);
 
-  // provenance
-  const src = get("aluminum")?.source ?? "";
-  assert.match(src, /VietnamBiz Data/);
+  // Nhựa & cao su
+  assert.equal(get("rubber")?.price, 429.3);
+  assert.equal(get("rubber")?.currency, "JPY", "Yên/tấn → JPY");
+  assert.equal(get("pet")?.price, 8_258.75);
+  assert.equal(get("pvc")?.price, 4_835);
+  assert.equal(get("pp")?.price, 9_633.33);
+
+  // provenance + % Ngày hiện "--"
+  assert.match(get("aluminum")?.source ?? "", /VietnamBiz Data/);
   assert.match(get("wti")?.url ?? "", /data\.vietnambiz\.vn\/goods/);
-  assert.equal(get("aluminum")?.changePercent, null); // % Ngày hiện "--"
+  assert.equal(get("aluminum")?.changePercent, null);
 });
 
-test("mapVnbGoodsRows: KHÔNG map những hàng đơn vị/nghĩa không khớp (không bịa)", () => {
+test("mapVnbGoodsRows: KHÔNG map hàng không tồn tại trên /goods; match chính xác (không prefix)", () => {
   const mapped = mapVnbGoodsRows(parseVnbGoodsRows(GOODS_HTML));
-  // hàng có mapping nhưng là sản phẩm khác → KHÔNG map
-  assert.equal(mapped.has("coffee-robusta"), false); // "Giá cà phê trong nước" ≠ robusta USD/T
-  assert.equal(mapped.has("rice"), false); // chưa có hạt gạo thế giới
-  assert.equal(mapped.has("cotton"), false); // vải/sợi cotton ≠ futures CT
-  assert.equal(mapped.has("sugar"), false); // đường USD/tấn ≠ SB USd/lb
   assert.equal(mapped.has("milk-wmp"), false);
   assert.equal(mapped.has("pangasius"), false);
-  assert.equal(matchVnbGoods("Đồng Trung Quốc"), null); // không có key đồng TQ
+  assert.equal(mapped.has("btc"), false);
+  assert.equal(matchVnbGoods("Giá vàng thế giới"), null, "không match prefix (chỉ khớp tên chính xác)");
+  assert.equal(matchVnbGoods("Giá heo hơi trong nước (giá hôm nay)"), null);
+  // mọi mapped key phải nằm trong catalog keys
+  for (const k of mapped.keys()) assert.ok(VNB_GOODS_KEYS.has(k), k);
 });
 
-test("VNB_GOODS_KEYS: chứa nhôm/kẽm (mục trước đây không nguồn) và không chứa mặt hàng không khớp", () => {
-  assert.equal(VNB_GOODS_KEYS.has("aluminum"), true);
-  assert.equal(VNB_GOODS_KEYS.has("zinc"), true);
-  assert.equal(VNB_GOODS_KEYS.has("gold"), true);
+test("VNB_GOODS_KEYS: đúng 66 key của bảng /goods (có đủ nhôm/kẽm/pepper/pile/asphalt)", () => {
+  assert.equal(VNB_GOODS_KEYS.size, 66);
+  for (const k of ["aluminum", "zinc", "copper-cn", "gold", "pepper", "paddy", "pile", "asphalt", "gasoline-95-v", "rubber", "pet", "pvc", "pp"]) {
+    assert.equal(VNB_GOODS_KEYS.has(k), true, k);
+  }
   assert.equal(VNB_GOODS_KEYS.has("pangasius"), false);
   assert.equal(VNB_GOODS_KEYS.has("milk-wmp"), false);
 });

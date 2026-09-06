@@ -164,7 +164,7 @@ export interface ForexRow extends Quote {
 export interface CommodityRow extends Quote {
   assetClass: "commodity";
   commodity: string;
-  group: "metals" | "energy" | "industrial" | "agriculture" | "vietnam" | "livestock" | "seafood";
+  group: "consumer" | "metals" | "chemicals" | "construction" | "energy" | "plastics";
   sourceRecords: { source: string; price: number; timestamp: string | null; url?: string | null }[];
   /** Phase Commodities — unified model (additive) */
   id?: string;

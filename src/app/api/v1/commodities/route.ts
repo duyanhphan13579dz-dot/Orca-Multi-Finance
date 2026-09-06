@@ -9,7 +9,7 @@ export async function GET() {
   if (!r) {
     return unavailable(
       "commodity-providers",
-      "Không có nguồn hàng hóa nào phản hồi (Simplize/Vietnambiz/Yahoo) — xem /system.",
+      "Không có nguồn hàng hóa nào phản hồi (VietnamBiz Data — data.vietnambiz.vn) — xem /system.",
     );
   }
   return ok(
@@ -25,8 +25,8 @@ export async function GET() {
         symbol: c.symbol,
         unit: c.unit,
         vnImpact: c.vnImpact ?? null,
-        /** chart khả dụng khi có nguồn OHLC thật (Yahoo futures / PAXG) */
-        hasChart: Boolean(c.yahooSymbol || c.binanceSymbol),
+        /** chart khả dụng khi có nguồn OHLC lịch sử thật (Yahoo futures); quote hiện tại từ WiFeed */
+        hasChart: Boolean(c.yahooSymbol),
       })),
     },
     r.meta,

@@ -1,45 +1,39 @@
 /**
- * COMMODITY SERVICE — priority (Simplize → VietnamBiz Data WiFeed →
- * Vietnambiz → real fallbacks), real-data only, and crash-safety.
- *
- * Stubs fetch with REAL provider payload shapes:
- * - Simplize public page (server-rendered text — WTI fixture, real values)
- * - VietnamBiz Data portal (data.vietnambiz.vn/goods — giá thật 2026-09-06:
- *   nhôm 24,373 · kẽm 26,633 · vàng 4,442.4 · WTI 91.22 · heo hơi 57,833)
- * - Yahoo Finance quotes + chart JSON (real shapes)
- * - Vietnambiz SJC gold board (real published values)
- * Other sources fail → assert degrade, never crash, never fake.
+ * COMMODITY SERVICE — nguồn DUY NHẤT data.vietnambiz.vn/goods (WiFeed).
+ * Stub fetch trả đúng HTML bảng /goods (giá thật công bố 2026-09-06: vàng
+ * 4,442.4 · SJC 147,600 nghìn đồng/lượng · nhôm 24,373 · kẽm 26,633 ·
+ * WTI 91.22 · heo 57,833 · gạo TPXK 10,200 · hồ tiêu 137,000 · xăng 22.48/diesel 27.74
+ * · đá 1x2 169,200 · PVC 4,835). Yahoo CHỈ dùng cho chart OHLC lịch sử.
+ * Không mock — mọi số là giá WiFeed công bố.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
 import { getCommodityMarket, getCommodityHistory, getCommodityDetail, getCommodityCorrelation, getCommodityNews } from "../services/commodities";
-import { parseDecimal } from "../providers/commodities";
+import { clearCacheForTests } from "../cache";
+import { getVnbGoodsQuotes } from "../providers/vietnambiz-data";
+import { COMMODITY_CATALOG } from "../providers/commodities";
 
-const WTI_PAGE_TEXT =
-  "Trang chủ > Hàng hóa > Dầu thô WTI Giá hiện tại: 91.48 +0.18 0.20% " +
-  "Giá đóng cửa hôm trước 91.30 Giá mở cửa 91.67 Biên độ ngày 88.72 - 92.17 " +
-  "Biên độ 52 tuần 54.98 - 119.4 Đơn vị tính USD/Bbl % 7D 9.69% % 1M 21.62% " +
-  "% 3M 1.04% % YTD 59.32% % 1Y 44.11% % 5Y 32.02% " +
-  "Cổ phiếu liên quan GAS (HOSE) PLX (HOSE) BSR (HOSE) PVD (HOSE) PVS (HNX) Tin tức hàng hoá";
+const date = (iso: string) => new Date(iso).toISOString();
 
-const D10_PAGE_TEXT =
-  "Hàng Hoá > Thép D10 Giá hiện tại: 14.21 - 0.00% Giá đóng cửa hôm trước 14.21 " +
-  "Biên độ 52 tuần 12.99 - 15.43 Đơn vị tính Nghìn đồng/kg " +
-  "% 7D - % 1M - % 3M -7.91% % YTD +4.49% % 1Y +9.39% % 5Y -12.34% " +
-  "Cổ phiếu liên quan NKG (HOSE) CTCP Thép Nam Kim 10,750 -50 -0.46% " +
-  "HPG (HOSE) CTCP Tập đoàn Hòa Phát 21,700 100 0.46% " +
-  "HSG (HOSE) CTCP Tập đoàn Hoa Sen 10,600 -50 -0.47% Tin tức hàng hoá";
-
-const PIG_PAGE_TEXT =
-  "Hàng Hoá > Heo hơi miền Bắc Giá hiện tại: 59,500 +1,800 3.12% Giá đóng cửa hôm trước 57,700 " +
-  "Biên độ 52 tuần 48,100 - 79,100 Đơn vị tính VNĐ/kg " +
-  "% 7D +3.12% % 1M -7.47% % 3M -12.24% % YTD -13.64% % 1Y +7.4% % 5Y +22.08% " +
-  "Cổ phiếu liên quan DBC (HOSE) CTCP Tập đoàn Dabaco Việt Nam 16,800 -250 -1.47% " +
-  "BAF (HOSE) Công ty Cổ phần Nông nghiệp BAF Việt Nam 32,550 50 0.15% Tin tức hàng hoá";
-
-const GENERIC_PAGE_TEXT =
-  "Hàng Hoá > Mặt hàng chung Giá hiện tại: 1.00 +0.01 1.00% Giá đóng cửa hôm trước 0.99 " +
-  "Đơn vị tính USD/T % 7D 1.00% % 1M 2.00% % 1Y 3.00% Cổ phiếu liên quan HPG (HOSE) Tin tức hàng hoá";
+function goodsHtml(): string {
+  const row = (name: string, unit: string, price: string, d: string) =>
+    `<tr><td>${name}<br>${unit}</td><td>${price}</td><td>--</td><td>--</td><td>--</td><td>${d}</td></tr>`;
+  return `<table><tr><th>Mặt hàng</th><th>Giá</th><th>% Ngày</th><th>% Tháng</th><th>% Năm</th><th>Ngày cập nhật</th></tr>
+${row("Giá heo hơi trong nước", "Đồng/kg", "57,833", "04/09/2026")}
+${row("Giá vàng", "USD/ounce", "4,442.4", "05/09/2026")}
+${row("Giá vàng trong nước", "Đồng/lượng", "147,600", "05/09/2026")}
+${row("Nhôm Trung Quốc", "CNY/tấn", "24,373", "05/09/2026")}
+${row("Kẽm Trung Quốc", "CNY/tấn", "26,633", "05/09/2026")}
+${row("Dầu WTI", "USD/thùng", "91.22", "05/09/2026")}
+${row("Gạo TPXK", "Đồng/kg", "10,200", "27/08/2026")}
+${row("Hồ tiêu", "Đồng/kg", "137,000", "05/09/2026")}
+${row("Xăng sinh học E5 RON 92-II", "Nghìn/lít", "22.48", "04/09/2026")}
+${row("Xăng Diezen", "Nghìn/lít", "27.74", "04/09/2026")}
+${row("Đá 1x2", "Đồng/m3", "169,200", "01/07/2026")}
+${row("Hạt nhựa PVC Trung Quốc", "CNY/tấn", "4,835", "06/09/2026")}
+${row("Phụ phẩm lúa gạo", "Đồng/kg", "8,475", "27/08/2026")}
+</table>`;
+}
 
 function yahooChartBody(symbol: string, price: number, prev: number): unknown {
   const ts = Math.floor(Date.now() / 1000) - 3600;
@@ -55,177 +49,111 @@ function yahooChartBody(symbol: string, price: number, prev: number): unknown {
   };
 }
 
-let fetchCount = 0;
 const origFetch = globalThis.fetch;
 globalThis.fetch = ((input: RequestInfo | URL) => {
   const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-  fetchCount++;
-  if (url.includes("simplize.vn") && (url.includes("/hang-hoa/wti") || url.includes("/gia-vang"))) {
-    return Promise.resolve(new Response(WTI_PAGE_TEXT, { status: 200, headers: { "content-type": "text/html" } }));
-  }
-  if (url.includes("simplize.vn/hang-hoa/gia-thep-d10")) {
-    return Promise.resolve(new Response(D10_PAGE_TEXT, { status: 200, headers: { "content-type": "text/html" } }));
-  }
-  if (url.includes("simplize.vn/hang-hoa/gia-heo-hoi-mien-bac")) {
-    return Promise.resolve(new Response(PIG_PAGE_TEXT, { status: 200, headers: { "content-type": "text/html" } }));
-  }
-  // any other Simplize page → generic valid page (keeps the shared http circuit
-  // breaker closed so the catalogue-wide fetch completes in the test)
-  if (url.includes("simplize.vn/hang-hoa/")) {
-    return Promise.resolve(new Response(GENERIC_PAGE_TEXT, { status: 200, headers: { "content-type": "text/html" } }));
+  // duy nhất data.vietnambiz.vn (goods) — mọi host khác fail → không fallback
+  if (url.includes("data.vietnambiz.vn") && url.includes("/goods")) {
+    return Promise.resolve(new Response(goodsHtml(), { status: 200, headers: { "content-type": "text/html" } }));
   }
   if (url.includes("finance.yahoo.com") && url.includes("/v8/finance/chart/")) {
     const m = url.match(/\/chart\/([^?]+)/);
-    const sym = m ? decodeURIComponent(m[1]) : "CL=F";
-    const body = yahooChartBody(sym, sym === "CL=F" ? 91.48 : 100, sym === "CL=F" ? 91.3 : 99);
+    const sym = m ? decodeURIComponent(m[1]) : "GC=F";
+    const body = yahooChartBody(sym, sym === "GC=F" ? 4442.4 : 100, sym === "GC=F" ? 4300 : 99);
     return Promise.resolve(new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } }));
-  }
-  // VietnamBiz DATA portal — giá thật công bố 2026-09-06 (trước check vietnambiz.vn)
-  if (url.includes("data.vietnambiz.vn")) {
-    const html = [
-      "<table><tr><th>Mặt hàng</th><th>Giá</th><th>% Ngày</th><th>% Tháng</th><th>% Năm</th><th>Ngày cập nhật</th></tr>",
-      "<tr><td>Giá vàng<br>USD/ounce</td><td>4,442.4</td><td>--</td><td>--</td><td>--</td><td>05/09/2026</td></tr>",
-      "<tr><td>Giá heo hơi trong nước<br>Đồng/kg</td><td>57,833</td><td>--</td><td>--</td><td>--</td><td>04/09/2026</td></tr>",
-      "<tr><td>Dầu WTI<br>USD/thùng</td><td>91.22</td><td>--</td><td>--</td><td>--</td><td>05/09/2026</td></tr>",
-      "<tr><td>Nhôm Trung Quốc<br>CNY/tấn</td><td>24,373</td><td>--</td><td>--</td><td>--</td><td>05/09/2026</td></tr>",
-      "<tr><td>Kẽm Trung Quốc<br>CNY/tấn</td><td>26,633</td><td>--</td><td>--</td><td>--</td><td>05/09/2026</td></tr>",
-      "</table>",
-    ].join("");
-    return Promise.resolve(new Response(html, { status: 200, headers: { "content-type": "text/html" } }));
-  }
-  if (url.includes("vietnambiz.vn")) {
-    return Promise.resolve(new Response("<html>KHONG CO</html>", { status: 404 }));
   }
   return Promise.resolve(new Response("nope", { status: 502 }));
 }) as typeof fetch;
 
-test("parseDecimal: thousands comma + whitespace handled, garbage → NaN", () => {
-  assert.equal(parseDecimal("1,226"), 1226);
-  assert.equal(parseDecimal("15.87"), 15.87);
-  assert.equal(parseDecimal("9.450"), 9.45);
-  assert.equal(parseDecimal("+ 0.18"), 0.18);
-  assert.equal(parseDecimal("- 0.00"), -0.0);
-  assert.ok(Number.isNaN(parseDecimal("abc")));
-});
-
-test("getCommodityMarket: Simplize is the PRIMARY source (wti row + provenance)", async () => {
+test("getCommodityMarket: 12/12 mục trong stub có row từ WiFeed, UNAVAILABLE rỗng", async () => {
   const r = await getCommodityMarket();
-  assert.ok(r, "market must resolve even when some sources fail");
-  const wti = r.data.rows.find((x) => x.symbol === "CL");
-  assert.ok(wti, "WTI row exists");
-  assert.equal(wti.price, 91.48);
-  assert.equal(wti.change, 0.18);
-  assert.equal(wti.changePercent, 0.2);
-  assert.equal(wti.previousClose, 91.3);
-  assert.equal(wti.unit, "USD/Bbl");
-  assert.equal(wti.sourceRecords[0].source, "Simplize");
-  // fixture page publishes no "Cập nhật lúc" → honest null + DELAYED (never fake LIVE)
-  assert.equal(wti.sourceTimestamp, null);
-  assert.equal(wti.freshness, "DELAYED");
-  assert.equal(wti.freshnessNote ?? "", "Nguồn không công bố timestamp — dữ liệu trang công khai, không phải realtime");
-  assert.ok(r.data.sourcesUsed.includes("Simplize"));
-  assert.equal(wti.performance?.["1W"].changePercent, 9.69);
-  // fallback is real-only: brent (no Simplize page) still gets a REAL Yahoo row
-  const brent = r.data.rows.find((x) => x.symbol === "BZ");
-  assert.ok(brent);
-  assert.equal(brent.sourceRecords[0].source, "Yahoo Finance (futures)");
-  // aluminum/zinc giờ KHÔNG còn UNAVAILABLE — nguồn trực tiếp data.vietnambiz.vn (WiFeed)
-  const al = r.data.rows.find((x) => x.symbol === "AL");
-  assert.ok(al, "Nhôm có row từ WiFeed");
-  assert.equal(al.price, 24_373);
-  assert.equal(al.unit, "CNY/T");
-  assert.equal(al.currency, "CNY");
-  assert.match(al.sourceRecords[0].source, /VietnamBiz Data/);
-  const zn = r.data.rows.find((x) => x.symbol === "ZN");
-  assert.ok(zn, "Kẽm có row từ WiFeed");
-  assert.equal(zn.price, 26_633);
-  assert.ok(!r.data.unavailable.some((u) => u.key === "aluminum" || u.key === "zinc"));
+  assert.ok(r, "market resolve");
+  const keys = r.data.rows.map((x) => x.id);
+  for (const k of ["pig-vn", "gold", "sjc-gold", "aluminum", "zinc", "wti", "rice", "pepper", "gasoline-92", "diesel", "aggregate-1x2", "pvc", "rice-byproduct"]) {
+    assert.ok(keys.includes(k), `row ${k}`);
+  }
+  // stub cung cấp 13/66 dòng → 53 mục UNAVAILABLE là HÀNH VI ĐÚNG (không fallback/bịa)
+  assert.equal(r.data.rows.length, 13, "đúng 13 dòng stub khớp catalog");
+  assert.equal(r.data.unavailable.length, COMMODITY_CATALOG.length - 13, "các mục chưa có trên /goods → UNAVAILABLE");
+  assert.ok(r.data.unavailable.every((u) => /VietnamBiz|vietnambiz|Không có dòng/.test(u.reason)), "reason ghi rõ nguồn duy nhất");
   assert.ok(r.data.sourcesUsed.includes("VietnamBiz Data (WiFeed)"));
-  // wti must NOT have been replaced by the yahoo fallback (simplize is primary)
-  assert.equal(wti.sourceRecords[0].source, "Simplize");
+  assert.ok(!r.data.sourcesUsed.some((s) => /Simplize|Yahoo|Binance|MSN/i.test(s)), "chỉ WiFeed cho quote");
 });
 
-test("getCommodityMarket: meta honest — nguồn WiFeed+Simplize, không còn partial khi đủ nguồn", async () => {
+test("getCommodityMarket: giá trị + đơn vị + ngày cập nhật đúng như trang (không quy đổi, trừ SJC)", async () => {
   const r = await getCommodityMarket();
   assert.ok(r);
-  assert.equal(r.meta.partial, false);
-  assert.ok(r.meta.source.includes("Simplize"));
-  assert.ok(r.meta.source.includes("VietnamBiz Data (WiFeed)"));
-  assert.equal(r.data.unavailable.length, 0);
+  const row = (k: string) => r.data.rows.find((x) => x.id === k)!;
+  assert.equal(row("gold").price, 4_442.4);
+  assert.equal(row("gold").unit, "USD/ounce");
+  assert.equal(row("sjc-gold").price, 147_600_000, "SJC ×1000 — nghìn đồng/lượng → VNĐ");
+  assert.equal(row("sjc-gold").unit, "Đồng/lượng");
+  assert.equal(row("aluminum").price, 24_373);
+  assert.equal(row("aluminum").unit, "CNY/tấn");
+  assert.equal(row("aluminum").currency, "CNY");
+  assert.equal(row("zinc").price, 26_633);
+  assert.equal(row("wti").price, 91.22);
+  assert.equal(row("wti").unit, "USD/thùng");
+  assert.equal(row("rice").price, 10_200);
+  assert.equal(row("pepper").price, 137_000);
+  assert.equal(row("gasoline-92").price, 22.48);
+  assert.equal(row("diesel").price, 27.74);
+  assert.equal(row("aggregate-1x2").price, 169_200);
+  assert.equal(row("pvc").price, 4_835);
+  assert.equal(row("rice-byproduct").price, 8_475);
+  // freshness: ngày công bố 05/09/2026 → không bao giờ UNAVAILABLE/LIVE (dữ liệu ngày)
+  const fr = row("gold").freshness;
+  assert.ok(fr != null && ["FRESH", "DELAYED", "STALE"].includes(fr), fr ?? "none");
+  assert.equal(row("gold").sourceTimestamp, date("2026-09-05T00:00:00+07:00"));
+  assert.ok(row("gold").sourceRecords[0].source.includes("VietnamBiz Data"));
+  assert.match(row("gold").sourceUrl ?? "", /data\.vietnambiz\.vn\/goods/);
 });
 
-test("getCommodityDetail: resolves row + def for a chartable commodity", async () => {
-  const d = await getCommodityDetail("wti");
+test("getCommodityDetail: resolve def + row + market/unit/subgroup cho hàng mới (hồ tiêu)", async () => {
+  const d = await getCommodityDetail("pepper");
   assert.ok(d);
-  assert.equal(d.def.key, "wti");
-  assert.equal(d.row?.price, 91.48);
-  assert.equal(d.row?.relatedStocks?.includes("GAS"), true);
+  assert.equal(d.def.key, "pepper");
+  assert.equal(d.row?.price, 137_000);
+  assert.equal(d.row?.group, "consumer");
 });
 
-test("getCommodityDetail: unknown key → null (route 400), never a guessed row", async () => {
-  const d = await getCommodityDetail("definitely-not-real-xyz");
-  assert.equal(d, null);
+test("getCommodityDetail: unknown key → null (route 400), không đoán row", async () => {
+  assert.equal(await getCommodityDetail("definitely-not-real-xyz"), null);
 });
 
-test("getCommodityHistory: real OHLC via Yahoo (same ticker Simplize uses), CLOSE_ONLY never fabricated", async () => {
-  const h = await getCommodityHistory("wti", { timeframe: "1d", limit: 100 });
+test("getCommodityHistory: CHỈ Yahoo futures OHLC cho mục có chart (gold GC=F); mục khác null", async () => {
+  const h = await getCommodityHistory("gold", { timeframe: "1d", limit: 100 });
   assert.ok(h);
-  assert.equal(h.symbol, "CL");
+  assert.equal(h.symbol, "GOLD");
   assert.equal(h.priceType, "OHLC");
   assert.ok(h.points.length > 0);
   assert.ok(h.points.every((p) => p.close > 0 && p.source === "Yahoo Finance (futures)"));
-  // symbol with no yahoo ticker → null (must NOT fabricate a chart)
-  const steel = await getCommodityHistory("steel", { timeframe: "1d" });
-  assert.equal(steel, null);
+  // mục không có futures (hồ tiêu) → không bịa chart
+  assert.equal(await getCommodityHistory("pepper", { timeframe: "1d" }), null);
 });
 
-test("getCommodityMarket: VN universe rows (Thép D10, heo hơi) — unit/currency/market/related stocks", async () => {
-  const r = await getCommodityMarket();
-  assert.ok(r);
-  const d10 = r.data.rows.find((x) => x.symbol === "D10");
-  assert.ok(d10, "Thép D10 row exists (verified Simplize page)");
-  assert.equal(d10.price, 14.21);
-  assert.equal(d10.change, 0);
-  assert.equal(d10.changePercent, 0);
-  assert.equal(d10.unit, "Nghìn đồng/kg");
-  assert.equal(d10.currency, "VND");
-  assert.equal(d10.market, "VN");
-  assert.equal(d10.subgroup, "Steel");
-  assert.ok(d10.relatedStocks!.includes("HPG"));
-  assert.equal(d10.performance?.["1Y"].changePercent, 9.39);
-  assert.equal(d10.freshness, "DELAYED"); // fixture page has no published timestamp
-
-  const pig = r.data.rows.find((x) => x.symbol === "PIGVN");
-  assert.ok(pig, "Heo hơi row exists");
-  assert.equal(pig.price, 59_500);
-  assert.equal(pig.changePercent, 3.12);
-  assert.equal(pig.unit, "VNĐ/kg");
-  assert.ok(pig.relatedStocks!.includes("DBC"));
-});
-
-test("intelligence: correlation = INSUFFICIENT_DATA (2-point stub, never fabricated); news = keyword basis", async () => {
+test("intelligence: correlation INSUFFICIENT_DATA (stub 2 điểm, không bịa); news keyword basis", async () => {
   const c = await getCommodityCorrelation("wti");
   assert.ok(c);
   assert.equal(c.benchmark, "^VNINDEX");
   assert.equal(c.correlation.status, "INSUFFICIENT_DATA");
   assert.equal(c.correlation.r, null);
-  assert.equal(c.correlation.beta, null);
-  assert.match(c.correlation.note, /không|Chưa/);
-
   const n = await getCommodityNews("wti");
   assert.ok(n);
   assert.equal(n.basis, "keyword-match");
-  assert.ok(Array.isArray(n.articles));
-  // live feeds are unreachable in this stub → empty articles, no fake catalysts
-  assert.equal(n.articles.length, 0);
-  assert.ok(n.note.length > 0);
+  assert.equal(n.articles.length, 0); // RSS không chạy trong stub → không bịa tin
 });
 
-test("crash-safety: service runs even with everything failing — no throw", async () => {
-  // swap fetch to always-fail, confirm getCommodityMarket resolves null-ish gracefully
+test("crash-safety: WiFeed down → provider throw; market resolve với 66 UNAVAILABLE (không throw, không giả)", async () => {
+  clearCacheForTests();
   globalThis.fetch = (() => Promise.resolve(new Response("down", { status: 503 }))) as typeof fetch;
+  await assert.rejects(() => getVnbGoodsQuotes(), /vietnambiz-data/);
   const r = await getCommodityMarket();
-  // producers catch each source; market resolves with rows/unavailable, or null via cached producer error
-  assert.ok(r === null || Array.isArray(r.data.rows));
+  assert.ok(r, "market resolve — không throw");
+  assert.equal(r.data.rows.length, 0);
+  assert.equal(r.data.unavailable.length, COMMODITY_CATALOG.length);
+  assert.ok(r.data.unavailable.every((u) => /VietnamBiz|vietnambiz/.test(u.reason)), "không bịa fallback");
+  assert.ok(r.data.errors.some((e) => e.includes("vietnambiz-data")));
   globalThis.fetch = origFetch;
+  clearCacheForTests();
 });

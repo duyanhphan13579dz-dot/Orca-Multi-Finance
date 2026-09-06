@@ -2,8 +2,7 @@ import "server-only";
 import { env } from "../env";
 import { cached } from "../cache";
 import { httpText } from "../http";
-import { ProviderError } from "./binance";
-import type { RawCommodityQuote } from "./commodities";
+import { currencyForUnit, type RawCommodityQuote } from "./commodities";
 
 /**
  * VietnamBiz DATA PORTAL (data.vietnambiz.vn) — WiFeed/WiGroup tables.
@@ -15,6 +14,13 @@ import type { RawCommodityQuote } from "./commodities";
  * Ghi chú bản quyền từ trang: "Dữ liệu thuộc bản quyền CTCP WiGroup" — hiển thị
  * nguồn đầy đủ "VietnamBiz Data (WiFeed)" + url gốc trong mọi payload.
  */
+
+class VnbDataError extends Error {
+  constructor(message: string, readonly provider: string) {
+    super(message);
+    this.name = "VnbDataError";
+  }
+}
 
 export const VN_DATA_PROVIDER = "vietnambiz-data";
 export const VN_DATA_SOURCE = "VietnamBiz Data (WiFeed)";
@@ -69,7 +75,7 @@ function stripCssText(raw: string): string {
       .replace(/(?:font-weight|font-family|font-size|line-height|box-sizing|color|content|background|border|text-[\w-]+)\s*:\s*[^,;{}]+[;,]/gi, " ")
       .replace(/(?:font-weight|font-family|font-size|line-height|box-sizing|color|content|background)\s*:\s*[^,;{}]+/gi, " ")
       .replace(/(?::|::)(?:before|after|first-child|last-child|not)\b/gi, " ")
-      .replace(/,+(?=\s*(?:[a-z.#[:@,)]|\s*$))/gi, " ");
+      .replace(/(?:\s+,)+(?=\s|$)/g, " ");
     if (t === prev) break;
   }
   return t;
@@ -208,43 +214,93 @@ export function parseVnbGoodsRows(html: string): VnbGoodsRow[] {
 }
 
 /**
- * Mapping WiFeed row → catalog key. Chỉ giữ các hàng KHỚP NGHĨA + ĐƠN VỊ xác định:
- * không quy đổi tiền tệ (CNY→USD v.v.) vì bịa — hàng nào đơn vị khác catalog thì
- * giữ đơn vị NGUỒN ở mức row (unit/currency từ quote), def.unit là canonical.
- * scale: 1000 = WiFeed "147,600" nghìn đồng/lượng → 147,600,000 VNĐ (SJC);
- * 1/1000 = "91,500" đồng/kg → 91.5 nghìn đồng/kg (đơn vị catalog tôm).
+ * Mapping WiFeed row → catalog key — 66 dòng = TOÀN BỘ bảng /goods
+ * (user directive 2026-09-06: nguồn duy nhất). Không quy đổi tiền tệ:
+ * unit/currency lấy NGUYÊN VĂN từ trang. scale 1000 chỉ cho SJC (trang ghi
+ * "Đồng/lượng" nhưng giá 147,600 là nghìn đồng/lượng — đối chiếu SJC thực tế).
  */
 interface VnbGoodsMap {
   rx: RegExp;
   key: string;
   scale?: number;
-  unit?: string;
-  currency?: string;
 }
 
+const RX = (s: string) => new RegExp(`^${s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`);
+const R = (name: string, key: string, scale?: number): VnbGoodsMap => ({ rx: RX(name), key, scale });
+
 export const VNB_GOODS_MAP: VnbGoodsMap[] = [
-  // Precious metals (USD/ounce; VN gold)
-  { rx: /^Giá vàng trong nước$/, key: "sjc-gold", scale: 1000, unit: "VNĐ/Lượng", currency: "VND" },
-  { rx: /^Giá vàng$/, key: "gold", unit: "USD/oz", currency: "USD" },
-  { rx: /^Giá bạc$/, key: "silver", unit: "USD/oz", currency: "USD" },
-  { rx: /^Giá đồng$/, key: "copper", unit: "USD/lb", currency: "USD" }, // WiFeed "USD/pound" ≡ USD/lb
-  // Industrial (China CNY/tấn)
-  { rx: /^Quặng sắt Trung Quốc$/, key: "iron-ore", unit: "CNY/T", currency: "CNY" },
-  { rx: /^Kẽm Trung Quốc$/, key: "zinc", unit: "CNY/T", currency: "CNY" },
-  { rx: /^Nhôm Trung Quốc$/, key: "aluminum", unit: "CNY/T", currency: "CNY" },
-  { rx: /^Nikken Trung Quốc$/, key: "nickel", unit: "CNY/T", currency: "CNY" }, // WiFeed label cho nickel TQ
-  { rx: /^HRC Trung Quốc$/, key: "steel", unit: "CNY/T", currency: "CNY" },
-  // Fertilizer / energy
-  { rx: /^Ure Trung Đông$/, key: "urea", unit: "USD/T", currency: "USD" },
-  { rx: /^Than cốc Trung Quốc$/, key: "coal", unit: "CNY/T", currency: "CNY" },
-  { rx: /^Dầu WTI$/, key: "wti", unit: "USD/bbl", currency: "USD" },
-  { rx: /^Khí thiên nhiên$/, key: "natgas", unit: "USD/MMBtu", currency: "USD" },
-  // VN agriculture / energy
-  { rx: /^Giá heo hơi trong nước$/, key: "pig-vn", unit: "VNĐ/kg", currency: "VND" },
-  { rx: /^Tôm thẻ$/, key: "shrimp-vn", scale: 1 / 1000, unit: "Nghìn đồng/kg", currency: "VND" },
-  { rx: /^Xăng RON 95-V$/, key: "gasoline-95", unit: "Nghìn đồng/lít", currency: "VND" },
-  { rx: /^Xăng sinh học E5 RON 92-II$/, key: "gasoline-92", unit: "Nghìn đồng/lít", currency: "VND" },
-  { rx: /^Xăng Diezen$/, key: "diesel", unit: "Nghìn đồng/lít", currency: "VND" },
+  // Hàng tiêu dùng (15)
+  R("Giá heo hơi trong nước", "pig-vn"),
+  R("Vải cotton Trung Quốc", "cotton-fabric-cn"),
+  R("Sợi cotton Trung Quốc", "cotton-yarn-cn"),
+  R("Dầu cọ Malaysia", "palm-oil"),
+  R("Giấy gợn sóng Trung Quốc", "kraft-paper"),
+  R("Đường", "sugar"),
+  R("Cà phê", "coffee"),
+  R("Giá cà phê trong nước", "coffee-robusta"),
+  R("Hồ tiêu", "pepper"),
+  R("Vải cotton Mỹ", "cotton-fabric-us"),
+  R("Gạo TPXK", "rice"),
+  R("Tôm thẻ", "shrimp-vn"),
+  R("Lúa", "paddy"),
+  R("Gạo nguyên liệu", "rice-raw"),
+  R("Phụ phẩm lúa gạo", "rice-byproduct"),
+  // Kim loại và phi kim (10)
+  R("Quặng sắt Trung Quốc", "iron-ore"),
+  R("Chì Trung Quốc", "lead"),
+  R("Kẽm Trung Quốc", "zinc"),
+  R("Nhôm Trung Quốc", "aluminum"),
+  R("Đồng Trung Quốc", "copper-cn"),
+  R("Nikken Trung Quốc", "nickel"),
+  R("Giá vàng", "gold"),
+  R("Giá vàng trong nước", "sjc-gold", 1000),
+  R("Giá bạc", "silver"),
+  R("Giá đồng", "copper"),
+  // Hóa chất (7)
+  R("Ure Trung Đông", "urea"),
+  R("Lưu huỳnh Trung Quốc", "sulfur"),
+  R("Phốt pho vàng Trung Quốc", "yellow-phosphorus"),
+  R("Xút (NaOH) Trung Quốc", "caustic-soda"),
+  R("Phân Urea Trung Quốc", "urea-cn"),
+  R("Phân Ure Phú Mỹ", "urea-phu-my"),
+  R("Phân Ure Cà Mau", "urea-ca-mau"),
+  // Vật liệu xây dựng (20)
+  R("Thép phế Anh", "steel-scrap"),
+  R("Thép thanh Anh", "steel-rebar"),
+  R("HRC Trung Quốc", "steel"),
+  R("Đá 0-4", "aggregate-04"),
+  R("Đá mi sàng", "aggregate-sieve"),
+  R("Đá 1x2", "aggregate-1x2"),
+  R("Đá Hộc", "aggregate-boulder"),
+  R("Tôn lạnh màu Hoa Sen 0,45mm", "sheet-color"),
+  R("Tôn lạnh Hoa Sen 0,45mm", "sheet"),
+  { rx: /^Bê tông nhựa mịn\s*:\s*Carboncor Asphalt - CA 9\.5$/, key: "asphalt" },
+  R("Ống nhựa 27 x 1.8mm", "pipe-27"),
+  R("Ống nhựa 60 x 2mm", "pipe-60"),
+  R("Ống nhựa 90 x 2,9mm", "pipe-90"),
+  R("Sơn lót kháng kiềm cao cấp", "paint-primer"),
+  R("Sơn nội thất tiêu chuẩn STANDARD", "paint-interior"),
+  R("Sơn ngoại thất STANDARD", "paint-exterior"),
+  R("Xi măng - Vicem Hà Tiên PCB 40 - bao 50kg", "cement"),
+  R("Bê tông thương phẩm - Mác 300", "concrete"),
+  R("Gạch đất sét nung - Gạch ống 4 lỗ 80x80x80", "brick"),
+  R("Cọc bê tông dự ứng lực - Cọc 30x30cm, L=18m", "pile"),
+  // Năng lượng (10)
+  R("Than cốc Trung Quốc", "coal"),
+  R("Khí LPG Trung Quốc", "lpg"),
+  R("Dầu WTI", "wti"),
+  R("Khí thiên nhiên", "natgas"),
+  R("Than Newcastle", "coal-newcastle"),
+  R("Xăng RON 95-V", "gasoline-95-v"),
+  R("Xăng RON 95-II,III", "gasoline-95"),
+  R("Xăng sinh học E5 RON 92-II", "gasoline-92"),
+  R("Xăng Diezen", "diesel"),
+  R("Dầu hoả", "kerosene"),
+  // Nhựa và cao su (4)
+  R("Cao su Nhật Bản", "rubber"),
+  R("PET Trung Quốc", "pet"),
+  R("Hạt nhựa PVC Trung Quốc", "pvc"),
+  R("Hạt nhựa PP Trung Quốc", "pp"),
 ];
 
 export const VNB_GOODS_KEYS: ReadonlySet<string> = new Set(VNB_GOODS_MAP.map((m) => m.key));
@@ -267,8 +323,8 @@ export function mapVnbGoodsRows(rows: VnbGoodsRow[]): Map<string, RawCommodityQu
       price,
       change: null,
       changePercent: row.pctDay,
-      unit: m.unit ?? row.unit,
-      currency: m.currency ?? "USD",
+      unit: row.unit,
+      currency: currencyForUnit(row.unit),
       timestamp: row.dateTs,
       url: `${env.vietnambizDataBaseUrl.replace(/\/$/, "")}/goods`,
     });
@@ -292,7 +348,7 @@ export async function getVnbDatasetText(dataset: "goods" | "macro-economic" | "c
         retries: 1,
         headers: DATA_PORTAL_HEADERS,
       });
-      if (!r.ok || !r.text) throw new ProviderError(`vietnambiz-data: ${r.error ?? "unreachable"} (${url})`, VN_DATA_PROVIDER);
+      if (!r.ok || !r.text) throw new VnbDataError(`vietnambiz-data: ${r.error ?? "unreachable"} (${url})`, VN_DATA_PROVIDER);
       return r.text;
     },
   });
@@ -303,7 +359,7 @@ export async function getVnbGoodsQuotes(): Promise<Map<string, RawCommodityQuote
   const html = await getVnbDatasetText("goods");
   const rows = parseVnbGoodsRows(html);
   const mapped = mapVnbGoodsRows(rows);
-  if (mapped.size === 0) throw new ProviderError("vietnambiz-data: goods page parse failed (structure changed?)", VN_DATA_PROVIDER);
+  if (mapped.size === 0) throw new VnbDataError("vietnambiz-data: goods page parse failed (structure changed?)", VN_DATA_PROVIDER);
   return mapped;
 }
 

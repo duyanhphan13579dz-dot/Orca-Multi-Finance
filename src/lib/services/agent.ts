@@ -177,7 +177,7 @@ async function buildCommodity(kw: string): Promise<Built> {
             `${c.commodity}: ${c.price.toLocaleString("vi-VN")} ${c.unit ?? ""} (${c.changePercent != null ? `${c.changePercent >= 0 ? "+" : ""}${c.changePercent.toFixed(2)}%` : "chưa có %"}, nguồn ${c.sourceRecords.map((s) => s.source).join("/")})${c.symbol === "XAUUSD" ? ". Vàng bứt phá mạnh thường làm dòng tiền vào tài sản rủi ro chững lại — quan hệ quan sát, không nhân quả." : ""}`,
         )
         .join("\n\n")
-    : `Nhóm "${kw}" chưa có nguồn khả dụng (Vietnambiz/Simplize/MSN chưa cấu hình) — hệ thống không tự suy diễn giá.`;
+    : `Nhóm "${kw}" chưa có nguồn khả dụng (VietnamBiz Data — WiFeed) — hệ thống không tự suy diễn giá.`;
   return { narrative, contract, sectionsUsed: ["commodities"], symbols: rows.map((x) => x.symbol), freshnesses: [r.meta.freshness] };
 }
 

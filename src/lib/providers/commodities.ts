@@ -1,27 +1,19 @@
 import "server-only";
-import { env } from "../env";
-import { cached } from "../cache";
-import { httpJson, httpText } from "../http";
-import { ProviderError } from "./binance";
 import type { ImpactDirection, ImpactStrength, RelationshipType } from "../engines/commodity";
 
 /**
- * Commodity data providers — REAL public sources only.
+ * Commodity catalog — NGUỒN DUY NHẤT: VietnamBiz Data portal (WiFeed/WiGroup).
  *
- * Priority per product requirement: Simplize (public commodity pages, SSR,
- * real published values + published "related stocks") → Vietnambiz (SJC gold
- * board) → Yahoo Finance futures (chart + fallback quote) → MSN Finance →
- * Binance PAXG (gold spot cross-check). Every record carries source + real
- * timestamps when the source publishes them; otherwise freshness stays
- * DELAYED (never fake LIVE). No endpoint here is invented: the Simplize
- * public page URLs below were verified live (page 200, real values).
+ * 2026-09-06 (user directive): chuyển TOÀN BỘ hàng hóa về
+ * `https://data.vietnambiz.vn/goods` — bỏ Simplize; Yahoo/MSN/Binance không
+ * còn dùng cho quote (chỉ Yahoo còn dùng cho chart OHLC lịch sử — visualization).
+ * Mỗi mục dưới đây tương ứng ĐÚNG 1 dòng trong bảng /goods (name + unit lấy
+ * nguyên văn từ trang). Không quy đổi tiền tệ; SJC là ngoại lệ: trang ghi
+ * "Đồng/lượng" nhưng giá 147,600 là NGHÌN đồng/lượng (đối chiếu SJC ~145–150
+ * triệu đồng/lượng) → ×1000 có chú thích.
  */
 
-export const SIMPLIZE = "simplize";
-export const VIETNAMBIZ = "vietnambiz";
-export const MSN_FINANCE = "msn-finance";
-export const BINANCE_PAXG = "binance-paxg";
-export const YAHOO_FUTURES = "yahoo-futures";
+/* ------------------------------ types ----------------------------------- */
 
 export interface RawCommodityQuote {
   source: string;
@@ -42,25 +34,19 @@ export interface RawCommodityQuote {
   url?: string | null;
 }
 
-/* ------------------------------ catalog ----------------------------------- */
-
-export type CommodityGroup = "metals" | "energy" | "industrial" | "agriculture" | "vietnam" | "livestock" | "seafood";
+export type CommodityGroup = "consumer" | "metals" | "chemicals" | "construction" | "energy" | "plastics";
 
 export type CommodityCategory =
-  | "precious-metals"
-  | "industrial-metals"
+  | "consumer"
+  | "metals"
+  | "chemicals"
+  | "construction"
   | "energy"
-  | "agriculture"
-  | "soft-commodities"
-  | "fertilizers"
-  | "livestock"
-  | "seafood"
+  | "plastics"
   | "other";
 
-/** official universe: market = Vietnam (domestic price) vs International */
 export type CommodityMarket = "VN" | "INTL";
 
-/** per-stock impact relation (evidence-based, curated industry mapping) */
 export interface CommodityRelation {
   relationshipType: RelationshipType;
   direction: ImpactDirection;
@@ -73,7 +59,6 @@ export interface CommodityImpactMap {
   sector: string;
   stocks: string[];
   mechanism: string;
-  /** per-stock relation (falls back to CONDITIONAL/MEDIUM/MACRO_SENSITIVITY) */
   relations?: Record<string, CommodityRelation>;
 }
 
@@ -84,397 +69,232 @@ export interface CommodityDef {
   group: CommodityGroup;
   category: CommodityCategory;
   subcategory?: string;
-  /** sub-group alias per unified model */
   subgroup?: string;
-  /** Vietnam domestic price vs International market */
   market: CommodityMarket;
   symbol: string;
   unit: string;
   currency: string;
-  /** public Simplize commodity page path (verified live) */
-  simplizePath?: string;
-  /** Yahoo futures ticker used for chart + fallback quote (real, documented) */
+  /** giá trị WiFeed → đơn vị catalog (mặc định 1; chỉ SJC ×1000 — xem header) */
+  valueScale?: number;
+  /** Yahoo futures ticker — CHỈ cho chart OHLC lịch sử, không dùng làm quote */
   yahooSymbol?: string;
-  /** Binance spot proxy for 24/7 gold */
-  binanceSymbol?: string;
-  /** provider quotes in US cents (KC/SB/ZC/ZS) → keep as displayed (USd/…) */
-  centsQuoted?: boolean;
-  /** Vietnambiz scrape strategy */
-  vietnambiz?: "sjc-gold" | "fuel" | "pig";
-  /** news-filter keywords for the NEWS & CATALYST engine (title/summary match) */
+  /** news-filter keywords cho NEWS & CATALYST engine */
   newsKeywords?: string[];
-  /** verified economic exposure (mechanism from public industry descriptions) */
+  /** evidence-based economic exposure (curated; optional) */
   vnImpact?: CommodityImpactMap;
-  /** display aid: source page URL for provenance */
-  sourceUrl?: string;
 }
 
-export const COMMODITY_CATALOG: CommodityDef[] = [
-  {
-    key: "gold", name: "Gold", nameVi: "Vàng thế giới", group: "metals", category: "precious-metals", subcategory: "Bullion",
-    symbol: "XAUUSD", unit: "USD/oz", currency: "USD", market: "INTL", simplizePath: "/gia-vang/the-gioi",
-    yahooSymbol: "GC=F", binanceSymbol: "PAXGUSDT",
-    newsKeywords: ["vàng", "gold", "kim loại quý"],
-    vnImpact: {
-      sector: "Tài sản & Bán lẻ vàng", stocks: ["PNJ", "BID", "ACB", "VCB", "CTG"],
-      mechanism: "Giá vàng thế giới dẫn giá vàng nội địa → doanh thu bán lẻ vàng (PNJ) và kênh trú ẩn tài sản",
-      relations: {
-        PNJ: { relationshipType: "REVENUE_DRIVER", direction: "POSITIVE", impactStrength: "MEDIUM", confidence: "MEDIUM", channel: "Giá vàng tăng → doanh thu bán lẻ vàng tăng (biên mua–bán)" },
-        BID: { relationshipType: "MACRO_SENSITIVITY", direction: "CONDITIONAL", impactStrength: "LOW", confidence: "LOW", channel: "Giá vàng là kênh trú ẩn cạnh tranh tiền gửi" },
-        ACB: { relationshipType: "MACRO_SENSITIVITY", direction: "CONDITIONAL", impactStrength: "LOW", confidence: "LOW", channel: "Giá vàng là kênh trú ẩn cạnh tranh tiền gửi" },
-        VCB: { relationshipType: "MACRO_SENSITIVITY", direction: "CONDITIONAL", impactStrength: "LOW", confidence: "LOW", channel: "Giá vàng là kênh trú ẩn cạnh tranh tiền gửi" },
-        CTG: { relationshipType: "MACRO_SENSITIVITY", direction: "CONDITIONAL", impactStrength: "LOW", confidence: "LOW", channel: "Giá vàng là kênh trú ẩn cạnh tranh tiền gửi" },
-      },
-    },
-  },
-  {
-    key: "silver", name: "Silver", nameVi: "Bạc", group: "metals", category: "precious-metals", subcategory: "Bullion",
-    symbol: "XAGUSD", unit: "USD/oz", currency: "USD", market: "INTL", simplizePath: "/gia-bac-the-gioi", yahooSymbol: "SI=F",
-    newsKeywords: ["bạc", "silver"],
-    vnImpact: {
-      sector: "Trang sức & Công nghiệp", stocks: ["PNJ"],
-      mechanism: "Bạc là nguyên liệu trang sức và công nghiệp điện tử; giá tăng → chi phí nguyên liệu tăng",
-      relations: {
-        PNJ: { relationshipType: "INPUT_COST", direction: "MIXED", impactStrength: "LOW", confidence: "LOW", channel: "Mặt hàng bạc trang sức" },
-      },
-    },
-  },
-  {
-    key: "platinum", name: "Platinum", nameVi: "Platinum", group: "metals", category: "precious-metals", subcategory: "Bullion",
-    symbol: "XPTUSD", unit: "USD/oz", currency: "USD", market: "INTL", yahooSymbol: "PL=F",
-  },
-  {
-    key: "palladium", name: "Palladium", nameVi: "Palladium", group: "metals", category: "precious-metals", subcategory: "Bullion",
-    symbol: "XPDUSD", unit: "USD/oz", currency: "USD", market: "INTL", yahooSymbol: "PA=F",
-  },
-  {
-    key: "wti", name: "WTI Crude Oil", nameVi: "Dầu thô WTI", group: "energy", category: "energy", subcategory: "Crude",
-    symbol: "CL", unit: "USD/bbl", currency: "USD", market: "INTL", simplizePath: "/hang-hoa/wti", yahooSymbol: "CL=F",
-    vnImpact: { sector: "Dầu khí", stocks: ["GAS", "PLX", "BSR", "PVD", "PVS", "PVT"], mechanism: "Giá dầu tác động trực tiếp doanh thu khai thác, vận tải và phân phối" },
-  },
-  {
-    key: "brent", name: "Brent Crude Oil", nameVi: "Dầu Brent", group: "energy", category: "energy", subcategory: "Crude",
-    symbol: "BZ", unit: "USD/bbl", currency: "USD", market: "INTL", yahooSymbol: "BZ=F",
-    vnImpact: { sector: "Dầu khí", stocks: ["GAS", "PLX", "BSR", "OIL"], mechanism: "Chuẩn giá dầu tham chiếu cho hợp đồng khu vực" },
-  },
-  {
-    key: "natgas", name: "Natural Gas", nameVi: "Khí thiên nhiên", group: "energy", category: "energy", subcategory: "Gas",
-    symbol: "NG", unit: "USD/MMBtu", currency: "USD", market: "INTL", simplizePath: "/hang-hoa/khi-thien-nhien", yahooSymbol: "NG=F",
-    vnImpact: { sector: "Điện & Phân bón", stocks: ["GAS", "POW", "DCM", "DPM", "CNG", "PGD", "NT2"], mechanism: "Chi phí đầu vào cho điện lực, phân bón và kinh doanh khí" },
-  },
-  {
-    key: "coal", name: "Coking Coal", nameVi: "Than cốc", group: "energy", category: "energy", subcategory: "Coal",
-    symbol: "COAL", unit: "USD/T", currency: "USD", market: "INTL", simplizePath: "/hang-hoa/than-coc",
-    newsKeywords: ["than", "than cốc", "coking coal"],
-    vnImpact: {
-      sector: "Thép & Nhiệt điện", stocks: ["HPG", "HSG", "QTP", "NT2"],
-      mechanism: "Than cốc là nguyên liệu luyện thép và nhiên liệu nhiệt điện; giá tăng → chi phí đầu vào tăng",
-      relations: {
-        HPG: { relationshipType: "INPUT_COST", direction: "NEGATIVE", impactStrength: "MEDIUM", confidence: "MEDIUM", channel: "Than cốc trong sản xuất thép" },
-        HSG: { relationshipType: "INPUT_COST", direction: "NEGATIVE", impactStrength: "MEDIUM", confidence: "MEDIUM", channel: "Than cốc trong sản xuất thép" },
-        QTP: { relationshipType: "INPUT_COST", direction: "MIXED", impactStrength: "MEDIUM", confidence: "LOW", channel: "Nhiệt điện than — chi phí tăng, giá điện điều chỉnh" },
-        NT2: { relationshipType: "INPUT_COST", direction: "MIXED", impactStrength: "MEDIUM", confidence: "LOW", channel: "Nhiệt điện than — chi phí tăng, giá điện điều chỉnh" },
-      },
-    },
-  },
-  {
-    key: "copper", name: "Copper", nameVi: "Đồng", group: "industrial", category: "industrial-metals", subcategory: "Base Metals",
-    symbol: "HG", unit: "USD/lb", currency: "USD", market: "INTL", simplizePath: "/hang-hoa/gia-dong", yahooSymbol: "HG=F",
-    vnImpact: { sector: "Kim loại", stocks: ["HSG", "NKG", "HPG"], mechanism: "Chỉ báo chu kỳ kim loại công nghiệp, ảnh hưởng giá nguyên liệu ngành thép" },
-  },
-  {
-    key: "aluminum", name: "Aluminum", nameVi: "Nhôm", group: "industrial", category: "industrial-metals", subcategory: "Base Metals",
-    symbol: "AL", unit: "USD/T", currency: "USD", market: "INTL",
-  },
-  {
-    key: "zinc", name: "Zinc", nameVi: "Kẽm", group: "industrial", category: "industrial-metals", subcategory: "Base Metals",
-    symbol: "ZN", unit: "USD/T", currency: "USD", market: "INTL",
-  },
-  {
-    key: "nickel", name: "Nickel", nameVi: "Nickel", group: "industrial", category: "industrial-metals", subcategory: "Base Metals",
-    symbol: "NI", unit: "USD/T", currency: "USD", market: "INTL", simplizePath: "/hang-hoa/gia-nickel",
-    newsKeywords: ["niken", "nickel"],
-    vnImpact: {
-      sector: "Kim loại — Thép không gỉ", stocks: ["HPG", "VCA"],
-      mechanism: "Nickel là nguyên liệu thép không gỉ; giá tăng → chi phí đầu vào của nhà sản xuất kim loại",
-      relations: {
-        HPG: { relationshipType: "MACRO_SENSITIVITY", direction: "CONDITIONAL", impactStrength: "LOW", confidence: "LOW", channel: "Giá kim loại công nghiệp phản ánh chu kỳ ngành" },
-        VCA: { relationshipType: "INPUT_COST", direction: "MIXED", impactStrength: "LOW", confidence: "LOW", channel: "Nguyên liệu thép không gỉ" },
-      },
-    },
-  },
-  {
-    key: "iron-ore", name: "Iron Ore", nameVi: "Quặng sắt", group: "industrial", category: "industrial-metals", subcategory: "Bulk",
-    symbol: "IO", unit: "USD/T", currency: "USD", market: "INTL", simplizePath: "/hang-hoa/gia-quang-sat",
-    vnImpact: { sector: "Thép", stocks: ["HPG", "HSG", "NKG"], mechanism: "Chi phí nguyên liệu đầu vào quyết định biên lợi nhuận thép" },
-  },
-  {
-    key: "steel", name: "Steel HRC", nameVi: "Thép HRC", group: "industrial", category: "industrial-metals", subcategory: "Steel",
-    symbol: "HRC", unit: "USD/T", currency: "USD", market: "INTL", simplizePath: "/hang-hoa/gia-thep-hrc",
-    vnImpact: { sector: "Thép", stocks: ["HPG", "HSG", "NKG", "SMC", "TLH", "VGS", "TVN"], mechanism: "Giá thép quyết định biên lợi nhuận doanh nghiệp thép" },
-  },
-  {
-    key: "wheat", name: "Wheat", nameVi: "Lúa mì", group: "agriculture", category: "agriculture", subcategory: "Grains",
-    symbol: "ZW", unit: "USd/bu", currency: "USD", market: "INTL", yahooSymbol: "ZW=F", centsQuoted: true,
-  },
-  {
-    key: "corn", name: "Corn", nameVi: "Ngô", group: "agriculture", category: "agriculture", subcategory: "Grains",
-    symbol: "ZC", unit: "USd/bu", currency: "USD", market: "INTL", simplizePath: "/hang-hoa/gia-ngo", yahooSymbol: "ZC=F", centsQuoted: true,
-    vnImpact: { sector: "Chăn nuôi", stocks: ["DBC", "BAF", "HAG"], mechanism: "Chi phí thức ăn chăn nuôi" },
-  },
-  {
-    key: "soybean", name: "Soybean", nameVi: "Đậu tương", group: "agriculture", category: "agriculture", subcategory: "Grains",
-    symbol: "ZS", unit: "USd/bu", currency: "USD", market: "INTL", simplizePath: "/hang-hoa/gia-dau-nanh", yahooSymbol: "ZS=F", centsQuoted: true,
-    vnImpact: { sector: "Chăn nuôi", stocks: ["DBC", "BAF"], mechanism: "Chi phí thức ăn chăn nuôi" },
-  },
-  {
-    key: "rice", name: "Rough Rice", nameVi: "Gạo", group: "agriculture", category: "agriculture", subcategory: "Grains",
-    symbol: "ZR", unit: "USD/cwt", currency: "USD", market: "INTL", simplizePath: "/hang-hoa/gia-gao", yahooSymbol: "ZR=F",
-    vnImpact: { sector: "Nông nghiệp & Lương thực", stocks: ["PAN", "AFX", "LTG", "VSF"], mechanism: "Giá gạo tác động doanh thu xuất khẩu và chế biến lương thực" },
-  },
-  {
-    key: "coffee", name: "Coffee (Arabica)", nameVi: "Cà phê", group: "agriculture", category: "soft-commodities", subcategory: "Beverages",
-    symbol: "KC", unit: "US cent/lb", currency: "USD", market: "INTL", simplizePath: "/hang-hoa/gia-ca-phe-arabica", yahooSymbol: "KC=F", centsQuoted: true,
-    vnImpact: { sector: "Nông nghiệp", stocks: ["VNM", "PAN"], mechanism: "Việt Nam là nước xuất khẩu robusta lớn thứ hai thế giới" },
-  },
-  {
-    key: "sugar", name: "Sugar", nameVi: "Đường", group: "agriculture", category: "soft-commodities", subcategory: "Beverages",
-    symbol: "SB", unit: "USd/lb", currency: "USD", market: "INTL", simplizePath: "/hang-hoa/gia-duong", yahooSymbol: "SB=F", centsQuoted: true,
-    vnImpact: { sector: "Nông nghiệp", stocks: ["QNS", "LSS", "SBT", "KTS", "SLS", "CBS"], mechanism: "Giá đường thế giới chi phối giá mía đường nội địa" },
-  },
-  {
-    key: "cotton", name: "Cotton", nameVi: "Bông", group: "agriculture", category: "soft-commodities", subcategory: "Textiles",
-    symbol: "CT", unit: "US cent/lb", currency: "USD", market: "INTL", simplizePath: "/hang-hoa/gia-bong", yahooSymbol: "CT=F", centsQuoted: true,
-    newsKeywords: ["bông", "cotton", "dệt may"],
-    vnImpact: {
-      sector: "Dệt may", stocks: ["TNG", "MSH", "GIL"],
-      mechanism: "Việt Nam nhập khẩu bông; giá bông tăng → chi phí nguyên liệu dệt may tăng",
-      relations: {
-        TNG: { relationshipType: "INPUT_COST", direction: "NEGATIVE", impactStrength: "MEDIUM", confidence: "MEDIUM", channel: "Chi phí nguyên liệu sợi" },
-        MSH: { relationshipType: "INPUT_COST", direction: "NEGATIVE", impactStrength: "MEDIUM", confidence: "MEDIUM", channel: "Chi phí nguyên liệu sợi" },
-        GIL: { relationshipType: "INPUT_COST", direction: "NEGATIVE", impactStrength: "MEDIUM", confidence: "MEDIUM", channel: "Chi phí nguyên liệu sợi" },
-      },
-    },
-  },
-  {
-    key: "urea", name: "Urea", nameVi: "Phân URE", group: "agriculture", category: "fertilizers", subcategory: "Nitrogen",
-    symbol: "URE", unit: "USD/T", currency: "USD", market: "INTL", simplizePath: "/hang-hoa/gia-phan-ure",
-    vnImpact: { sector: "Phân bón", stocks: ["DCM", "DPM", "SFG", "LAS"], mechanism: "Giá ure nhập khẩu quyết định giá thành phân bón nội địa" },
-  },
-  {
-    key: "sjc-gold", name: "SJC Gold (VN)", nameVi: "Vàng SJC", group: "vietnam", category: "precious-metals", subcategory: "Domestic (VN)", subgroup: "Domestic (VN)",
-    symbol: "SJC", unit: "VNĐ/Lượng", currency: "VND", market: "VN", simplizePath: "/gia-vang/pnj/vang-mieng-sjc-9999-pnj", vietnambiz: "sjc-gold",
-    newsKeywords: ["vàng", "sjc", "gold"],
-    vnImpact: {
-      sector: "Tài sản nội & Bán lẻ vàng", stocks: ["PNJ"],
-      mechanism: "Giá vàng SJC dẫn tâm lý đầu tư tài sản trong nước và doanh thu bán lẻ vàng",
-      relations: {
-        PNJ: { relationshipType: "REVENUE_DRIVER", direction: "POSITIVE", impactStrength: "MEDIUM", confidence: "MEDIUM", channel: "Giá vàng nội địa tăng → doanh thu bán lẻ vàng tăng" },
-      },
-    },
-  },
-  /* ------------------------- official universe — VN market ------------------------- */
-  {
-    key: "steel-d10", name: "Steel Rebar D10 (VN)", nameVi: "Thép D10", group: "industrial", category: "industrial-metals", subcategory: "Steel", subgroup: "Steel",
-    market: "VN", symbol: "D10", unit: "Nghìn đồng/kg", currency: "VND", simplizePath: "/hang-hoa/gia-thep-d10",
-    newsKeywords: ["thép", "giá thép"],
-    vnImpact: {
-      sector: "Thép & Xây dựng", stocks: ["HPG", "HSG", "NKG", "TLH", "VGS", "TVN"],
-      mechanism: "Giá thép D10 tăng → doanh thu thép bán ra tăng (nếu bán được giá) nhưng chi phí đầu vào xây dựng tăng",
-      relations: {
-        HPG: { relationshipType: "SELLING_PRICE", direction: "MIXED", impactStrength: "MEDIUM", confidence: "MEDIUM", channel: "Giá bán thép tăng → biên lợi nhuận cải thiện khi chi phí nguyên liệu tăng chậm hơn" },
-        HSG: { relationshipType: "SELLING_PRICE", direction: "MIXED", impactStrength: "MEDIUM", confidence: "MEDIUM", channel: "Giá bán thép tăng → biên lợi nhuận cải thiện khi chi phí nguyên liệu tăng chậm hơn" },
-        NKG: { relationshipType: "SELLING_PRICE", direction: "MIXED", impactStrength: "MEDIUM", confidence: "MEDIUM", channel: "Giá bán thép tăng → biên lợi nhuận cải thiện khi chi phí nguyên liệu tăng chậm hơn" },
-        TLH: { relationshipType: "SELLING_PRICE", direction: "MIXED", impactStrength: "MEDIUM", confidence: "LOW", channel: "Nhà máy thép bán theo giá thị trường" },
-        VGS: { relationshipType: "SELLING_PRICE", direction: "MIXED", impactStrength: "MEDIUM", confidence: "LOW", channel: "Giá thép thượng nguồn ảnh hưởng giá ống thép" },
-        TVN: { relationshipType: "SELLING_PRICE", direction: "MIXED", impactStrength: "MEDIUM", confidence: "LOW", channel: "Doanh thu thép của nhà máy thép" },
-      },
-    },
-  },
-  {
-    key: "gasoline-95", name: "Gasoline RON95 (VN)", nameVi: "Xăng RON95", group: "energy", category: "energy", subcategory: "Gasoline", subgroup: "Gasoline",
-    market: "VN", symbol: "RON95", unit: "Nghìn đồng/lít", currency: "VND", simplizePath: "/hang-hoa/gia-xang-ron95", vietnambiz: "fuel",
-    newsKeywords: ["xăng", "giá xăng dầu", "dầu"],
-    vnImpact: {
-      sector: "Dầu khí & Vận tải", stocks: ["PLX", "OIL", "VIP", "VTO", "GMD"],
-      mechanism: "Giá xăng RON95 điều hành theo giá dầu thế giới; tăng → doanh thu bán lẻ xăng dầu tăng, chi phí vận tải/logistics tăng",
-      relations: {
-        PLX: { relationshipType: "SELLING_PRICE", direction: "POSITIVE", impactStrength: "MEDIUM", confidence: "MEDIUM", channel: "Giá bán được điều chỉnh theo chi phí → doanh thu bán lẻ tăng" },
-        OIL: { relationshipType: "SELLING_PRICE", direction: "POSITIVE", impactStrength: "MEDIUM", confidence: "MEDIUM", channel: "Giá bán được điều chỉnh theo chi phí → doanh thu bán lẻ tăng" },
-        VIP: { relationshipType: "INPUT_COST", direction: "NEGATIVE", impactStrength: "MEDIUM", confidence: "MEDIUM", channel: "Chi phí vận tải xăng dầu tăng" },
-        VTO: { relationshipType: "INPUT_COST", direction: "NEGATIVE", impactStrength: "MEDIUM", confidence: "MEDIUM", channel: "Chi phí vận tải xăng dầu tăng" },
-        GMD: { relationshipType: "INPUT_COST", direction: "NEGATIVE", impactStrength: "MEDIUM", confidence: "MEDIUM", channel: "Chi phí nhiên liệu logistics tăng" },
-      },
-    },
-  },
-  {
-    key: "gasoline-92", name: "Gasoline RON92 (VN)", nameVi: "Xăng RON92", group: "energy", category: "energy", subcategory: "Gasoline", subgroup: "Gasoline",
-    market: "VN", symbol: "RON92", unit: "Nghìn đồng/lít", currency: "VND", simplizePath: "/hang-hoa/gia-xang-ron92", vietnambiz: "fuel",
-    newsKeywords: ["xăng", "giá xăng dầu", "dầu"],
-    vnImpact: {
-      sector: "Dầu khí & Vận tải", stocks: ["PLX", "OIL", "VIP", "VTO", "GMD"],
-      mechanism: "Giá xăng RON92 điều hành theo giá dầu thế giới; tăng → doanh thu bán lẻ tăng, chi phí vận tải tăng",
-      relations: {
-        PLX: { relationshipType: "SELLING_PRICE", direction: "POSITIVE", impactStrength: "MEDIUM", confidence: "MEDIUM", channel: "Giá bán được điều chỉnh theo chi phí → doanh thu bán lẻ tăng" },
-        OIL: { relationshipType: "SELLING_PRICE", direction: "POSITIVE", impactStrength: "MEDIUM", confidence: "MEDIUM", channel: "Giá bán được điều chỉnh theo chi phí → doanh thu bán lẻ tăng" },
-        VIP: { relationshipType: "INPUT_COST", direction: "NEGATIVE", impactStrength: "MEDIUM", confidence: "MEDIUM", channel: "Chi phí vận tải xăng dầu tăng" },
-        VTO: { relationshipType: "INPUT_COST", direction: "NEGATIVE", impactStrength: "MEDIUM", confidence: "MEDIUM", channel: "Chi phí vận tải xăng dầu tăng" },
-        GMD: { relationshipType: "INPUT_COST", direction: "NEGATIVE", impactStrength: "MEDIUM", confidence: "MEDIUM", channel: "Chi phí nhiên liệu logistics tăng" },
-      },
-    },
-  },
-  {
-    key: "diesel", name: "Diesel DO (VN)", nameVi: "Dầu DO", group: "energy", category: "energy", subcategory: "Diesel", subgroup: "Diesel",
-    market: "VN", symbol: "DO", unit: "Nghìn đồng/lít", currency: "VND", simplizePath: "/hang-hoa/gia-dau-diesel", vietnambiz: "fuel",
-    newsKeywords: ["dầu", "diesel", "xăng dầu"],
-    vnImpact: {
-      sector: "Vận tải & Logistics", stocks: ["GMD", "VTO", "VIP", "PLX", "OIL"],
-      mechanism: "Giá diesel là chi phí đầu vào trực tiếp của vận tải/logistics; tăng → chi phí vận tải tăng",
-      relations: {
-        GMD: { relationshipType: "INPUT_COST", direction: "NEGATIVE", impactStrength: "HIGH", confidence: "MEDIUM", channel: "Nhiên liệu là chi phí vận hành chính của cảng/logistics" },
-        VTO: { relationshipType: "INPUT_COST", direction: "NEGATIVE", impactStrength: "HIGH", confidence: "MEDIUM", channel: "Vận tải xăng dầu tiêu hao diesel lớn" },
-        VIP: { relationshipType: "INPUT_COST", direction: "NEGATIVE", impactStrength: "HIGH", confidence: "MEDIUM", channel: "Vận tải xăng dầu tiêu hao diesel lớn" },
-        PLX: { relationshipType: "SELLING_PRICE", direction: "POSITIVE", impactStrength: "MEDIUM", confidence: "MEDIUM", channel: "Giá bán điều hành theo chi phí → doanh thu bán lẻ tăng" },
-        OIL: { relationshipType: "SELLING_PRICE", direction: "POSITIVE", impactStrength: "MEDIUM", confidence: "MEDIUM", channel: "Giá bán điều hành theo chi phí → doanh thu bán lẻ tăng" },
-      },
-    },
-  },
-  {
-    key: "pig-vn", name: "Live Hog North VN", nameVi: "Heo hơi miền Bắc", group: "livestock", category: "livestock", subcategory: "Hogs — VN", subgroup: "Hogs — VN",
-    market: "VN", symbol: "PIGVN", unit: "VNĐ/kg", currency: "VND", simplizePath: "/hang-hoa/gia-heo-hoi-mien-bac", vietnambiz: "pig",
-    newsKeywords: ["heo hơi", "thịt heo", "chăn nuôi", "lợn"],
-    vnImpact: {
-      sector: "Chăn nuôi & Thực phẩm", stocks: ["DBC", "BAF", "HAG", "MML"],
-      mechanism: "Giá heo hơi tăng → doanh thu trang trại tăng, chi phí nguyên liệu chế biến thực phẩm tăng",
-      relations: {
-        DBC: { relationshipType: "REVENUE_DRIVER", direction: "POSITIVE", impactStrength: "HIGH", confidence: "MEDIUM", channel: "Giá bán heo hơi tăng trực tiếp vào doanh thu trang trại" },
-        BAF: { relationshipType: "REVENUE_DRIVER", direction: "POSITIVE", impactStrength: "HIGH", confidence: "MEDIUM", channel: "Giá bán heo hơi tăng trực tiếp vào doanh thu trang trại" },
-        HAG: { relationshipType: "REVENUE_DRIVER", direction: "POSITIVE", impactStrength: "MEDIUM", confidence: "LOW", channel: "Mảng chăn nuôi phụ thuộc giá heo hơi" },
-        MML: { relationshipType: "INPUT_COST", direction: "NEGATIVE", impactStrength: "MEDIUM", confidence: "MEDIUM", channel: "Thịt heo là nguyên liệu chế biến thực phẩm" },
-      },
-    },
-  },
-  {
-    key: "shrimp-vn", name: "Whiteleg Shrimp (VN)", nameVi: "Tôm thẻ (tại ao)", group: "seafood", category: "seafood", subcategory: "Shrimp", subgroup: "Shrimp",
-    market: "VN", symbol: "TOMTHE", unit: "Nghìn đồng/kg", currency: "VND", simplizePath: "/hang-hoa/gia-tom-the",
-    newsKeywords: ["tôm", "tôm thẻ", "thủy sản"],
-    vnImpact: {
-      sector: "Thủy sản — Tôm", stocks: ["FMC", "MPC", "CMX", "ABT"],
-      mechanism: "Giá tôm nguyên liệu tăng → chi phí thu mua chế biến tăng; giá bán xuất khẩu có thể tăng khi nhu cầu mạnh",
-      relations: {
-        FMC: { relationshipType: "INPUT_COST", direction: "MIXED", impactStrength: "MEDIUM", confidence: "MEDIUM", channel: "Thu mua tôm nguyên liệu → chi phí tăng, giá bán xuất khẩu điều chỉnh" },
-        MPC: { relationshipType: "INPUT_COST", direction: "MIXED", impactStrength: "MEDIUM", confidence: "MEDIUM", channel: "Thu mua tôm nguyên liệu → chi phí tăng, giá bán xuất khẩu điều chỉnh" },
-        CMX: { relationshipType: "INPUT_COST", direction: "MIXED", impactStrength: "MEDIUM", confidence: "LOW", channel: "Thu mua tôm nguyên liệu → chi phí tăng" },
-        ABT: { relationshipType: "INPUT_COST", direction: "MIXED", impactStrength: "MEDIUM", confidence: "LOW", channel: "Thu mua tôm nguyên liệu → chi phí tăng" },
-      },
-    },
-  },
-  {
-    key: "pangasius", name: "Pangasius (VN)", nameVi: "Cá tra (tại ao)", group: "seafood", category: "seafood", subcategory: "Pangasius", subgroup: "Pangasius",
-    market: "VN", symbol: "CATRA", unit: "Nghìn đồng/kg", currency: "VND", simplizePath: "/hang-hoa/gia-ca-tra-vietnam",
-    newsKeywords: ["cá tra", "pangasius", "cá ba sa"],
-    vnImpact: {
-      sector: "Thủy sản — Cá tra", stocks: ["VHC", "ANV", "IDI", "ASM"],
-      mechanism: "Giá cá tra nguyên liệu tăng → chi phí thu mua tăng, giá bán xuất khẩu thường điều chỉnh theo nguồn cung",
-      relations: {
-        VHC: { relationshipType: "INPUT_COST", direction: "MIXED", impactStrength: "MEDIUM", confidence: "MEDIUM", channel: "Chuỗi nuôi–chế biến tự chủ; giá nguyên liệu tăng đẩy giá bán" },
-        ANV: { relationshipType: "INPUT_COST", direction: "MIXED", impactStrength: "MEDIUM", confidence: "MEDIUM", channel: "Thu mua cá tra nguyên liệu" },
-        IDI: { relationshipType: "INPUT_COST", direction: "MIXED", impactStrength: "MEDIUM", confidence: "LOW", channel: "Thu mua cá tra nguyên liệu" },
-        ASM: { relationshipType: "INPUT_COST", direction: "MIXED", impactStrength: "MEDIUM", confidence: "LOW", channel: "Mảng thủy sản thu mua nguyên liệu" },
-      },
-    },
-  },
-  /* ------------------------- official universe — INTL market ------------------------- */
-  {
-    key: "coffee-robusta", name: "Robusta Coffee", nameVi: "Cà phê Robusta", group: "agriculture", category: "soft-commodities", subcategory: "Beverages", subgroup: "Beverages",
-    market: "INTL", symbol: "RC", unit: "USD/T", currency: "USD", simplizePath: "/hang-hoa/gia-ca-phe-robusta", yahooSymbol: "RC=F",
-    newsKeywords: ["cà phê", "robusta", "coffee"],
-    vnImpact: {
-      sector: "Nông sản — Cà phê", stocks: ["PAN", "VNM"],
-      mechanism: "Việt Nam xuất khẩu robusta lớn thứ hai thế giới; giá robusta chi phối thu nhập hộ trồng và doanh thu chế biến",
-      relations: {
-        PAN: { relationshipType: "REVENUE_DRIVER", direction: "POSITIVE", impactStrength: "MEDIUM", confidence: "LOW", channel: "Giá cà phê tăng → doanh thu kinh doanh nông sản" },
-        VNM: { relationshipType: "MACRO_SENSITIVITY", direction: "CONDITIONAL", impactStrength: "LOW", confidence: "LOW", channel: "Tiêu dùng nông sản gián tiếp" },
-      },
-    },
-  },
-  {
-    key: "milk-wmp", name: "Whole Milk Powder", nameVi: "Sữa bột nguyên kem", group: "livestock", category: "livestock", subcategory: "Whole Milk Powder", subgroup: "Whole Milk Powder",
-    market: "INTL", symbol: "MILKWMP", unit: "USD/MT", currency: "USD", simplizePath: "/hang-hoa/gia-sua-bot-nguyen-kem-nguyen-lieu",
-    newsKeywords: ["sữa bột", "sữa", "dairy", "nguyên kem"],
-    vnImpact: {
-      sector: "Sữa & Thực phẩm", stocks: ["VNM", "MCM"],
-      mechanism: "Sữa bột nguyên liệu là chi phí đầu vào chính của ngành sữa; giá tăng → chi phí sản xuất tăng",
-      relations: {
-        VNM: { relationshipType: "INPUT_COST", direction: "MIXED", impactStrength: "MEDIUM", confidence: "MEDIUM", channel: "Nguyên liệu sữa tăng → chi phí tăng; có thể chuyển một phần vào giá bán" },
-        MCM: { relationshipType: "INPUT_COST", direction: "MIXED", impactStrength: "MEDIUM", confidence: "MEDIUM", channel: "Nguyên liệu sữa tăng → chi phí tăng; có thể chuyển một phần vào giá bán" },
-      },
-    },
-  },
-  {
-    key: "milk-smp", name: "Skim Milk Powder", nameVi: "Sữa bột tách béo", group: "livestock", category: "livestock", subcategory: "Skim Milk Powder", subgroup: "Skim Milk Powder",
-    market: "INTL", symbol: "MILKSMP", unit: "USD/MT", currency: "USD", simplizePath: "/hang-hoa/gia-sua-bot-tach-beo-nguyen-lieu",
-    newsKeywords: ["sữa bột", "sữa", "dairy", "tách béo"],
-    vnImpact: {
-      sector: "Sữa & Thực phẩm", stocks: ["VNM", "MCM"],
-      mechanism: "Sữa bột tách béo nguyên liệu là chi phí đầu vào của ngành sữa và chế biến thực phẩm",
-      relations: {
-        VNM: { relationshipType: "INPUT_COST", direction: "MIXED", impactStrength: "MEDIUM", confidence: "MEDIUM", channel: "Nguyên liệu sữa tăng → chi phí tăng; có thể chuyển một phần vào giá bán" },
-        MCM: { relationshipType: "INPUT_COST", direction: "MIXED", impactStrength: "MEDIUM", confidence: "MEDIUM", channel: "Nguyên liệu sữa tăng → chi phí tăng; có thể chuyển một phần vào giá bán" },
-      },
-    },
-  },
-  {
-    key: "rubber-tsr20", name: "Rubber TSR20 (Tokyo)", nameVi: "Cao su TSR20", group: "agriculture", category: "soft-commodities", subcategory: "Rubber", subgroup: "Rubber",
-    market: "INTL", symbol: "RUBTSR20", unit: "JPY/kg", currency: "JPY", simplizePath: "/hang-hoa/gia-cao-su-tsr20",
-    newsKeywords: ["cao su", "mủ cao su", "rubber"],
-    vnImpact: {
-      sector: "Cao su", stocks: ["GVR", "PHR", "DPR", "TRC"],
-      mechanism: "Giá mủ cao su tăng → doanh thu đồn điền và chế biến mủ tăng",
-      relations: {
-        GVR: { relationshipType: "REVENUE_DRIVER", direction: "POSITIVE", impactStrength: "HIGH", confidence: "MEDIUM", channel: "Doanh thu mủ cao su chi phối kết quả" },
-        PHR: { relationshipType: "REVENUE_DRIVER", direction: "POSITIVE", impactStrength: "MEDIUM", confidence: "MEDIUM", channel: "Doanh thu mủ cao su chi phối kết quả" },
-        DPR: { relationshipType: "REVENUE_DRIVER", direction: "POSITIVE", impactStrength: "MEDIUM", confidence: "MEDIUM", channel: "Doanh thu mủ cao su chi phối kết quả" },
-        TRC: { relationshipType: "REVENUE_DRIVER", direction: "POSITIVE", impactStrength: "MEDIUM", confidence: "MEDIUM", channel: "Doanh thu mủ cao su chi phối kết quả" },
-      },
-    },
-  },
-  {
-    key: "rubber-rss3", name: "Rubber RSS3 (Tokyo)", nameVi: "Cao su RSS3", group: "agriculture", category: "soft-commodities", subcategory: "Rubber", subgroup: "Rubber",
-    market: "INTL", symbol: "RUBRSS3", unit: "JPY/kg", currency: "JPY", simplizePath: "/hang-hoa/gia-cao-su-rss3",
-    newsKeywords: ["cao su", "mủ cao su", "rubber"],
-    vnImpact: {
-      sector: "Cao su", stocks: ["GVR", "PHR", "DPR", "TRC"],
-      mechanism: "Giá mủ cao su tăng → doanh thu đồn điền và chế biến mủ tăng",
-      relations: {
-        GVR: { relationshipType: "REVENUE_DRIVER", direction: "POSITIVE", impactStrength: "HIGH", confidence: "MEDIUM", channel: "Doanh thu mủ cao su chi phối kết quả" },
-        PHR: { relationshipType: "REVENUE_DRIVER", direction: "POSITIVE", impactStrength: "MEDIUM", confidence: "MEDIUM", channel: "Doanh thu mủ cao su chi phối kết quả" },
-        DPR: { relationshipType: "REVENUE_DRIVER", direction: "POSITIVE", impactStrength: "MEDIUM", confidence: "MEDIUM", channel: "Doanh thu mủ cao su chi phối kết quả" },
-        TRC: { relationshipType: "REVENUE_DRIVER", direction: "POSITIVE", impactStrength: "MEDIUM", confidence: "MEDIUM", channel: "Doanh thu mủ cao su chi phối kết quả" },
-      },
-    },
-  },
-  {
-    key: "pig-cn", name: "Live Hog China", nameVi: "Heo hơi Trung Quốc", group: "livestock", category: "livestock", subcategory: "Hogs — CN", subgroup: "Hogs — CN",
-    market: "INTL", symbol: "PIGCN", unit: "CNY/kg", currency: "CNY", simplizePath: "/hang-hoa/gia-heo-hoi-trung-quoc",
-    newsKeywords: ["heo hơi", "thịt heo", "trung quốc", "chăn nuôi"],
-    vnImpact: {
-      sector: "Chăn nuôi (giá tham chiếu khu vực)", stocks: ["DBC", "BAF"],
-      mechanism: "Giá heo TQ phản ánh chu kỳ thị trường heo khu vực; ảnh hưởng gián tiếp qua giá thức ăn và cạnh tranh nhập khẩu",
-      relations: {
-        DBC: { relationshipType: "MACRO_SENSITIVITY", direction: "CONDITIONAL", impactStrength: "LOW", confidence: "LOW", channel: "Giá thịt heo khu vực → tâm lý và chu kỳ ngành" },
-        BAF: { relationshipType: "MACRO_SENSITIVITY", direction: "CONDITIONAL", impactStrength: "LOW", confidence: "LOW", channel: "Giá thịt heo khu vực → tâm lý và chu kỳ ngành" },
-      },
-    },
-  },
+/* ----------------------------- catalog (66 rows) -------------------------- */
+/* Mỗi dòng: [key, nameVi (row name trên /goods), group, symbol, unit, yahoo?] */
+
+type Row = [key: string, nameVi: string, group: CommodityGroup, symbol: string, unit: string, yahoo?: string];
+
+const ROWS: Row[] = [
+  // ---- Hàng tiêu dùng (15) ----
+  ["pig-vn", "Giá heo hơi trong nước", "consumer", "PIGVN", "Đồng/kg"],
+  ["cotton-fabric-cn", "Vải cotton Trung Quốc", "consumer", "COFTCN", "CNY/tấn"],
+  ["cotton-yarn-cn", "Sợi cotton Trung Quốc", "consumer", "COTYCN", "CNY/tấn"],
+  ["palm-oil", "Dầu cọ Malaysia", "consumer", "PALM", "MYR/tấn"],
+  ["kraft-paper", "Giấy gợn sóng Trung Quốc", "consumer", "PAPER", "CNY/tấn"],
+  ["sugar", "Đường", "consumer", "SUG", "USD/tấn"],
+  ["coffee", "Cà phê", "consumer", "COF", "USD/tấn"],
+  ["coffee-robusta", "Giá cà phê trong nước", "consumer", "COFVN", "Đồng/kg"],
+  ["pepper", "Hồ tiêu", "consumer", "PEP", "Đồng/kg"],
+  ["cotton-fabric-us", "Vải cotton Mỹ", "consumer", "COFTUS", "USD/tấn"],
+  ["rice", "Gạo TPXK", "consumer", "RICE", "Đồng/kg"],
+  ["shrimp-vn", "Tôm thẻ", "consumer", "TOMTHE", "Đồng/kg"],
+  ["paddy", "Lúa", "consumer", "PADDY", "Đồng/kg"],
+  ["rice-raw", "Gạo nguyên liệu", "consumer", "RICERAW", "Đồng/kg"],
+  ["rice-byproduct", "Phụ phẩm lúa gạo", "consumer", "RICEBP", "Đồng/kg"],
+  // ---- Kim loại và phi kim (10) ----
+  ["iron-ore", "Quặng sắt Trung Quốc", "metals", "IO", "CNY/tấn"],
+  ["lead", "Chì Trung Quốc", "metals", "PB", "CNY/tấn"],
+  ["zinc", "Kẽm Trung Quốc", "metals", "ZN", "CNY/tấn"],
+  ["aluminum", "Nhôm Trung Quốc", "metals", "AL", "CNY/tấn"],
+  ["copper-cn", "Đồng Trung Quốc", "metals", "CUCN", "CNY/tấn"],
+  ["nickel", "Nikken Trung Quốc", "metals", "NI", "CNY/tấn"],
+  ["gold", "Giá vàng", "metals", "GOLD", "USD/oz", "GC=F"],
+  ["sjc-gold", "Giá vàng trong nước", "metals", "SJC", "Đồng/lượng", undefined],
+  ["silver", "Giá bạc", "metals", "AG", "USD/oz", "SI=F"],
+  ["copper", "Giá đồng", "metals", "CU", "USD/lb", "HG=F"],
+  // ---- Hóa chất (7) ----
+  ["urea", "Ure Trung Đông", "chemicals", "URE", "USD/tấn"],
+  ["sulfur", "Lưu huỳnh Trung Quốc", "chemicals", "SULF", "CNY/tấn"],
+  ["yellow-phosphorus", "Phốt pho vàng Trung Quốc", "chemicals", "P4", "CNY/tấn"],
+  ["caustic-soda", "Xút (NaOH) Trung Quốc", "chemicals", "NAOH", "CNY/tấn"],
+  ["urea-cn", "Phân Urea Trung Quốc", "chemicals", "URECN", "CNY/tấn"],
+  ["urea-phu-my", "Phân Ure Phú Mỹ", "chemicals", "UREPM", "Đồng/kg"],
+  ["urea-ca-mau", "Phân Ure Cà Mau", "chemicals", "URECM", "Đồng/kg"],
+  // ---- Vật liệu xây dựng (20) ----
+  ["steel-scrap", "Thép phế Anh", "construction", "SCRAP", "USD/tấn"],
+  ["steel-rebar", "Thép thanh Anh", "construction", "REBAR", "USD/tấn"],
+  ["steel", "HRC Trung Quốc", "construction", "HRC", "CNY/tấn"],
+  ["aggregate-04", "Đá 0-4", "construction", "AGG04", "Đồng/m3"],
+  ["aggregate-sieve", "Đá mi sàng", "construction", "AGGSV", "Đồng/m3"],
+  ["aggregate-1x2", "Đá 1x2", "construction", "AGG12", "Đồng/m3"],
+  ["aggregate-boulder", "Đá Hộc", "construction", "AGGHC", "Đồng/m3"],
+  ["sheet-color", "Tôn lạnh màu Hoa Sen 0,45mm", "construction", "SHEETC", "Đồng/m2"],
+  ["sheet", "Tôn lạnh Hoa Sen 0,45mm", "construction", "SHEET", "Đồng/m2"],
+  ["asphalt", "Bê tông nhựa mịn CA 9.5", "construction", "ASPH", "Đồng/tấn"],
+  ["pipe-27", "Ống nhựa 27 x 1.8mm", "construction", "P27", "Đồng/m"],
+  ["pipe-60", "Ống nhựa 60 x 2mm", "construction", "P60", "Đồng/m"],
+  ["pipe-90", "Ống nhựa 90 x 2,9mm", "construction", "P90", "Đồng/m"],
+  ["paint-primer", "Sơn lót kháng kiềm cao cấp", "construction", "PPRIM", "Đồng/lít"],
+  ["paint-interior", "Sơn nội thất tiêu chuẩn STANDARD", "construction", "PINT", "Đồng/lít"],
+  ["paint-exterior", "Sơn ngoại thất STANDARD", "construction", "PEXT", "Đồng/lít"],
+  ["cement", "Xi măng Vicem Hà Tiên PCB 40 - bao 50kg", "construction", "CEM", "Đồng/kg"],
+  ["concrete", "Bê tông thương phẩm - Mác 300", "construction", "CONC", "Đồng/m3"],
+  ["brick", "Gạch đất sét nung - gạch ống 4 lỗ 80x80x80", "construction", "BRICK", "Đồng/viên"],
+  ["pile", "Cọc bê tông dự ứng lực - cọc 30x30cm, L=18m", "construction", "PILE", "Đồng/cọc"],
+  // ---- Năng lượng (10) ----
+  ["coal", "Than cốc Trung Quốc", "energy", "COAL", "CNY/tấn"],
+  ["lpg", "Khí LPG Trung Quốc", "energy", "LPG", "CNY/tấn"],
+  ["wti", "Dầu WTI", "energy", "WTI", "USD/bbl", "CL=F"],
+  ["natgas", "Khí thiên nhiên", "energy", "NG", "USD/MMBtu", "NG=F"],
+  ["coal-newcastle", "Than Newcastle", "energy", "NC", "USD/tấn"],
+  ["gasoline-95-v", "Xăng RON 95-V", "energy", "G95V", "Nghìn/lít"],
+  ["gasoline-95", "Xăng RON 95-II,III", "energy", "G95", "Nghìn/lít"],
+  ["gasoline-92", "Xăng sinh học E5 RON 92-II", "energy", "G92", "Nghìn/lít"],
+  ["diesel", "Xăng Diezen", "energy", "DO", "Nghìn/lít"],
+  ["kerosene", "Dầu hoả", "energy", "KERO", "Nghìn/lít"],
+  // ---- Nhựa và cao su (4) ----
+  ["rubber", "Cao su Nhật Bản", "plastics", "RUB", "Yên/tấn"],
+  ["pet", "PET Trung Quốc", "plastics", "PET", "CNY/tấn"],
+  ["pvc", "Hạt nhựa PVC Trung Quốc", "plastics", "PVC", "CNY/tấn"],
+  ["pp", "Hạt nhựa PP Trung Quốc", "plastics", "PP", "CNY/tấn"],
 ];
 
-/** Legacy MSN key mapping kept for the MSN fallback provider. */
-export const MSN_KEY_BY_KEY: Record<string, string> = {
-  gold: "GOLD", silver: "SILVER", wti: "WTI", brent: "BRENT", natgas: "NATGAS",
-  copper: "COPPER", steel: "STEEL", coffee: "COFFEE", sugar: "SUGAR", corn: "CORN",
-  wheat: "WHEAT", soybean: "SOYBEAN",
+const GROUP_LABEL: Record<CommodityGroup, string> = {
+  consumer: "Hàng tiêu dùng",
+  metals: "Kim loại và phi kim",
+  chemicals: "Hóa chất",
+  construction: "Vật liệu xây dựng",
+  energy: "Năng lượng",
+  plastics: "Nhựa và cao su",
 };
+
+/** Chinese-currency rows → per unit mapping; VND rows → VN market. */
+export function currencyForUnit(unit: string | null | undefined): string {
+  const u = (unit ?? "").toUpperCase();
+  if (/VNĐ|VND|ĐỒNG|NGHÌN/.test(u)) return "VND";
+  if (/CNY/.test(u)) return "CNY";
+  if (/MYR/.test(u)) return "MYR";
+  if (/JPY|YÊN/.test(u)) return "JPY";
+  return "USD";
+}
+
+/** vnImpact curated cho các mục đã có (kinh tế VN) — giữ nguyên từ catalog cũ. */
+const VN_IMPACT: Record<string, CommodityImpactMap> = {
+  "sjc-gold": {
+    sector: "Vàng bạc đá quý & Ngân hàng", stocks: ["PNJ", "SJC", "VCB", "BID"],
+    mechanism: "Giá vàng trong nước phản ánh cung cầu vàng miếng SJC; tăng → doanh thu bán lẻ vàng tăng, nhu cầu trú ẩn tăng",
+    relations: {
+      PNJ: { relationshipType: "REVENUE_DRIVER", direction: "POSITIVE", impactStrength: "MEDIUM", confidence: "MEDIUM", channel: "Doanh thu bán vàng miếng/nữ trang theo giá thị trường" },
+    },
+  },
+  "pig-vn": {
+    sector: "Chăn nuôi & Thực phẩm", stocks: ["DBC", "BAF", "HAG", "MML"],
+    mechanism: "Giá heo hơi tăng → doanh thu trang trại tăng; chi phí đầu vào chế biến thực phẩm tăng",
+    relations: {
+      DBC: { relationshipType: "REVENUE_DRIVER", direction: "POSITIVE", impactStrength: "HIGH", confidence: "MEDIUM", channel: "Giá bán heo hơi tăng trực tiếp vào doanh thu trang trại" },
+      BAF: { relationshipType: "REVENUE_DRIVER", direction: "POSITIVE", impactStrength: "HIGH", confidence: "MEDIUM", channel: "Giá bán heo hơi tăng trực tiếp vào doanh thu trang trại" },
+    },
+  },
+  gasoline: {
+    sector: "Dầu khí & Vận tải", stocks: ["PLX", "OIL", "VIP", "VTO", "GMD"],
+    mechanism: "Giá xăng điều hành theo giá dầu thế giới; tăng → doanh thu bán lẻ tăng, chi phí vận tải/logistics tăng",
+    relations: {
+      PLX: { relationshipType: "SELLING_PRICE", direction: "POSITIVE", impactStrength: "MEDIUM", confidence: "MEDIUM", channel: "Giá bán điều hành theo chi phí → doanh thu bán lẻ tăng" },
+      VIP: { relationshipType: "INPUT_COST", direction: "NEGATIVE", impactStrength: "MEDIUM", confidence: "MEDIUM", channel: "Chi phí vận tải xăng dầu tăng" },
+      GMD: { relationshipType: "INPUT_COST", direction: "NEGATIVE", impactStrength: "MEDIUM", confidence: "MEDIUM", channel: "Chi phí nhiên liệu logistics tăng" },
+    },
+  },
+  diesel: {
+    sector: "Vận tải & Logistics", stocks: ["GMD", "VTO", "VIP", "PLX", "OIL"],
+    mechanism: "Giá diesel là chi phí đầu vào trực tiếp của vận tải/logistics; tăng → chi phí vận tải tăng",
+    relations: {
+      GMD: { relationshipType: "INPUT_COST", direction: "NEGATIVE", impactStrength: "HIGH", confidence: "MEDIUM", channel: "Nhiên liệu là chi phí vận hành chính của cảng/logistics" },
+      VTO: { relationshipType: "INPUT_COST", direction: "NEGATIVE", impactStrength: "HIGH", confidence: "MEDIUM", channel: "Vận tải xăng dầu tiêu hao diesel lớn" },
+      PLX: { relationshipType: "SELLING_PRICE", direction: "POSITIVE", impactStrength: "MEDIUM", confidence: "MEDIUM", channel: "Giá bán điều hành theo chi phí → doanh thu bán lẻ tăng" },
+    },
+  },
+  wti: {
+    sector: "Dầu khí & Vận tải", stocks: ["GAS", "PLX", "BSR", "PVD", "PVS"],
+    mechanism: "Giá dầu WTI là chuẩn giá dầu thế giới; tăng → doanh thu thương mại dầu khí, chi phí nhiên liệu vận tải tăng",
+    relations: {
+      PLX: { relationshipType: "SELLING_PRICE", direction: "POSITIVE", impactStrength: "MEDIUM", confidence: "MEDIUM", channel: "Giá bán lẻ điều hành theo giá dầu thế giới" },
+      BSR: { relationshipType: "INPUT_COST", direction: "NEGATIVE", impactStrength: "MEDIUM", confidence: "MEDIUM", channel: "Chi phí dầu thô đầu vào lọc dầu tăng" },
+    },
+  },
+  steel: {
+    sector: "Thép", stocks: ["HPG", "HSG", "NKG"],
+    mechanism: "Giá HRC Trung Quốc là chuẩn thép cuộn; tăng → giá bán thép nội địa tăng, chi phí nguyên liệu nhập khẩu tăng",
+    relations: {
+      HPG: { relationshipType: "SELLING_PRICE", direction: "POSITIVE", impactStrength: "MEDIUM", confidence: "MEDIUM", channel: "Giá thép nội địa bám theo giá HRC Trung Quốc" },
+      HSG: { relationshipType: "INPUT_COST", direction: "NEGATIVE", impactStrength: "MEDIUM", confidence: "MEDIUM", channel: "Chi phí HRC nhập khẩu tăng" },
+    },
+  },
+  iron: {
+    sector: "Thép", stocks: ["HPG", "HSG", "NKG"],
+    mechanism: "Giá quặng sắt là chi phí đầu vào chính luyện thép; tăng → chi phí sản xuất thép tăng",
+    relations: {
+      HPG: { relationshipType: "INPUT_COST", direction: "NEGATIVE", impactStrength: "HIGH", confidence: "MEDIUM", channel: "Quặng sắt chiếm tỷ trọng lớn giá thành thép" },
+    },
+  },
+  urea: {
+    sector: "Phân bón", stocks: ["DCM", "DPM", "SFG", "LAS"],
+    mechanism: "Giá ure nhập khẩu (Trung Đông) quyết định giá thành phân bón nội địa; tăng → giá bán phân bón trong nước tăng",
+    relations: {
+      DCM: { relationshipType: "SELLING_PRICE", direction: "POSITIVE", impactStrength: "MEDIUM", confidence: "MEDIUM", channel: "Giá ure thế giới tăng → giá bán ure nội địa tăng" },
+      DPM: { relationshipType: "SELLING_PRICE", direction: "POSITIVE", impactStrength: "MEDIUM", confidence: "MEDIUM", channel: "Giá ure thế giới tăng → giá bán ure nội địa tăng" },
+    },
+  },
+  rice: {
+    sector: "Nông sản xuất khẩu", stocks: ["LTG", "VHC", "ANV"],
+    mechanism: "Giá gạo xuất khẩu tăng → doanh thu các doanh nghiệp xuất khẩu gạo và thủy sản liên quan tăng",
+    relations: {
+      LTG: { relationshipType: "REVENUE_DRIVER", direction: "POSITIVE", impactStrength: "HIGH", confidence: "MEDIUM", channel: "Giá gạo TPXK tăng trực tiếp vào doanh thu xuất khẩu" },
+    },
+  },
+  shrimp: {
+    sector: "Thủy sản", stocks: ["FMC", "ABT", "CMX"],
+    mechanism: "Giá tôm thẻ nguyên liệu tăng → chi phí chế biến thủy sản tăng, giá xuất khẩu tăng",
+    relations: {
+      FMC: { relationshipType: "INPUT_COST", direction: "NEGATIVE", impactStrength: "MEDIUM", confidence: "MEDIUM", channel: "Nguyên liệu tôm là chi phí chính của chế biến xuất khẩu" },
+    },
+  },
+};
+
+const KEYS = new Set<string>();
+const SYMBOLS = new Set<string>();
+export const COMMODITY_CATALOG: CommodityDef[] = ROWS.map(([key, nameVi, group, symbol, unit, yahoo]) => {
+  if (KEYS.has(key)) throw new Error(`duplicate commodity key: ${key}`);
+  if (SYMBOLS.has(symbol)) throw new Error(`duplicate symbol: ${symbol}`);
+  KEYS.add(key);
+  SYMBOLS.add(symbol);
+  const currency = currencyForUnit(unit);
+  const impact =
+    VN_IMPACT[key] ??
+    (key === "gasoline-95" || key === "gasoline-92" || key === "gasoline-95-v" ? VN_IMPACT.gasoline : undefined) ??
+    (key === "iron-ore" ? VN_IMPACT.iron : undefined) ??
+    (key === "shrimp-vn" ? VN_IMPACT.shrimp : undefined);
+  return {
+    key,
+    name: nameVi,
+    nameVi,
+    group,
+    category: group,
+    subcategory: GROUP_LABEL[group],
+    subgroup: GROUP_LABEL[group],
+    market: currency === "VND" ? "VN" : "INTL",
+    symbol,
+    unit,
+    currency,
+    valueScale: key === "sjc-gold" ? 1000 : undefined, // trang ghi nghìn đồng/lượng với nhãn "Đồng/lượng"
+    yahooSymbol: yahoo,
+    vnImpact: impact,
+  };
+});
 
 export function defByKeyOrSymbol(needle: string): CommodityDef | null {
   const q = needle.toUpperCase();
@@ -487,424 +307,4 @@ export function defByKeyOrSymbol(needle: string): CommodityDef | null {
 export function parseDecimal(s: string): number {
   const v = Number(s.replace(/,/g, "").replace(/\s+/g, "").trim());
   return Number.isFinite(v) ? v : NaN;
-}
-
-/** map a published unit string to a currency code (public page is the source of truth) */
-export function currencyForUnit(unit: string | null | undefined): string {
-  const u = (unit ?? "").toUpperCase();
-  if (/VNĐ|VND|ĐỒNG/.test(u)) return "VND";
-  if (/CNY/.test(u)) return "CNY";
-  if (/JPY/.test(u)) return "JPY";
-  if (/EUR/.test(u)) return "EUR";
-  if (/GBP/.test(u)) return "GBP";
-  return "USD";
-}
-
-/* ------------------------------ Simplize page ------------------------------ */
-
-export interface SimplizeParsed {
-  price: number;
-  change: number | null;
-  changePercent: number | null;
-  previousClose: number | null;
-  open: number | null;
-  high: number | null;
-  low: number | null;
-  unit: string | null;
-  perf: Partial<Record<"1W" | "1M" | "3M" | "YTD" | "1Y" | "5Y", number>>;
-  relatedStocks: string[];
-  timestamp: number | null;
-}
-
-const PERF_KEYS: { label: string; key: "1W" | "1M" | "3M" | "YTD" | "1Y" | "5Y" }[] = [
-  { label: "7D", key: "1W" },
-  { label: "1M", key: "1M" },
-  { label: "3M", key: "3M" },
-  { label: "YTD", key: "YTD" },
-  { label: "1Y", key: "1Y" },
-  { label: "5Y", key: "5Y" },
-];
-
-const stripTags = (s: string) =>
-  s
-    .replace(/<script[\s\S]*?<\/script>/gi, " ")
-    .replace(/<style[\s\S]*?<\/style>/gi, " ")
-    .replace(/<[^>]*>/g, " ")
-    .replace(/&nbsp;/gi, " ")
-    .replace(/&#\d+;/g, " ")
-    .replace(/&[a-z]+;/gi, " ")
-    .replace(/\s+/g, " ");
-
-function pct(s: string): number | null {
-  const m = s.replace(/[%\s]/g, "").match(/^([+-]?[\d.,]+)$/);
-  if (!m) return null;
-  const v = parseDecimal(m[1]);
-  return Number.isFinite(v) ? v : null;
-}
-
-/**
- * Parse the stripped text of a Simplize commodity detail page (verified live
- * structure: "Giá hiện tại", "Giá đóng cửa hôm trước", "Giá mở cửa",
- * "Biên độ ngày", "Biên độ 52 tuần", "Đơn vị tính", "% 7D/1M/3M/YTD/1Y/5Y",
- * "Cổ phiếu liên quan", and optionally "Cập nhật lúc … ngày …").
- */
-export function parseSimplizePage(text: string): SimplizeParsed | null {
-  const t = stripTags(text);
-  const priceM = t.match(/Giá\s*hiện\s*tại\s*:?\s*([\d.,]+)/);
-  if (!priceM) return null;
-  const price = parseDecimal(priceM[1]);
-  if (!Number.isFinite(price) || price <= 0) return null;
-
-  // change block: "<price> <±change> <±pct>". Real pages render 3 variants:
-  // 1) joined  "+1,200,000 0.81%"   2) split sign  "+ 0.18 0.20%"
-  // 3) flat     "- 0.00%"            → try them in order, never guess.
-  const after = t.slice(priceM.index! + priceM[0].length, priceM.index! + priceM[0].length + 120);
-  let change: number | null = null;
-  let changePercent: number | null = null;
-  const joined = after.match(/^\s*([+-]?[\d.,]+)\s*([+-]?[\d.,]+%)/);
-  // flat must be checked BEFORE splitSign: "- 0.00%" (sign node + pct only)
-  // must not be re-interpreted as change=-0.00 with pct from the same token.
-  const flat = !joined ? after.match(/^\s*-\s*([+-]?[\d.,]+%)/) : null;
-  const splitSign = !joined && !flat ? after.match(/^\s*([+-])\s*([\d.,]+)\s*([+-]?[\d.,]+%)/) : null;
-  if (joined) {
-    const v = parseDecimal(joined[1]);
-    change = Number.isFinite(v) ? v : null;
-    changePercent = pct(joined[2]);
-  } else if (flat) {
-    change = 0;
-    changePercent = pct(flat[1]);
-  } else if (splitSign) {
-    const v = parseDecimal(splitSign[2]);
-    change = Number.isFinite(v) ? (splitSign[1] === "-" ? -v : v) : null;
-    changePercent = pct(splitSign[3]);
-  }
-
-  const numAfter = (label: string) => {
-    const m = t.match(new RegExp(`${label}\\s*([\\d.,]+)`));
-    return m ? parseDecimal(m[1]) : null;
-  };
-  const rangeAfter = (label: string): [number, number] | null => {
-    const m = t.match(new RegExp(`${label}\\s*([\\d.,]+)\\s*-\\s*([\\d.,]+)`));
-    if (!m) return null;
-    const a = parseDecimal(m[1]);
-    const b = parseDecimal(m[2]);
-    return Number.isFinite(a) && Number.isFinite(b) ? [a, b] : null;
-  };
-
-  const previousClose = numAfter("Giá\\s*đóng\\s*cửa\\s*hôm\\s*trước");
-  const open = numAfter("Giá\\s*mở\\s*cửa");
-  const day = rangeAfter("Biên\\s*độ\\s*ngày");
-  // unit may be multi-token: "VNĐ/kg", "USD/Bbl", "Nghìn đồng/lít", "US cent/lb"
-  // stop at the next section marker (% / Giá / Biên / Biến / Thay / Từ / Tổng / Cổ).
-  const unitM = t.match(/Đơn\s*vị\s*tính\s*[:：]?\s*([^\s,;%]+(?:\s+(?!%|Giá|Biên|Biến|Thay|Từ|Tổng|Cổ)[^\s,;%]{1,14}){0,3})/);
-  const unit = unitM ? unitM[1] : null;
-
-  const perf: SimplizeParsed["perf"] = {};
-  for (const { label, key } of PERF_KEYS) {
-    const m = t.match(new RegExp(`%\\s*${label}\\s*[:：]?\\s*([+-]?[\\d.,]+%)`));
-    if (m) {
-      const v = pct(m[1]);
-      if (v != null) perf[key] = v;
-    }
-  }
-  // gold-world page uses "Từ đầu năm" and "1 năm" instead of "% YTD"/"% 1Y"
-  if (perf.YTD == null) {
-    const m = t.match(/Từ\s*đầu\s*năm\s*[:：]?\s*([+-]?[\d.,]+%)/);
-    if (m) {
-      const v = pct(m[1]);
-      if (v != null) perf.YTD = v;
-    }
-  }
-  if (perf["1Y"] == null) {
-    const m = t.match(/1\s*năm\s*[:：]?\s*([+-]?[\d.,]+%)/);
-    if (m) {
-      const v = pct(m[1]);
-      if (v != null) perf["1Y"] = v;
-    }
-  }
-
-  // related stocks: section between "Cổ phiếu liên quan" and following section
-  const relStart = t.search(/Cổ\s*phiếu\s*liên\s*quan/);
-  let relText = "";
-  if (relStart >= 0) {
-    const tail = t.slice(relStart, relStart + 4000);
-    const stop = tail.search(/Tin\s*tức\s*hàng\s*hoá|Chỉ\s*số\s*chứng\s*khoán|Tổng\s*quan/);
-    relText = stop >= 0 ? tail.slice(0, stop) : tail;
-  }
-  const relatedStocks: string[] = [];
-  if (relText) {
-    const re = /\b([A-Z]{2,5})\s*\((HOSE|HNX|UPCOM)\)/g;
-    let m: RegExpExecArray | null;
-    while ((m = re.exec(relText)) !== null) {
-      if (!relatedStocks.includes(m[1])) relatedStocks.push(m[1]);
-      if (relatedStocks.length >= 12) break;
-    }
-  }
-
-  // provider-published update time (gold page: "Cập nhật lúc 12:24:17, ngày 06/09/2026")
-  let timestamp: number | null = null;
-  const tsM = t.match(/Cập\s*nhật\s*lúc\s*(\d{1,2}):(\d{2}):(\d{2})[,\s]+ngày\s*(\d{2})\/(\d{2})\/(\d{4})/);
-  if (tsM) {
-    const [, hh, mm, ss, dd, mo, yy] = tsM;
-    const parsed = new Date(Number(yy), Number(mo) - 1, Number(dd), Number(hh), Number(mm), Number(ss));
-    if (!Number.isNaN(parsed.getTime())) timestamp = parsed.getTime();
-  }
-
-  return {
-    price,
-    change,
-    changePercent,
-    previousClose: previousClose != null && Number.isFinite(previousClose) ? previousClose : null,
-    open: open != null && Number.isFinite(open) ? open : null,
-    high: day ? day[1] : null,
-    low: day ? day[0] : null,
-    unit,
-    perf,
-    relatedStocks,
-    timestamp,
-  };
-}
-
-/** Fetch + parse a public Simplize commodity page (SSR — real published values). */
-export async function getSimplizeCommodityPage(path: string): Promise<RawCommodityQuote> {
-  const base = env.simplizeBaseUrl.replace(/\/$/, "");
-  const url = `${base}${path.startsWith("/") ? path : `/${path}`}`;
-  const res = await httpText(url, { provider: SIMPLIZE, timeoutMs: 9_000, retries: 1 });
-  if (!res.ok || !res.text) throw new ProviderError(`simplize: ${res.error ?? "unreachable"}`, SIMPLIZE);
-  const p = parseSimplizePage(res.text);
-  if (!p) throw new ProviderError("simplize: page parse failed (structure changed?)", SIMPLIZE);
-  // units are published on the page — map to ISO currency, never guess from slug
-  const currency = currencyForUnit(p.unit);
-  return {
-    source: "Simplize",
-    price: p.price,
-    change: p.change,
-    changePercent: p.changePercent,
-    previousClose: p.previousClose,
-    open: p.open,
-    high: p.high,
-    low: p.low,
-    unit: p.unit,
-    currency,
-    perf: p.perf,
-    relatedStocks: p.relatedStocks,
-    timestamp: p.timestamp,
-    url,
-  };
-}
-
-/* ------------------- Vietnambiz fallback (fuel / pig) ----------------------
- * Vietnambiz publishes daily price articles with DYNAMIC URLs (e.g.
- * /gia-xang-dau-hom-nay-268-…-202682674924302.htm). Discovery: stable category
- * page /hang-hoa.htm → first link matching the daily slug → parse article.
- * Patterns verified 2026-09-06 (search + category page live). */
-
-const VNB_FUEL_LABELS: Record<string, RegExp> = {
-  RON95: /Xăng\s*E10RON95(?:-III)?/i,
-  RON92: /Xăng\s*E5RON92/i,
-  DO: /Dầu\s*diesel(?:\s*0[.,]?\s*05S)?/i,
-};
-
-function vnbToNum(s: string): number {
-  const n = Number(s.replace(/\./g, "").replace(",", "."));
-  if (!Number.isFinite(n)) throw new ProviderError(`vietnambiz: bad number "${s}"`, VIETNAMBIZ);
-  return n;
-}
-
-function vnbDate(text: string): number | null {
-  const m = strip(text).match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
-  if (!m) return null;
-  const ts = Date.parse(`${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}T00:00:00+07:00`);
-  return Number.isFinite(ts) ? ts : null;
-}
-
-/** Parse the daily "Giá xăng dầu hôm nay" table (real published values). */
-export function parseVnbFuel(text: string, symbol: string): { price: number; change: number | null; changePercent: number | null; timestamp: number | null } {
-  const t = strip(text);
-  const label = VNB_FUEL_LABELS[symbol];
-  if (!label) throw new ProviderError(`vietnambiz: no fuel label for ${symbol}`, VIETNAMBIZ);
-  const idx = t.search(label);
-  if (idx < 0) throw new ProviderError(`vietnambiz: row ${symbol} not found`, VIETNAMBIZ);
-  const win = t.slice(idx, idx + 320);
-  const priceM = win.match(/(\d{1,3}(?:\.\d{3})*)\s*đồng\s*\/?\s*lít/i);
-  if (!priceM) throw new ProviderError(`vietnambiz: price parse failed for ${symbol}`, VIETNAMBIZ);
-  const changeM = win.match(/([+-])\s*(\d{1,3}(?:\.\d{3})*)\s*đồng\s*\/?\s*lít/i);
-  const pctM = win.match(/([+-])\s*(\d{1,2}(?:,\d{1,2})?)\s*%/i);
-  const dong = vnbToNum(priceM[1]);
-  return {
-    price: dong / 1000, // đồng/lít → Nghìn đồng/lít (catalog unit)
-    change: changeM ? (changeM[1] === "-" ? -1 : 1) * vnbToNum(changeM[2]) / 1000 : null,
-    changePercent: pctM ? (pctM[1] === "-" ? -1 : 1) * Number(pctM[2].replace(",", ".")) : null,
-    timestamp: vnbDate(text),
-  };
-}
-
-/** Parse the daily "Giá heo hơi hôm nay" article: published national range → midpoint. */
-export function parseVnbPig(text: string): { price: number; timestamp: number | null } {
-  const t = strip(text);
-  const rangeM = t.match(/(\d{2,3}(?:\.\d{3})+)\s*[-–]\s*(\d{2,3}(?:\.\d{3})+)\s*đồng\s*\/?\s*kg/i);
-  if (!rangeM) throw new ProviderError("vietnambiz: pig range not found", VIETNAMBIZ);
-  const lo = vnbToNum(rangeM[1]);
-  const hi = vnbToNum(rangeM[2]);
-  if (!(lo > 10_000 && hi >= lo)) throw new ProviderError("vietnambiz: pig range invalid", VIETNAMBIZ);
-  return { price: (lo + hi) / 2, timestamp: vnbDate(text) };
-}
-
-export async function getVietnambizCategoryText(): Promise<string> {
-  const base = env.vietnambizBaseUrl.replace(/\/$/, "");
-  const res = await cached("vietnambiz:category:hang-hoa", {
-    ttlMs: 10 * 60_000,
-    staleMs: 60 * 60_000,
-    producer: async () => {
-      const r = await httpText(`${base}/hang-hoa.htm`, { provider: VIETNAMBIZ, timeoutMs: 9_000, retries: 1 });
-      if (!r.ok || !r.text) throw new ProviderError(`vietnambiz: ${r.error ?? "unreachable"}`, VIETNAMBIZ);
-      return r.text;
-    },
-  });
-  return res.value;
-}
-
-export function findVnbArticlePath(categoryText: string, slug: string): string {
-  const re = new RegExp(String.raw`/${slug}[^"\s]*\.htm`, "i");
-  const m = categoryText.match(re);
-  if (!m) throw new ProviderError(`vietnambiz: article "${slug}" not found in category`, VIETNAMBIZ);
-  return m[0];
-}
-
-export async function getVnbArticleText(path: string): Promise<{ text: string; url: string }> {
-  const base = env.vietnambizBaseUrl.replace(/\/$/, "");
-  const url = `${base}${path.startsWith("/") ? path : `/${path}`}`;
-  const res = await cached(`vietnambiz:article:${path}`, {
-    ttlMs: 30 * 60_000,
-    staleMs: 6 * 3_600_000,
-    producer: async () => {
-      const r = await httpText(url, { provider: VIETNAMBIZ, timeoutMs: 9_000, retries: 1 });
-      if (!r.ok || !r.text) throw new ProviderError(`vietnambiz: ${r.error ?? "unreachable"}`, VIETNAMBIZ);
-      return r.text;
-    },
-  });
-  return { text: res.value, url };
-}
-
-async function getVnbFuelQuote(symbol: string): Promise<RawCommodityQuote> {
-  const cat = await getVietnambizCategoryText();
-  const path = await findVnbArticlePath(cat, "gia-xang-dau-hom-nay");
-  const { text, url } = await getVnbArticleText(path);
-  const p = parseVnbFuel(text, symbol);
-  return {
-    source: "VietnamBiz",
-    price: p.price,
-    change: p.change,
-    changePercent: p.changePercent,
-    unit: "Nghìn đồng/lít",
-    currency: "VND",
-    timestamp: p.timestamp,
-    url,
-  };
-}
-
-async function getVnbPigQuote(): Promise<RawCommodityQuote> {
-  const cat = await getVietnambizCategoryText();
-  const path = await findVnbArticlePath(cat, "gia-heo-hoi-hom-nay");
-  const { text, url } = await getVnbArticleText(path);
-  const p = parseVnbPig(text);
-  return {
-    source: "VietnamBiz",
-    price: p.price,
-    change: null,
-    changePercent: null,
-    unit: "VNĐ/kg",
-    currency: "VND",
-    timestamp: p.timestamp,
-    url,
-  };
-}
-
-/** Dispatcher: Vietnambiz fallback per commodity strategy. */
-export async function getVietnambizQuote(def: CommodityDef): Promise<RawCommodityQuote> {
-  switch (def.vietnambiz) {
-    case "sjc-gold":
-      return getVietnambizSjcGold();
-    case "fuel":
-      return getVnbFuelQuote(def.symbol);
-    case "pig":
-      return getVnbPigQuote();
-    default:
-      throw new ProviderError(`vietnambiz: no strategy for ${def.key}`, VIETNAMBIZ);
-  }
-}
-
-/* ------------------------------- MSN Finance ------------------------------- */
-
-type MsnQuote = {
-  price?: number;
-  priceChange?: number;
-  priceChangePercent?: number;
-  priceDayHigh?: number;
-  priceDayLow?: number;
-  timeLastTraded?: string;
-  instrumentId?: string;
-};
-
-export async function getMsnQuotes(ids: string[]): Promise<Record<string, RawCommodityQuote>> {
-  if (!ids.length) return {};
-  const url = `https://assets.msn.com/service/Finance/Quotes?apikey=${env.msnApiKey}&ocid=finance-utils-peregrine&cm=en-us&it=web&wrapodata=false&ids=${ids
-    .map(encodeURIComponent)
-    .join(",")}`;
-  const res = await httpJson<MsnQuote[]>(url, { provider: MSN_FINANCE, timeoutMs: 8_000, retries: 1 });
-  if (!res.ok || !Array.isArray(res.data)) throw new ProviderError(`msn: ${res.error ?? "unreachable"}`, MSN_FINANCE);
-  const out: Record<string, RawCommodityQuote> = {};
-  for (const q of res.data) {
-    if (!q || typeof q.price !== "number" || !q.instrumentId) continue;
-    out[q.instrumentId] = {
-      source: "MSN Finance",
-      price: q.price,
-      change: q.priceChange ?? null,
-      changePercent: q.priceChangePercent ?? null,
-      high: q.priceDayHigh ?? null,
-      low: q.priceDayLow ?? null,
-      timestamp: q.timeLastTraded ? Date.parse(q.timeLastTraded) : null,
-    };
-  }
-  if (!Object.keys(out).length) throw new ProviderError("msn: empty payload", MSN_FINANCE);
-  return out;
-}
-
-/* -------------------------------- Vietnambiz ------------------------------- */
-
-const strip = (s: string) => s.replace(/<[^>]*>/g, " ").replace(/&[a-z#0-9]+;/gi, " ").replace(/\s+/g, " ");
-
-/**
- * SJC gold price from Vietnambiz gold board (real scraped numbers).
- * Fragile by nature of scraping → returns ProviderError on any anomaly.
- */
-export async function getVietnambizSjcGold(): Promise<RawCommodityQuote> {
-  const url = `${env.vietnambizBaseUrl.replace(/\/$/, "")}/gia-vang-hom-nay.htm`;
-  const res = await httpText(url, { provider: VIETNAMBIZ, timeoutMs: 9_000, retries: 1 });
-  if (!res.ok || !res.text) throw new ProviderError(`vietnambiz: ${res.error ?? "unreachable"}`, VIETNAMBIZ);
-  const text = res.text;
-  const sjcIdx = text.search(/SJC/i);
-  if (sjcIdx < 0) throw new ProviderError("vietnambiz: SJC row not found", VIETNAMBIZ);
-  const window = strip(text.slice(sjcIdx, sjcIdx + 800));
-  const numbers = (window.match(/(\d{2,3}(?:[.,]\d{3})+(?:[.,]\d)?)/g) ?? [])
-    .map((n) => Number(n.replace(/\./g, "").replace(",", ".")))
-    .filter((n) => Number.isFinite(n) && n > 10_000); // VND nghìn/lượng sanity window
-  if (numbers.length < 2) throw new ProviderError("vietnambiz: price parse failed", VIETNAMBIZ);
-  const buy = numbers[0];
-  const sell = numbers[1];
-  const mid = (buy + sell) / 2;
-  // Vietnambiz quotes SJC in "nghìn đồng/lượng" on this board → normalize to VND/lượng
-  const priceVnd = mid < 100_000 ? mid * 1000 : mid;
-  const dateMatch = text.match(/(\d{1,2}\/\d{1,2}\/\d{4})(?:\s+(\d{1,2}:\d{2}))?/);
-  const ts = dateMatch ? Date.parse(dateMatch[0].replace(/(\d{1,2})\/(\d{1,2})\/(\d{4})/, "$3-$2-$1")) : null;
-  return {
-    source: "Vietnambiz",
-    price: priceVnd,
-    change: null,
-    changePercent: null,
-    unit: "VND/lượng",
-    currency: "VND",
-    timestamp: Number.isFinite(ts) ? ts : null,
-    url,
-  };
 }
