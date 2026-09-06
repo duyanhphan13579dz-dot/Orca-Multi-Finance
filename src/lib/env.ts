@@ -35,6 +35,15 @@ export const env = {
   simplizeBaseUrl: opt(process.env.SIMPLIZE_BASE_URL) ?? "https://simplize.vn",
   simplizeApiKey: opt(process.env.SIMPLIZE_API_KEY),
 
+  /* Vietnam stocks — provider chain (Phase 10 SAFE FALLBACK).
+   * Default: VNDirect primary; Simplize = candidate embed-only cho tới khi
+   * có giấy phép API bằng văn bản (xem docs/simplize-vn-audit.md). */
+  simplizeDataAccess: opt(process.env.SIMPLIZE_DATA_ACCESS) ?? "none", // none | api-partner | approved-api
+  /** optional: template chứa {symbol} (+{timeframe}) cho widget embed đã xác minh */
+  simplizeWidgetUrlTemplate: opt(process.env.SIMPLIZE_WIDGET_URL_TEMPLATE),
+  /** provider order: "vndirect,simplize" (vndirect luôn primary hiện tại) */
+  vnProviderOrder: opt(process.env.VN_PROVIDER_ORDER) ?? "vndirect,simplize",
+
   /* Optional MSN Finance instrument map for world commodities (JSON: {"GOLD":"id",...}) */
   msnCommodityMap: (() => {
     try {
