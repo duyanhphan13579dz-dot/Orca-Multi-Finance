@@ -3,16 +3,18 @@ import { recordFailure, recordSuccess } from "../health";
 import { eventBus } from "../events";
 
 /**
- * CENTRALIZED BINANCE WEBSOCKET INGESTION ENGINE
+ * CENTRALIZED BINANCE WEBSOCKET INGESTION ENGINE (perf-tuned)
  *
  * One shared connection for the whole platform (never per-user):
  *   wss://stream.binance.com  !ticker@arr      → spot realtime store
  *   wss://fstream.binance.com !markPrice@arr   → futures marks/funding store
+ *   wss://stream.binance.com  /ws              → dynamic kline SUBSCRIBE
  *
- * Validation + normalization happens at ingestion; invalid messages are
- * dropped and logged. When the stream is geo-blocked/unreachable the engine
- * backs off, keeps retrying slowly, and the REST pipeline remains the source
- * of truth — status is always exposed at /system.
+ * Hot-path optimisations:
+ *   - tick emit only when channel has listeners (avoids 2k+ no-op emits/msg)
+ *   - kline uses incremental SUBSCRIBE/UNSUBSCRIBE (no full reconnect churn)
+ *   - stats use ring counters instead of unbounded timestamp arrays
+ *   - stale ticker/mark pruning on watchdog
  */
 
 export interface WsTicker {
@@ -48,10 +50,27 @@ export interface RealtimeStats {
   klineStreams: number;
   tickersTracked: number;
   marksTracked: number;
+  ticksEmittedPerMin: number;
+  ticksSkippedPerMin: number;
 }
 
-/** Binance-supported kline intervals */
-export const KLINE_INTERVALS = new Set(["1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "8h", "12h", "1d", "3d", "1w", "1M"]);
+export const KLINE_INTERVALS = new Set([
+  "1m",
+  "3m",
+  "5m",
+  "15m",
+  "30m",
+  "1h",
+  "2h",
+  "4h",
+  "6h",
+  "8h",
+  "12h",
+  "1d",
+  "3d",
+  "1w",
+  "1M",
+]);
 
 export interface KlineCandle {
   time: number;
@@ -65,14 +84,18 @@ export interface KlineCandle {
 
 const SPOT_URL = process.env.BINANCE_WS_SPOT_URL ?? "wss://stream.binance.com:9443/stream?streams=!ticker@arr";
 const FUT_URL = process.env.BINANCE_WS_FUT_URL ?? "wss://fstream.binance.com/stream?streams=!markPrice@arr";
+const KLINE_WS_URL = process.env.BINANCE_WS_KLINE_URL ?? "wss://stream.binance.com:9443/ws";
 const SPOT_PROVIDER = "binance-ws:spot";
 const FUT_PROVIDER = "binance-ws:futures";
+const KLINE_PROVIDER = "binance-ws:kline";
+const MAX_KLINE_STREAMS = Number(process.env.BINANCE_WS_MAX_KLINES ?? 48);
 
 interface PrivStats {
   state: StreamStats["state"];
   connectedAt: number | null;
   lastMessageAt: number | null;
-  window: number[];
+  secBuckets: Int16Array;
+  secBase: number;
   reconnectAttempts: number;
   lastError: string | null;
 }
@@ -81,10 +104,34 @@ const newStats = (): PrivStats => ({
   state: "connecting",
   connectedAt: null,
   lastMessageAt: null,
-  window: [],
+  secBuckets: new Int16Array(60),
+  secBase: Math.floor(Date.now() / 1000),
   reconnectAttempts: 0,
   lastError: null,
 });
+
+function noteMsg(st: PrivStats, now = Date.now()) {
+  st.lastMessageAt = now;
+  const sec = Math.floor(now / 1000);
+  if (sec !== st.secBase) {
+    const drift = sec - st.secBase;
+    if (drift >= 60) {
+      st.secBuckets.fill(0);
+    } else {
+      for (let i = 1; i <= drift; i++) st.secBuckets[(st.secBase + i) % 60] = 0;
+    }
+    st.secBase = sec;
+  }
+  st.secBuckets[sec % 60]++;
+}
+
+function msgsPerMin(st: PrivStats, now = Date.now()): number {
+  const sec = Math.floor(now / 1000);
+  if (sec - st.secBase >= 60) return 0;
+  let sum = 0;
+  for (let i = 0; i < 60; i++) sum += st.secBuckets[i];
+  return sum;
+}
 
 type WsLike = {
   onopen: (() => void) | null;
@@ -92,6 +139,8 @@ type WsLike = {
   onerror: ((e: unknown) => void) | null;
   onclose: ((e: { code?: number; reason?: string }) => void) | null;
   close: () => void;
+  send?: (data: string) => void;
+  readyState?: number;
 };
 
 class BinanceRealtimeEngine {
@@ -101,34 +150,37 @@ class BinanceRealtimeEngine {
   private spot: PrivStats = newStats();
   private fut: PrivStats = newStats();
   private kline: PrivStats = newStats();
-  private klineRefs = new Map<string, number>(); // "SYM@interval" → refs
+  private klineRefs = new Map<string, number>();
+  private klineDesired = new Set<string>();
   private klineWs: WsLike | null = null;
-  private klineRebuildTimer: ReturnType<typeof setTimeout> | null = null;
+  private klineSubTimer: ReturnType<typeof setTimeout> | null = null;
+  private klineMsgId = 1;
   private spotWs: WsLike | null = null;
   private futWs: WsLike | null = null;
   private spotTimer: ReturnType<typeof setTimeout> | null = null;
   private futTimer: ReturnType<typeof setTimeout> | null = null;
+  private klineTimer: ReturnType<typeof setTimeout> | null = null;
   private watchdog: ReturnType<typeof setInterval> | null = null;
+  private emitOk = 0;
+  private emitSkip = 0;
+  private emitWindowStart = Date.now();
 
-  /**
-   * CENTRALIZED KLINE SUBSCRIPTION MANAGER — one shared aggregated connection
-   * for all (symbol, interval) keys, refcounted. Returns an unsubscribe fn.
-   * Emits `kline:{SYM}:{interval}` on the event bus with validated bars
-   * (closed flag = Binance k.x). When the region blocks WS, the stream stays
-   * "blocked" honestly and the REST/tick pipeline keeps feeding candles.
-   */
+  private enabled(): boolean {
+    return process.env.BINANCE_WS_DISABLED !== "true";
+  }
+
   requestKline(symbol: string, interval: string): () => void {
     if (!this.enabled() || !KLINE_INTERVALS.has(interval)) return () => {};
     this.start();
     const sym = symbol.toUpperCase();
     const key = `${sym}@${interval}`;
     this.klineRefs.set(key, (this.klineRefs.get(key) ?? 0) + 1);
-    this.scheduleKlineRebuild();
+    this.scheduleKlineSync();
     return () => {
       const n = (this.klineRefs.get(key) ?? 0) - 1;
       if (n <= 0) this.klineRefs.delete(key);
       else this.klineRefs.set(key, n);
-      this.scheduleKlineRebuild();
+      this.scheduleKlineSync();
     };
   }
 
@@ -136,96 +188,165 @@ class BinanceRealtimeEngine {
     return [...this.klineRefs.keys()];
   }
 
-  private scheduleKlineRebuild() {
-    if (this.klineRebuildTimer) clearTimeout(this.klineRebuildTimer);
-    this.klineRebuildTimer = setTimeout(() => this.rebuildKlineStream(), 350);
-    this.klineRebuildTimer.unref?.();
+  private scheduleKlineSync() {
+    if (this.klineSubTimer) clearTimeout(this.klineSubTimer);
+    this.klineSubTimer = setTimeout(() => this.syncKlineSubscriptions(), 200);
+    this.klineSubTimer.unref?.();
   }
 
-  private rebuildKlineStream() {
+  private desiredStreams(): string[] {
+    const keys = [...this.klineRefs.keys()];
+    const rank = (k: string) => {
+      const tf = k.split("@")[1] ?? "";
+      if (tf === "1m") return 0;
+      if (tf === "5m") return 1;
+      if (tf === "15m") return 2;
+      return 3;
+    };
+    keys.sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
+    return keys.slice(0, MAX_KLINE_STREAMS).map((k) => {
+      const [sym, tf] = k.split("@");
+      return `${sym.toLowerCase()}@kline_${tf}`;
+    });
+  }
+
+  private syncKlineSubscriptions() {
+    const desired = new Set(this.desiredStreams());
+    if (!desired.size) {
+      this.klineDesired.clear();
+      try {
+        this.klineWs?.close();
+      } catch {
+        /* noop */
+      }
+      this.klineWs = null;
+      this.kline.state = "closed";
+      return;
+    }
+
+    const WSImpl = (globalThis as { WebSocket?: new (url: string) => WsLike }).WebSocket;
+    if (!WSImpl) {
+      this.kline.state = "disabled";
+      return;
+    }
+
+    if (!this.klineWs || this.kline.state === "closed" || this.kline.state === "blocked") {
+      this.openKlineSocket(WSImpl, desired);
+      return;
+    }
+
+    if (this.kline.state !== "open" || typeof this.klineWs.send !== "function") {
+      this.openKlineSocket(WSImpl, desired);
+      return;
+    }
+
+    const toSub: string[] = [];
+    const toUnsub: string[] = [];
+    for (const s of desired) if (!this.klineDesired.has(s)) toSub.push(s);
+    for (const s of this.klineDesired) if (!desired.has(s)) toUnsub.push(s);
+
+    if (toUnsub.length) {
+      try {
+        this.klineWs.send(JSON.stringify({ method: "UNSUBSCRIBE", params: toUnsub, id: this.klineMsgId++ }));
+      } catch {
+        this.openKlineSocket(WSImpl, desired);
+        return;
+      }
+    }
+    if (toSub.length) {
+      try {
+        this.klineWs.send(JSON.stringify({ method: "SUBSCRIBE", params: toSub, id: this.klineMsgId++ }));
+      } catch {
+        this.openKlineSocket(WSImpl, desired);
+        return;
+      }
+    }
+    this.klineDesired = desired;
+  }
+
+  private openKlineSocket(WSImpl: new (url: string) => WsLike, desired: Set<string>) {
     try {
       this.klineWs?.close();
     } catch {
       /* noop */
     }
     this.klineWs = null;
-    const keys = [...this.klineRefs.keys()];
-    if (!keys.length) {
-      this.kline.state = "closed";
-      return;
-    }
-    const WSImpl = (globalThis as { WebSocket?: new (url: string) => WsLike }).WebSocket;
-    if (!WSImpl) {
-      this.kline.state = "disabled";
-      return;
-    }
-    const streams = keys.map((k) => {
-      const [sym, tf] = k.split("@");
-      return `${sym.toLowerCase()}@kline_${tf}`;
-    });
-    const url = `wss://stream.binance.com:9443/stream?streams=${streams.join("/")}`;
+    this.klineDesired = new Set();
     try {
       this.kline.state = "connecting";
-      const ws = new WSImpl(url);
+      const ws = new WSImpl(KLINE_WS_URL);
       this.klineWs = ws;
       ws.onopen = () => {
         this.kline.state = "open";
         this.kline.connectedAt = Date.now();
         this.kline.lastError = null;
-        recordSuccess("binance-ws:kline", 0);
-      };
-      ws.onmessage = (e) => {
-        this.kline.lastMessageAt = Date.now();
-        this.kline.window.push(this.kline.lastMessageAt);
-        if (this.kline.window.length > 2000) this.kline.window.splice(0, this.kline.window.length - 2000);
-        try {
-          const msg = JSON.parse(String(e.data)) as { stream?: string; data?: Record<string, unknown> };
-          const k = msg.data?.k as Record<string, unknown> | undefined;
-          if (!k || typeof k.s !== "string" || typeof k.i !== "string") return;
-          const sym = k.s;
-          const tf = k.i;
-          const time = Number(k.t);
-          const open = Number(k.o);
-          const high = Number(k.h);
-          const low = Number(k.l);
-          const close = Number(k.c);
-          if (!Number.isFinite(time) || open <= 0 || high < low || close <= 0) return; // validation
-          const candle: KlineCandle = {
-            time, open, high, low, close,
-            volume: Number(k.v) || 0,
-            closed: Boolean(k.x),
-          };
-          eventBus.emit(`kline:${sym}:${tf}`, { symbol: sym, timeframe: tf, candle });
-        } catch {
-          /* malformed frame */
+        this.kline.reconnectAttempts = 0;
+        recordSuccess(KLINE_PROVIDER, 0);
+        const params = [...desired];
+        if (params.length && typeof ws.send === "function") {
+          try {
+            ws.send(JSON.stringify({ method: "SUBSCRIBE", params, id: this.klineMsgId++ }));
+            this.klineDesired = new Set(params);
+          } catch {
+            /* next sync */
+          }
         }
       };
+      ws.onmessage = (e) => this.onKlineMessage(e);
       ws.onerror = (e) => {
         this.kline.lastError = wsErrorMessage(e);
       };
       ws.onclose = (e) => {
         this.kline.state = this.kline.lastError ? "blocked" : "closed";
-        recordFailure("binance-ws:kline", this.kline.lastError ?? `close ${e.code ?? ""}`);
-        // reconnect while there are active subscriptions (bounded backoff)
+        this.klineDesired.clear();
+        recordFailure(KLINE_PROVIDER, this.kline.lastError ?? `close ${e.code ?? ""}`);
         if (this.klineRefs.size) {
-          const st = this.kline;
-          st.reconnectAttempts += 1;
-          const delay = Math.min(2000 * 2 ** Math.min(st.reconnectAttempts, 5), 30_000) + Math.random() * 1000;
-          st.state = "retrying";
-          setTimeout(() => {
-            if (this.klineRefs.size) this.rebuildKlineStream();
-          }, delay).unref?.();
+          this.kline.reconnectAttempts += 1;
+          const delay = Math.min(1500 * 2 ** Math.min(this.kline.reconnectAttempts, 5), 30_000) + Math.random() * 800;
+          this.kline.state = "retrying";
+          if (this.klineTimer) clearTimeout(this.klineTimer);
+          this.klineTimer = setTimeout(() => {
+            if (this.klineRefs.size) this.syncKlineSubscriptions();
+          }, delay);
+          this.klineTimer.unref?.();
         }
       };
     } catch (err) {
       this.kline.lastError = err instanceof Error ? err.message : "kline connect failed";
       this.kline.state = "blocked";
-      recordFailure("binance-ws:kline", this.kline.lastError);
+      recordFailure(KLINE_PROVIDER, this.kline.lastError);
     }
   }
 
-  enabled(): boolean {
-    return (process.env.BINANCE_WS_ENABLED ?? "true").toLowerCase() !== "false";
+  private onKlineMessage(e: { data: unknown }) {
+    noteMsg(this.kline);
+    try {
+      const raw = String(e.data);
+      if (raw.length < 80 && raw.includes('"result"')) return;
+      const msg = JSON.parse(raw) as { stream?: string; data?: Record<string, unknown>; k?: Record<string, unknown> };
+      const k = (msg.data?.k ?? msg.k) as Record<string, unknown> | undefined;
+      if (!k || typeof k.s !== "string" || typeof k.i !== "string") return;
+      const sym = k.s;
+      const tf = k.i;
+      const time = Number(k.t);
+      const open = Number(k.o);
+      const high = Number(k.h);
+      const low = Number(k.l);
+      const close = Number(k.c);
+      if (!Number.isFinite(time) || open <= 0 || high < low || close <= 0) return;
+      const candle: KlineCandle = {
+        time,
+        open,
+        high,
+        low,
+        close,
+        volume: Number(k.v) || 0,
+        closed: Boolean(k.x),
+      };
+      eventBus.emit(`kline:${sym}:${tf}`, { symbol: sym, timeframe: tf, candle });
+    } catch {
+      /* malformed */
+    }
   }
 
   start() {
@@ -267,15 +388,13 @@ class BinanceRealtimeEngine {
         recordSuccess(provider, 0);
       };
       ws.onmessage = (e) => {
-        st.lastMessageAt = Date.now();
-        st.window.push(st.lastMessageAt);
-        if (st.window.length > 4000) st.window.splice(0, st.window.length - 4000);
+        noteMsg(st);
         try {
           const parsed = JSON.parse(String(e.data)) as { stream?: string; data?: unknown };
           if (kind === "spot") this.ingestTickers(parsed.data);
           else this.ingestMarks(parsed.data);
         } catch {
-          /* malformed frame — drop */
+          /* drop */
         }
       };
       ws.onerror = (e) => {
@@ -316,52 +435,80 @@ class BinanceRealtimeEngine {
         try {
           (kind === "spot" ? this.spotWs : this.futWs)?.close();
         } catch {
-          /* force path through onclose */
           this.scheduleReconnect(kind, kind === "spot" ? SPOT_URL : FUT_URL);
         }
       }
     }
+    if (this.kline.state === "open" && this.kline.lastMessageAt && now - this.kline.lastMessageAt > 90_000 && this.klineRefs.size) {
+      this.kline.lastError = "kline silent > 90s — reconnect";
+      try {
+        this.klineWs?.close();
+      } catch {
+        this.syncKlineSubscriptions();
+      }
+    }
+    for (const [k, v] of this.tickers) {
+      if (now - v.eventTime > 120_000) this.tickers.delete(k);
+    }
+    for (const [k, v] of this.marks) {
+      if (now - v.eventTime > 300_000) this.marks.delete(k);
+    }
   }
-
-  /* ------------------------------- ingestion ------------------------------ */
 
   private ingestTickers(data: unknown) {
     if (!Array.isArray(data)) return;
+    const now = Date.now();
+    if (now - this.emitWindowStart > 60_000) {
+      this.emitOk = 0;
+      this.emitSkip = 0;
+      this.emitWindowStart = now;
+    }
     for (const raw of data) {
       const r = raw as Record<string, unknown>;
       const symbol = typeof r.s === "string" ? r.s : null;
       const price = Number(r.c);
-      const changePercent = Number(r.P);
       const eventTime = Number(r.E);
       if (!symbol || !Number.isFinite(price) || price <= 0 || !Number.isFinite(eventTime)) continue;
-      if (eventTime > Date.now() + 60_000 || eventTime < Date.now() - 600_000) continue; // timestamp sanity
+      if (eventTime > now + 60_000 || eventTime < now - 600_000) continue;
+
+      const changePercent = Number(r.P);
+      const volume = Number(r.v) || 0;
+      const quoteVolume = Number(r.q) || 0;
+
       this.tickers.set(symbol, {
         symbol,
         price,
         changePercent: Number.isFinite(changePercent) ? changePercent : 0,
-        volume: Number(r.v) || 0,
-        quoteVolume: Number(r.q) || 0,
+        volume,
+        quoteVolume,
         eventTime,
       });
-      // central event bus → candle aggregation engine (only when subscribed)
-      eventBus.emit(`tick:${symbol}`, {
-        symbol,
-        price,
-        cumVolume: Number(r.v) || 0,
-        cumQuoteVolume: Number(r.q) || 0,
-        ts: eventTime,
-      });
+
+      if (eventBus.subscriberCount(`tick:${symbol}`) > 0) {
+        this.emitOk++;
+        eventBus.emit(`tick:${symbol}`, {
+          symbol,
+          price,
+          cumVolume: volume,
+          cumQuoteVolume: quoteVolume,
+          ts: eventTime,
+        });
+      } else {
+        this.emitSkip++;
+      }
     }
   }
 
   private ingestMarks(data: unknown) {
     if (!Array.isArray(data)) return;
+    const now = Date.now();
     for (const raw of data) {
       const r = raw as Record<string, unknown>;
       const symbol = typeof r.s === "string" ? r.s : null;
       const markPrice = Number(r.p);
       const eventTime = Number(r.E);
       if (!symbol || !Number.isFinite(markPrice) || markPrice <= 0 || !Number.isFinite(eventTime)) continue;
+      if (eventTime > now + 60_000 || eventTime < now - 600_000) continue;
       this.marks.set(symbol, {
         symbol,
         markPrice,
@@ -371,8 +518,6 @@ class BinanceRealtimeEngine {
     }
   }
 
-  /* -------------------------------- accessors ----------------------------- */
-
   getTickers(maxAgeMs = 15_000): Map<string, WsTicker> {
     const now = Date.now();
     const out = new Map<string, WsTicker>();
@@ -381,12 +526,12 @@ class BinanceRealtimeEngine {
   }
 
   getTicker(symbol: string, maxAgeMs = 15_000): WsTicker | null {
-    const t = this.tickers.get(symbol);
+    const t = this.tickers.get(symbol.toUpperCase());
     return t && Date.now() - t.eventTime <= maxAgeMs ? t : null;
   }
 
   getMark(symbol: string, maxAgeMs = 120_000): WsMark | null {
-    const m = this.marks.get(symbol);
+    const m = this.marks.get(symbol.toUpperCase());
     return m && Date.now() - m.eventTime <= maxAgeMs ? m : null;
   }
 
@@ -395,7 +540,7 @@ class BinanceRealtimeEngine {
       state: st.state,
       connectedAt: st.connectedAt,
       lastMessageAt: st.lastMessageAt,
-      messagesPerMin: st.window.filter((t) => Date.now() - t < 60_000).length,
+      messagesPerMin: msgsPerMin(st),
       reconnectAttempts: st.reconnectAttempts,
       lastError: st.lastError,
     });
@@ -407,6 +552,8 @@ class BinanceRealtimeEngine {
       klineStreams: this.klineRefs.size,
       tickersTracked: this.tickers.size,
       marksTracked: this.marks.size,
+      ticksEmittedPerMin: this.emitOk,
+      ticksSkippedPerMin: this.emitSkip,
     };
   }
 }
