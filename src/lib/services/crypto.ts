@@ -4,6 +4,7 @@ import { buildMeta } from "../freshness";
 import * as binance from "../providers/binance";
 import { binanceWs, ensureBinanceWsStarted } from "../realtime/binance-ws";
 import { candleAggregator } from "../realtime/candles";
+import { marketStore, type StoredQuote } from "../realtime/market-store";
 import { CHANNEL } from "../realtime/channels";
 import { emitEvent } from "../realtime/event-envelope";
 import { logQualityEvent, validateQuote } from "../quality";
@@ -26,6 +27,28 @@ interface AllMarket {
   overlaid: number;
   invalid: number;
   suspect: number;
+}
+
+/** Phase 6 §7 — rebuild CryptoMarketRow from a stored (validated) quote. */
+export function rowFromStoredQuote(q: StoredQuote, symbol: string): CryptoMarketRow | null {
+  if (!Number.isFinite(q.price) || q.price <= 0) return null;
+  const sym = symbol.toUpperCase();
+  return {
+    symbol: sym,
+    baseAsset: sym.replace(/USDT$/, ""),
+    assetClass: "crypto",
+    price: q.price,
+    change: q.change ?? null,
+    changePercent: q.changePercent ?? null,
+    open: q.open ?? null,
+    high: q.high ?? null,
+    low: q.low ?? null,
+    volume: q.volume ?? null,
+    quoteVolume: q.quoteVolume ?? null,
+    trades24h: q.trades24h ?? null,
+    previousClose: q.previousClose ?? null,
+    updatedAt: new Date(q.ts).toISOString(),
+  };
 }
 
 export function toRow(t: binance.BinanceTicker24h): CryptoMarketRow | null {
@@ -176,12 +199,37 @@ export interface CryptoDetail {
 export async function getCryptoKlines(symbol: string, interval = "1h", limit = 200): Promise<{ bars: OhlcvBar[]; meta: Meta } | null> {
   const sym = symbol.toUpperCase();
   try {
+    // Phase 6 §7 — REALTIME MARKET STORE first: shared candles, no provider call
+    // when a fresh series exists (write-through below). `cached()` still dedups
+    // concurrent provider refreshes for many users.
+    const stored = marketStore.getCandles("crypto", sym, interval);
+    if (stored && stored.candles.length >= Math.min(limit, stored.limit) && Date.now() - stored.ingestedAt <= 25_000) {
+      const meta = buildMeta({
+        source: stored.source,
+        sourceTimestampMs: stored.sourceTimestampMs ?? (stored.candles[stored.candles.length - 1]?.time ?? Date.now()),
+        cached: true,
+        note: "Dữ liệu từ Realtime Market Store (chung cho mọi user)",
+        slas: { liveSlaMs: 120_000, freshSlaMs: 300_000, delayedSlaMs: 3_600_000 },
+      });
+      return { bars: stored.candles as OhlcvBar[], meta };
+    }
     const res = await cached(`crypto:klines:${sym}:${interval}:${limit}`, {
       ttlMs: 25_000,
       staleMs: 15 * 60_000,
       producer: async () => ({ bars: await binance.getKlines(sym, interval, limit), fetchedAt: Date.now() }),
     });
     const lastBar = res.value.bars[res.value.bars.length - 1];
+    // Phase 6 §7 — write-through: next users read from the store, no provider call.
+    marketStore.setCandles({
+      assetType: "crypto",
+      symbol: sym,
+      timeframe: interval,
+      intervalMs: intervalMsFor(interval),
+      limit,
+      candles: res.value.bars,
+      source: "binance",
+      sourceTimestampMs: lastBar?.time ?? Date.now(),
+    });
     const meta = buildMeta({
       source: "binance",
       sourceTimestampMs: lastBar ? lastBar.time : res.value.fetchedAt,
@@ -195,17 +243,57 @@ export async function getCryptoKlines(symbol: string, interval = "1h", limit = 2
   }
 }
 
+/** binance interval → ms (chart-const TF_MS equivalent for klines API). */
+function intervalMsFor(interval: string): number {
+  const table: Record<string, number> = {
+    "1m": 60_000, "3m": 180_000, "5m": 300_000, "15m": 900_000, "30m": 1_800_000,
+    "1h": 3_600_000, "2h": 7_200_000, "4h": 14_400_000, "6h": 21_600_000,
+    "8h": 28_800_000, "12h": 43_200_000, "1d": 86_400_000, "3d": 259_200_000,
+    "1w": 604_800_000, "1M": 2_592_000_000,
+  };
+  return table[interval] ?? 3_600_000;
+}
+
 export async function getCryptoDetail(symbol: string, interval = "1h"): Promise<{ detail: CryptoDetail; meta: Meta } | null> {
   const sym = symbol.toUpperCase().endsWith("USDT") ? symbol.toUpperCase() : `${symbol.toUpperCase()}USDT`;
+  // Phase 6 §7 — REALTIME MARKET STORE first cho ticker: quote chung, provider
+  // chỉ được gọi khi store còn thiếu/stale (write-through dưới đây).
+  const storedQ = marketStore.getQuote("crypto", sym);
+  const storedFresh = storedQ != null && Date.now() - storedQ.ingestedAt <= 20_000;
+  const tickerPromise = storedFresh
+    ? Promise.resolve<binance.BinanceTicker24h | null>(null)
+    : binance.getSpotTicker(sym).then((t) => {
+        // write-through: quote mới nhất → store cho mọi user sau đó
+        const row = toRow(t);
+        if (row) {
+          marketStore.setQuote({
+            assetType: "crypto",
+            symbol: sym,
+            price: row.price,
+            change: row.change,
+            changePercent: row.changePercent,
+            open: row.open,
+            high: row.high,
+            low: row.low,
+            volume: row.volume,
+            quoteVolume: row.quoteVolume,
+            previousClose: row.previousClose,
+            trades24h: row.trades24h,
+            source: "binance",
+            ts: row.updatedAt ? Date.parse(row.updatedAt) : Date.now(),
+          });
+        }
+        return t;
+      });
   const [tickerRes, klinesRes, fundingRes, oiRes] = await Promise.allSettled([
-    binance.getSpotTicker(sym),
+    tickerPromise,
     getCryptoKlines(sym, interval, 200),
     binance.getFundingRate(sym),
     binance.getOpenInterest(sym),
   ]);
-  if (tickerRes.status === "rejected") return null;
-  const t = tickerRes.value;
-  const base = toRow(t);
+  if (!storedFresh && tickerRes.status === "rejected") return null;
+  const t = tickerRes.status === "fulfilled" ? tickerRes.value : null;
+  const base = storedFresh && storedQ ? rowFromStoredQuote(storedQ, sym) : t ? toRow(t) : null;
   if (!base) return null;
   const bars = klinesRes.status === "fulfilled" && klinesRes.value ? klinesRes.value.bars : [];
   const technical = bars.length ? analyzeSeries(bars) : null;
@@ -241,7 +329,7 @@ export async function getCryptoDetail(symbol: string, interval = "1h"): Promise<
   };
   const meta = buildMeta({
     source: "binance",
-    sourceTimestampMs: t.closeTime ?? Date.now(),
+    sourceTimestampMs: t?.closeTime ?? storedQ?.ts ?? Date.now(),
     note: funding ? undefined : "Dữ liệu futures (funding/OI) tạm thờ không khả dụng từ vị trí máy chủ",
     partial: !funding,
   });

@@ -13,8 +13,9 @@
 import "server-only";
 import { CHANNEL } from "./channels";
 import { emitEvent, onAnyEvent } from "./event-envelope";
-import { validateQuote, logQualityEvent } from "../quality";
-import type { QualityStatus } from "../types";
+import { validateQuote, validateBars, logQualityEvent } from "../quality";
+import type { ChartCandle } from "../chart-const";
+import type { FreshnessStatus, OhlcvBar, QualityStatus } from "../types";
 
 export type StoredAssetType = "stock" | "crypto" | "forex" | "commodity" | "index";
 
@@ -32,12 +33,47 @@ export interface StoredQuote {
   referencePrice?: number | null;
   ceilingPrice?: number | null;
   floorPrice?: number | null;
+  /** Phase 6 — normalized quote extras (additive) */
+  previousClose?: number | null;
+  trades24h?: number | null;
   source: string;
   /** provider event time (ms) */
   ts: number;
   /** local ingestion time (ms) */
   ingestedAt: number;
   quality: QualityStatus;
+}
+
+/** Phase 6 — one validated candle series per asset+symbol+timeframe. */
+export interface StoredCandleSeries {
+  timeframe: string;
+  intervalMs: number;
+  /** limit của series khi được refresh (store chỉ đáp ứng nếu đủ độ dài) */
+  limit: number;
+  candles: ChartCandle[];
+  source: string;
+  sourceTimestampMs: number | null;
+  ingestedAt: number;
+  quality: QualityStatus;
+  gaps: number;
+  suspect: number;
+}
+
+/**
+ * Phase 6 — asset-level Realtime Market Store entry (schema §7):
+ * `{ quote, candles, source, freshness, quality, updatedAt }`.
+ * Key format: `<assetType>:<SYMBOL>` e.g. `crypto:BTCUSDT`, `forex:EURUSD`.
+ */
+export interface StoredAssetEntry {
+  assetType: StoredAssetType;
+  symbol: string;
+  quote: StoredQuote | null;
+  /** keyed by timeframe: "1m" | "5m" | ... | "1M" */
+  candles: Record<string, StoredCandleSeries>;
+  source: string | null;
+  freshness: FreshnessStatus;
+  quality: QualityStatus;
+  updatedAt: number;
 }
 
 const STALE_MS: Record<StoredAssetType, number> = {
@@ -48,6 +84,15 @@ const STALE_MS: Record<StoredAssetType, number> = {
   index: 120_000,
 };
 
+/** Entry freshness SLA: FRESH ≤ ½ stale-window, DELAYED ≤ stale-window, else STALE. */
+export const ENTRY_FRESH_MS: Record<StoredAssetType, number> = {
+  crypto: 10_000,
+  stock: 45_000,
+  forex: 150_000,
+  commodity: 150_000,
+  index: 60_000,
+};
+
 const PRUNE_MS = 30 * 60_000; // drop entries older than this
 
 interface Subscriber {
@@ -55,13 +100,40 @@ interface Subscriber {
   cb: (q: StoredQuote) => void;
 }
 
+/** Worst quality wins: INVALID > SUSPECT > VALID. */
+function worstQuality(a: QualityStatus, b: QualityStatus): QualityStatus {
+  const rank: Record<QualityStatus, number> = { VALID: 0, SUSPECT: 1, INVALID: 2, STALE: 0 };
+  return rank[a] >= rank[b] ? a : b;
+}
+
 class MarketStore {
   private quotes = new Map<string, StoredQuote>();
+  /** Phase 6 — asset-level entries keyed `<assetType>:<SYMBOL>` */
+  private entries = new Map<string, StoredAssetEntry>();
   private subs = new Map<string, Set<Subscriber>>();
   private anyOff: (() => void) | null = null;
   private lastPrune = Date.now();
   private writes = 0;
   private rejected = 0;
+
+  /** Canonical asset-level key: `crypto:BTCUSDT`, `forex:EURUSD`. */
+  static key(assetType: StoredAssetType, symbol: string): string {
+    return `${assetType}:${symbol.toUpperCase()}`;
+  }
+
+  private entryKey(assetType: StoredAssetType, symbol: string): string {
+    return MarketStore.key(assetType, symbol);
+  }
+
+  private entryFreshness(e: StoredAssetEntry, now = Date.now()): FreshnessStatus {
+    const age = now - e.updatedAt;
+    if (e.quote == null && Object.keys(e.candles).length === 0) return "UNAVAILABLE";
+    const freshSla = ENTRY_FRESH_MS[e.assetType] ?? 150_000;
+    const staleSla = STALE_MS[e.assetType] ?? 300_000;
+    if (age <= freshSla) return "FRESH";
+    if (age <= staleSla) return "DELAYED";
+    return "STALE";
+  }
 
   /** Auto-ingest `tick:{SYM}` events — envelopes or legacy raw ticks. */
   attach(): void {
@@ -108,6 +180,18 @@ class MarketStore {
     }
     const stored: StoredQuote = { ...input, ingestedAt: Date.now(), quality: q.status };
     this.quotes.set(input.symbol.toUpperCase(), stored);
+    // Phase 6 — write-through into asset-level entry
+    const ek = this.entryKey(input.assetType, input.symbol);
+    let entry = this.entries.get(ek);
+    if (!entry) {
+      entry = { assetType: input.assetType, symbol: input.symbol.toUpperCase(), quote: null, candles: {}, source: null, freshness: "UNAVAILABLE", quality: "VALID", updatedAt: 0 };
+      this.entries.set(ek, entry);
+    }
+    entry.quote = stored;
+    entry.source = stored.source;
+    entry.quality = worstQuality(entry.quality, stored.quality);
+    entry.updatedAt = Date.now();
+    entry.freshness = this.entryFreshness(entry);
     this.writes += 1;
     this.prune();
     emitEvent(CHANNEL.quote(input.symbol), "quote", stored, {
@@ -148,6 +232,78 @@ class MarketStore {
       ts: p.ts ?? Date.now(),
     });
   }
+
+  /* ----------------------- Phase 6 asset-level API ------------------------- */
+
+  /** `getEntry("crypto","BTCUSDT")` → `{quote, candles, source, freshness, quality, updatedAt}`. */
+  getEntry(assetType: StoredAssetType, symbol: string): StoredAssetEntry | null {
+    const e = this.entries.get(this.entryKey(assetType, symbol));
+    if (!e) return null;
+    e.freshness = this.entryFreshness(e);
+    return e;
+  }
+
+  /** Quote from the asset-level entry (null if none / unavailable). */
+  getQuote(assetType: StoredAssetType, symbol: string): StoredQuote | null {
+    return this.getEntry(assetType, symbol)?.quote ?? null;
+  }
+
+  /**
+   * Store a validated candle series (Phase 6 §8: invalid OHLC / NaN / Infinity /
+   * high<low / dupes / out-of-order are sanitized; INVALID → rejected, log).
+   * Returns `false` when the series is unusable (nothing is written).
+   */
+  setCandles(input: {
+    assetType: StoredAssetType;
+    symbol: string;
+    timeframe: string;
+    intervalMs: number;
+    limit: number;
+    candles: ChartCandle[];
+    source: string;
+    sourceTimestampMs?: number | null;
+    gaps?: number;
+    suspect?: number;
+  }): boolean {
+    const q = validateBars(input.candles as OhlcvBar[]);
+    if (q.status === "INVALID") {
+      this.rejected += 1;
+      void logQualityEvent("market-store", `${input.assetType}:${input.symbol}:${input.timeframe}`, q);
+      return false;
+    }
+    const ek = this.entryKey(input.assetType, input.symbol);
+    let entry = this.entries.get(ek);
+    if (!entry) {
+      entry = { assetType: input.assetType, symbol: input.symbol.toUpperCase(), quote: null, candles: {}, source: null, freshness: "UNAVAILABLE", quality: "VALID", updatedAt: 0 };
+      this.entries.set(ek, entry);
+    }
+    const strict = q.status === "SUSPECT" ? worstQuality(entry.quality, "SUSPECT") : entry.quality;
+    entry.candles[input.timeframe] = {
+      timeframe: input.timeframe,
+      intervalMs: input.intervalMs,
+      limit: input.limit,
+      candles: q.cleaned as ChartCandle[],
+      source: input.source,
+      sourceTimestampMs: input.sourceTimestampMs ?? null,
+      ingestedAt: Date.now(),
+      quality: q.status,
+      gaps: input.gaps ?? 0,
+      suspect: input.suspect ?? 0,
+    };
+    entry.source = input.source;
+    entry.quality = strict;
+    entry.updatedAt = Date.now();
+    entry.freshness = this.entryFreshness(entry);
+    this.writes += 1;
+    return true;
+  }
+
+  /** Stored candle series for `assetType:symbol:timeframe` (null nếu chưa có). */
+  getCandles(assetType: StoredAssetType, symbol: string, timeframe: string): StoredCandleSeries | null {
+    return this.getEntry(assetType, symbol)?.candles[timeframe] ?? null;
+  }
+
+  /* ------------------------------ legacy API ------------------------------- */
 
   get(symbol: string): StoredQuote | null {
     return this.quotes.get(symbol.toUpperCase()) ?? null;
@@ -200,12 +356,19 @@ class MarketStore {
     }
   }
 
-  stats(): { symbols: number; writes: number; rejected: number; subs: number } {
-    return { symbols: this.quotes.size, writes: this.writes, rejected: this.rejected, subs: [...this.subs.values()].reduce((a, s) => a + s.size, 0) };
+  stats(): { symbols: number; entries: number; writes: number; rejected: number; subs: number } {
+    return {
+      symbols: this.quotes.size,
+      entries: this.entries.size,
+      writes: this.writes,
+      rejected: this.rejected,
+      subs: [...this.subs.values()].reduce((a, s) => a + s.size, 0),
+    };
   }
 
   reset(): void {
     this.quotes.clear();
+    this.entries.clear();
     this.subs.clear();
     this.writes = 0;
     this.rejected = 0;

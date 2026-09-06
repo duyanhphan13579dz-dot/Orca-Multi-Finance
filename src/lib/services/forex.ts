@@ -4,7 +4,7 @@ import { buildMeta } from "../freshness";
 import { getBiquoteQuotes, getErApiLatest, getFrankfurterSeries, type FxLatest } from "../providers/forex";
 import { getYahooQuotes, yahooSymbolForPair } from "../providers/yahoo";
 import { analyzeSeries } from "../technical";
-import { marketStore } from "../realtime/market-store";
+import { marketStore, ENTRY_FRESH_MS } from "../realtime/market-store";
 import type { ForexRow, Meta, OhlcvBar, TechnicalSnapshot } from "../types";
 
 /** Phase 6 — feed validated forex quotes into the shared Realtime Market Store. */
@@ -32,6 +32,38 @@ function missingPairErrors(rows: ForexRow[]): NonNullable<Meta["errors"]> {
   const got = new Set(rows.map((r) => r.pair));
   const missing = PAIRS.map((p) => p.pair).filter((pair) => !got.has(pair));
   return missing.length ? [{ component: "quote", status: "PARTIAL", message: `Provider không trả: ${missing.join(", ")}` }] : [];
+}
+
+/**
+ * Phase 6 §7 — build ForexRow từ stored quote (Realtime Market Store).
+ * Chỉ dùng khi entry còn TRONG cửa sổ FRESH của forex (150s) — dữ liệu cũ hơn
+ * không được coi là current → rơi về getForexMarkets() (refresh provider).
+ */
+function forexRowFromStore(pair: string): ForexRow | null {
+  const def = PAIRS.find((p) => p.pair === pair);
+  if (!def) return null;
+  const q = marketStore.getQuote("forex", pair);
+  if (!q || !Number.isFinite(q.price) || q.price <= 0) return null;
+  if (Date.now() - q.ingestedAt > 150_000) return null;
+  return {
+    pair: def.pair,
+    base: def.base,
+    quote: def.quote,
+    group: def.group,
+    baseCurrency: def.base,
+    quoteCurrency: def.quote,
+    symbol: `${def.base}/${def.quote}`,
+    assetClass: "forex" as const,
+    price: q.price,
+    change: q.change ?? null,
+    changePercent: q.changePercent ?? null,
+    open: q.open ?? null,
+    high: q.high ?? null,
+    low: q.low ?? null,
+    volume: q.volume ?? null,
+    previousClose: q.previousClose ?? null,
+    updatedAt: new Date(q.ts).toISOString(),
+  } satisfies ForexRow;
 }
 
 /**
@@ -263,8 +295,13 @@ export async function getForexDetail(pairRaw: string): Promise<{ detail: ForexDe
   if (pair.length !== 6) return null;
   const base = pair.slice(0, 3);
   const quote = pair.slice(3);
-  const markets = await getForexMarkets();
-  const current = markets?.data.rows.find((r) => r.pair === pair) ?? null;
+  // Phase 6 §7 — REALTIME MARKET STORE first cho quote: provider chỉ được gọi
+  // khi store chưa có/stale (getForexMarkets write-through qua ingestRows).
+  let current = forexRowFromStore(pair);
+  if (!current) {
+    const markets = await getForexMarkets();
+    current = markets?.data.rows.find((r) => r.pair === pair) ?? null;
+  }
   let series: { date: string; rate: number }[] = [];
   let seriesTs: number | null = null;
   const errors: Meta["errors"] = [];

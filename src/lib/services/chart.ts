@@ -4,6 +4,7 @@ import { buildMeta } from "../freshness";
 import * as binance from "../providers/binance";
 import { getYahooChart, yahooSymbolForPair, yahooIntervalFor } from "../providers/yahoo";
 import { getVnOhlcv, vndirectConfigured } from "./stocks";
+import { marketStore } from "../realtime/market-store";
 import { validateBars, detectGaps, logQualityEvent } from "../quality";
 import { aggregateCandles, binanceInterval, TF_MS, tfsFor, type ChartAssetType, type ChartCandle } from "../chart-const";
 import { ema, rsi, macd, sma, supportResistance } from "../technical";
@@ -215,6 +216,11 @@ async function commodityCandles(symbol: string, tf: string, limit: number): Prom
   throw new Error("commodity_history_unavailable");
 }
 
+/** How long a stored candle series is considered fresh (providers not re-called). */
+function chartFreshMs(assetType: ChartAssetType, tf: string): number {
+  return assetType === "crypto" ? 18_000 : assetType === "forex" ? 45_000 : 60_000;
+}
+
 export async function getChartHistory(args: ChartArgs): Promise<{ data: ChartMarketData; meta: Meta } | null> {
   const symbol = args.symbol.toUpperCase().replace(/[^A-Z0-9]/g, "");
   const tf = args.timeframe;
@@ -222,8 +228,21 @@ export async function getChartHistory(args: ChartArgs): Promise<{ data: ChartMar
   if (!tfsFor(args.assetType).includes(tf)) return null;
 
   try {
+    const ttlMs = chartFreshMs(args.assetType, tf);
+    // Phase 6 §7 — REALTIME MARKET STORE first: shared across users, no direct
+    // provider call when the stored series is fresh (write-through producer below).
+    const stored = marketStore.getCandles(args.assetType, symbol, tf);
+    if (stored && stored.candles.length >= Math.min(limit, stored.limit) && Date.now() - stored.ingestedAt <= ttlMs) {
+      return buildChartResult(stored.candles, stored.source, stored.sourceTimestampMs, stored.gaps, stored.suspect, {
+        assetType: args.assetType,
+        tf,
+        cached: true,
+        note: "Dữ liệu từ Realtime Market Store (chung cho mọi user — provider không được gọi lại)",
+      });
+    }
+
     const res = await cached(`chart:${args.assetType}:${symbol}:${tf}:${limit}`, {
-      ttlMs: args.assetType === "crypto" ? 18_000 : args.assetType === "forex" ? 45_000 : 60_000,
+      ttlMs,
       staleMs: 24 * 3_600_000,
       producer: async () => {
         const raw =
@@ -252,34 +271,66 @@ export async function getChartHistory(args: ChartArgs): Promise<{ data: ChartMar
     });
 
     const { candles, source, note, gaps, suspect } = res.value;
-    const last = candles[candles.length - 1];
-    const meta = buildMeta({
-      source,
-      sourceTimestampMs: last?.time ?? Date.now(),
-      cached: res.cached,
-      stale: res.stale,
-      note: [note, gaps ? `${gaps} khoảng trống dữ liệu trong chuỗi` : null, suspect ? `quality: SUSPECT flags đã log` : null]
-        .filter(Boolean)
-        .join(" · ") || undefined,
-      slas:
-        args.assetType === "crypto"
-          ? { liveSlaMs: TF_MS[tf] * 1.5, freshSlaMs: TF_MS[tf] * 4, delayedSlaMs: TF_MS[tf] * 20 }
-          : { liveSlaMs: TF_MS[tf] * 2, freshSlaMs: TF_MS[tf] * 6, delayedSlaMs: TF_MS[tf] * 48 },
-    });
-    meta.qualityStatus = suspect ? "SUSPECT" : "VALID";
-
-    const data: ChartMarketData = {
-      candles,
-      indicators: computeIndicators(candles),
-      markers: computeMarkers(candles),
+    // Phase 6 §7 — write-through: next users read from the store, no provider call.
+    marketStore.setCandles({
+      assetType: args.assetType,
+      symbol,
+      timeframe: tf,
       intervalMs: TF_MS[tf],
+      limit,
+      candles,
+      source,
+      sourceTimestampMs: candles[candles.length - 1]?.time ?? Date.now(),
       gaps,
       suspect,
-    };
-    return { data, meta };
+    });
+    return buildChartResult(candles, source, candles[candles.length - 1]?.time ?? Date.now(), gaps, suspect, {
+      assetType: args.assetType,
+      tf,
+      cached: res.cached,
+      stale: res.stale,
+      note,
+    });
   } catch {
     return null;
   }
+}
+
+/** Build the normalized ChartMarketData + freshness meta from a candle series. */
+function buildChartResult(
+  candles: ChartCandle[],
+  source: string,
+  sourceTimestampMs: number | null,
+  gaps: number,
+  suspect: number,
+  opts: { assetType: ChartAssetType; tf: string; cached?: boolean; stale?: boolean; note?: string },
+): { data: ChartMarketData; meta: Meta } {
+  const last = candles[candles.length - 1];
+  const meta = buildMeta({
+    source,
+    sourceTimestampMs: sourceTimestampMs ?? last?.time ?? Date.now(),
+    cached: opts.cached,
+    stale: opts.stale,
+    note: [opts.note, gaps ? `${gaps} khoảng trống dữ liệu trong chuỗi` : null, suspect ? `quality: SUSPECT flags đã log` : null]
+      .filter(Boolean)
+      .join(" · ") || undefined,
+    slas:
+      opts.assetType === "crypto"
+        ? { liveSlaMs: TF_MS[opts.tf] * 1.5, freshSlaMs: TF_MS[opts.tf] * 4, delayedSlaMs: TF_MS[opts.tf] * 20 }
+        : { liveSlaMs: TF_MS[opts.tf] * 2, freshSlaMs: TF_MS[opts.tf] * 6, delayedSlaMs: TF_MS[opts.tf] * 48 },
+  });
+  meta.qualityStatus = suspect ? "SUSPECT" : "VALID";
+  return {
+    data: {
+      candles,
+      indicators: computeIndicators(candles),
+      markers: computeMarkers(candles),
+      intervalMs: TF_MS[opts.tf],
+      gaps,
+      suspect,
+    },
+    meta,
+  };
 }
 
 /* technical snapshot reuse for overlays elsewhere */
