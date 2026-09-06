@@ -2,13 +2,13 @@
  * SERIES MANAGER — official Lightweight Charts v5 API.
  * Owns base series (5 chart kinds), volume, indicator series across native
  * panes (price 0 / rsi 1 / macd 2), S/R price lines and incremental updates.
+ * Types from chart-const only — never import server-only services.
  */
 import {
   AreaSeries, BarSeries, BaselineSeries, CandlestickSeries, HistogramSeries, LineSeries,
   LineStyle, type IChartApi, type ISeriesApi, type IPriceLine, type Time, type UTCTimestamp,
 } from "lightweight-charts";
-import type { ChartIndicators } from "@/lib/services/chart";
-import type { ChartCandle } from "@/lib/chart-const";
+import type { ChartIndicators, ChartCandle } from "@/lib/chart-const";
 import type { ChartKind } from "./theme";
 import { ORCA_CHART_THEME as T } from "./theme";
 
@@ -27,7 +27,6 @@ export class SeriesManager {
   constructor(private chart: IChartApi) {}
 
   createBase(kindToShow: ChartKind) {
-    // remove any previous
     for (const k of this.kinds) {
       const s = this.baseSeries[k];
       if (s) {
@@ -36,7 +35,7 @@ export class SeriesManager {
       this.baseSeries[k] = undefined;
     }
     this.kinds = [kindToShow];
-    const opts = { visible: kindToShow === kindToShow };
+    const opts = { visible: true };
     switch (kindToShow) {
       case "candles":
         this.baseSeries.candles = this.chart.addSeries(
@@ -81,6 +80,9 @@ export class SeriesManager {
   }
 
   setHistory(candles: ChartCandle[], kind: ChartKind) {
+    if (!this.baseSeries.candles && !this.baseSeries.area && !this.baseSeries.line && !this.baseSeries.bar && !this.baseSeries.baseline) {
+      this.createBase(((kind as string) === "candle" ? "candles" : kind) as ChartKind);
+    }
     const ls = candles.map((c) => ({ time: toSec(c.time), open: c.open, high: c.high, low: c.low, close: c.close }));
     const vs = candles.map((c) => ({ time: toSec(c.time), value: c.close }));
     this.baseSeries.candles?.setData(ls);
@@ -115,7 +117,6 @@ export class SeriesManager {
     }
   }
 
-  /** incremental EMA update per tick — O(1), no history recalc */
   updateIncremental(close: number, timeMs: number) {
     for (const [key, s] of this.emaState) {
       const next = close * s.k + s.last * (1 - s.k);
@@ -124,8 +125,6 @@ export class SeriesManager {
       this.indicators.get(key)?.update({ time: toSec(timeMs), value: next });
     }
   }
-
-  /* ----------------------------- indicators ------------------------------ */
 
   rebuildIndicators(ind: ChartIndicators | null, visible: { ema: boolean; bollinger: boolean; vwap: boolean; rsi: boolean; macd: boolean; srLevels: boolean }) {
     for (const [, s] of this.indicators) {
@@ -194,8 +193,6 @@ export class SeriesManager {
     for (const key of map[k] ?? []) this.indicators.get(key)?.applyOptions({ visible: on });
   }
 
-  /* ------------------------------ S/R lines -------------------------------- */
-
   rebuildSrLines(ind: ChartIndicators | null, on: boolean) {
     const c = this.base();
     if (!c) return;
@@ -218,7 +215,6 @@ export class SeriesManager {
 
   private extraLevelLines: IPriceLine[] = [];
 
-  /** Vietnam price bands: Trần (ceiling) / Tham chiếu (reference) / Sàn (floor) */
   rebuildExtraLevels(levels: { label: string; price: number; color: string }[]) {
     const c = this.base();
     if (!c) return;
