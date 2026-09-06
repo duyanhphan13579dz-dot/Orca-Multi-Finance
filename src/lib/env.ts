@@ -45,6 +45,8 @@ export const env = {
   /** Snapshot cadence cho commodity quotes (user-mandated 3s polling; floor 2s).
    *  Nguồn WiFeed cập nhật theo ngày — cache dữ liệu 3 phút (xem vietnambiz-data). */
   commoditySnapshotTtlMs: parseBoundedIntEnv(process.env.COMMODITY_SNAPSHOT_TTL_MS, 3_000, 2_000, 300_000),
+  /** WiFeed /goods chỉ refresh 1 lần/ngày (00:00) — cache parse 6h mặc định (30s..24h) */
+  vnbDataTtlMs: parseBoundedIntEnv(process.env.VNB_DATA_TTL_MS, 6 * 3_600_000, 30_000, 24 * 3_600_000),
 
   /* Vietnam stocks — provider chain (Phase 10 SAFE FALLBACK).
    * Default: VNDirect primary; Simplize = candidate embed-only cho tới khi

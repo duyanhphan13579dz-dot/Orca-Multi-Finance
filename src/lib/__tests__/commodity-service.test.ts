@@ -1,38 +1,22 @@
 /**
  * COMMODITY SERVICE — nguồn DUY NHẤT data.vietnambiz.vn/goods (WiFeed).
- * Stub fetch trả đúng HTML bảng /goods (giá thật công bố 2026-09-06: vàng
- * 4,442.4 · SJC 147,600 nghìn đồng/lượng · nhôm 24,373 · kẽm 26,633 ·
- * WTI 91.22 · heo 57,833 · gạo TPXK 10,200 · hồ tiêu 137,000 · xăng 22.48/diesel 27.74
- * · đá 1x2 169,200 · PVC 4,835). Yahoo CHỈ dùng cho chart OHLC lịch sử.
- * Không mock — mọi số là giá WiFeed công bố.
+ * Stub fetch trả HTML bảng /goods 66 dòng THẬT (giá công bố 2026-09-06)
+ * + CSS blob dán vào mọi ô giống trang SSR — parser phải rửa sạch hết.
+ * Yahoo CHỈ dùng cho chart OHLC lịch sử. Không mock — mọi số là giá WiFeed.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
 import { getCommodityMarket, getCommodityHistory, getCommodityDetail, getCommodityCorrelation, getCommodityNews } from "../services/commodities";
 import { clearCacheForTests } from "../cache";
+import { junkGoodsHtml } from "./fixtures/vnb-goods";
 import { getVnbGoodsQuotes } from "../providers/vietnambiz-data";
 import { COMMODITY_CATALOG } from "../providers/commodities";
 
 const date = (iso: string) => new Date(iso).toISOString();
 
 function goodsHtml(): string {
-  const row = (name: string, unit: string, price: string, d: string) =>
-    `<tr><td>${name}<br>${unit}</td><td>${price}</td><td>--</td><td>--</td><td>--</td><td>${d}</td></tr>`;
-  return `<table><tr><th>Mặt hàng</th><th>Giá</th><th>% Ngày</th><th>% Tháng</th><th>% Năm</th><th>Ngày cập nhật</th></tr>
-${row("Giá heo hơi trong nước", "Đồng/kg", "57,833", "04/09/2026")}
-${row("Giá vàng", "USD/ounce", "4,442.4", "05/09/2026")}
-${row("Giá vàng trong nước", "Đồng/lượng", "147,600", "05/09/2026")}
-${row("Nhôm Trung Quốc", "CNY/tấn", "24,373", "05/09/2026")}
-${row("Kẽm Trung Quốc", "CNY/tấn", "26,633", "05/09/2026")}
-${row("Dầu WTI", "USD/thùng", "91.22", "05/09/2026")}
-${row("Gạo TPXK", "Đồng/kg", "10,200", "27/08/2026")}
-${row("Hồ tiêu", "Đồng/kg", "137,000", "05/09/2026")}
-${row("Xăng sinh học E5 RON 92-II", "Nghìn/lít", "22.48", "04/09/2026")}
-${row("Xăng Diezen", "Nghìn/lít", "27.74", "04/09/2026")}
-${row("Đá 1x2", "Đồng/m3", "169,200", "01/07/2026")}
-${row("Hạt nhựa PVC Trung Quốc", "CNY/tấn", "4,835", "06/09/2026")}
-${row("Phụ phẩm lúa gạo", "Đồng/kg", "8,475", "27/08/2026")}
-</table>`;
+  // 66 dòng thật + CSS blob trong MỌI ô (giống trang SSR) — parser rửa sạch
+  return `<table>${junkGoodsHtml()}</table>`;
 }
 
 function yahooChartBody(symbol: string, price: number, prev: number): unknown {
@@ -65,17 +49,15 @@ globalThis.fetch = ((input: RequestInfo | URL) => {
   return Promise.resolve(new Response("nope", { status: 502 }));
 }) as typeof fetch;
 
-test("getCommodityMarket: 12/12 mục trong stub có row từ WiFeed, UNAVAILABLE rỗng", async () => {
+test("getCommodityMarket: 66/66 dòng /goods (có CSS blob trong mọi ô) → row đủ + không UNAVAILABLE", async () => {
   const r = await getCommodityMarket();
   assert.ok(r, "market resolve");
-  const keys = r.data.rows.map((x) => x.id);
-  for (const k of ["pig-vn", "gold", "sjc-gold", "aluminum", "zinc", "wti", "rice", "pepper", "gasoline-92", "diesel", "aggregate-1x2", "pvc", "rice-byproduct"]) {
-    assert.ok(keys.includes(k), `row ${k}`);
+  assert.equal(r.data.rows.length, 66, "66/66 mục khớp catalog");
+  const ids = new Set(r.data.rows.map((x) => x.id));
+  for (const k of ["pig-vn", "gold", "sjc-gold", "aluminum", "zinc", "wti", "rice", "pepper", "gasoline-92", "diesel", "aggregate-1x2", "pvc", "rice-byproduct", "asphalt", "pile", "copper-cn"]) {
+    assert.ok(ids.has(k), `row ${k}`);
   }
-  // stub cung cấp 13/66 dòng → 53 mục UNAVAILABLE là HÀNH VI ĐÚNG (không fallback/bịa)
-  assert.equal(r.data.rows.length, 13, "đúng 13 dòng stub khớp catalog");
-  assert.equal(r.data.unavailable.length, COMMODITY_CATALOG.length - 13, "các mục chưa có trên /goods → UNAVAILABLE");
-  assert.ok(r.data.unavailable.every((u) => /VietnamBiz|vietnambiz|Không có dòng/.test(u.reason)), "reason ghi rõ nguồn duy nhất");
+  assert.equal(r.data.unavailable.length, 0, "không còn mục nào UNAVAILABLE khi nguồn chạy");
   assert.ok(r.data.sourcesUsed.includes("VietnamBiz Data (WiFeed)"));
   assert.ok(!r.data.sourcesUsed.some((s) => /Simplize|Yahoo|Binance|MSN/i.test(s)), "chỉ WiFeed cho quote");
 });
@@ -101,6 +83,11 @@ test("getCommodityMarket: giá trị + đơn vị + ngày cập nhật đúng nh
   assert.equal(row("aggregate-1x2").price, 169_200);
   assert.equal(row("pvc").price, 4_835);
   assert.equal(row("rice-byproduct").price, 8_475);
+  assert.equal(row("asphalt").price, 4_146_000);
+  assert.equal(row("pile").price, 7_416_667);
+  assert.equal(row("copper-cn").price, 110_032);
+  assert.equal(row("gasoline-95").price, 24.15);
+  assert.equal(row("rubber").currency, "JPY");
   // freshness: ngày công bố 05/09/2026 → không bao giờ UNAVAILABLE/LIVE (dữ liệu ngày)
   const fr = row("gold").freshness;
   assert.ok(fr != null && ["FRESH", "DELAYED", "STALE"].includes(fr), fr ?? "none");
@@ -153,7 +140,9 @@ test("crash-safety: WiFeed down → provider throw; market resolve với 66 UNAV
   assert.equal(r.data.rows.length, 0);
   assert.equal(r.data.unavailable.length, COMMODITY_CATALOG.length);
   assert.ok(r.data.unavailable.every((u) => /VietnamBiz|vietnambiz/.test(u.reason)), "không bịa fallback");
-  assert.ok(r.data.errors.some((e) => e.includes("vietnambiz-data")));
+  const err = r.data.errors.find((e) => e.includes("vietnambiz-data"));
+  assert.ok(err, "error có thông tin chi tiết");
+  assert.match(err, /http_\d+|rows=|sample=/, "diagnostic rõ ràng: lỗi HTTP hoặc rows/sample parse");
   globalThis.fetch = origFetch;
   clearCacheForTests();
 });

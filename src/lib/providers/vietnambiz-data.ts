@@ -25,10 +25,22 @@ class VnbDataError extends Error {
 export const VN_DATA_PROVIDER = "vietnambiz-data";
 export const VN_DATA_SOURCE = "VietnamBiz Data (WiFeed)";
 
-/** Chrome UA mặc định của http.ts — KHÔNG gửi UA bot (WAF WiGroup chặn bot UA). */
+/** Headers kiểu Chrome (UA thật ở http.ts) — WAF WiGroup chặn request thiếu
+ *  sec-ch-ua/*sec-fetch-* (thường trả 403/429 → mọi mục UNAVAILABLE). */
 const DATA_PORTAL_HEADERS: Record<string, string> = {
   Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
   "Accept-Language": "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7",
+  "Cache-Control": "no-cache",
+  Pragma: "no-cache",
+  "Upgrade-Insecure-Requests": "1",
+  "Sec-Fetch-Dest": "document",
+  "Sec-Fetch-Mode": "navigate",
+  "Sec-Fetch-Site": "same-origin",
+  "Sec-Fetch-User": "?1",
+  "sec-ch-ua": '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+  "sec-ch-ua-mobile": "?0",
+  "sec-ch-ua-platform": '"Windows"',
+  Referer: "https://data.vietnambiz.vn/",
 };
 
 /* ------------------------------ HTML helpers ------------------------------ */
@@ -100,7 +112,10 @@ const isCssJunk = (s: string) =>
 /** cell đã cellText() nhưng vẫn lẫn CSS dạng text → trả về "" (không hiện rác). */
 const cleanCell = (s: string | null | undefined): string => {
   const t = stripCssText((s ?? "").trim());
-  return isCssJunk(t) ? "" : t;
+  if (isCssJunk(t)) return "";
+  // rác CSS có thể để sót dấu phân cách ở đầu/cuối (", Giá heo hơi…", "…, "):
+  // cắt bỏ nhưng không đụng dấu phẩy TRONG tên ("RON 95-II,III", "30x30cm, L=18m").
+  return t.replace(/^[\s,;:.\-–•|]+/, "").replace(/[\s,;:.\-–•|]+$/, "").replace(/\s+/g, " ").trim();
 };
 
 /** Header tokens nhận diện bảng dữ liệu thật (loại bảng dump CSS). */
@@ -305,8 +320,29 @@ export const VNB_GOODS_MAP: VnbGoodsMap[] = [
 
 export const VNB_GOODS_KEYS: ReadonlySet<string> = new Set(VNB_GOODS_MAP.map((m) => m.key));
 
+/** normalize: bỏ dấu/hoa thường/khoảng trắng & punctuation → chuỗi khớp bền. */
+function normGoods(s: string): string {
+  return s
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "");
+}
+
+/** khớp dài nhất trước (để "Giá vàng trong nước" → sjc-gold, không trúng "gold"). */
+const FUZZY = [...VNB_GOODS_MAP].sort((a, b) => normGoods(b.rx.source).length - normGoods(a.rx.source).length);
+
 export function matchVnbGoods(name: string): VnbGoodsMap | null {
+  // 1) chính xác (nhanh, không sai)
   for (const m of VNB_GOODS_MAP) if (m.rx.test(name)) return m;
+  // 2) bền: cho phép rác CSS còn sót ở đầu/cuối hoặc label đổi nhẹ (containment)
+  const n = normGoods(name);
+  if (!n) return null;
+  for (const m of FUZZY) {
+    const k = normGoods(m.rx.source.replace(/^\^/, "").replace(/\$$/, ""));
+    // đòi hỏi khớp cả TÊN (không phải chỉ unit) để tránh false-positive
+    if (k.length >= 4 && n.includes(k)) return m;
+  }
   return null;
 }
 
@@ -339,17 +375,33 @@ export async function getVnbDatasetText(dataset: "goods" | "macro-economic" | "c
     // WiFeed cập nhật theo NGÀY — cache 3 phút (không phải 3s) là đủ và tránh
     // bị WAF rate-limit khi client poll 3s (tổng hợp commodities:all vẫn tươi 3s
     // vì đọc từ cache này + các cache per-source khác).
-    ttlMs: 3 * 60_000,
-    staleMs: 24 * 3_600_000,
+    // WiFeed chỉ refresh 1 lần/ngày (00:00 — user xác nhận 2026-09-06):
+    // cache 6h (mặc định) tránh bị WAF chặn vì poll quá dày; stale 48h cho
+    // last-known khi nguồn tạm lỗi.
+    ttlMs: env.vnbDataTtlMs,
+    staleMs: 48 * 3_600_000,
     producer: async () => {
-      const r = await httpText(url, {
-        provider: VN_DATA_PROVIDER,
-        timeoutMs: 12_000,
-        retries: 1,
-        headers: DATA_PORTAL_HEADERS,
-      });
-      if (!r.ok || !r.text) throw new VnbDataError(`vietnambiz-data: ${r.error ?? "unreachable"} (${url})`, VN_DATA_PROVIDER);
-      return r.text;
+      let attempt = 0;
+      const fetchOnce = async (): Promise<string> => {
+        const r = await httpText(url, {
+          provider: VN_DATA_PROVIDER,
+          timeoutMs: 12_000,
+          retries: 1,
+          headers: DATA_PORTAL_HEADERS,
+        });
+        if (!r.ok || !r.text) {
+          // WAF có thể trả 403/404 thay vì 429 — retry thêm 1 lần sau 3s
+          // (cached() dedupe in-flight nên không tạo thêm áp lực)
+          if ((r.status === 403 || r.status === 404) && attempt < 1) {
+            attempt += 1;
+            await new Promise((res) => setTimeout(res, 3_000));
+            return fetchOnce();
+          }
+          throw new VnbDataError(`vietnambiz-data: ${r.error ?? "unreachable"} (${url})`, VN_DATA_PROVIDER);
+        }
+        return r.text;
+      };
+      return fetchOnce();
     },
   });
   return res.value;
@@ -359,7 +411,16 @@ export async function getVnbGoodsQuotes(): Promise<Map<string, RawCommodityQuote
   const html = await getVnbDatasetText("goods");
   const rows = parseVnbGoodsRows(html);
   const mapped = mapVnbGoodsRows(rows);
-  if (mapped.size === 0) throw new VnbDataError("vietnambiz-data: goods page parse failed (structure changed?)", VN_DATA_PROVIDER);
+  if (mapped.size === 0) {
+    const sample = rows
+      .slice(0, 8)
+      .map((r) => `${r.name} [${r.unit}] ${r.price}`)
+      .join(" | ");
+    throw new VnbDataError(
+      `vietnambiz-data: goods page parse failed (structure changed?) — rows=${rows.length}, htmlChars=${html.length}, sample=${sample.slice(0, 400)}`,
+      VN_DATA_PROVIDER,
+    );
+  }
   return mapped;
 }
 

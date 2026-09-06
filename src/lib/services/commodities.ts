@@ -60,21 +60,70 @@ export interface CommodityMarket {
  * User directive 2026-09-06: toàn bộ hàng hóa lấy từ data.vietnambiz.vn/goods.
  * Simplize (và Yahoo/MSN/Binance quote) đã bỏ. Yahoo chỉ còn cho chart OHLC
  * lịch sử (getCommodityHistory). Mỗi cycle: 1 request bảng WiFeed → map 66 mục
- * → validate → market store. Cache WiFeed 3 phút (dữ liệu cập nhật theo ngày).
+ * → validate → market store. Cache WiFeed 6h (nguồn chỉ refresh 00:00 hằng ngày);
+ * nguồn trực tiếp lỗi → fallback bản ghi cuối ≤48h đã lưu DB (nhãn STALE, không mock).
  */
+
+/** Bản ghi WiFeed cuối cùng đã lưu DB (< 48h) — dữ liệu THẬT, chỉ dùng khi nguồn trực tiếp lỗi. */
+async function loadLastKnownQuotes(): Promise<Map<string, RawCommodityQuote>> {
+  try {
+    const { db } = await import("@/db");
+    const { commodityQuotes } = await import("@/db/schema");
+    const { desc } = await import("drizzle-orm");
+    const rows = await db.select().from(commodityQuotes).orderBy(desc(commodityQuotes.ingestedAt)).limit(800);
+    const out = new Map<string, RawCommodityQuote>();
+    const cutoff = Date.now() - 48 * 3_600_000;
+    for (const r of rows) {
+      if (out.has(r.symbol)) continue; // đã có bản mới nhất cho symbol này
+      const ts = r.sourceTimestamp ? new Date(r.sourceTimestamp).getTime() : (r.ingestedAt ? new Date(r.ingestedAt).getTime() : null);
+      if (ts == null || ts < cutoff) continue; // quá cũ → không dùng
+      const price = r.price != null ? Number(r.price) : NaN;
+      if (!Number.isFinite(price) || price <= 0) continue;
+      out.set(r.symbol, {
+        source: `${r.source ?? "VietnamBiz Data (WiFeed)"} — bản ghi cuối`,
+        price,
+        change: r.change != null ? Number(r.change) : null,
+        changePercent: r.changePercent != null ? Number(r.changePercent) : null,
+        unit: r.unit ?? null,
+        currency: r.currency ?? null,
+        timestamp: ts,
+        url: r.sourceUrl,
+      });
+    }
+    return out;
+  } catch {
+    return new Map(); // DB chưa cấu hình → chỉ UNAVAILABLE, không giả
+  }
+}
 
 async function fetchAll(): Promise<CommodityMarket> {
   const errors: string[] = [];
   const sourcesUsed = new Set<string>();
   const rows: CommodityRow[] = [];
   const unavailable: CommodityUnavailable[] = [];
-
   let vnbDataByKey: Map<string, RawCommodityQuote> | null = null;
   try {
     vnbDataByKey = await getVnbGoodsQuotes();
     if (vnbDataByKey.size) sourcesUsed.add("VietnamBiz Data (WiFeed)");
   } catch (e) {
-    errors.push(`vietnambiz-data: ${e instanceof Error ? e.message : String(e)}`);
+    errors.push(e instanceof Error ? e.message : String(e));
+  }
+  // Nguồn trực tiếp lỗi → thử bản ghi WiFeed cuối đã lưu DB (nhãn STALE/DELAYED thật)
+  let usingLastKnown = false;
+  if (!vnbDataByKey || vnbDataByKey.size === 0) {
+    const lk = await loadLastKnownQuotes();
+    if (lk.size > 0) {
+      vnbDataByKey = new Map<string, RawCommodityQuote>();
+      for (const def of COMMODITY_CATALOG) {
+        const q = lk.get(def.symbol);
+        if (q) vnbDataByKey.set(def.key, q);
+      }
+      if (vnbDataByKey.size > 0) {
+        usingLastKnown = true;
+        sourcesUsed.add("VietnamBiz Data (WiFeed) — bản ghi cuối (DB)");
+        errors.push("WiFeed trực tiếp tạm lỗi — đang hiển thị bản ghi cuối cùng (≤48h) đã lưu từ trang /goods (dữ liệu thật, không phải mock)");
+      }
+    }
   }
 
   for (const def of COMMODITY_CATALOG) {
@@ -88,6 +137,9 @@ async function fetchAll(): Promise<CommodityMarket> {
     }
 
     const freshness = commodityFreshness(best.timestamp, { hasData: true });
+    if (usingLastKnown) {
+      freshness.note = "Nguồn WiFeed trực tiếp tạm lỗi — giá là bản công bố cuối cùng đã lưu (refresh 00:00 hằng ngày)";
+    }
     const providerPerf: Record<string, number | null> = {
       "1W": best.perf?.["1W"] ?? null,
       "1M": best.perf?.["1M"] ?? null,
@@ -227,11 +279,16 @@ export async function getCommodityMarket(): Promise<{ data: CommodityMarket; met
   }
 }
 
+/** Chỉ ghi khi giá/timestamp đổi (WiFeed đổi 1 lần/ngày → ~1 write/mục/ngày). */
+const lastPersisted = new Map<string, string>();
+
 async function persistQuotes(rows: CommodityRow[]) {
   try {
     const { db } = await import("@/db");
     const { commodityQuotes } = await import("@/db/schema");
-    for (const r of rows.slice(0, 30)) {
+    for (const r of rows) {
+      const sig = `${r.symbol}:${r.price}:${r.sourceTimestamp ?? ""}`;
+      if (lastPersisted.get(r.symbol) === sig) continue;
       await db.insert(commodityQuotes).values({
         commodity: r.commodity,
         symbol: r.symbol,
@@ -245,7 +302,9 @@ async function persistQuotes(rows: CommodityRow[]) {
         sourceUrl: r.sourceRecords[0]?.url ?? null,
         sourceTimestamp: r.updatedAt ? new Date(r.updatedAt) : null,
       });
+      lastPersisted.set(r.symbol, sig);
     }
+    if (lastPersisted.size > 200) lastPersisted.clear(); // chống leak
   } catch {
     /* best-effort */
   }

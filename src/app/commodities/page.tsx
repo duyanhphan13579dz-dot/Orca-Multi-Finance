@@ -39,15 +39,15 @@ type Data = CommodityMarket & {
   }[];
 };
 
+/** NHÓM theo đúng bảng /goods (6 nhóm). */
 const GROUPS: { key: string; title: string; desc: string }[] = [
   { key: "", title: "Tất cả", desc: "" },
-  { key: "metals", title: "Kim loại quý", desc: "Vàng · Bạc" },
+  { key: "consumer", title: "Hàng tiêu dùng", desc: "Heo · Gạo · Cà phê" },
+  { key: "metals", title: "Kim loại & phi kim", desc: "Vàng · Đồng · Nhôm" },
+  { key: "chemicals", title: "Hóa chất", desc: "Ure · Xút · Lưu huỳnh" },
+  { key: "construction", title: "Vật liệu xây dựng", desc: "Thép · Đá · Xi măng" },
   { key: "energy", title: "Năng lượng", desc: "Dầu · Gas · Xăng dầu" },
-  { key: "industrial", title: "Công nghiệp", desc: "Đồng · Thép" },
-  { key: "agriculture", title: "Nông sản", desc: "Cà phê · Ngô · Gạo" },
-  { key: "livestock", title: "Chăn nuôi & Sữa", desc: "Heo hơi · Sữa bột" },
-  { key: "seafood", title: "Thủy sản", desc: "Tôm · Cá tra" },
-  { key: "vietnam", title: "Việt Nam", desc: "SJC · Xăng · Heo" },
+  { key: "plastics", title: "Nhựa & cao su", desc: "PVC · PP · PET" },
 ];
 
 const DATE_RANGES: { label: string; tf: string; limit: number }[] = [
@@ -95,6 +95,7 @@ export default function CommoditiesPage() {
   }, [data, group, q]);
 
   const bySymbol = useMemo(() => new Map((data?.rows ?? []).map((r) => [r.symbol, r])), [data]);
+  const byUnavailable = useMemo(() => new Map((data?.unavailable ?? []).map((u) => [u.key, u])), [data]);
   /** chartable = real OHLC source exists (catalog hasChart) — same container, data-driven */
   const chartable = useMemo(() => new Set((data?.catalog ?? []).filter((d) => d.hasChart).map((d) => d.symbol)), [data]);
   const chartDef = chart ? data?.catalog.find((d) => d.symbol === chart && d.hasChart) : null;
@@ -189,13 +190,15 @@ export default function CommoditiesPage() {
             const groupMeta = GROUPS.find((x) => x.key === d.group);
             const openDetail = () => setDetail(d.key);
             if (!row) {
+              const un = byUnavailable.get(d.key);
               return (
                 <div key={d.key} className="panel flex items-center justify-between p-3 opacity-60">
-                  <div>
+                  <div className="min-w-0">
                     <div className="text-[13px] font-medium">{d.nameVi}</div>
                     <div className="text-[10px] text-text-muted">{d.symbol} · {groupMeta?.title}</div>
+                    {un?.reason && <div className="mt-1 line-clamp-2 text-[9.5px] leading-snug text-text-muted">{un.reason}</div>}
                   </div>
-                  <Badge tone="warn">UNAVAILABLE</Badge>
+                  <span title={un?.reason ?? undefined}><Badge tone="warn">UNAVAILABLE</Badge></span>
                 </div>
               );
             }
@@ -263,9 +266,15 @@ export default function CommoditiesPage() {
       )}
 
       {data && data.unavailable.length > 0 && (
-        <p className="text-[11px] text-text-muted">
-          {data.unavailable.length} mặt hàng chưa có nguồn (VietnamBiz Data / WiFeed) — hệ thống không mock data.
-        </p>
+        <div className="space-y-1 text-[11px] text-text-muted">
+          <p>
+            {data.unavailable.length} mặt hàng chưa có nguồn (VietnamBiz Data / WiFeed) — hệ thống không mock data.
+            {data.sourcesUsed.length > 0 && <> · nguồn đang dùng: {data.sourcesUsed.join(", ")}</>}
+          </p>
+          {data.errors?.[0] && (
+            <p className="text-[10px] text-warning/90">Lỗi nguồn: {data.errors[0]}</p>
+          )}
+        </div>
       )}
 
       {/* LANDING PAGE NỔI — floating overlay khi chọn/chạm một hàng hóa */}
