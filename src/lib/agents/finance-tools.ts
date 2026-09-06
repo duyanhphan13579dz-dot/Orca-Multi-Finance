@@ -1,5 +1,5 @@
 import { buildFinancialProfile, type FinancialProfile, type FinancialGoal } from "../finance/financial-profile";
-import { projectGoal, requiredMonthlySaving, runPortfolioScenario, type Holding } from "../finance/financial-math";
+import { computeBudgetPlan, projectGoal, requiredMonthlySaving, runPortfolioScenario, type Holding } from "../finance/financial-math";
 import { errResult, okResult, type ToolHandler, type ToolResult } from "./tool-types";
 
 /**
@@ -202,6 +202,36 @@ export const personalFinanceTools: ToolHandler[] = [
         annualReturnPct: args.annualReturnPct != null ? Number(args.annualReturnPct) : goal.annualReturnPct,
         note: rr.monthly === 0 ? "Đã đủ tiền cho mục tiêu — không cần góp thêm" : "Kết quả giả định lãi kép hàng tháng — model inference, không phải bảo đảm",
       });
+    },
+  },
+  {
+    spec: {
+      name: "budget_plan",
+      domain: "personal-finance",
+      category: "analysis",
+      description: "Kế hoạch tiêu tiền: ngân sách tổng / số tuần → ngân sách mỗi tuần, trừ chi phí cố định, phần còn lại cho chi tiêu linh hoạt (kèm gợi ý 50/20/30).",
+      params: [
+        { name: "totalAmount", type: "number", required: true, min: 1, description: "Tổng ngân sách (VNĐ)" },
+        { name: "weeks", type: "number", required: true, min: 1, max: 260, description: "Số tuần" },
+        { name: "fixedExpenses", type: "array", required: false, description: "Mảng { label, amount, per: 'week'|'period' }" },
+      ],
+      outputType: "{ weeklyBudget, fixedWeekly, discretionaryWeekly, deficit, suggestedSplit, note }",
+      requiresProfile: false,
+    },
+    async execute(args) {
+      const totalAmount = Number(args.totalAmount);
+      const weeks = Number(args.weeks);
+      const rawFixed = Array.isArray(args.fixedExpenses) ? (args.fixedExpenses as unknown[]) : [];
+      const fixedExpenses = rawFixed
+        .map((f) => {
+          const o = f as Record<string, unknown>;
+          const amount = Number(o.amount);
+          return { label: String(o.label ?? "Khoản cố định"), amount, per: (o.per === "period" ? "period" : "week") as "week" | "period" };
+        })
+        .filter((f) => Number.isFinite(f.amount) && f.amount > 0);
+      const plan = computeBudgetPlan(totalAmount, weeks, fixedExpenses);
+      if (!plan) return errResult("INVALID_INPUT", "Cần totalAmount > 0 và weeks > 0");
+      return okResult(plan, { trace: ["finance-math-engine", "budget-engine"] });
     },
   },
 ];

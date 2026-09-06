@@ -441,3 +441,61 @@ export function runPortfolioScenario(holdings: Holding[], shocks: ScenarioShock[
   const after = perClass.reduce((a, r) => a + r.after, 0);
   return { before, after, changePct: (after - before) / before * 100, perClass };
 }
+
+/* ------------------------------- budget plan ------------------------------- */
+
+export interface FixedExpenseItem {
+  label: string;
+  amount: number;
+  per: "week" | "period"; // week = mỗi tuần; period = tổng cả kỳ
+}
+
+export interface BudgetPlanResult {
+  totalAmount: number;
+  weeks: number;
+  weeklyBudget: number;
+  fixedWeekly: number;
+  fixedBreakdown: { label: string; weekly: number; periodTotal: number }[];
+  discretionaryWeekly: number;
+  deficit: number | null; // thiếu hụt mỗi tuần (khi fixed > weekly budget)
+  suggestedSplit: { bucket: string; pct: number; weekly: number }[];
+  note: string;
+}
+
+/**
+ * KẾ HOẠCH CHI TIÊU — deterministic từ ngân sách + chi phí cố định.
+ * suggestedSplit là MODEL-INFERENCE (quy tắc 50/20/30 trên phần linh hoạt),
+ * luôn kèm note; các con số còn lại là DATA-DRIVEN từ input của user.
+ */
+export function computeBudgetPlan(
+  totalAmount: number,
+  weeks: number,
+  fixedExpenses: FixedExpenseItem[] = [],
+): BudgetPlanResult | null {
+  if (!Number.isFinite(totalAmount) || totalAmount <= 0 || !Number.isFinite(weeks) || weeks <= 0) return null;
+  const weeklyBudget = totalAmount / weeks;
+  const fixedBreakdown = fixedExpenses.map((f) => {
+    const weekly = f.per === "week" ? f.amount : f.amount / weeks;
+    return { label: f.label, weekly, periodTotal: weekly * weeks };
+  });
+  const fixedWeekly = fixedBreakdown.reduce((a, f) => a + f.weekly, 0);
+  const discretionaryWeekly = weeklyBudget - fixedWeekly;
+  const deficit = discretionaryWeekly < 0 ? -discretionaryWeekly : null;
+  const base = Math.max(0, discretionaryWeekly);
+  const suggestedSplit = [
+    { bucket: "Chi tiêu linh hoạt (ăn uống, đi lại phát sinh)", pct: 50, weekly: (base * 50) / 100 },
+    { bucket: "Dự phòng (sự cố, tăng giá)", pct: 20, weekly: (base * 20) / 100 },
+    { bucket: "Tự do (giải trí, mua sắm nhỏ)", pct: 30, weekly: (base * 30) / 100 },
+  ];
+  return {
+    totalAmount,
+    weeks,
+    weeklyBudget,
+    fixedWeekly,
+    fixedBreakdown,
+    discretionaryWeekly,
+    deficit,
+    suggestedSplit,
+    note: "Phân bổ 50/20/30 là model inference theo quy tắc ngân sách phổ biến — có thể điều chỉnh theo ưu tiên thực tế; không phải khuyến nghị tài chính.",
+  };
+}

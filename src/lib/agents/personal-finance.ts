@@ -1,7 +1,156 @@
 import "server-only";
 import { executeTool } from "./tools";
-import { numVn, pctVn, type AgentContext, type AgentRun, type AgentSection } from "./agent-types";
+import { numVn, type AgentContext, type AgentRun, type AgentSection } from "./agent-types";
 import type { FinancialProfile } from "../finance/financial-profile";
+import { parseBudgetQuestion } from "../finance/budget-parser";
+
+/**
+ * BUDGET PLANNER — trả lời câu hỏi ngân sách ad-hoc ("500k tiêu 2 tuần"),
+ * không cần profile, KHÔNG lưu gì vào memory (không consent trong luồng này).
+ * Số từ câu hỏi = FACT; phép chia = DATA-DRIVEN; gợi ý 50/20/30 =
+ * MODEL-INFERENCE kèm disclaimer.
+ */
+export function looksLikeBudgetQuestion(question: string): boolean {
+  const q = question.toLowerCase();
+  const hasMoney = /(\d[\d.,]*\s*(k|nghìn|ngàn|tr|triệu|tỷ|tỉ|vnd|đ))/i.test(q);
+  const budgetWords = /(ngân sách|budget|tiêu trong|phân chia|chia như|chi phí sinh hoạt|tiền ăn|xăng|ăn quán|đổ xăng|đủ tiêu|đủ tiền|tiêu\b|chi tiêu)/i.test(q);
+  return hasMoney && budgetWords;
+}
+
+export async function runBudgetPlanner(question: string): Promise<AgentRun> {
+  const parsed = parseBudgetQuestion(question);
+  const sections: AgentSection[] = [];
+  const unavailable: string[] = [];
+  const trace = ["personal-finance", "budget-parser"];
+
+  if (parsed.totalAmount == null) {
+    return {
+      agent: "personal-finance",
+      sections: [{
+        id: "budget-unavailable",
+        title: "Chưa đọc được ngân sách",
+        label: "FACT",
+        body: "Hệ thống chưa trích được tổng ngân sách từ câu hỏi (cần dạng như “500k”, “1,5 triệu”). Vui lòng nêu rõ số tiền và thời gian (VD: 500k trong 2 tuần, mỗi tuần xăng 50k).",
+        data: null,
+        sources: [],
+        unavailable: true,
+      }],
+      narrative: "Chưa trích được ngân sách từ câu hỏi — cần số tiền và thời gian rõ ràng.",
+      symbols: [],
+      sources: [],
+      freshness: "UNAVAILABLE",
+      confidence: null,
+      unavailable: ["budget-parse"],
+      trace,
+    };
+  }
+
+  const weeks = parsed.weeks ?? 1;
+  const tool = await executeTool("budget_plan", {
+    totalAmount: parsed.totalAmount,
+    weeks,
+    fixedExpenses: parsed.fixedExpenses,
+  });
+  if (!tool.ok) {
+    return {
+      agent: "personal-finance",
+      sections: [{
+        id: "budget-unavailable",
+        title: "Không lập được kế hoạch",
+        label: "FACT",
+        body: `Chưa tính được kế hoạch: ${tool.message ?? "dữ liệu không đủ"}.`,
+        data: null,
+        sources: [],
+        unavailable: true,
+      }],
+      narrative: "Không lập được kế hoạch ngân sách.",
+      symbols: [],
+      sources: [],
+      freshness: "UNAVAILABLE",
+      confidence: null,
+      unavailable: ["budget-tool"],
+      trace,
+    };
+  }
+
+  const plan = tool.data as {
+    totalAmount: number;
+    weeks: number;
+    weeklyBudget: number;
+    fixedWeekly: number;
+    fixedBreakdown: { label: string; weekly: number }[];
+    discretionaryWeekly: number;
+    deficit: number | null;
+    suggestedSplit: { bucket: string; pct: number; weekly: number }[];
+    note: string;
+  };
+
+  // FACT — ngân sách user nhập
+  sections.push({
+    id: "budget-input",
+    title: "Ngân sách bạn đưa ra",
+    label: "FACT",
+    body: `Tổng ${numVn(plan.totalAmount)} trong ${plan.weeks} tuần → ngân sách trung bình ${numVn(plan.weeklyBudget)}/tuần.`,
+    data: { totalAmount: plan.totalAmount, weeks: plan.weeks, weeklyBudget: plan.weeklyBudget },
+    sources: ["user-question"],
+  });
+
+  // DATA-DRIVEN — chi phí cố định + phần còn lại
+  const fixedLines = plan.fixedBreakdown.length
+    ? plan.fixedBreakdown.map((f) => `${f.label} ${numVn(f.weekly)}/tuần`).join(" · ")
+    : "không có khoản cố định được trích";
+  sections.push({
+    id: "budget-fixed",
+    title: "Chi phí cố định mỗi tuần",
+    label: "DATA-DRIVEN",
+    body: `${fixedLines}. Tổng cố định ${numVn(plan.fixedWeekly)}/tuần → còn lại ${numVn(plan.discretionaryWeekly)}/tuần cho chi tiêu linh hoạt.`,
+    data: { fixedWeekly: plan.fixedWeekly, discretionaryWeekly: plan.discretionaryWeekly },
+    sources: ["budget-engine"],
+  });
+
+  // DATA-DRIVEN — cảnh báo thiếu hụt (nếu có)
+  if (plan.deficit != null) {
+    sections.push({
+      id: "budget-deficit",
+      title: "Cảnh báo thiếu hụt",
+      label: "DATA-DRIVEN",
+      body: `Chi phí cố định ${numVn(plan.fixedWeekly)}/tuần vượt ngân sách ${numVn(plan.weeklyBudget)}/tuần — thiếu ${numVn(plan.deficit)}/tuần. Cần giảm khoản cố định hoặc tăng ngân sách; hệ thống không tự ý “bù” bằng cách giảm ăn uống/xăng vì đó là quyết định của bạn.`,
+      data: { deficit: plan.deficit },
+      sources: ["budget-engine"],
+    });
+  } else {
+    sections.push({
+      id: "budget-split",
+      title: "Gợi ý phân bổ phần còn lại",
+      label: "MODEL-INFERENCE",
+      body: plan.suggestedSplit.map((b) => `${b.bucket}: ${b.pct}% (${numVn(b.weekly)}/tuần)`).join(" · ") + `.\n${plan.note}`,
+      data: plan.suggestedSplit,
+      sources: ["budget-rule-50-20-30"],
+    });
+  }
+
+  // OPINION — lời khuyên thực tế có điều kiện (không số liệu mới)
+  sections.push({
+    id: "budget-tips",
+    title: "Cách theo dõi trong 2 tuần",
+    label: "OPINION",
+    body: "Chia tiền mặt theo từng tuần ngay đầu tuần (một phong bì/túi riêng cho linh hoạt) để không lố; ghi lại mỗi khoản chi cuối ngày; nếu tuần đầu hụt, ưu tiên cắt phần tự do 30% trước, sau đó mới điều chỉnh ăn uống — đừng cắt xăng vì đó là chi phí đi lại cố định. Nếu tuần đầu còn dư, chuyển phần dư sang tuần sau thay vì tiêu hết.",
+    data: null,
+    sources: ["personal-finance-rules"],
+  });
+
+  return {
+    agent: "personal-finance",
+    sections,
+    narrative: sections.map((s) => `## ${s.title}\n${s.body}`).join("\n\n"),
+    symbols: [],
+    sources: ["budget-engine", "personal-finance-rules"],
+    freshness: "FRESH",
+    confidence: null,
+    unavailable,
+    trace,
+  };
+}
 
 /**
  * PERSONAL FINANCE AGENT — từ FinancialProfile + Health Engine:

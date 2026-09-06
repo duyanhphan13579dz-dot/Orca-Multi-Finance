@@ -3,7 +3,7 @@ import { answerQuestion, type AgentPrefs } from "../services/agent";
 import { buildMeta, worstFreshness } from "../freshness";
 import { qualityToLabel } from "../quality";
 import { runStockAnalyst, runStockAnalystWithLLM, extractStockSymbol } from "./stock-analyst";
-import { runPersonalFinance } from "./personal-finance";
+import { runPersonalFinance, runBudgetPlanner, looksLikeBudgetQuestion } from "./personal-finance";
 import { runWealthManager } from "./wealth-manager";
 import type { AgentId, AgentRun } from "./agent-types";
 import type { FinancialProfile } from "../finance/financial-profile";
@@ -41,6 +41,9 @@ export function classifyFinancial(question: string): {
     return { intents: ["stock-analyst", "wealth-manager", "personal-finance"], symbol, kind: "stock-budget" };
   }
   if (symbol && stockIntent) return { intents: ["stock-analyst"], symbol, kind: "stock-analysis" };
+  // BUDGET: hỏi ngân sách tiêu (có số tiền + từ khóa chi tiêu) → Budget Planner
+  // (trước wealth/pf để không rơi về pipeline thị trường legacy)
+  if (looksLikeBudgetQuestion(question)) return { intents: ["personal-finance"], kind: "budget-plan" };
   if (wealthIntent) return { intents: ["wealth-manager"], kind: "wealth" };
   if (pfIntent) return { intents: ["personal-finance"], kind: "personal-finance" };
   return { intents: [], kind: "unknown" };
@@ -86,7 +89,10 @@ export async function runFinancialOrchestrator(
       runs.push(run);
     }
     if (cls.intents.includes("wealth-manager")) runs.push(await runWealthManager(agentCtx));
-    if (cls.intents.includes("personal-finance")) runs.push(await runPersonalFinance(agentCtx));
+    if (cls.intents.includes("personal-finance")) {
+      if (cls.kind === "budget-plan") runs.push(await runBudgetPlanner(question));
+      else runs.push(await runPersonalFinance(agentCtx));
+    }
 
     const freshnesses = runs.map((r) => r.freshness);
     const dataFreshness = freshnesses.length ? worstFreshness(freshnesses as Meta["freshness"][]) : "UNAVAILABLE";

@@ -95,6 +95,11 @@ Thesis → Sức mạnh tài chính → Định giá → Kỹ thuật → Xúc t
 FinancialProfile + Health Engine (savings rate, DTI, quỹ khẩn cấp, thanh khoản, đòn bẩy) + **action plan ưu tiên HIGH/MEDIUM/LOW** theo rule minh bạch (`healthPlan`).
 - Không profile → `DATA_UNAVAILABLE` + hướng dẫn tạo profile (có consent).
 
+**Budget Planner** (`runBudgetPlanner`, parser `src/lib/finance/budget-parser.ts` + tool `budget_plan`):
+- Câu hỏi ngân sách ad-hoc (VD: "Tôi còn 500k tiêu trong 2 tuần, 1 tuần xăng hết 50k, ăn quán hết 50k") → trích số tiền/chu kỳ/khoản cố định bằng deterministic parser → plan: ngân sách tuần, chi phí cố định, phần còn lại, gợi ý 50/20/30 (MODEL-INFERENCE kèm disclaimer).
+- **Không cần profile, KHÔNG lưu vào memory** (không consent trong luồng ad-hoc) — dữ liệu chỉ dùng 1 lần.
+- Intent `budget-plan` được ưu tiên trước pipeline thị trường legacy (fix regression: câu "500k tiêu 2 tuần" trước đây bị trả snapshot thị trường).
+
 #### Wealth Manager — `src/lib/agents/wealth-manager.ts`
 Danh mục → Phân bổ tài sản → Tập trung (HHI) → Phơi nhiễm ngành/tiền tệ → Thanh khoản → Drawdown → Rủi ro danh mục → **Kế hoạch tái cân bằng** (MODEL-INFERENCE kèm disclaimer).
 - Target allocation theo risk profile + tuổi (quy tắc 100−tuổi, clamp 20–70) — model inference có disclosure.
