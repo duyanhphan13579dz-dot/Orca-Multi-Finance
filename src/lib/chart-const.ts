@@ -2,6 +2,7 @@
  * UNIFIED CHART DATA MODEL + TIMEFRAME CONSTANTS
  * Shared between server (chart services) and client (OrcaChart) — no
  * provider-specific formats are allowed past the normalization layer.
+ * NEVER add server-only imports here.
  */
 
 export interface ChartCandle {
@@ -88,7 +89,7 @@ export function aggregateCandles(candles: ChartCandle[], tfMs: number): ChartCan
   return out;
 }
 
-/** Client-safe chart payload shapes (also used by server chart service). */
+/** Client-safe indicator/payload shapes (also used by server chart service). */
 export interface IndicatorPoint {
   time: number;
   value?: number;
@@ -97,17 +98,16 @@ export interface IndicatorPoint {
 export interface ChartIndicators {
   ema20: IndicatorPoint[];
   ema50: IndicatorPoint[];
-  rsi14: IndicatorPoint[];
-  macd?: { macd: IndicatorPoint[]; signal: IndicatorPoint[]; hist: IndicatorPoint[] };
-  bollinger?: { upper: IndicatorPoint[]; mid: IndicatorPoint[]; lower: IndicatorPoint[] };
-  vwap?: IndicatorPoint[];
-  support?: number[];
-  resistance?: number[];
+  bollinger: { upper: IndicatorPoint[]; mid: IndicatorPoint[]; lower: IndicatorPoint[] } | null;
+  vwap: IndicatorPoint[] | null;
+  rsi: IndicatorPoint[];
+  macd: { macd: IndicatorPoint[]; signal: IndicatorPoint[]; histogram: IndicatorPoint[] } | null;
+  srLevels: { support: number[]; resistance: number[] };
 }
 
 export interface ChartSignalMarker {
   time: number;
-  type: string;
+  type: "buy-signal" | "sell-signal" | "volume-spike" | "rsi-extreme" | "breakout" | "breakdown" | string;
   position: "aboveBar" | "belowBar" | "inBar";
   title: string;
 }
