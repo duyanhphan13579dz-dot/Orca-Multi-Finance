@@ -1,0 +1,72 @@
+# ==========================================================================
+# Orca Multi-Finance — .gitattributes
+# ==========================================================================
+
+# --- Default: normalize line endings to LF for everything Git treats as text
+* text=auto eol=lf
+
+# --- Source code (force LF explicitly, avoid CRLF creeping in on Windows) ---
+*.ts       text eol=lf
+*.tsx      text eol=lf
+*.js       text eol=lf
+*.jsx      text eol=lf
+*.mjs      text eol=lf
+*.cjs      text eol=lf
+*.css      text eol=lf
+*.scss     text eol=lf
+*.html     text eol=lf
+*.json     text eol=lf
+*.md       text eol=lf
+*.mdx      text eol=lf
+*.yml      text eol=lf
+*.yaml     text eol=lf
+*.sql      text eol=lf
+*.sh       text eol=lf
+.env.example text eol=lf
+
+# --- Windows-only scripts keep CRLF ---
+*.bat      text eol=crlf
+*.cmd      text eol=crlf
+
+# --- Lockfiles: keep as-is, don't let Git "helpfully" reformat/merge them ---
+package-lock.json  -diff  linguist-generated=true
+pnpm-lock.yaml      -diff  linguist-generated=true
+yarn.lock           -diff  linguist-generated=true
+
+# --- Drizzle migration snapshots: generated, exclude from diff noise/stats ---
+drizzle/meta/*.json -diff linguist-generated=true
+
+# --- Binary assets: never touch line endings, never diff as text ---
+*.png    binary
+*.jpg    binary
+*.jpeg   binary
+*.gif    binary
+*.webp   binary
+*.ico    binary
+*.svg    binary
+*.woff   binary
+*.woff2  binary
+*.ttf    binary
+*.eot    binary
+*.pdf    binary
+*.zip    binary
+*.gz     binary
+*.tar    binary
+
+# --- GitHub Linguist: keep language stats meaningful ---
+docs/**           linguist-documentation
+test/**           linguist-generated=false
+**/*.min.js       linguist-generated=true
+**/*.min.css      linguist-generated=true
+
+# --- Diff hints for readability ---
+*.md   diff=markdown
+*.ts   diff=typescript
+*.tsx  diff=typescript
+
+# --- Export-ignore: exclude dev-only files from `git archive` releases ---
+.github/         export-ignore
+docs/            export-ignore
+test/            export-ignore
+.gitattributes   export-ignore
+.gitignore       export-ignore
