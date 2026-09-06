@@ -2,9 +2,9 @@ import "server-only";
 import { cached } from "../cache";
 import { buildMeta } from "../freshness";
 import { getBiquoteQuotes, getErApiLatest, getFrankfurterSeries, type FxLatest } from "../providers/forex";
-import { getYahooQuotes, yahooSymbolForPair } from "../providers/yahoo";
-import { analyzeSeries } from "../technical";
-import type { ForexRow, Meta, OhlcvBar, TechnicalSnapshot } from "../types";
+import { getYahooQuotes, getYahooChart, yahooSymbolForPair, yahooIntervalFor } from "../providers/yahoo";
+import { analyzeSeries, detectPatterns } from "../technical";
+import type { CandlePattern, ForexRow, Meta, OhlcvBar, TechnicalSnapshot } from "../types";
 
 /**
  * Forex domain service.
@@ -110,7 +110,7 @@ export async function getForexMarkets(): Promise<{ data: ForexMarket; meta: Meta
   } catch {
     /* degrade to fallback */
   }
-  // 2) Yahoo FX snapshot fallback (approved public reference — batch pair quotes)
+  // 2) Yahoo FX snapshot fallback
   try {
     const yahoo = await cached(`forex:yahoo:${PAIRS.length}`, {
       ttlMs: 30_000,
@@ -148,7 +148,7 @@ export async function getForexMarkets(): Promise<{ data: ForexMarket; meta: Meta
   } catch {
     /* degrade to er-api */
   }
-  // 3) exchangerate-api fallback (real)
+  // 3) exchangerate-api fallback
   try {
     const latest = await cached<FxLatest>("forex:er-latest", {
       ttlMs: 10 * 60_000,
@@ -209,6 +209,7 @@ export interface ForexDetail {
   current: ForexRow | null;
   series: OhlcvBar[]; // ECB daily reference closes (o=h=l=c=rate)
   technical: TechnicalSnapshot | null;
+  patterns: CandlePattern[];
   referenceNote: string;
 }
 
@@ -222,7 +223,6 @@ export async function getForexDetail(pairRaw: string): Promise<{ detail: ForexDe
   let series: { date: string; rate: number }[];
   let seriesTs: number | null = null;
   try {
-    // ECB base currencies are limited; invert when needed
     const direct = await getFrankfurterSeries(base, quote, 370);
     series = direct;
     seriesTs = direct.length ? Date.parse(direct[direct.length - 1].date) : null;
@@ -240,10 +240,23 @@ export async function getForexDetail(pairRaw: string): Promise<{ detail: ForexDe
     open: x.rate, high: x.rate, low: x.rate, close: x.rate, volume: 0,
   }));
   const technical = bars.length >= 30 ? analyzeSeries(bars) : null;
+
+  // Candle patterns from Yahoo intraday OHLC (ECB daily has o=h=l=c → no wick patterns)
+  let patterns: CandlePattern[] = [];
+  try {
+    const cfg = yahooIntervalFor("1h");
+    if (cfg) {
+      const y = await getYahooChart(yahooSymbolForPair(pair), cfg.interval, cfg.range);
+      if (y.candles?.length) patterns = detectPatterns(y.candles as OhlcvBar[]);
+    }
+  } catch {
+    /* optional */
+  }
+
   const detail: ForexDetail = {
     pair, base, quote, current,
-    series: bars, technical,
-    referenceNote: "Chuỗi lịch sử: tỷ giá tham chiếu hằng ngày của Ngân hàng Trung ương châu Âu (ECB), cập nhật mỗi ngày làm việc ~16:00 CET.",
+    series: bars, technical, patterns,
+    referenceNote: "Chuỗi lịch sử: tỷ giá tham chiếu hằng ngày của Ngân hàng Trung ương châu Âu (ECB), cập nhật mỗi ngày làm việc ~16:00 CET. Chart intraday từ Yahoo FX.",
   };
   const meta = buildMeta({
     source: "frankfurter-ecb",
