@@ -28,6 +28,15 @@ export interface Meta {
   dataConfidence?: { score: number; level: "high" | "medium" | "low" | "unverified"; factors: string[] } | null;
   /** Phase 2 — provider source set tham gia resolution (vnstock, vndirect, archive…) */
   providers?: string[];
+  /** Phase 4 — agent pipeline trace: question → realtime → quant → confidence → llm → output */
+  pipeline?: {
+    steps: string[];
+    intent: string;
+    quant: string[];
+    realtimeOverlaid: number;
+    confidence: string | null;
+    llm: boolean;
+  };
 }
 
 export interface ApiOk<T> {

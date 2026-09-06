@@ -168,7 +168,24 @@ Ràng buộc API: chỉ **thêm** field `meta.dataConfidence`/`meta.providers` �
 Nguồn dữ liệu: quotes thật (VN_SECURITIES ≤135 mã, chunk 30), OHLCV top-30 mã thanh khoản (độ sâu breadth), VNINDEX OHLCV (tolerant). Không bao giờ suy diễn khi thiếu dữ liệu — fields null + note.
 Không đổi bất kỳ payload endpoint/UI hiện có; tất cả là endpoint mới + engine mới.
 
-## 11. Security
+## 11. AI Agent Pipeline (Phase 4)
+
+Chuẩn hoá pipeline theo yêu cầu: **User Question → Existing AI UI → Realtime Context → Quant Engine → Data Confidence → LLM Reasoning → Existing UI Output**. UI agent hiện có **không đổi**; mọi thứ là backend/additive.
+
+| Bước | Code | Ghi chú |
+| --- | --- | --- |
+| 1. User Question | `src/app/agent/page.tsx` (giữ nguyên) | ≤800 ký tự → `POST /api/v1/agent` |
+| 2. Route intent | `engines/question-router.ts` (thuần) | tách từ agent v1; thêm 6 intent Market Intelligence: `market-breadth/sectors/state/leaders/events/smart-alerts`; kế thừa crypto/forex/vn-stock/commodity/compare/news/general |
+| 3. Realtime Context | `services/agent-pipeline.ts` `overlayRealtime` | overlay quote market-store vào contract **additive**: `market_data.realtime.{SYM}` (hoặc `realtime_overlay` khi contract không có `market_data`) — field cũ giữ nguyên |
+| 4. Quant Engine | `services/agent.ts` builders (giữ nguyên) + `buildMarketIntel` cho 6 intent mới (đọc Phase 3 engines) | deterministic fallback stay authoritative; unavailable → không suy diễn |
+| 5. Data Confidence | `pipelineConfidence` + `foldConfidence` (Phase 2 worst-of) | `computeQuoteConfidence`/`aggregateConfidence`; single-source tối đa medium (không giả định 2 provider); chỉ hạ cấp Confidence cũ, không nâng |
+| 6. LLM Reasoning | `llmChat` + `validateMaybeRepair` (giữ nguyên) | contract giờ có intel + realtime overlay làm fact mới; role `reasoning` cho market/compare/intel; anti-hallucination không đổi |
+| 7. Existing UI Output | `agent/page.tsx` + response `AgentAnswer` (contract giữ nguyên) | meta additive: `meta.pipeline` (trace 7 bước) + `meta.dataConfidence` (Phase 2) + `meta.providers` |
+
+Intent mới dùng chung 6 engine Phase 3 (`market-intelligence.ts`): question như "độ rộng thị trường?", "ngành nào xoay vòng?", "trạng thái thị trường?", "cổ phiếu dẫn dắt?", "sự kiện nổi bật?", "cảnh báo thông minh?" → contract scope riêng + narrative deterministic tiếng Việt; LLM được thêm `intel_market` (regime/breadth/rotation/events, bounded) khi hỏi về thị trường.
+Market Intel context chỉ gắn khi intent thị trường; nguồn VN offline → `unavailable: true`, LLM bị chặn, fallback nêu rõ thiếu dữ liệu.
+
+## 12. Security
 
 - API keys chỉ đọc qua `src/lib/env.ts` (module `server-only`), không biến `NEXT_PUBLIC_*`.
 - Auth: scrypt password hash, JWT HS256 trong httpOnly cookie (`/api/v1/auth/*`), audit logs.

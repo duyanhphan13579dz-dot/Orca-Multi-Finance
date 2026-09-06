@@ -12,6 +12,9 @@ import { llmChat, llmConfigured, type LlmResult } from "../ai/gateway";
 import { collectFactNumbers, validateOutput } from "../ai/validate";
 import { qualityToLabel } from "../quality";
 import { VN_TICKERS } from "../providers/news";
+import { routeQuestion, KNOWN_CRYPTO, FX_PAIRS, type AgentIntent } from "../engines/question-router";
+import { overlayRealtime, marketIntelContext, pipelineConfidence, foldConfidence, pipelineTrace } from "./agent-pipeline";
+import { getMarketBreadth, getMarketRegime, getSectorRotation, getMarketLeaders, getMarketEvents, getSmartSignals } from "./market-intelligence";
 import type { FreshnessStatus, Meta } from "../types";
 
 /**
@@ -26,25 +29,7 @@ import type { FreshnessStatus, Meta } from "../types";
  * always grounded in fetched facts, never in model memory.
  */
 
-type Intent =
-  | { kind: "crypto"; symbol: string }
-  | { kind: "forex"; pair: string }
-  | { kind: "vn-stock"; symbol: string }
-  | { kind: "commodity"; query: string }
-  | { kind: "market" }
-  | { kind: "compare"; a: string; b: string }
-  | { kind: "news"; query?: string }
-  | { kind: "general" };
-
-const KNOWN_CRYPTO = new Set([
-  "BTC","ETH","SOL","BNB","XRP","DOGE","ADA","TON","AVAX","LINK","DOT","TRX","LTC","BCH","NEAR","SUI","APT","ARB","OP","INJ","TIA","SEI","PEPE","SHIB","UNI","ATOM","FIL","ETC","AAVE","MKR","ALGO","VET","ICP","FET","RENDER","WLD","JUP","ENA","ONDO","POL","XLM","HBAR","KAS","TAO","IP","PI","ZEC","STRK","PAXG",
-]);
-const FX_PAIRS = ["EURUSD","GBPUSD","USDJPY","USDCHF","AUDUSD","USDCAD","NZDUSD","EURJPY","EURGBP","GBPJPY","AUDJPY","USDVND"];
-const COMMODITY_WORDS: [RegExp, string][] = [
-  [/vàng|gold/i, "gold"], [/bạc|silver/i, "silver"], [/dầu|oil|wti|brent/i, "oil"],
-  [/cà phê|coffee/i, "coffee"], [/thép|steel/i, "steel"], [/đường|sugar/i, "sugar"],
-  [/khí|gas|natgas/i, "natgas"], [/đồng\b|copper/i, "copper"],
-];
+type Intent = AgentIntent;
 
 export interface AgentPrefs {
   depth?: "concise" | "standard" | "deep";
@@ -75,27 +60,7 @@ interface Built {
 
 /* ------------------------------ intent ------------------------------------- */
 
-function detectIntent(q: string): Intent {
-  const upper = q.toUpperCase();
-  if (/so sánh|compare|\bvs\b|\bversus\b/i.test(q)) {
-    const tokens = upper.match(/\b[A-Z]{2,10}\b/g) ?? [];
-    const meaningful = tokens.filter((t) => KNOWN_CRYPTO.has(t) || VN_TICKERS.includes(t) || FX_PAIRS.includes(t));
-    if (meaningful.length >= 2) return { kind: "compare", a: meaningful[0], b: meaningful[1] };
-  }
-  const usdt = upper.match(/\b([A-Z]{2,12})USDT\b/);
-  if (usdt) return { kind: "crypto", symbol: `${usdt[1]}USDT` };
-  const fxMatch = upper.match(/\b(EUR|GBP|USD|JPY|CHF|AUD|CAD|NZD|VND)[\s/]?(USD|JPY|CHF|CAD|NZD|EUR|GBP|AUD|VND)\b/);
-  if (fxMatch) {
-    const pair = (fxMatch[1] + fxMatch[2]).toUpperCase();
-    if (FX_PAIRS.includes(pair)) return { kind: "forex", pair };
-  }
-  for (const t of upper.match(/\b[A-Z]{2,5}\b/g) ?? []) if (KNOWN_CRYPTO.has(t)) return { kind: "crypto", symbol: `${t}USDT` };
-  for (const t of upper.match(/\b[A-Z]{3}\b/g) ?? []) if (VN_TICKERS.includes(t)) return { kind: "vn-stock", symbol: t };
-  for (const [re, key] of COMMODITY_WORDS) if (re.test(q)) return { kind: "commodity", query: key };
-  if (/thị trường|market|tổng quan|hôm nay|tình hình|đánh giá chung|bức tranh/i.test(q)) return { kind: "market" };
-  if (/tin tức|news|sự kiện/i.test(q)) return { kind: "news" };
-  return { kind: "general" };
-}
+const detectIntent = (q: string): Intent => routeQuestion(q, VN_TICKERS);
 
 /* --------------------------- contract builders ----------------------------- */
 
@@ -280,6 +245,106 @@ async function buildMarket(): Promise<Built> {
   };
 }
 
+/* --------------------- market intelligence builders ----------------------- */
+
+type IntelKind = "market-breadth" | "market-sectors" | "market-state" | "market-leaders" | "market-events" | "market-smart-alerts";
+
+const intelUnavailable = (title: string, kind: IntelKind): Built => ({
+  narrative: `${title}: chưa có dữ liệu từ market-intelligence (VNSTOCK_API_KEY chưa cấu hình hoặc provider VN offline) — hệ thống không suy diễn số liệu; kiểm tra /system.`,
+  contract: { scope: kind, status: "unavailable" },
+  sectionsUsed: [`market-intel:${kind}`],
+  symbols: [],
+  freshnesses: [],
+  unavailable: true,
+});
+
+const intelMeta = (source: string, freshness: FreshnessStatus) => ({ source, freshness, fetched_at: new Date().toISOString() });
+
+async function buildMarketIntel(kind: IntelKind): Promise<Built> {
+  const sectionsUsed = [`market-intel:${kind}`];
+
+  if (kind === "market-breadth") {
+    const r = await getMarketBreadth();
+    if (!r) return intelUnavailable("Độ rộng thị trường", kind);
+    const b = r.breadth;
+    const volume = b.volumeRatio != null ? ` Khối lượng tăng/giảm ${b.volumeRatio.toFixed(2)}x.` : "";
+    const sma = [b.pctAboveSma20 != null ? `${b.pctAboveSma20.toFixed(0)}% mã trên SMA20` : null, b.pctAboveSma50 != null ? `${b.pctAboveSma50.toFixed(0)}% trên SMA50` : null].filter(Boolean).join(", ");
+    const hl = [b.newHighs20 != null ? `${b.newHighs20} mã mới đỉnh 20 phiên` : null, b.newLows20 != null ? `${b.newLows20} mã mới đáy 20 phiên` : null].filter(Boolean).join(", ");
+    return {
+      narrative: `Độ rộng thị trường: ${b.advancers} mã tăng / ${b.decliners} giảm / ${b.unchanged} đứng yên trên ${b.total} mã, chỉ số composite ${b.score}/100${b.note ? ` — ${b.note}` : ""}.${volume}${sma ? ` ${sma}.` : ""}${hl ? ` ${hl}.` : ""}`,
+      contract: { scope: "market-breadth", breadth: b, data_meta: intelMeta(r.meta.source, r.meta.freshness) },
+      sectionsUsed, symbols: [], freshnesses: [r.meta.freshness],
+    };
+  }
+
+  if (kind === "market-sectors") {
+    const r = await getSectorRotation();
+    if (!r) return intelUnavailable("Xoay vòng ngành", kind);
+    const rot = r.rotation;
+    const top = rot.rows.find((x) => x.sector === rot.topSector);
+    const lag = rot.rows.find((x) => x.sector === rot.laggardSector);
+    const top3 = rot.rows.slice(0, 3)
+      .map((x) => `${x.sector} ${x.medianChangePct >= 0 ? "+" : ""}${x.medianChangePct.toFixed(2)}% (${(x.participationRatio * 100).toFixed(0)}% mã tăng, điểm ${x.rotationScore})`)
+      .join("; ");
+    return {
+      narrative: `Xoay vòng ngành: ngành mạnh nhất ${rot.topSector ?? "—"}${top ? ` ${top.medianChangePct >= 0 ? "+" : ""}${top.medianChangePct.toFixed(2)}%` : ""}, yếu nhất ${rot.laggardSector ?? "—"}${lag ? ` ${lag.medianChangePct >= 0 ? "+" : ""}${lag.medianChangePct.toFixed(2)}%` : ""}, độ phân tán ${rot.dispersionPct.toFixed(1)}pp, trung vị toàn thị trường ${rot.marketMedianChangePct >= 0 ? "+" : ""}${rot.marketMedianChangePct.toFixed(2)}%. Top: ${top3}.${rot.note ? ` ${rot.note}` : ""}`,
+      contract: { scope: "market-sectors", sector_rotation: { rows: rot.rows.slice(0, 8), market_median_change_pct: rot.marketMedianChangePct, dispersion_pct: rot.dispersionPct, top_sector: rot.topSector, laggard_sector: rot.laggardSector }, data_meta: intelMeta(r.meta.source, r.meta.freshness) },
+      sectionsUsed, symbols: [], freshnesses: [r.meta.freshness],
+    };
+  }
+
+  if (kind === "market-state") {
+    const r = await getMarketRegime();
+    if (!r) return intelUnavailable("Trạng thái thị trường", kind);
+    const m = r.regime;
+    return {
+      narrative: `Trạng thái thị trường: ${m.regimeLabelVi} (${m.regime}) — risk appetite ${m.riskAppetite}/100, trend score ${m.trendScore >= 0 ? "+" : ""}${m.trendScore.toFixed(1)}, biến động vol30/vol120 ${m.volatilityRatio != null ? m.volatilityRatio.toFixed(2) + "x" : "?"}.${m.evidence.length ? ` Bằng chứng: ${m.evidence.join("; ")}.` : ""}${m.note ? ` ${m.note}` : ""}`,
+      contract: { scope: "market-state", regime: m, data_meta: intelMeta(r.meta.source, r.meta.freshness) },
+      sectionsUsed, symbols: [], freshnesses: [r.meta.freshness],
+    };
+  }
+
+  if (kind === "market-leaders") {
+    const r = await getMarketLeaders(10);
+    if (!r) return intelUnavailable("Cổ phiếu dẫn dắt", kind);
+    const l = r.leadership;
+    const lead = l.leaders.slice(0, 5)
+      .map((x) => `${x.symbol} ${x.changePercent >= 0 ? "+" : ""}${x.changePercent.toFixed(2)}% (RS ${x.relativeStrength >= 0 ? "+" : ""}${x.relativeStrength.toFixed(2)}, score ${x.score})`)
+      .join(", ");
+    const lag = l.laggards.slice(0, 3)
+      .map((x) => `${x.symbol} ${x.changePercent >= 0 ? "+" : ""}${x.changePercent.toFixed(2)}% (score ${x.score})`)
+      .join(", ");
+    const symbols = [...l.leaders.slice(0, 10).map((x) => x.symbol), ...l.laggards.slice(0, 5).map((x) => x.symbol)];
+    return {
+      narrative: `Cổ phiếu dẫn dắt (VN, phiên hiện tại): ${lead}.${lag ? ` Kém hơn thị trường: ${lag}.` : ""}${l.marketChangePercent != null ? ` Thay đổi trung bình thị trường: ${l.marketChangePercent >= 0 ? "+" : ""}${l.marketChangePercent.toFixed(2)}%.` : ""}${l.note ? ` ${l.note}` : ""}`,
+      contract: { scope: "market-leaders", leadership: { leaders: l.leaders.slice(0, 10), laggards: l.laggards.slice(0, 5), market_change_percent: l.marketChangePercent }, data_meta: intelMeta(r.meta.source, r.meta.freshness) },
+      sectionsUsed, symbols, freshnesses: [r.meta.freshness],
+    };
+  }
+
+  if (kind === "market-events") {
+    const r = await getMarketEvents(6);
+    if (!r) return intelUnavailable("Sự kiện thị trường", kind);
+    const symbols = [...new Set(r.events.flatMap((e) => e.relatedSymbols))];
+    const lines = r.events.map((e) => `${e.severity.toUpperCase()} · ${e.title} — ${e.description}${e.relatedSymbols.length ? ` (${e.relatedSymbols.join(", ")})` : ""}`);
+    return {
+      narrative: `Sự kiện nổi bật (VN, ${r.events.length} sự kiện):\n\n${lines.join("\n")}`,
+      contract: { scope: "market-events", events: r.events, detected_at: r.detectedAt, data_meta: intelMeta(r.meta.source, r.meta.freshness) },
+      sectionsUsed, symbols, freshnesses: [r.meta.freshness],
+    };
+  }
+
+  // market-smart-alerts
+  const r = await getSmartSignals();
+  if (!r) return intelUnavailable("Cảnh báo thông minh", kind);
+  const lines = r.signals.map((s) => `${s.severity === "alert" ? "⚠" : s.severity === "watch" ? "•" : "ℹ"} ${s.title} — ${s.description}`);
+  return {
+    narrative: `Cảnh báo thông minh (${r.signals.length} tín hiệu):\n\n${lines.join("\n")}`,
+    contract: { scope: "market-smart-alerts", signals: r.signals, data_meta: intelMeta(r.meta.source, r.meta.freshness) },
+    sectionsUsed, symbols: [], freshnesses: [r.meta.freshness],
+  };
+}
+
 /* --------------------------------- main ------------------------------------ */
 
 const SYS = `Bạn là chuyên viên phân tích cấp cao của ORCA Financial (high-level reasoning layer).
@@ -300,7 +365,9 @@ export async function answerQuestion(question: string, prefs: AgentPrefs = {}): 
   else if (intent.kind === "forex") built = await buildForex(intent.pair);
   else if (intent.kind === "commodity") built = await buildCommodity(intent.query);
   else if (intent.kind === "vn-stock") built = await buildVn(intent.symbol, deep);
-  else if (intent.kind === "market" || intent.kind === "news" || intent.kind === "general") {
+  else if (intent.kind === "market-breadth" || intent.kind === "market-sectors" || intent.kind === "market-state" || intent.kind === "market-leaders" || intent.kind === "market-events" || intent.kind === "market-smart-alerts") {
+    built = await buildMarketIntel(intent.kind);
+  } else if (intent.kind === "market" || intent.kind === "news" || intent.kind === "general") {
     built = await buildMarket();
     if (intent.kind === "news" && built.contract.news_top) {
       const tops = (built.contract as { news_top?: { title: string; source: string }[] }).news_top ?? [];
@@ -327,6 +394,15 @@ export async function answerQuestion(question: string, prefs: AgentPrefs = {}): 
     };
   }
 
+  /* Phase 4 — Realtime Context (overlay quote từ market-store, additive) */
+  const isIntel = intent.kind.startsWith("market-");
+  if (intent.kind === "market" || intent.kind === "general" || isIntel) {
+    const intel = await marketIntelContext();
+    if (intel) built.contract.intel_market = intel;
+  }
+  const { confidences, overlaid, providers } = overlayRealtime(built.contract, built.symbols);
+  const conf = pipelineConfidence(confidences);
+
   /* depth: concise trims deterministic narrative */
   let narrative = built.narrative;
   if (prefs.depth === "concise") {
@@ -342,7 +418,7 @@ export async function answerQuestion(question: string, prefs: AgentPrefs = {}): 
   const factNums = collectFactNumbers(built.contract);
 
   if (llmConfigured() && !built.unavailable) {
-    const role = intent.kind === "compare" || intent.kind === "market" ? "reasoning" : "analysis";
+    const role = intent.kind === "compare" || intent.kind === "market" || isIntel ? "reasoning" : "analysis";
     const styleVi = prefs.style === "technical" ? "súc tích, nhấn chỉ báo kỹ thuật" : prefs.style === "brief" ? "rất ngắn gọn (3-5 câu)" : "phân tích chuyên sâu, 2-4 đoạn mạch lạc";
     const user = `CÂU HỎI: ${question}\n\nSTRUCTURED CONTEXT (dữ liệu thật mới nhất, đã qua validation + quant engines):\n${JSON.stringify(built.contract, null, 1).slice(0, 11_000)}\n\nTrả lờì bằng văn phong analyst — phong cách: ${styleVi}.`;
     const first = await llmChat(role, { system: SYS, user, temperature: 0.3, maxTokens: prefs.depth === "deep" ? 1100 : 800 });
@@ -367,7 +443,9 @@ export async function answerQuestion(question: string, prefs: AgentPrefs = {}): 
   }
 
   const dataFreshness = built.freshnesses.length ? worstFreshness(built.freshnesses) : built.unavailable ? "UNAVAILABLE" : "LIVE";
-  const confidence = computeConfidence({ freshness: built.freshnesses, coverage: built.unavailable ? 0 : 1 });
+  const baseConfidence = computeConfidence({ freshness: built.freshnesses, coverage: built.unavailable ? 0 : 1 });
+  /* Phase 4 — Data Confidence: fold Phase-2 worst-of vào Confidence cũ (chỉ hạ cấp) */
+  const confidence = foldConfidence(baseConfidence, confidences);
   const meta = buildMeta({
     source: mode === "llm" ? `orca-agent + ${model}` : "orca-agent (deterministic)",
     sourceTimestampMs: Date.now(),
@@ -376,6 +454,15 @@ export async function answerQuestion(question: string, prefs: AgentPrefs = {}): 
   meta.freshness = dataFreshness;
   meta.outputValidation = outputValidation;
   meta.qualityStatus = built.unavailable ? "STALE" : "VALID";
+  /* Phase 4 — pipeline trace + Phase-2 data confidence (additive meta) */
+  meta.dataConfidence = conf.aggregate;
+  meta.providers = providers.length ? providers : undefined;
+  meta.pipeline = pipelineTrace(intent.kind, {
+    quant: built.sectionsUsed,
+    overlaid,
+    confidenceLevel: conf.aggregate?.level ?? null,
+    llm: mode === "llm",
+  });
 
   const result: AgentAnswer = {
     answer: finalAnswer,

@@ -53,7 +53,7 @@ Không có module nào dùng số liệu giả. Khi provider lỗi: **retry → 
 | Commodities + VN impact mapping | Implemented | Đa nguồn, hiển thị provenance từng record |
 | News Engine (RSS, dedupe, tagging) | Implemented | Timestamp validation, symbol/sector tagging |
 | Morning Brief (reports) | Implemented | Freshness gate, analyst narrative, lưu DB |
-| AI Agent (fetch-data-first) | Implemented | Deterministic engine; LLM optional (bounded context) |
+| AI Agent Pipeline (Phase 4) | Implemented | Question → Realtime Context → Quant Engine → Data Confidence → LLM Reasoning → UI (không redesign); question-router thuần + 6 intent Market Intelligence; overlay `market_data.realtime` + `meta.pipeline`/`meta.dataConfidence` additive — chi tiết §11 |
 | Technical engine (RSI/MACD/BB/ATR/S-R/patterns) | Implemented | Pure quantitative, deterministic |
 | Watchlist + Trade Journal | Implemented | Local-first + server sync (`/api/v1/watchlist`, merge khi đăng nhập) |
 | Alerts | Implemented | CRUD `/api/v1/alerts*` + pure evaluator + scheduler poll 5 phút |

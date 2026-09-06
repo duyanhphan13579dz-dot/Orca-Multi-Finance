@@ -117,7 +117,7 @@ Mọi topic đều có `snapshot` đầu tiên, heartbeat 20s, reconnect do clie
 | `POST /api/v1/reports` `{type}` | Tạo ngay morning_brief / market_summary / strategy | engine |
 | `GET /api/v1/reports/morning-brief` | Morning Brief analyst-style (freshness gate) | engine |
 | `GET /api/v1/reports/{id}` | Chi tiết bản tin đã lưu | engine |
-| `POST /api/v1/agent` `{question}` | AI Agent: intent → fetch data → answer + meta | engine (+LLM opt.) |
+| `POST /api/v1/agent` `{question, preferences?}` | AI Agent pipeline (Phase 4): intent → realtime context → quant engines → data confidence → LLM reasoning → output. Response cũ giữ nguyên (answer/mode/intent/model/confidence/dataQuality/dataFreshness/context); **meta additive**: `meta.pipeline` (trace 7 bước), `meta.dataConfidence` (Phase 2 worst-of), `meta.providers`; contract LLM thêm `market_data.realtime.{SYM}` + `intel_market`. Intent mới: `market-breadth`, `market-sectors`, `market-state`, `market-leaders`, `market-events`, `market-smart-alerts` | engine (+LLM opt.) |
 
 ## Ops / Auth / Settings
 
