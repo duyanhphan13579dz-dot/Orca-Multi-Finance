@@ -1,12 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { useApi } from "@/lib/hooks";
 import { Badge, fmtNum, FreshnessDot, Loading, MetaLine, Panel, priceDigits, Unavailable } from "@/components/ui";
-import { Crosshair, Radio, ShieldAlert, Timer, Zap } from "lucide-react";
+import { Crosshair, ShieldAlert, Timer, Zap } from "lucide-react";
 import type { Meta, QualityStatus } from "@/lib/types";
 
-/** Client-local shapes — avoid importing server-only modules into the browser bundle. */
+/** Client-local shapes — never import server-only modules. */
 interface ScalpSignalView {
   timeframe: string;
   direction: "watch-long" | "watch-short" | "neutral" | string;
@@ -45,145 +45,12 @@ const DIR_UI: Record<string, { label: string; tone: "up" | "down" | "neutral" }>
   neutral: { label: "QUAN SAT", tone: "neutral" },
 };
 
-type LiveState = "idle" | "connecting" | "live" | "delayed" | "reconnecting";
-
-interface StreamPayload extends ScalpResult {
-  reason?: string;
-  pushedAt?: string;
-  meta?: Partial<Meta> & {
-    source?: string;
-    freshness?: Meta["freshness"];
-    ageMs?: number | null;
-    qualityStatus?: Meta["qualityStatus"];
-  };
-}
-
 export function ScalpPanel({ symbol }: { symbol: string }) {
   const [tf, setTf] = useState<(typeof TF)[number]>("5m");
-  const { data: restData, meta: restMeta, isLoading, mutate } = useApi<ScalpResult>(
+  const { data, meta, isLoading } = useApi<ScalpResult>(
     `/api/v1/crypto/${encodeURIComponent(symbol)}/scalp?tf=${tf}`,
-    { refreshInterval: 30_000 },
+    { refreshInterval: 20_000 },
   );
-
-  const [live, setLive] = useState<ScalpResult | null>(null);
-  const [liveMeta, setLiveMeta] = useState<Meta | null>(null);
-  const [liveState, setLiveState] = useState<LiveState>("idle");
-  const [lastPushAt, setLastPushAt] = useState<number | null>(null);
-  const esRef = useRef<EventSource | null>(null);
-  const tokenRef = useRef(0);
-
-  const stopStream = useCallback(() => {
-    tokenRef.current += 1;
-    esRef.current?.close();
-    esRef.current = null;
-    setLiveState("idle");
-  }, []);
-
-  useEffect(() => {
-    stopStream();
-    setLive(null);
-    setLiveMeta(null);
-    setLastPushAt(null);
-
-    const tk = ++tokenRef.current;
-    setLiveState("connecting");
-
-    const base = `/api/v1/crypto/${encodeURIComponent(symbol)}/scalp/stream?tf=${encodeURIComponent(tf)}`;
-    const url = `${base}&_=${Date.now()}`;
-    let es: EventSource;
-    try {
-      es = new EventSource(url);
-    } catch {
-      setLiveState("delayed");
-      return () => stopStream();
-    }
-    esRef.current = es;
-
-    const apply = (payload: StreamPayload) => {
-      if (tk !== tokenRef.current) return;
-      const { meta: m, reason: _r, pushedAt, ...result } = payload;
-      if (!result.signal) return;
-      setLive(result as ScalpResult);
-      setLastPushAt(Date.now());
-      setLiveState("live");
-      if (m) {
-        setLiveMeta({
-          source: m.source ?? "binance-ws",
-          sourceTimestamp: null,
-          ingestedAt: pushedAt ?? new Date().toISOString(),
-          freshness: m.freshness ?? "LIVE",
-          ageMs: m.ageMs ?? 0,
-          cached: false,
-          stale: false,
-          qualityStatus: m.qualityStatus,
-        });
-      }
-      void mutate();
-    };
-
-    const applyPrice = (price: number) => {
-      if (tk !== tokenRef.current || !Number.isFinite(price)) return;
-      setLive((prev) => {
-        if (!prev?.signal) return prev;
-        return { ...prev, signal: { ...prev.signal, last: price } };
-      });
-      setLastPushAt(Date.now());
-      setLiveState("live");
-    };
-
-    es.addEventListener("snapshot", (e) => {
-      try {
-        apply(JSON.parse((e as MessageEvent).data as string) as StreamPayload);
-      } catch {
-        /* drop */
-      }
-    });
-    es.addEventListener("scalp.signal", (e) => {
-      try {
-        apply(JSON.parse((e as MessageEvent).data as string) as StreamPayload);
-      } catch {
-        /* drop */
-      }
-    });
-    es.addEventListener("scalp.price", (e) => {
-      try {
-        const { price } = JSON.parse((e as MessageEvent).data as string) as { price: number };
-        applyPrice(price);
-      } catch {
-        /* drop */
-      }
-    });
-    es.addEventListener("heartbeat", () => {
-      if (tk !== tokenRef.current) return;
-      setLastPushAt((prev) => prev ?? Date.now());
-    });
-
-    es.onerror = () => {
-      if (tk !== tokenRef.current) return;
-      setLiveState("reconnecting");
-      es.close();
-      // Fall back to REST only — do not tight-loop EventSource reconnect (page jank)
-      setTimeout(() => {
-        if (tk === tokenRef.current) setLiveState("delayed");
-      }, 2_000);
-    };
-
-    return () => {
-      stopStream();
-    };
-  }, [symbol, tf, stopStream, mutate]);
-
-  useEffect(() => {
-    const id = setInterval(() => {
-      if (lastPushAt && Date.now() - lastPushAt > 25_000 && liveState === "live") {
-        setLiveState("delayed");
-      }
-    }, 3_000);
-    return () => clearInterval(id);
-  }, [lastPushAt, liveState]);
-
-  const data = live ?? restData;
-  const meta = liveMeta ?? restMeta;
 
   return (
     <Panel
@@ -192,20 +59,12 @@ export function ScalpPanel({ symbol }: { symbol: string }) {
           <Zap className="size-4 text-accent-primary" /> Scalping Intelligence
           {meta && <FreshnessDot status={meta.freshness} ageMs={meta.ageMs} />}
           {data?.wsLive && <Badge tone="up">WS LIVE</Badge>}
-          {liveState === "live" && (
-            <Badge tone="up">
-              <Radio className="size-3" /> STREAM
-            </Badge>
-          )}
-          {liveState === "connecting" && <Badge tone="neutral">CONNECTING</Badge>}
-          {liveState === "reconnecting" && <Badge tone="neutral">RECONNECTING</Badge>}
-          {liveState === "delayed" && <Badge tone="down">DELAYED</Badge>}
         </span>
       }
       right={
         <div className="seg">
           {TF.map((x) => (
-            <button key={x} data-active={tf === x} onClick={() => setTf(x)}>
+            <button key={x} type="button" data-active={tf === x} onClick={() => setTf(x)}>
               {x}
             </button>
           ))}
@@ -217,27 +76,17 @@ export function ScalpPanel({ symbol }: { symbol: string }) {
       ) : !data ? (
         <Unavailable title="Chua du du lieu realtime" meta={meta} />
       ) : (
-        <ScalpView result={data} meta={meta} liveState={liveState} />
+        <ScalpView result={data} meta={meta} />
       )}
     </Panel>
   );
 }
 
-function ScalpView({
-  result,
-  meta,
-  liveState,
-}: {
-  result: ScalpResult;
-  meta: ReturnType<typeof useApi<ScalpResult>>["meta"];
-  liveState: LiveState;
-}) {
+function ScalpView({ result, meta }: { result: ScalpResult; meta: Meta | null }) {
   const s = result.signal;
   const digits = priceDigits(s.last);
   const dir = DIR_UI[s.direction] ?? DIR_UI.neutral;
   const setup = s.primarySetup;
-  const regime = s.regime;
-  const filter = s.filter;
 
   return (
     <div className="space-y-3">
@@ -257,8 +106,8 @@ function ScalpView({
             {setup.strategy}:{setup.status}
           </Badge>
         )}
-        {regime && <Badge tone="neutral">{regime.market}</Badge>}
-        {filter && <Badge tone={filter.eligible ? "up" : "down"}>tier {filter.tier}</Badge>}
+        {s.regime && <Badge tone="neutral">{s.regime.market}</Badge>}
+        {s.filter && <Badge tone={s.filter.eligible ? "up" : "down"}>tier {s.filter.tier}</Badge>}
       </div>
 
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
@@ -271,37 +120,26 @@ function ScalpView({
         <Metric
           label="Invalidation"
           value={s.invalidation != null ? fmtNum(s.invalidation, digits) : "-"}
-          hint={
-            s.invalidation != null && s.atr != null
-              ? `~ ${(Math.abs(s.last - s.invalidation) / s.atr).toFixed(1)}xATR`
-              : undefined
-          }
           tone="down"
         />
-        <Metric
-          label="Stream"
-          value={liveState.toUpperCase()}
-          hint={result.wsLive ? "Binance WS + SSE" : "REST fallback"}
-          tone={liveState === "live" ? "up" : liveState === "delayed" ? "down" : "neutral"}
-        />
+        <Metric label="Source" value={result.wsLive ? "WS+REST" : "REST"} />
       </div>
 
       {setup && (setup.entry != null || setup.stopLoss != null) && (
         <div className="grid grid-cols-3 gap-2 text-[11px]">
-          <Metric label="Setup entry" value={setup.entry != null ? fmtNum(setup.entry, digits) : "-"} tone="up" />
-          <Metric label="Stop loss" value={setup.stopLoss != null ? fmtNum(setup.stopLoss, digits) : "-"} tone="down" />
+          <Metric label="Entry" value={setup.entry != null ? fmtNum(setup.entry, digits) : "-"} tone="up" />
+          <Metric label="Stop" value={setup.stopLoss != null ? fmtNum(setup.stopLoss, digits) : "-"} tone="down" />
           <Metric
-            label="Take profit"
+            label="TP"
             value={setup.takeProfit != null ? fmtNum(setup.takeProfit, digits) : "-"}
             hint={setup.riskReward != null ? `RR ${setup.riskReward}` : undefined}
           />
         </div>
       )}
 
-      {s.micro?.resistance?.length + s.micro?.support?.length > 0 && (
+      {(s.micro?.support?.length ?? 0) + (s.micro?.resistance?.length ?? 0) > 0 && (
         <div className="flex flex-wrap items-center gap-2 text-[11px]">
           <Crosshair className="size-3.5 text-text-muted" />
-          <span className="text-text-muted">Micro levels:</span>
           {(s.micro?.support ?? []).slice(0, 2).map((v) => (
             <span key={`s${v}`} className="num rounded bg-positive/10 px-1.5 py-0.5 text-positive">
               {fmtNum(v, digits)}
@@ -335,7 +173,7 @@ function ScalpView({
       )}
 
       <p className="text-[10.5px] text-text-muted">
-        Signal deterministic tu nen realtime Binance (WS kline + SSE stream). Khong phai khuyen nghi.
+        Signal quant tu nen Binance (REST poll). Khong phai khuyen nghi.
       </p>
       {meta && <MetaLine meta={meta} />}
     </div>
