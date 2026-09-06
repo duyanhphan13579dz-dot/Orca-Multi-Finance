@@ -121,6 +121,31 @@ export async function runWealthManager(ctx: AgentContext): Promise<AgentRun> {
     });
   } else unavailable.push("rebalancing");
 
+  // Thanh khoản (từ profile)
+  const liquidity = profile.derive.liquidityRatio.value;
+  sections.push({
+    id: "liquidity",
+    title: "Thanh khoản danh mục",
+    label: "DATA-DRIVEN",
+    body: liquidity != null
+      ? `Tài sản thanh khoản chiếm ${(liquidity * 100).toFixed(0)}% tổng tài sản${liquidity < 0.15 ? " — dưới ngưỡng an toàn, cần cân nhắc" : liquidity < 0.3 ? " — trong vùng theo dõi" : " — đạt ngưỡng 30%"}.`
+      : "Chưa khai báo tài sản thanh khoản/tổng tài sản — không đánh giá được.",
+    data: { liquidityRatio: liquidity ?? null },
+    sources: ["liquidity-engine"],
+    unavailable: liquidity == null,
+  });
+
+  // Drawdown: không có chuỗi giá từng vị thế → UNAVAILABLE trung thực
+  sections.push({
+    id: "drawdown",
+    title: "Drawdown danh mục",
+    label: "DATA-DRIVEN",
+    body: "Không có chuỗi giá lịch sử của từng vị thế trong profile — hệ thống không ước lượng drawdown. Nếu có chuỗi giá trị danh mục, dùng tool max_drawdown để tính.",
+    data: null,
+    sources: [],
+    unavailable: true,
+  });
+
   // Risk assessment (portfolio risk), deterministic comment
   const riskSection: AgentSection = {
     id: "risk",

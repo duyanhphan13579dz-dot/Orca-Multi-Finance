@@ -1,6 +1,7 @@
 import "server-only";
 import { answerQuestion, type AgentPrefs } from "../services/agent";
 import { buildMeta, worstFreshness } from "../freshness";
+import { qualityToLabel } from "../quality";
 import { runStockAnalyst, runStockAnalystWithLLM, extractStockSymbol } from "./stock-analyst";
 import { runPersonalFinance } from "./personal-finance";
 import { runWealthManager } from "./wealth-manager";
@@ -120,7 +121,7 @@ export async function runFinancialOrchestrator(
       intent: `financial:${cls.kind ?? "unknown"}`,
       model: mode === "llm" ? "multi-model" : "orca-deterministic",
       confidence: confidence?.level ?? "LOW",
-      dataQuality: meta.qualityStatus,
+      dataQuality: qualityToLabel(meta.qualityStatus),
       dataFreshness,
       context: { sectionsUsed: runs.flatMap((r) => r.sections.map((s) => s.id)), symbols },
       agents: runs.map((r) => r.agent),
