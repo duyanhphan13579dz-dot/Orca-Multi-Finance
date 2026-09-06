@@ -98,11 +98,23 @@ export async function getSpotTicker(symbol: string): Promise<BinanceTicker24h> {
 
 type RawKline = [number, string, string, string, string, string, number, string, number, string, string, string];
 
-export async function getKlines(symbol: string, interval: string, limit = 200): Promise<OhlcvBar[]> {
+export async function getKlines(
+  symbol: string,
+  interval: string,
+  limit = 200,
+  opts?: { endTime?: number; startTime?: number },
+): Promise<OhlcvBar[]> {
+  const qs = new URLSearchParams({
+    symbol,
+    interval,
+    limit: String(Math.min(Math.max(limit, 1), 1000)),
+  });
+  if (opts?.endTime != null) qs.set("endTime", String(opts.endTime));
+  if (opts?.startTime != null) qs.set("startTime", String(opts.startTime));
   const { data, hostIdx } = await getFromHosts<RawKline[]>(
     SPOT_HOSTS,
     lastGoodSpot,
-    `/api/v3/klines?symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(interval)}&limit=${limit}`,
+    `/api/v3/klines?${qs.toString()}`,
     BINANCE_SPOT,
   );
   lastGoodSpot = hostIdx;
@@ -114,6 +126,29 @@ export async function getKlines(symbol: string, interval: string, limit = 200): 
     close: Number(k[4]),
     volume: Number(k[5]),
   }));
+}
+
+/**
+ * Deep kline history: pages backward via endTime until `limit` bars (max ~5000).
+ * Binance returns at most 1000 per request.
+ */
+export async function getKlinesDeep(symbol: string, interval: string, limit = 1000): Promise<OhlcvBar[]> {
+  const target = Math.min(Math.max(limit, 50), 5000);
+  const out: OhlcvBar[] = [];
+  let endTime: number | undefined;
+  let guard = 0;
+  while (out.length < target && guard < 8) {
+    guard += 1;
+    const batch = Math.min(1000, target - out.length);
+    const page = await getKlines(symbol, interval, batch, endTime != null ? { endTime } : undefined);
+    if (!page.length) break;
+    out.unshift(...page);
+    endTime = page[0].time - 1;
+    if (page.length < batch) break;
+  }
+  const map = new Map<number, OhlcvBar>();
+  for (const b of out) map.set(b.time, b);
+  return [...map.values()].sort((a, b) => a.time - b.time).slice(-target);
 }
 
 /** Futures mark price + funding rate (may be geo-blocked → throws ProviderError). */
@@ -135,22 +170,8 @@ export async function getFundingRate(symbol: string): Promise<FundingInfo> {
   };
 }
 
-export async function getAllFundingRates(): Promise<FundingInfo[]> {
-  type Premium = { symbol: string; markPrice: string; indexPrice: string; lastFundingRate: string; nextFundingTime: number };
-  const { data, hostIdx } = await getFromHosts<Premium[]>(FUTURES_HOSTS, lastGoodFutures, `/fapi/v1/premiumIndex`, BINANCE_FUTURES);
-  lastGoodFutures = hostIdx;
-  return data.map((d) => ({
-    symbol: d.symbol,
-    markPrice: Number(d.markPrice),
-    indexPrice: Number(d.indexPrice),
-    fundingRate: Number(d.lastFundingRate),
-    nextFundingTime: d.nextFundingTime,
-  }));
-}
-
-/** Open interest for a perpetual contract. */
-export async function getOpenInterest(symbol: string): Promise<{ symbol: string; openInterest: number; time: number }> {
-  type OI = { symbol: string; openInterest: string; time: number };
+export async function getOpenInterest(symbol: string): Promise<{ openInterest: number; time: number }> {
+  type OI = { openInterest: string; symbol: string; time: number };
   const { data, hostIdx } = await getFromHosts<OI>(
     FUTURES_HOSTS,
     lastGoodFutures,
@@ -158,18 +179,13 @@ export async function getOpenInterest(symbol: string): Promise<{ symbol: string;
     BINANCE_FUTURES,
   );
   lastGoodFutures = hostIdx;
-  return { symbol: data.symbol, openInterest: Number(data.openInterest), time: data.time };
-}
-
-export interface DepthLevel {
-  price: number;
-  qty: number;
+  return { openInterest: Number(data.openInterest), time: data.time };
 }
 
 export interface OrderBookSnapshot {
   lastUpdateId: number;
-  bids: DepthLevel[];
-  asks: DepthLevel[];
+  bids: { price: number; qty: number }[];
+  asks: { price: number; qty: number }[];
 }
 
 /** Spot order book depth (REST). limit: 5|10|20|50|100 */
@@ -193,31 +209,24 @@ export interface AggTrade {
   id: number;
   price: number;
   qty: number;
-  quoteQty: number;
   time: number;
   isBuyerMaker: boolean;
 }
 
-/** Recent aggregate trades — large prints for flow proxy. */
 export async function getAggTrades(symbol: string, limit = 80): Promise<AggTrade[]> {
-  type Raw = { a: number; p: string; q: string; f: number; l: number; T: number; m: boolean }[];
-  const { data, hostIdx } = await getFromHosts<Raw>(
+  type Raw = { a: number; p: string; q: string; f: number; l: number; T: number; m: boolean };
+  const { data, hostIdx } = await getFromHosts<Raw[]>(
     SPOT_HOSTS,
     lastGoodSpot,
     `/api/v3/aggTrades?symbol=${encodeURIComponent(symbol)}&limit=${limit}`,
     BINANCE_SPOT,
   );
   lastGoodSpot = hostIdx;
-  return data.map((t) => {
-    const price = Number(t.p);
-    const qty = Number(t.q);
-    return {
-      id: t.a,
-      price,
-      qty,
-      quoteQty: price * qty,
-      time: t.T,
-      isBuyerMaker: t.m,
-    };
-  });
+  return data.map((t) => ({
+    id: t.a,
+    price: Number(t.p),
+    qty: Number(t.q),
+    time: t.T,
+    isBuyerMaker: t.m,
+  }));
 }

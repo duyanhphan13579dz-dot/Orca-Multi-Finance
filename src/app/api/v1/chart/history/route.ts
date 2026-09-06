@@ -6,24 +6,27 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 /**
- * UNIFIED CHART DATA API — normalized candles + structured indicators for
- * every asset class (crypto / forex / stock), freshness + quality meta.
+ * UNIFIED CHART DATA API — normalized candles + structured indicators.
+ * Crypto can request up to 3000 bars (paged Binance klines).
  *
- * GET /api/v1/chart/history?symbol=BTCUSDT&assetType=crypto&timeframe=1h&limit=300
+ * GET /api/v1/chart/history?symbol=BTCUSDT&assetType=crypto&timeframe=1h&limit=1500
  */
 export async function GET(req: Request) {
   const url = new URL(req.url);
   const symbol = url.searchParams.get("symbol") ?? "";
   const assetType = (url.searchParams.get("assetType") ?? "crypto") as ChartAssetType;
   const timeframe = url.searchParams.get("timeframe") ?? "1h";
-  const limit = Number(url.searchParams.get("limit") ?? 300);
+  const rawLimit = Number(url.searchParams.get("limit") ?? 500);
+  const maxLimit = assetType === "crypto" ? 3000 : 1000;
 
   if (!/^[A-Za-z0-9]{2,20}$/.test(symbol)) return badRequest("symbol không hợp lệ");
   if (!["crypto", "forex", "stock", "commodity"].includes(assetType)) return badRequest("assetType không hợp lệ");
-  if (!tfsFor(assetType).includes(timeframe)) return badRequest(`timeframe không hỗ trợ cho ${assetType} (cho phép: ${tfsFor(assetType).join(", ")})`);
-  if (!Number.isFinite(limit) || limit < 50 || limit > 1000) return badRequest("limit 50..1000");
+  if (!tfsFor(assetType).includes(timeframe))
+    return badRequest(`timeframe không hỗ trợ cho ${assetType} (cho phép: ${tfsFor(assetType).join(", ")})`);
+  if (!Number.isFinite(rawLimit) || rawLimit < 50 || rawLimit > maxLimit)
+    return badRequest(`limit 50..${maxLimit}`);
 
-  const r = await getChartHistory({ symbol, assetType, timeframe, limit });
+  const r = await getChartHistory({ symbol, assetType, timeframe, limit: rawLimit });
   if (!r) {
     return unavailable(
       "chart-engine",
