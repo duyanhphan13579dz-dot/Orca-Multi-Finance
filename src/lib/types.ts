@@ -37,6 +37,8 @@ export interface Meta {
     confidence: string | null;
     llm: boolean;
   };
+  /** Phase 6 — partial-response diagnostics: which component failed and its status */
+  errors?: { component: string; status: string; message?: string }[];
 }
 
 export interface ApiOk<T> {

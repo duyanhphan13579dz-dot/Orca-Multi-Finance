@@ -45,6 +45,8 @@ export function buildMeta(args: {
   partial?: boolean;
   sections?: Record<string, FreshnessStatus>;
   slas?: { liveSlaMs?: number; freshSlaMs?: number; delayedSlaMs?: number };
+  /** Phase 6 — partial-response diagnostics (component + status) */
+  errors?: NonNullable<Meta["errors"]>;
 }): Meta {
   const hasData = args.hasData ?? true;
   const ts = args.sourceTimestampMs ?? null;
@@ -69,6 +71,7 @@ export function buildMeta(args: {
     note: args.note,
     partial: args.partial,
     sections: args.sections,
+    errors: args.errors,
   };
 }
 

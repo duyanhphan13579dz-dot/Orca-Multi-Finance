@@ -15,7 +15,7 @@ import { useApi } from "@/lib/hooks";
 import { useSettings } from "@/lib/settings";
 import { tfsFor, TF_LABEL, type ChartAssetType, type ChartCandle } from "@/lib/chart-const";
 import type { ChartMarketData } from "@/lib/services/chart";
-import type { Meta } from "@/lib/types";
+import { normalizeChartPayload } from "./payload";
 import { SeriesManager } from "./series-manager";
 import { ChartLiveManager } from "./live-manager";
 import { attachMarkers } from "./markers";
@@ -31,11 +31,6 @@ interface Props {
   title?: string;
   /** Vietnam-specific bands rendered as labelled price lines */
   extraLevels?: { label: string; price: number; color: string }[];
-}
-
-interface HistResp {
-  data: ChartMarketData;
-  meta: Meta;
 }
 
 export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height = 430, title, extraLevels }: Props) {
@@ -61,9 +56,12 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
   const kindRef = useRef<ChartKind>(prefs.chartType as ChartKind);
   const loadSeqRef = useRef(0);
 
-  const { data, meta, isLoading, mutate } = useApi<HistResp>(
+  const { data: chartPayload, meta, isLoading, mutate } = useApi<ChartMarketData>(
     `/api/v1/chart/history?symbol=${encodeURIComponent(symbol)}&assetType=${assetType}&timeframe=${tf}&limit=320`,
   );
+  // useApi already unwraps `{success,data,meta}` → `data` IS ChartMarketData.
+  // normalizeChartPayload validates + never throws; malformed → null → no-data UI.
+  const data = useMemo(() => normalizeChartPayload(chartPayload), [chartPayload]);
 
   /* ------------------------------ chart init ------------------------------- */
 
@@ -129,7 +127,7 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
     mgrRef.current?.setIndicatorVisible("rsi", prefs.indicators.rsi);
     mgrRef.current?.setIndicatorVisible("macd", prefs.indicators.macd);
     mgrRef.current?.rebuildSrLines(null, prefs.indicators.srLevels);
-    if (data) mgrRef.current?.rebuildSrLines(data.data.indicators, prefs.indicators.srLevels);
+    if (data) mgrRef.current?.rebuildSrLines(data.indicators, prefs.indicators.srLevels);
   }, [prefs, data]);
 
   /* ------------------------------ history data ----------------------------- */
@@ -139,8 +137,8 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
     const chart = chartRef.current;
     const mgr = mgrRef.current;
     if (!chart || !mgr || !data) return;
-    const d = data.data;
-    if (!d.candles.length) return;
+    const d = data;
+    if (!d.candles?.length) return;
 
     mgr.setHistory(d.candles, kindRef.current);
     mgr.rebuildIndicators(d.indicators, prefs.indicators);
@@ -152,7 +150,7 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
     const c = mgr.base();
     if (c) {
       markersRef.current?.setMarkers([]);
-      markersRef.current = attachMarkers(c, d.markers as SignalMarker[]) as unknown as { setMarkers: (m: unknown[]) => void };
+      markersRef.current = attachMarkers(c, (d.markers ?? []) as SignalMarker[]) as unknown as { setMarkers: (m: unknown[]) => void };
     }
     if (seq === loadSeqRef.current) chart.timeScale().fitContent();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -165,13 +163,13 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
     if (kind === kindRef.current) return;
     kindRef.current = kind;
     const mgr = mgrRef.current;
-    if (!mgr || !data) return;
+    if (!mgr || !data?.candles?.length) return;
     mgr.switchKind(kind);
-    mgr.setHistory(data.data.candles, kind);
-    mgr.rebuildSrLines(data.data.indicators, prefs.indicators.srLevels);
+    mgr.setHistory(data.candles, kind);
+    mgr.rebuildSrLines(data.indicators, prefs.indicators.srLevels);
     rebuildDrawings();
     const c = mgr.base();
-    if (c) markersRef.current = attachMarkers(c, data.data.markers as SignalMarker[]) as unknown as { setMarkers: (m: unknown[]) => void };
+    if (c) markersRef.current = attachMarkers(c, (data.markers ?? []) as SignalMarker[]) as unknown as { setMarkers: (m: unknown[]) => void };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [prefs.chartType]);
 

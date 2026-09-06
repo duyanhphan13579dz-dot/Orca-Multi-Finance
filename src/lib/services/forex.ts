@@ -219,8 +219,9 @@ export async function getForexDetail(pairRaw: string): Promise<{ detail: ForexDe
   const quote = pair.slice(3);
   const markets = await getForexMarkets();
   const current = markets?.data.rows.find((r) => r.pair === pair) ?? null;
-  let series: { date: string; rate: number }[];
+  let series: { date: string; rate: number }[] = [];
   let seriesTs: number | null = null;
+  const errors: Meta["errors"] = [];
   try {
     // ECB base currencies are limited; invert when needed
     const direct = await getFrankfurterSeries(base, quote, 370);
@@ -232,7 +233,9 @@ export async function getForexDetail(pairRaw: string): Promise<{ detail: ForexDe
       series = inverted.map((x) => ({ date: x.date, rate: 1 / x.rate }));
       seriesTs = inverted.length ? Date.parse(inverted[inverted.length - 1].date) : null;
     } catch {
-      return null;
+      // Partial response: quote still valid → page renders, chart shows "no data",
+      // NEVER a null-detail (which would 502 the whole page).
+      errors.push({ component: "chart", status: "UNAVAILABLE", message: "Frankfurter/ECB daily series unavailable (direct + inverted)" });
     }
   }
   const bars: OhlcvBar[] = series.map((x) => ({
@@ -245,11 +248,25 @@ export async function getForexDetail(pairRaw: string): Promise<{ detail: ForexDe
     series: bars, technical,
     referenceNote: "Chuỗi lịch sử: tỷ giá tham chiếu hằng ngày của Ngân hàng Trung ương châu Âu (ECB), cập nhật mỗi ngày làm việc ~16:00 CET.",
   };
+  const hasQuote = current != null;
+  const hasSeries = bars.length > 0;
+  // TOTAL failure (no quote AND no history) → null so the route returns a safe
+  // JSON 502 (Unavailable UI). Any partial data → success:true + meta.partial.
+  if (!hasQuote && !hasSeries) return null;
   const meta = buildMeta({
-    source: "frankfurter-ecb",
-    sourceTimestampMs: seriesTs,
-    note: current ? undefined : "Giá hiện tại không khả dụng — chỉ còn chuỗi tham chiếu ECB",
+    source: hasSeries ? "frankfurter-ecb" : "forex-quote",
+    sourceTimestampMs: hasSeries ? seriesTs : current?.updatedAt ? Date.parse(current.updatedAt) : null,
+    partial: errors.length > 0 || !hasSeries,
+    note: !hasQuote && !hasSeries
+      ? "Không có dữ liệu nào (quote + series đều unavailable)"
+      : !hasSeries
+        ? "Chuỗi lịch sử ECB không khả dụng — chỉ có giá hiện tại (không hiển thị candles giả)"
+        : !hasQuote
+          ? "Giá hiện tại không khả dụng — chỉ còn chuỗi tham chiếu ECB"
+          : undefined,
     slas: { liveSlaMs: 86_400_000, freshSlaMs: 2 * 86_400_000, delayedSlaMs: 5 * 86_400_000 },
+    sections: { quote: hasQuote ? "FRESH" : "UNAVAILABLE", chart: hasSeries ? "FRESH" : "UNAVAILABLE", technical: technical ? "FRESH" : "UNAVAILABLE" },
+    errors: errors.length ? errors : undefined,
   });
   return { detail, meta };
 }
