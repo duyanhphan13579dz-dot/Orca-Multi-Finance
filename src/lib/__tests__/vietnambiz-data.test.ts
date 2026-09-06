@@ -24,6 +24,7 @@ import {
   parseVnbMacroRows,
   parseVnbRatesRows,
 } from "../providers/vietnambiz-data";
+import { COMMODITY_CATALOG, currencyForUnit } from "../providers/commodities";
 
 
 
@@ -385,6 +386,24 @@ test("REGRESSION 2: CSS-as-text trong cell — goods name/unit/price sạch", ()
   assert.equal(mapped.get("pig-vn")?.price, 57_833);
 });
 
+
+
+test("CHUẨN HÓA /goods (2026-09-06): 66/66 catalog khớp NGUYÊN VĂN name/unit trang + currency/market đúng", () => {
+  const rows = parseVnbGoodsRows(GOODS_HTML);
+  assert.equal(rows.length, COMMODITY_CATALOG.length, "66 dòng = 66 mục catalog");
+  rows.forEach((r, i) => {
+    const c = COMMODITY_CATALOG[i];
+    assert.equal(r.name, c.nameVi, `#${i} ${c.key}: nameVi phải bằng tên trang`);
+    assert.equal(r.unit, c.unit, `#${i} ${c.key}: unit phải bằng đơn vị trang`);
+    const cur = currencyForUnit(r.unit);
+    assert.equal(c.currency, cur, `#${i} ${c.key}: currency theo unit trang (${r.unit})`);
+    assert.equal(c.market, cur === "VND" ? "VN" : "INTL", `#${i} ${c.key}: market theo currency`);
+  });
+  // không còn alias cũ (đơn vị chính xác như trang)
+  for (const c of COMMODITY_CATALOG) {
+    assert.ok(!["USD/oz", "USD/lb", "USD/bbl", "USD/MMBtu"].includes(c.unit), `${c.key}: ${c.unit} là alias cũ`);
+  }
+});
 
 test("REGRESSION 4 (live 06/09): tên cell rác không rửa được → KHÔNG drop; map vòng 2 + unit/currency theo catalog", () => {
   const hard = ".css-unclosed{"; // stripCssText không xử lý hết → cleanCell trả ""

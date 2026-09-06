@@ -83,8 +83,10 @@ test("currencyForUnit: WiFeed units (kể cả Nghìn/lít, Yên/tấn, MYR)", (
   assert.equal(currencyForUnit("CNY/tấn"), "CNY");
   assert.equal(currencyForUnit("MYR/tấn"), "MYR");
   assert.equal(currencyForUnit("Yên/tấn"), "JPY");
-  assert.equal(currencyForUnit("USD/oz"), "USD");
+  assert.equal(currencyForUnit("USD/ounce"), "USD");
   assert.equal(currencyForUnit("USD/tấn"), "USD");
+  assert.equal(currencyForUnit("USD/thùng"), "USD");
+  assert.equal(currencyForUnit("USD/Mmbtu"), "USD");
 });
 
 test("parseDecimal: thousands comma + whitespace handled, garbage → NaN", () => {

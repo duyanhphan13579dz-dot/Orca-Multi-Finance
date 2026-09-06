@@ -329,7 +329,7 @@ export const VNB_GOODS_MAP: VnbGoodsMap[] = [
   R("Đá Hộc", "aggregate-boulder"),
   R("Tôn lạnh màu Hoa Sen 0,45mm", "sheet-color"),
   R("Tôn lạnh Hoa Sen 0,45mm", "sheet"),
-  { rx: /^Bê tông nhựa mịn\s*:\s*Carboncor Asphalt - CA 9\.5$/, key: "asphalt", name: "Bê tông nhựa mịn : Carboncor Asphalt - CA 9.5", unit: DEF_BY_KEY.get("asphalt")?.unit ?? "" },
+  R("Bê tông nhựa mịn : Carboncor Asphalt - CA 9.5", "asphalt"),
   R("Ống nhựa 27 x 1.8mm", "pipe-27"),
   R("Ống nhựa 60 x 2mm", "pipe-60"),
   R("Ống nhựa 90 x 2,9mm", "pipe-90"),
