@@ -132,7 +132,9 @@ export async function getCryptoOrderFlow(symbolRaw: string): Promise<{ data: Cry
     const spreadBps = mid > 0 ? (spread / mid) * 10_000 : 0;
     const imbalance = bidTotal + askTotal > 0 ? (bidTotal - askTotal) / (bidTotal + askTotal) : 0;
 
-    const sorted = [...trades].sort((a, b) => b.quoteQty - a.quoteQty).slice(0, 15);
+    // AggTrade has price+qty only — quote notional = price * qty
+    const withQuote = trades.map((t) => ({ ...t, quoteQty: t.price * t.qty }));
+    const sorted = [...withQuote].sort((a, b) => b.quoteQty - a.quoteQty).slice(0, 15);
     const largePrints: LargePrint[] = sorted.map((t) => ({
       price: t.price,
       qty: t.qty,
@@ -143,7 +145,7 @@ export async function getCryptoOrderFlow(symbolRaw: string): Promise<{ data: Cry
 
     let buyVolumeQuote = 0;
     let sellVolumeQuote = 0;
-    for (const t of trades) {
+    for (const t of withQuote) {
       if (t.isBuyerMaker) sellVolumeQuote += t.quoteQty;
       else buyVolumeQuote += t.quoteQty;
     }
