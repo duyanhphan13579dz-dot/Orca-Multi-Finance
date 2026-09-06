@@ -49,3 +49,8 @@ export function badRequest(message: string): NextResponse<ApiResponse<never>> {
 export function notFound(message: string): NextResponse<ApiResponse<never>> {
   return fail("NOT_FOUND", message, 404);
 }
+
+/** Rate-limited: HTTP 429 with a stable error code for the UI. */
+export function tooMany(message: string): NextResponse<ApiResponse<never>> {
+  return fail("TOO_MANY_REQUESTS", message, 429);
+}

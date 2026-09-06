@@ -7,6 +7,8 @@ import { env } from "../env";
 import { buildQuoteSet, logDiscrepancies, reconcileQuotes } from "../reconcile";
 import { validateBars, logQualityEvent } from "../quality";
 import { analyzeSeries, detectPatterns } from "../technical";
+import { filterAndSortRows } from "../engines/screener";
+import { VN_SECURITIES } from "../vn/master";
 import type { CandlePattern, IndexQuote, Meta, OhlcvBar, Quote, TechnicalSnapshot } from "../types";
 
 /**
@@ -181,4 +183,86 @@ export async function getVnStockDetail(symbol: string): Promise<{ detail: VnStoc
     note: detail.notes[0],
   });
   return { detail, meta };
+}
+
+/* -------------------------------- Screener -------------------------------- */
+
+export interface VnScreenerParams {
+  minChange?: number;
+  maxChange?: number;
+  minQuoteVolume?: number;
+  sort?: "gainers" | "losers" | "volume";
+  limit?: number;
+  exchange?: "HOSE" | "HNX" | "UPCOM";
+  sector?: string;
+  symbols?: string[];
+}
+
+export interface VnScreenerRow extends Quote {
+  name: string | null;
+  exchange: string | null;
+  sector: string | null;
+}
+
+/**
+ * VN equity screener — real provider data only.
+ * Universe (name/exchange/industry) from VNStock; taxonomy (sector) from the
+ * canonical Security Master; quotes fetched in chunks (≤30/call).
+ */
+export async function screenVnStocks(params: VnScreenerParams): Promise<{ rows: VnScreenerRow[]; meta: Meta; note: string } | null> {
+  if (!vnstockConfigured()) return null;
+  try {
+    const universe = await vnstock.getVnUniverse();
+    if (!universe.length) return null;
+    let universeSymbols = universe.map((u) => u.symbol);
+    if (params.symbols && params.symbols.length > 0) {
+      const wanted = new Set(params.symbols);
+      universeSymbols = universeSymbols.filter((s) => wanted.has(s));
+    }
+    const master = new Map(VN_SECURITIES.map((s) => [s.symbol, s]));
+    const bySym = new Map(universe.map((u) => [u.symbol, u]));
+    let candidates = universeSymbols.filter((s) => {
+      const m = master.get(s);
+      if (params.exchange && m && m.exchange !== params.exchange) return false;
+      if (params.sector && m && m.sector !== params.sector) return false;
+      return true;
+    });
+
+    const perChunk = 30;
+    const quotes: Quote[] = [];
+    for (let i = 0; i < candidates.length && quotes.length < 200; i += perChunk) {
+      const chunk = candidates.slice(i, i + perChunk);
+      const q = await getVnQuotes(chunk);
+      if (q) quotes.push(...q.quotes);
+    }
+
+    const enriched: VnScreenerRow[] = quotes.map((quote) => {
+      const m = master.get(quote.symbol);
+      const u = bySym.get(quote.symbol);
+      return {
+        ...quote,
+        name: m?.name ?? u?.name ?? null,
+        exchange: m?.exchange ?? u?.exchange ?? null,
+        sector: m?.sector ?? u?.industry ?? null,
+      };
+    });
+
+    const rows = filterAndSortRows(enriched, {
+      minChange: params.minChange,
+      maxChange: params.maxChange,
+      minQuoteVolume: params.minQuoteVolume,
+      sort: params.sort,
+      limit: Math.min(params.limit ?? 40, 100),
+    });
+
+    const meta = buildMeta({
+      source: "vnstock",
+      sourceTimestampMs: Date.now(),
+      slas: { liveSlaMs: 60_000, freshSlaMs: 300_000, delayedSlaMs: 3_600_000 },
+      note: `universe ${universeSymbols.length} · candidates ${candidates.length}`,
+    });
+    return { rows, meta, note: `universe ${universeSymbols.length} · candidates ${candidates.length}` };
+  } catch {
+    return null;
+  }
 }

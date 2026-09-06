@@ -28,7 +28,7 @@ Không có module nào dùng số liệu giả. Khi provider lỗi: **retry → 
 | **Vietnam Security Master** (HOSE/HNX/UPCoM, taxonomy) | Implemented | Symbol→exchange→sector→industry canonical registry + search index |
 | **VN Market Session Engine** | Implemented | ATO/liên tục/nghỉ trưa/ATC/post-trading + holidays; freshness theo session |
 | **VN Market Center** (dashboard ưu tiên 1) | Implemented | VN indices hero, sector taxonomy, tin VN doanh nghiệp ưu tiên |
-| VN Screener (universe tab đầu tiên) | Implemented | Filter theo ngành ±% · GT GD; chiến lược nâng cao roadmap |
+| VN Screener (universe tab đầu tiên) | Implemented | Filter theo ngành ±% · GT GD; `/api/v1/screener?universe=vn` (cần VNSTOCK_API_KEY) |
 | Search VN-first (tên công ty không dấu) | Implemented | Security Master index, VN ticker rank trên mọi asset |
 | VN chart reference/ceiling/floor overlays | Implemented | ExtraLevels từ provider khi có dữ liệu |
 | Market Dashboard + ORCA Market Pulse | Implemented | Analyst-style narrative từ dữ liệu realtime, gauge risk-appetite |
@@ -52,7 +52,8 @@ Không có module nào dùng số liệu giả. Khi provider lỗi: **retry → 
 | Morning Brief (reports) | Implemented | Freshness gate, analyst narrative, lưu DB |
 | AI Agent (fetch-data-first) | Implemented | Deterministic engine; LLM optional (bounded context) |
 | Technical engine (RSI/MACD/BB/ATR/S-R/patterns) | Implemented | Pure quantitative, deterministic |
-| Watchlist + Trade Journal | Implemented | Local-first; server tables sẵn sàng để sync |
+| Watchlist + Trade Journal | Implemented | Local-first + server sync (`/api/v1/watchlist`, merge khi đăng nhập) |
+| Alerts | Implemented | CRUD `/api/v1/alerts*` + pure evaluator + scheduler poll 5 phút |
 | Auth (email/password, scrypt, JWT cookie) | Implemented | `/api/v1/auth/*` |
 | Ops/Observability (`/system`) | Implemented | Provider health, latency, circuit, cache stats |
 | VN Stocks: universe/quotes/OHLCV/financials | Implemented (needs key) | Tự kích hoạt khi `VNSTOCK_API_KEY` được cấu hình |
@@ -126,8 +127,10 @@ npm run start
 Kiểm tra chất lượng trước khi commit:
 
 ```bash
-npm run check    # typecheck + test
+npm run check    # typecheck + test (node:test, ~38 assertions)
 ```
+
+CI (GitHub Actions `.github/workflows/ci.yml`): lint → typecheck → test → build trên push/PR. Với `main` chú ý: production runtime yêu cầu `JWT_SECRET` ≥32 ký tự (guard `assertSecureEnv`), auth có rate-limit (`src/lib/rate-limit.ts`).
 
 Health & diagnostics:
 

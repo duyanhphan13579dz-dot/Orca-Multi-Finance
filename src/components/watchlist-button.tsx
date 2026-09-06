@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Eye, EyeOff } from "lucide-react";
+import { pushWatchlist } from "@/lib/watchlist-sync";
 
 export interface WatchItem {
   assetType: "stock" | "crypto" | "forex" | "commodity";
@@ -22,6 +23,7 @@ export function loadWatchlist(): WatchItem[] {
 export function saveWatchlist(items: WatchItem[]) {
   localStorage.setItem(KEY, JSON.stringify(items));
   window.dispatchEvent(new Event("orca:watchlist"));
+  void pushWatchlist(items); // server sync (fire-and-forget, local-first)
 }
 
 export function AddToWatchlist({ assetType, symbol }: { assetType: WatchItem["assetType"]; symbol: string }) {

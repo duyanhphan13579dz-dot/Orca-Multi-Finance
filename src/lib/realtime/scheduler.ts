@@ -13,6 +13,8 @@ const g = globalThis as typeof globalThis & { __orcaScheduler?: Scheduler };
 class Scheduler {
   private timer: ReturnType<typeof setInterval> | null = null;
   private running = new Set<string>();
+  private lastAlertPoll = 0;
+  private readonly alertPollMs = 5 * 60_000;
 
   start() {
     if (this.timer) return;
@@ -67,6 +69,14 @@ class Scheduler {
   }
 
   private async tick() {
+    /* ALERT ENGINE: independent of report times — polls every 5 minutes. */
+    if (Date.now() - this.lastAlertPoll >= this.alertPollMs) {
+      this.lastAlertPoll = Date.now();
+      void (async () => {
+        const { pollActiveAlerts } = await import("../services/alerts");
+        await pollActiveAlerts();
+      })();
+    }
     const cfg = await this.loadCfg();
     if (!cfg.autoDaily) return;
     const { minutes, date, dow } = this.vnNow();

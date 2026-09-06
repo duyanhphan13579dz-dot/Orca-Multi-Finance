@@ -63,7 +63,24 @@ Envelope chuẩn cho mọi endpoint:
 | --- | --- | --- |
 | `GET /api/v1/commodities` | Catalog + rows đa nguồn + unavailable list + impact mapping | multi |
 | `GET /api/v1/news?category=&symbol=&sector=&limit=` | Tin tức đã dedupe/tag/validate timestamp | RSS multi-feed |
-| `GET /api/v1/screener?universe=crypto&minChange=&maxChange=&minQuoteVolume=&limit=` | Screener rule-based | Binance |
+| `GET /api/v1/screener?universe=crypto\|vn&minChange=&maxChange=&minQuoteVolume=&exchange=&sector=&limit=&sort=` | Screener rule-based. `vn` cần VNSTOCK_API_KEY; hỗ trợ lọc exchange/sector/symbols | Binance / VNStock |
+
+## Alerts
+
+| Endpoint | Mô tả | Nguồn |
+| --- | --- | --- |
+| `GET /api/v1/alerts` | Danh sách alert đang active của user (401 nếu chưa login) | engine |
+| `POST /api/v1/alerts` `{assetType,symbol,condition,threshold}` | Tạo alert: `condition ∈ price_above\|price_below\|pct_change\|rsi\|volume_spike` | engine |
+| `PATCH /api/v1/alerts/{id}` `{active?,threshold?}` | Bật/tắt hoặc đổi ngưỡng (đổi ngưỡng reset `triggeredAt`) | engine |
+| `DELETE /api/v1/alerts/{id}` | Xóa alert | engine |
+| `POST /api/v1/alerts/check` | Đánh giá thủ công toàn bộ alert của user (scheduler poll 5 phút tự chạy) | engine |
+
+## Watchlist
+
+| Endpoint | Mô tả | Nguồn |
+| --- | --- | --- |
+| `GET /api/v1/watchlist` | Danh sách watchlist server-side của user | DB |
+| `PUT /api/v1/watchlist` `{items:[{assetType,symbol}]}` | Replace toàn bộ (local-first: UI sync fire-and-forget khi login) | DB |
 
 ## Reports & AI
 

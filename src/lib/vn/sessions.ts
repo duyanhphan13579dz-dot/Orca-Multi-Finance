@@ -52,21 +52,26 @@ function vnNow(): { date: Date; dateStr: string; minutes: number; dow: number } 
   return { date: now, dateStr, minutes, dow: now.getDay() };
 }
 
-export function getVnSession(): VnSessionInfo {
-  const { dateStr, minutes, dow } = vnNow();
+/** Pure classifier — exported for deterministic tests. */
+export function classifySession(dateStr: string, minutes: number, dow: number): VnSessionState {
   const isHoliday = HOLIDAYS.has(dateStr);
   const weekend = dow === 0 || dow === 6;
 
-  let state: VnSessionState = "closed";
-  if (isHoliday) state = "holiday_closed";
-  else if (weekend) state = "weekend_closed";
-  else if (minutes >= 9 * 60 && minutes < 9 * 60 + 15) state = "opening_auction";
-  else if (minutes >= 9 * 60 + 15 && minutes < 11 * 60 + 30) state = "morning_continuous";
-  else if (minutes >= 11 * 60 + 30 && minutes < 13 * 60) state = "lunch_break";
-  else if (minutes >= 13 * 60 && minutes < 14 * 60 + 30) state = "afternoon_continuous";
-  else if (minutes >= 14 * 60 + 30 && minutes < 14 * 60 + 45) state = "closing_auction";
-  else if (minutes >= 14 * 60 + 45 && minutes < 15 * 60) state = "post_trading";
-  else if (minutes >= 8 * 60 && minutes < 9 * 60) state = "pre_open";
+  if (isHoliday) return "holiday_closed";
+  if (weekend) return "weekend_closed";
+  if (minutes >= 9 * 60 && minutes < 9 * 60 + 15) return "opening_auction";
+  if (minutes >= 9 * 60 + 15 && minutes < 11 * 60 + 30) return "morning_continuous";
+  if (minutes >= 11 * 60 + 30 && minutes < 13 * 60) return "lunch_break";
+  if (minutes >= 13 * 60 && minutes < 14 * 60 + 30) return "afternoon_continuous";
+  if (minutes >= 14 * 60 + 30 && minutes < 14 * 60 + 45) return "closing_auction";
+  if (minutes >= 14 * 60 + 45 && minutes < 15 * 60) return "post_trading";
+  if (minutes >= 8 * 60 && minutes < 9 * 60) return "pre_open";
+  return "closed";
+}
+
+export function getVnSession(): VnSessionInfo {
+  const { dateStr, minutes, dow } = vnNow();
+  const state = classifySession(dateStr, minutes, dow);
 
   const labels: Record<VnSessionState, string> = {
     pre_open: "Trước giờ mở cửa",

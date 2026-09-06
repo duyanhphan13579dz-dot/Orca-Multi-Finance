@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useApi } from "@/lib/hooks";
 import { loadWatchlist, saveWatchlist, type WatchItem } from "@/components/watchlist-button";
+import { pullWatchlist, mergeWatchlists } from "@/lib/watchlist-sync";
 import { DEFAULT_VN_WATCHLIST } from "@/lib/vn/master";
 import type { CryptoSummary } from "@/lib/services/crypto";
 import type { CryptoMarketRow, ForexRow } from "@/lib/types";
@@ -17,10 +18,18 @@ export default function WatchlistPage() {
   const [items, setItems] = useState<WatchItem[]>([]);
   const [input, setInput] = useState("");
   useEffect(() => {
-    // VN-first default watchlist when empty
-    if (loadWatchlist().length === 0) {
+    // VN-first default watchlist when empty; merge with the server copy when logged in
+    const local = loadWatchlist();
+    if (local.length === 0) {
       saveWatchlist(DEFAULT_VN_WATCHLIST.slice(2).map((s, i) => ({ assetType: "stock" as const, symbol: s, addedAt: Date.now() - i })));
     }
+    void (async () => {
+      const server = await pullWatchlist();
+      if (server?.length) {
+        const merged = mergeWatchlists(loadWatchlist(), server);
+        saveWatchlist(merged);
+      }
+    })();
     const load = () => setItems(loadWatchlist());
     load();
     window.addEventListener("orca:watchlist", load);

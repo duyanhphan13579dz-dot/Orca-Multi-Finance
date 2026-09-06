@@ -7,6 +7,7 @@ import { candleAggregator } from "../realtime/candles";
 import { eventBus } from "../events";
 import { logQualityEvent, validateQuote } from "../quality";
 import { analyzeSeries, detectPatterns } from "../technical";
+import { filterAndSortRows } from "../engines/screener";
 import type { CandlePattern, CryptoMarketRow, Meta, OhlcvBar, TechnicalSnapshot } from "../types";
 
 /**
@@ -258,11 +259,6 @@ export interface CryptoScreenerParams {
 export async function screenCrypto(params: CryptoScreenerParams): Promise<{ rows: CryptoMarketRow[]; meta: Meta } | null> {
   const m = await getCryptoMarkets();
   if (!m) return null;
-  let rows = m.rows;
-  if (params.minChange != null) rows = rows.filter((r) => (r.changePercent ?? 0) >= (params.minChange as number));
-  if (params.maxChange != null) rows = rows.filter((r) => (r.changePercent ?? 0) <= (params.maxChange as number));
-  if (params.minQuoteVolume != null) rows = rows.filter((r) => (r.quoteVolume ?? 0) >= (params.minQuoteVolume as number));
-  if (params.sort === "gainers") rows = [...rows].sort((a, b) => (b.changePercent ?? 0) - (a.changePercent ?? 0));
-  if (params.sort === "losers") rows = [...rows].sort((a, b) => (a.changePercent ?? 0) - (b.changePercent ?? 0));
-  return { rows: rows.slice(0, params.limit ?? 40), meta: m.meta };
+  const rows = filterAndSortRows(m.rows, params);
+  return { rows, meta: m.meta };
 }

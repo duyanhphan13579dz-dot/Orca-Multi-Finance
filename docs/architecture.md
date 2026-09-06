@@ -99,7 +99,7 @@ Data contract per analysis: `{asset, market_data, technical_state, market_state,
 
 1. `internal/ws-gateway`: SSE → WebSocket, subscribe theo symbol (lazy subscriptions).
 2. Binance `!ticker@arr` relay → Redis pub/sub channel `crypto.ticker` → broadcast delta JSON patches.
-3. Alert engine (bảng `alerts` đã có) xử lý event-driven: price_above/below, RSI, volume spike, funding thresholds.
+3. ~~Alert engine~~ — **implemented (2026-09)**: bảng `alerts` + `src/lib/engines/alerts.ts` (pure evaluator: price_above/below, pct_change, RSI, volume_spike) + `src/lib/services/alerts.ts` (CRUD, snapshot, trigger persistence) + `/api/v1/alerts*` + scheduler poll 5 phút. Còn lại: push realtime qua WS gateway (mục 1).
 4. Incremental indicator updates cho crypto/stock engine khi có tick mới.
 5. VN universe scheduler (daily sync HOSE/HNX/UPCOM vào `stock_symbols`) khi VNStock hoạt động ổn định.
 
@@ -107,5 +107,8 @@ Data contract per analysis: `{asset, market_data, technical_state, market_state,
 
 - API keys chỉ đọc qua `src/lib/env.ts` (module `server-only`), không biến `NEXT_PUBLIC_*`.
 - Auth: scrypt password hash, JWT HS256 trong httpOnly cookie (`/api/v1/auth/*`), audit logs.
+- **Rate limiting** (`src/lib/rate-limit.ts`): login 10 lần/IP+email và 40/IP trong 15 phút; register 10/IP/giờ → HTTP 429 `TOO_MANY_REQUESTS`.
+- **Production guard** (`assertSecureEnv`): từ chối 503 khi `JWT_SECRET` thiếu hoặc <32 ký tự trong `NODE_ENV=production` (fallback dev bị chặn).
+- **Security headers** (`next.config.ts`): X-Content-Type-Options, Referrer-Policy, Permissions-Policy, HSTS (production).
 - Input validation ở mọi route (symbol regex, cặp FX 6 ký tự, giới hạn length/limit).
 - Không trả internal stack trace: error envelope `{ code, message }` ngắn gọn.

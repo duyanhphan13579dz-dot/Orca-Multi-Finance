@@ -9,6 +9,9 @@ const opt = (v: string | undefined): string | undefined => {
   return t && t.length > 0 ? t : undefined;
 };
 
+/** The built-in fallback secret MUST never be used outside development. */
+export const INSECURE_JWT_SECRET = "orca-dev-insecure-secret-change-in-production";
+
 export const env = {
   nodeEnv: process.env.NODE_ENV ?? "development",
 
@@ -44,7 +47,7 @@ export const env = {
 
   /* Platform */
   redisUrl: opt(process.env.REDIS_URL),
-  jwtSecret: opt(process.env.JWT_SECRET) ?? "orca-dev-insecure-secret-change-in-production",
+  jwtSecret: opt(process.env.JWT_SECRET) ?? INSECURE_JWT_SECRET,
 
   /* Optional LLM for the AI Agent (OpenAI-compatible) */
   aiProviderKey: opt(process.env.AI_PROVIDER_KEY),
@@ -53,3 +56,19 @@ export const env = {
 };
 
 export const isProd = env.nodeEnv === "production";
+
+/**
+ * Fail loudly instead of silently shipping a guessable JWT secret.
+ * Returns an error message when the runtime config is unsafe, null otherwise.
+ */
+export function assertSecureEnv(): string | null {
+  if (process.env.NODE_ENV !== "production") return null;
+  if (!opt(process.env.JWT_SECRET)) return "JWT_SECRET bắt buộc trong production (đang dùng fallback dev-insecure).";
+  if ((process.env.JWT_SECRET ?? "").length < 32) return "JWT_SECRET phải dài tối thiểu 32 ký tự trong production.";
+  return null;
+}
+
+/** True when auth is currently backed by the dev fallback secret. */
+export function usingInsecureJwtSecret(): boolean {
+  return env.jwtSecret === INSECURE_JWT_SECRET;
+}
