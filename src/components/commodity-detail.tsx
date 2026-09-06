@@ -6,7 +6,7 @@ import { OrcaChart } from "@/components/orca-chart";
 import { Badge, Chg, fmtNum, FreshnessDot, Loading, MetaLine, Panel, Unavailable } from "@/components/ui";
 import type { FreshnessStatus } from "@/lib/types";
 import { AddToWatchlist } from "@/components/watchlist-button";
-import { CalendarDays, Droplets, LineChart, Link2 } from "lucide-react";
+import { CalendarDays, Droplets, LineChart, Link2, Newspaper } from "lucide-react";
 
 /**
  * COMMODITY DETAIL VIEW — shared by the landing route /commodities/:key and
@@ -24,6 +24,8 @@ export interface CommodityDetailBody {
   nameVi: string;
   category: string;
   subcategory: string | null;
+  subgroup?: string | null;
+  market?: "VN" | "INTL";
   unit: string;
   currency: string;
   hasChart?: boolean;
@@ -54,6 +56,27 @@ export interface CommodityDetailBody {
   updatedAt: string | null;
   sourceTimestamp: string | null;
   sourceUrl: string | null;
+  /** intelligence profile */
+  correlation?: {
+    r: number | null;
+    beta: number | null;
+    observations: number;
+    window: string;
+    status: "OK" | "INSUFFICIENT_DATA";
+    note: string;
+  } | null;
+  latestNews?: NewsItem[];
+  catalysts?: NewsItem[];
+  newsNote?: string | null;
+}
+
+interface NewsItem {
+  id: string;
+  title: string;
+  summary: string | null;
+  url: string;
+  source: string;
+  publishedAt: string;
 }
 
 const DATE_RANGES: { label: string; tf: string; limit: number }[] = [
@@ -126,7 +149,8 @@ export default function CommodityDetailView({ symbol, compact = false }: { symbo
               {data.marketState === "CLOSED" && <Badge tone="warn">MARKET CLOSED</Badge>}
             </div>
             <div className="mt-0.5 text-[11px] text-text-muted">
-              {data.symbol} · {data.unit} · <span className="text-text-secondary">{data.source ?? "—"}</span>
+              {data.symbol} · {data.unit} · {data.market === "VN" ? "Thị trường Việt Nam" : "Thị trường quốc tế"}
+              {data.subgroup ? ` · ${data.subgroup}` : ""} · <span className="text-text-secondary">{data.source ?? "—"}</span>
             </div>
             <div className="mt-3 flex flex-wrap items-baseline gap-x-4 gap-y-1">
               <span className="num text-[28px] font-semibold tracking-tight">
@@ -256,6 +280,49 @@ export default function CommodityDetailView({ symbol, compact = false }: { symbo
           )}
         </div>
       </Panel>
+
+      {/* correlation / sensitivity — historical statistics only */}
+      {data.correlation && (
+        <Panel title="Tương quan & Độ nhạy" right={data.correlation.status === "OK" ? <Badge tone="accent">HISTORICAL</Badge> : <Badge tone="warn">INSUFFICIENT</Badge>}>
+          <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-[11.5px]">
+            {data.correlation.status === "OK" && data.correlation.r != null ? (
+              <>
+                <span>
+                  Tương quan với VNINDEX: <b className="num text-text-secondary">{data.correlation.r.toFixed(2)}</b>
+                </span>
+                <span>
+                  Độ nhạy (β): <b className="num text-text-secondary">{data.correlation.beta?.toFixed(2) ?? "—"}</b>
+                  <span className="text-[9.5px] text-text-muted"> · 1% VNINDEX ↔ β% hàng hóa</span>
+                </span>
+              </>
+            ) : (
+              <span className="text-[11px] text-text-muted">{data.correlation.note}</span>
+            )}
+            <span className="text-[10px] text-text-muted">{data.correlation.observations} ngày khớp · {data.correlation.note}</span>
+          </div>
+        </Panel>
+      )}
+
+      {/* latest news & candidate catalysts — news-driven only */}
+      {(data.latestNews?.length ?? 0) > 0 && (
+        <Panel title="Tin mới & Catalyst" right={<span className="text-[10px] text-text-muted">{data.newsNote ?? ""}</span>}>
+          <div className="space-y-2">
+            {(data.catalysts?.length ? data.catalysts : data.latestNews!).map((a) => (
+              <div key={a.id} className="flex items-start gap-2 rounded-md border border-border-subtle bg-surface-elevated p-2">
+                <Newspaper className="mt-0.5 size-3.5 shrink-0 text-accent-primary" />
+                <div className="min-w-0">
+                  <a href={a.url} target="_blank" rel="noreferrer" className="line-clamp-2 text-[11.5px] leading-snug text-text-primary hover:text-accent-primary">
+                    {a.title}
+                  </a>
+                  <div className="mt-0.5 text-[9.5px] text-text-muted">
+                    {a.source} · {new Date(a.publishedAt).toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </Panel>
+      )}
 
       {/* impact */}
       <ImpactSection symbol={key} />

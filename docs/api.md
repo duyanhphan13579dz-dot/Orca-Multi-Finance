@@ -79,11 +79,11 @@ Mọi topic đều có `snapshot` đầu tiên, heartbeat 20s, reconnect do clie
 
 | Endpoint | Mô tả | Nguồn |
 | --- | --- | --- |
-| `GET /api/v1/commodities` | Catalog + rows đa nguồn (Simplize→Vietnambiz→Yahoo→MSN→Binance) + unavailable list + `hasChart` + provenance | multi |
-| `GET /api/v1/commodities/:symbol` | Chi tiết một hàng hóa (unified: quote + performance + provenance + freshness + `hasChart`) | multi |
+| `GET /api/v1/commodities` | Catalog + rows đa nguồn (Simplize→Vietnambiz→Yahoo→MSN→Binance) + unavailable list (kèm reason per source) + `hasChart` + provenance | multi |
+| `GET /api/v1/commodities/:symbol` | Chi tiết (unified): quote/performance/freshness/provenance + `market/subgroup` + `hasChart` + `correlation` (r, β vs VNINDEX) + `latestNews/catalysts` | multi |
 | `GET /api/v1/commodities/:symbol/history?timeframe=1h/4h/1d/1w/1M&limit=10..1000` | Lịch sử thật futures (Yahoo, cùng ticker Simplize); OHLC hoặc CLOSE_ONLY | yahoo |
 | `GET /api/v1/commodities/:symbol/performance` | 1D/1W/1M/1Q/1Y — historical (nearest valid observation) + provider-published | engine+yahoo |
-| `GET /api/v1/commodities/:symbol/impact` | Impact matrix evidence-based (exposure + related-source, không nhân quả) | engine |
+| `GET /api/v1/commodities/:symbol/impact` | Impact matrix evidence-based: per-stock relationshipType/direction/strength/channel/confidence (exposure + related-source, không nhân quả) | engine |
 | `GET /api/v1/news?category=&symbol=&sector=&limit=` | Tin tức đã dedupe/tag/validate timestamp | RSS multi-feed |
 | `GET /api/v1/screener?universe=crypto\|vn&minChange=&maxChange=&minQuoteVolume=&exchange=&sector=&limit=&sort=` | Screener rule-based. `vn` = Security Master + quotes VNDirect; lọc exchange/sector/symbols | Binance / VNDirect |
 

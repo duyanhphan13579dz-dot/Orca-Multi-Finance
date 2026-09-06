@@ -13,6 +13,7 @@ import {
   commodityFreshness,
   buildImpactRows,
   correlateReturns,
+  computeSensitivity,
   PERFORMANCE_WINDOWS,
   WINDOW_MS,
 } from "../engines/commodity";
@@ -165,4 +166,36 @@ test("PERFORMANCE_WINDOWS order + windows match spec (1D/1W/1M/1Q/1Y)", () => {
   assert.deepEqual(PERFORMANCE_WINDOWS, ["1D", "1W", "1M", "1Q", "1Y"]);
   assert.equal(WINDOW_MS["1D"], DAY);
   assert.equal(WINDOW_MS["1Y"], 365 * DAY);
+});
+
+test("computeSensitivity: perfectly-co-moved series → r=1, beta=1 (exact arithmetic)", () => {
+  const DAY_MS = 24 * 3_600_000;
+  // b = 2×a → daily returns are bitwise identical → cov = var → r=1, beta=1
+  const a = Array.from({ length: 60 }, (_, i) => ({ timestamp: i * DAY_MS, price: 100 + i }));
+  const b = Array.from({ length: 60 }, (_, i) => ({ timestamp: i * DAY_MS, price: 200 + 2 * i }));
+  const r = computeSensitivity(a, b, "1Y");
+  assert.equal(r.status, "OK");
+  assert.equal(r.observations, 59);
+  assert.ok(r.r != null && Math.abs(r.r - 1) < 1e-9);
+  assert.ok(r.beta != null && Math.abs(r.beta - 1) < 1e-9);
+  assert.match(r.note, /CORRELATION IS NOT CAUSATION/);
+});
+
+test("computeSensitivity: <30 aligned observations → INSUFFICIENT_DATA (never fabricate)", () => {
+  const DAY_MS = 24 * 3_600_000;
+  const a = Array.from({ length: 10 }, (_, i) => ({ timestamp: i * DAY_MS, price: 100 + i }));
+  const b = Array.from({ length: 10 }, (_, i) => ({ timestamp: i * DAY_MS, price: 200 + 2 * i }));
+  const r = computeSensitivity(a, b, "1Y");
+  assert.equal(r.status, "INSUFFICIENT_DATA");
+  assert.equal(r.r, null);
+  assert.equal(r.beta, null);
+});
+
+test("computeSensitivity: aligns by UTC date bucket (same-day timestamps normalize)", () => {
+  const DAY_MS = 24 * 3_600_000;
+  const a = Array.from({ length: 40 }, (_, i) => ({ timestamp: i * DAY_MS + 21 * 3_600_000, price: 100 + i })); // futures session start
+  const b = Array.from({ length: 40 }, (_, i) => ({ timestamp: i * DAY_MS + 2 * 3_600_000, price: 200 + 2 * i })); // index session
+  const r = computeSensitivity(a, b, "1Y");
+  assert.equal(r.status, "OK");
+  assert.equal(r.observations, 39);
 });

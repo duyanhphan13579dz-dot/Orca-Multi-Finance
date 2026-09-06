@@ -6,7 +6,7 @@
  */
 import test from "node:test";
 import assert from "node:assert/strict";
-import { parseSimplizePage, defByKeyOrSymbol, COMMODITY_CATALOG, MSN_KEY_BY_KEY } from "../providers/commodities";
+import { parseSimplizePage, defByKeyOrSymbol, COMMODITY_CATALOG, MSN_KEY_BY_KEY, currencyForUnit } from "../providers/commodities";
 
 /** stripped-text (as produced by parseSimplizePage's stripTags) — WTI page, real values */
 const WTI_TEXT = [
@@ -97,6 +97,74 @@ test("catalog: steel (HRC) has verified Simplize page → not permanently UNAVAI
   const steel = COMMODITY_CATALOG.find((d) => d.key === "steel");
   assert.equal(steel?.simplizePath, "/hang-hoa/gia-thep-hrc");
   assert.equal(steel?.unit, "USD/T");
+});
+
+test("parseSimplizePage: Thép D10 — flat '-' change, multi-token unit 'Nghìn đồng/kg'", () => {
+  const T =
+    "Hàng Hoá > Thép D10 Giá hiện tại: 14.21 - 0.00% Giá đóng cửa hôm trước 14.21 " +
+    "Biên độ 52 tuần 12.99 - 15.43 Đơn vị tính Nghìn đồng/kg " +
+    "% 7D - % 1M - % 3M -7.91% % YTD +4.49% % 1Y +9.39% % 5Y -12.34% " +
+    "Cổ phiếu liên quan NKG (HOSE) CTCP Thép Nam Kim 10,750 -50 -0.46% " +
+    "VCA (HOSE) CTCP Thép VICASA 6,600 0 0.00% HMC (HOSE) CTCP Kim khí TP HCM 10,800 0 0.00% " +
+    "HPG (HOSE) CTCP Tập đoàn Hòa Phát 21,700 100 0.46% HSG (HOSE) CTCP Tập đoàn Hoa Sen 10,600 -50 -0.47% " +
+    "Tin tức hàng hoá";
+  const p = parseSimplizePage(T);
+  assert.ok(p);
+  assert.equal(p.price, 14.21);
+  assert.equal(p.change, 0);
+  assert.equal(p.changePercent, 0);
+  assert.equal(p.previousClose, 14.21);
+  assert.equal(p.unit, "Nghìn đồng/kg");
+  assert.equal(p.perf["1Y"], 9.39);
+  assert.equal(p.perf["3M"], -7.91);
+  assert.deepEqual(p.relatedStocks, ["NKG", "VCA", "HMC", "HPG", "HSG"]);
+});
+
+test("parseSimplizePage: heo hơi VN — absolute VND price + positive change + VNĐ/kg unit", () => {
+  const T =
+    "Giá hiện tại: 59,500 +1,800 3.12% Giá đóng cửa hôm trước 57,700 " +
+    "Biên độ 52 tuần 48,100 - 79,100 Đơn vị tính VNĐ/kg " +
+    "% 7D +3.12% % 1M -7.47% % 3M -12.24% % YTD -13.64% % 1Y +7.4% % 5Y +22.08% " +
+    "Cổ phiếu liên quan DBC (HOSE) CTCP Tập đoàn Dabaco Việt Nam 16,800 -250 -1.47% " +
+    "HAG (HOSE) CTCP Hoàng Anh Gia Lai 14,000 -150 -1.06% MML (UPCOM) CTCP Masan MeatLife 28,800 0 0.00% " +
+    "BAF (HOSE) Công ty Cổ phần Nông nghiệp BAF Việt Nam 32,550 50 0.15% Tin tức hàng hoá";
+  const p = parseSimplizePage(T);
+  assert.ok(p);
+  assert.equal(p.price, 59_500);
+  assert.equal(p.change, 1_800);
+  assert.equal(p.changePercent, 3.12);
+  assert.equal(p.unit, "VNĐ/kg");
+  assert.deepEqual(p.relatedStocks, ["DBC", "HAG", "MML", "BAF"]);
+});
+
+test("currencyForUnit: published unit → ISO currency (VNĐ/Nghìn đồng/CNY/JPY/USD)", () => {
+  assert.equal(currencyForUnit("VNĐ/kg"), "VND");
+  assert.equal(currencyForUnit("Nghìn đồng/lít"), "VND");
+  assert.equal(currencyForUnit("CNY/kg"), "CNY");
+  assert.equal(currencyForUnit("JPY/kg"), "JPY");
+  assert.equal(currencyForUnit("USD/T"), "USD");
+  assert.equal(currencyForUnit(null), "USD");
+});
+
+test("universe: mọi commodity chính thức có Simplize path + market + currency + unit + vnImpact", () => {
+  const OFFICIAL = [
+    "gold", "sjc-gold", "silver",
+    "copper", "nickel", "iron-ore", "steel", "steel-d10",
+    "wti", "natgas", "coal", "gasoline-95", "gasoline-92", "diesel",
+    "corn", "soybean", "rice",
+    "coffee", "coffee-robusta", "rubber-tsr20", "rubber-rss3", "cotton", "sugar",
+    "urea",
+    "pig-vn", "pig-cn", "milk-wmp", "milk-smp",
+    "shrimp-vn", "pangasius",
+  ];
+  for (const key of OFFICIAL) {
+    const d = COMMODITY_CATALOG.find((x) => x.key === key);
+    assert.ok(d, `missing official commodity: ${key}`);
+    assert.ok(d.simplizePath && d.simplizePath.startsWith("/"), `${key}: verified Simplize page`);
+    assert.ok(d.market === "VN" || d.market === "INTL", `${key}: market`);
+    assert.ok(d.currency && d.unit, `${key}: currency/unit`);
+    assert.ok(d.vnImpact && d.vnImpact.stocks.length > 0, `${key}: vnImpact + related stocks`);
+  }
 });
 
 test("MSN_KEY_BY_KEY remains only a fallback map — never primary for chart/change", () => {

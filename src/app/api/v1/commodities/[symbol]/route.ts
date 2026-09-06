@@ -1,11 +1,15 @@
 import { ok, unavailable, badRequest } from "@/lib/envelope";
-import { getCommodityDetail } from "@/lib/services/commodities";
+import { getCommodityDetail, getCommodityNews, getCommodityCorrelation } from "@/lib/services/commodities";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
+/** catalyst markers — news-driven only (never hypothetical) */
+const CATALYST_RE = /tăng|giảm|chính sách|thuế|cung|nguồn cung|xuất khẩu|nhập khẩu|giá |thị trường|điều chỉnh|cắt giảm|sản lượng|thời tiết|hạn hán|đình công|stockpile|inventory/i;
+
 /**
- * GET /api/v1/commodities/:symbol — chi tiết một hàng hóa (unified model).
+ * GET /api/v1/commodities/:symbol — chi tiết một hàng hóa (unified model +
+ * intelligence profile: performance, correlation/sensitivity, news/catalysts).
  * Backward-compatible envelope: { success, data, meta }.
  */
 export async function GET(_req: Request, ctx: { params: Promise<{ symbol: string }> }) {
@@ -21,6 +25,13 @@ export async function GET(_req: Request, ctx: { params: Promise<{ symbol: string
       unavailableReason ?? `Chưa có nguồn dữ liệu đáng tin cậy cho ${def.name} — hệ thống không mock giá.`,
     );
   }
+  // intelligence — best-effort, never crash the detail page
+  const [corrRes, newsRes] = await Promise.allSettled([getCommodityCorrelation(clean), getCommodityNews(clean)]);
+  const correlation = corrRes.status === "fulfilled" ? (corrRes.value?.correlation ?? null) : null;
+  const latestNews = newsRes.status === "fulfilled" ? (newsRes.value?.articles ?? []) : [];
+  const catalysts = latestNews
+    .filter((a) => CATALYST_RE.test(`${a.title} ${a.summary ?? ""}`))
+    .slice(0, 5);
   const data = {
     id: def.key,
     symbol: def.symbol,
@@ -28,6 +39,8 @@ export async function GET(_req: Request, ctx: { params: Promise<{ symbol: string
     nameVi: def.nameVi,
     category: def.category,
     subcategory: def.subcategory ?? null,
+    subgroup: def.subgroup ?? def.subcategory ?? null,
+    market: def.market,
     unit: row.unit,
     currency: row.currency,
     /** chart khả dụng khi có nguồn OHLC thật (Yahoo futures / PAXG) */
@@ -57,6 +70,11 @@ export async function GET(_req: Request, ctx: { params: Promise<{ symbol: string
     updatedAt: row.updatedAt,
     sourceTimestamp: row.sourceTimestamp,
     sourceUrl: row.sourceUrl,
+    /** intelligence profile — historical statistics, never causal evidence */
+    correlation,
+    latestNews,
+    catalysts,
+    newsNote: newsRes.status === "fulfilled" ? (newsRes.value?.note ?? null) : "Nguồn tin chưa khả dụng",
   };
   return ok(data);
 }

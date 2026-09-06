@@ -21,12 +21,15 @@ import {
   commodityFreshness,
   normalizeHistory,
   buildImpactRows,
+  computeSensitivity,
   type CommodityImpactRow,
   type HistoricalPoint,
   type PerformanceResult,
+  type SensitivityResult,
 } from "../engines/commodity";
+import { aggregateNews } from "../providers/news";
 import { validateBars, validateQuote, logQualityEvent } from "../quality";
-import type { CommodityRow, Meta, OhlcvBar } from "../types";
+import type { CommodityRow, Meta, NewsArticle, OhlcvBar } from "../types";
 
 /**
  * Commodity domain service — Simplize → Vietnambiz priority, real data only.
@@ -159,6 +162,7 @@ async function fetchAll(): Promise<CommodityMarket> {
         return;
       }
       const records: { kind: SourceKind; q: RawCommodityQuote }[] = [];
+      const failures: string[] = [];
       // try in priority order; first success is primary; keep up to 3 for provenance
       for (const kind of priority) {
         try {
@@ -171,14 +175,22 @@ async function fetchAll(): Promise<CommodityMarket> {
           if (q && Number.isFinite(q.price) && q.price > 0) {
             records.push({ kind, q });
             if (records.length >= 3) break;
+          } else {
+            failures.push(`${kind}: không có giá hợp lệ`);
           }
-        } catch {
-          /* degrade to next priority — never crash the module */
+        } catch (e) {
+          // degrade to next priority — never crash the module; keep the reason
+          failures.push(`${kind}: ${e instanceof Error ? e.message : String(e)}`);
         }
       }
       const best = records[0]?.q ?? null;
       if (!best) {
-        unavailable.push({ key: def.key, name: def.name, nameVi: def.nameVi, group: def.group, reason: "Các nguồn hàng hóa chưa phản hồi hoặc cấu trúc trang thay đổi", freshness: "UNAVAILABLE" });
+        const reason = failures.length
+          ? `Tất cả nguồn ưu tiên thất bại — ${failures.slice(0, 3).join(" | ")}`
+          : "Không có nguồn công khai đáng tin cậy — không dùng dữ liệu giả";
+        const un = { key: def.key, name: def.name, nameVi: def.nameVi, group: def.group, reason, freshness: "UNAVAILABLE" as const };
+        unavailable.push(un);
+        errors.push(`${def.key}: ${reason}`);
         return;
       }
       for (const r of records) sourcesUsed.add(r.q.source);
@@ -232,6 +244,8 @@ async function fetchAll(): Promise<CommodityMarket> {
         nameVi: def.nameVi,
         category: def.category,
         subcategory: def.subcategory ?? null,
+        subgroup: def.subgroup ?? def.subcategory ?? null,
+        market: def.market,
         previousClose: best.previousClose ?? (best.change != null ? best.price - best.change : null),
         freshness: freshness.status,
         marketState: freshness.marketState,
@@ -449,6 +463,95 @@ export async function getCommodityImpact(needle: string): Promise<{ rows: Commod
     };
   } catch {
     return null;
+  }
+}
+
+/* ---------------------- NEWS & CATALYST / CORRELATION ---------------------- */
+
+/** keyword set for the news filter — curated per commodity + derived from name */
+function newsKeywordsFor(def: CommodityDef): string[] {
+  const kws = new Set<string>(def.newsKeywords ?? []);
+  const words = `${def.name} ${def.nameVi} ${def.subcategory ?? ""} ${def.group}`
+    .toLowerCase()
+    .split(/[^a-z0-9à-ỹđ]+/)
+    .filter((w) => w.length >= 2 && !["usd","vnd","cny","jpy","the","và","của"].includes(w));
+  for (const w of words) kws.add(w);
+  return [...kws];
+}
+
+export interface CommodityNewsResult {
+  articles: NewsArticle[];
+  note: string;
+  basis: "keyword-match";
+}
+
+/**
+ * Latest news related to a commodity — real RSS articles filtered by
+ * commodity keywords (title/summary), newest first. Never shows old news as a
+ * fresh catalyst: timestamps come from the feeds (validated by news engine).
+ */
+export async function getCommodityNews(needle: string): Promise<CommodityNewsResult | null> {
+  const def = defByKeyOrSymbol(needle);
+  if (!def) return null;
+  const keywords = newsKeywordsFor(def);
+  if (!keywords.length) return { articles: [], note: "Không có từ khóa tin tức cho hàng hóa này", basis: "keyword-match" };
+  try {
+    const res = await cached(`commodity:news:${def.key}`, {
+      ttlMs: 3 * 60_000,
+      staleMs: 30 * 60_000,
+      producer: async () => {
+        const { articles } = await aggregateNews();
+        const hits = articles
+          .filter((a) => {
+            const hay = `${a.title} ${a.summary ?? ""}`.toLowerCase();
+            return keywords.some((k) => hay.includes(k.toLowerCase()));
+          })
+          .sort((a, b) => Date.parse(b.publishedAt) - Date.parse(a.publishedAt))
+          .slice(0, 8);
+        return { articles: hits, note: "Lọc từ nguồn tin thật (RSS) theo từ khóa hàng hóa — mới nhất trước", basis: "keyword-match" as const };
+      },
+    });
+    return res.value;
+  } catch {
+    return { articles: [], note: "Nguồn tin chưa khả dụng — không tự tạo catalyst", basis: "keyword-match" };
+  }
+}
+
+export interface CommodityCorrelationResult {
+  correlation: SensitivityResult;
+  benchmark: string;
+}
+
+/**
+ * Historical correlation + sensitivity vs VNINDEX (benchmark). Computed from
+ * REAL price series only (Yahoo futures history for INTL commodities); VN
+ * domestic commodities have no public history series → INSUFFICIENT_DATA.
+ * Statistics are NEVER used as causal evidence (note in result).
+ */
+export async function getCommodityCorrelation(needle: string): Promise<CommodityCorrelationResult | null> {
+  const def = defByKeyOrSymbol(needle);
+  if (!def) return null;
+  const insufficient = (obs: number, why: string): CommodityCorrelationResult => ({
+    benchmark: "^VNINDEX",
+    correlation: { r: null, beta: null, observations: obs, window: "1Y", status: "INSUFFICIENT_DATA", note: why },
+  });
+  try {
+    const series = (await getCommodityHistory(needle, { timeframe: "1d", limit: 500 }))?.points ?? [];
+    if (series.length < 30) {
+      return insufficient(series.length, "Không có chuỗi lịch sử giá thật đủ dài cho hàng hóa này (nguồn chỉ công bố giá hiện tại) — không ước lượng tương quan");
+    }
+    const indexRes = await cached("commodity:benchmark:^VNINDEX:1d", {
+      ttlMs: 30 * 60_000,
+      staleMs: 24 * 3_600_000,
+      producer: () => getYahooChart("^VNINDEX", "1d", "10y"),
+    }).then((r) => r.value);
+    if (!indexRes.candles.length) return insufficient(0, "Chuỗi chỉ số VNINDEX chưa khả dụng — không ước lượng tương quan");
+    const commodity: HistoricalPoint[] = series.map((p) => ({ timestamp: p.timestamp, price: p.close }));
+    const benchmark: HistoricalPoint[] = indexRes.candles.map((c) => ({ timestamp: c.time, price: c.close }));
+    const correlation = computeSensitivity(commodity, benchmark, "1Y");
+    return { benchmark: "^VNINDEX", correlation };
+  } catch {
+    return insufficient(0, "Không thể tính tương quan (nguồn lịch sử lỗi) — không tự tạo số liệu");
   }
 }
 

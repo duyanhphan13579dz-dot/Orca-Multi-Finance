@@ -290,9 +290,17 @@ export interface CommodityImpactRow {
  *   (real evidence of relevance, NOT of direction) → CONDITIONAL + LOW.
  * Correlation is deliberately NOT used to build this matrix.
  */
+export interface ImpactRelationInput {
+  relationshipType?: RelationshipType;
+  direction?: ImpactDirection;
+  impactStrength?: ImpactStrength;
+  confidence?: "HIGH" | "MEDIUM" | "LOW";
+  channel?: string;
+}
+
 export function buildImpactRows(
   commodity: string,
-  exposure: { sector: string; stocks: string[]; mechanism: string } | null,
+  exposure: { sector: string; stocks: string[]; mechanism: string; relations?: Record<string, ImpactRelationInput> } | null,
   relatedStocks: string[],
   opts: { transmissionChannel?: string } = {},
 ): CommodityImpactRow[] {
@@ -300,15 +308,16 @@ export function buildImpactRows(
   const channel = opts.transmissionChannel ?? "Giá hàng hóa → chi phí/doanh thu ngành → kết quả kinh doanh doanh nghiệp";
   if (exposure && exposure.stocks.length > 0) {
     for (const stock of exposure.stocks) {
+      const rel = exposure.relations?.[stock];
       rows.push({
         commodity,
         stock,
         sector: exposure.sector,
-        relationshipType: "MACRO_SENSITIVITY",
-        direction: "CONDITIONAL",
-        impactStrength: "MEDIUM",
-        transmissionChannel: channel,
-        confidence: "MEDIUM",
+        relationshipType: rel?.relationshipType ?? "MACRO_SENSITIVITY",
+        direction: rel?.direction ?? "CONDITIONAL",
+        impactStrength: rel?.impactStrength ?? "MEDIUM",
+        transmissionChannel: rel?.channel ?? channel,
+        confidence: rel?.confidence ?? "MEDIUM",
         evidence: `Economic exposure: ${exposure.mechanism}`,
         basis: "economic-exposure",
       });
@@ -341,6 +350,98 @@ export interface CorrelationResult {
   window: PerformanceWindow;
   status: "OK" | "INSUFFICIENT_DATA";
   note: string;
+}
+
+/** Economic exposure basis labels — never conflate correlation with causality */
+export const EXPOSURE_BASIS = "economic-exposure";
+export const CORRELATION_BASIS = "historical-correlation";
+
+export interface SensitivityResult {
+  /** Pearson correlation of aligned daily returns */
+  r: number | null;
+  /** statistical beta: 1% benchmark move ↔ beta% commodity move (history only) */
+  beta: number | null;
+  observations: number;
+  window: PerformanceWindow;
+  status: "OK" | "INSUFFICIENT_DATA";
+  note: string;
+}
+
+/**
+ * Correlation + statistical sensitivity of commodity returns vs a benchmark
+ * (e.g. VNINDEX). Daily series are aligned by UTC date bucket (trading-day
+ * equivalence), returns computed on consecutive aligned observations.
+ * Requires ≥30 aligned return pairs (default) — otherwise INSUFFICIENT_DATA.
+ * CORRELATION/SENSITIVITY ARE HISTORICAL STATISTICS, NOT CAUSAL EVIDENCE —
+ * callers must surface `note`.
+ */
+export function computeSensitivity(
+  commodity: HistoricalPoint[],
+  benchmark: HistoricalPoint[],
+  window: PerformanceWindow,
+  opts: { minObservations?: number } = {},
+): SensitivityResult {
+  const min = opts.minObservations ?? 30;
+  const DAY_MS = 24 * 3_600_000;
+  const bByDay = new Map<number, number>();
+  for (const p of benchmark) {
+    if (!Number.isFinite(p.timestamp) || !Number.isFinite(p.price) || p.price <= 0) continue;
+    const day = Math.floor(p.timestamp / DAY_MS);
+    if (!bByDay.has(day)) bByDay.set(day, p.price); // first of the day wins
+  }
+  const aligned: { t: number; a: number; b: number }[] = [];
+  for (const p of commodity) {
+    if (!Number.isFinite(p.timestamp) || !Number.isFinite(p.price) || p.price <= 0) continue;
+    const b = bByDay.get(Math.floor(p.timestamp / DAY_MS));
+    if (b != null) aligned.push({ t: p.timestamp, a: p.price, b });
+  }
+  aligned.sort((x, y) => x.t - y.t); // chronological order for return computation
+  const ra: number[] = [];
+  const rb: number[] = [];
+  for (let i = 1; i < aligned.length; i++) {
+    const a0 = aligned[i - 1].a;
+    const a1 = aligned[i].a;
+    const b0 = aligned[i - 1].b;
+    const b1 = aligned[i].b;
+    if (a0 > 0 && b0 > 0) {
+      ra.push(a1 / a0 - 1);
+      rb.push(b1 / b0 - 1);
+    }
+  }
+  if (ra.length < min) {
+    return {
+      r: null,
+      beta: null,
+      observations: ra.length,
+      window,
+      status: "INSUFFICIENT_DATA",
+      note: `Chưa đủ ${min} quan sát khớp — không ước lượng tương quan/độ nhạy (${CORRELATION_NOT_CAUSATION})`,
+    };
+  }
+  const n = ra.length;
+  const ma = ra.reduce((s, v) => s + v, 0) / n;
+  const mb = rb.reduce((s, v) => s + v, 0) / n;
+  let cov = 0;
+  let va = 0;
+  let vb = 0;
+  for (let i = 0; i < n; i++) {
+    const da = ra[i] - ma;
+    const db = rb[i] - mb;
+    cov += da * db;
+    va += da * da;
+    vb += db * db;
+  }
+  const denom = Math.sqrt(va * vb);
+  const r = denom > 0 ? cov / denom : null;
+  const beta = vb > 0 ? cov / vb : null;
+  return {
+    r,
+    beta,
+    observations: n,
+    window,
+    status: "OK",
+    note: `Hệ số tương quan (r) và độ nhạy thống kê (β) tính trên ${n} ngày khớp — ${CORRELATION_NOT_CAUSATION}`,
+  };
 }
 
 export const CORRELATION_NOT_CAUSATION = "CORRELATION IS NOT CAUSATION — chỉ là chỉ số bổ sung";

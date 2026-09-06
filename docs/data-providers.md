@@ -56,9 +56,28 @@ Không còn khái niệm primary/secondary/reconciliation: một source duy nh�
 
 ### Commodities (`src/lib/providers/commodities.ts` + `engines/commodity.ts` + `services/commodities.ts`)
 
-Catalog đầy đủ (20+ mặt hàng): metals (XAU/XAG/XPT/XPD), energy (WTI/Brent/NatGas/Than cốc), industrial
-(đồng/nhôm/kẽm/nickel/quặng sắt/thép HRC), agriculture+grain (wheat/corn/soybean/rice/coffee/sugar/cotton),
-fertilizers (URE) và vietnam (SJC).
+**Universe chính thức (30 mục, mỗi mục có Group/Sub-group/Market/Currency/Unit):**
+- 🟡 Precious metals: Vàng SJC, Vàng thế giới, Bạc
+- 🔩 Industrial: Đồng, Nickel, Quặng sắt, Thép HRC, Thép D10
+- ⚡ Energy: WTI, Khí thiên nhiên, Than cốc, Xăng RON95, Xăng RON92, Diesel
+- 🌾 Grains: Ngô, Đậu nành, Gạo
+- ☕ Soft: Cà phê Arabica, Cà phê Robusta, Cao su TSR20, Cao su RSS3, Bông, Đường
+- 🧪 Fertilizers: URE
+- 🐄 Livestock & Dairy: Heo hơi VN, Heo hơi TQ, Sữa bột nguyên kem, Sữa bột tách béo
+- 🦐 Seafood: Tôm thẻ, Cá tra
+
+Mọi mục chính thức đều có **trang Simplize công khai** (verified `simplize.vn/hang-hoa` 2026-09-06:
+`gia-thep-d10`, `gia-xang-ron95/ron92`, `gia-dau-diesel`, `gia-heo-hoi-mien-bac`,
+`gia-tom-the`, `gia-ca-tra-vietnam`, `gia-ca-phe-robusta`, `gia-cao-su-tsr20/rss3`,
+`gia-sua-bot-nguyen-kem-nguyen-lieu`, `gia-sua-bot-tach-beo-nguyen-lieu`,
+`gia-heo-hoi-trung-quoc`…). Đơn vị/tiền tệ đọc từ trang (`Nghìn đồng/kg` → VND,
+`CNY/kg` → CNY, `JPY/kg` → JPY — xem `currencyForUnit`).
+
+**UNAVAILABLE diagnostics:** service giữ `unavailable[].reason` theo từng nguồn
+(ví dụ `simplize: http_404`, `simplize: circuit_open:simplize`, `yahoo: …`) +
+`errors[]` tổng hợp để API/UI giải thích đúng lý do — không bao giờ giả nguồn.
+Một provider lỗi (kể cả circuit breaker) chỉ làm mục đó UNAVAILABLE, không làm
+crash cả trang.
 
 **Ưu tiên nguồn (user-mandated): Simplize → Vietnambiz → Yahoo → MSN → Binance (PAXG).**
 - Simplize: trang công khai SSR `simplize.vn/hang-hoa/{slug}` (verified 200; gold = `/gia-vang/the-gioi`,
@@ -78,10 +97,21 @@ category/subcategory/previousClose/open/high/low/freshness/marketState/freshness
 theo timestamp nguồn — nguồn không công bố timestamp → DELAYED (không bao giờ fake LIVE). Quote được
 `validateQuote` (assetClass commodity, stale 300s) trước khi lưu; INVALID → UNAVAILABLE, không lưu rác.
 
-Service: `getCommodityMarket/History/Performance/Impact/Detail` + write-through `marketStore.setQuote`
-(assetType `commodity`) + persist best-effort vào bảng `commodity_quotes`. Impact matrix = economic-exposure
-(cơ chế ngành công khai) + related-source (danh sách nguồn công bố) — correlation KHÔNG dùng làm bằng chứng
-nhân quả. Bounded concurrency 6 khi scrape catalog (~25 trang).
+Service: `getCommodityMarket/History/Performance/Impact/Detail/News/Correlation` + write-through
+`marketStore.setQuote` (assetType `commodity`) + persist best-effort vào bảng `commodity_quotes`.
+Bounded concurrency 6 khi scrape catalog (~37 trang, không hammer nguồn).
+
+**Intelligence profile (mỗi commodity):**
+- Performance 1D/1W/1M/1Q/1Y: tính từ lịch sử thật (nearest valid observation); nếu thiếu → provider
+  perf do nguồn công bố (`basis: "provider"`); không đủ cả hai → `insufficient` (không bịa số).
+- Impact matrix (`/impact`): per-stock `relationshipType/direction/impactStrength/confidence/channel`
+  từ mapping cơ chế ngành (curated + evidence) cho economic-exposure rows; related-source rows giữ
+  CONDITIONAL/LOW. Correlation KHÔNG dùng làm bằng chứng nhân quả.
+- Correlation/Sensitivity (`/correlation` trong detail): `computeSensitivity` (engine thuần) — align
+  theo ngày UTC, r (Pearson) + β (statistical) với VNINDEX, ≥30 quan sát; thiếu lịch sử →
+  `INSUFFICIENT_DATA` (VN commodity chỉ giá hiện tại, không có chuỗi công khai).
+- News & Catalysts (`/news` trong detail): lọc RSS thật theo từ khóa commodity (mới nhất trước,
+  timestamp từ feed — không hiển thị tin cũ như catalyst mới); catalysts = news-driven markers.
 
 ### News (`src/lib/providers/news.ts`)
 

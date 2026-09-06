@@ -42,10 +42,12 @@ type Data = CommodityMarket & {
 const GROUPS: { key: string; title: string; desc: string }[] = [
   { key: "", title: "Tất cả", desc: "" },
   { key: "metals", title: "Kim loại quý", desc: "Vàng · Bạc" },
-  { key: "energy", title: "Năng lượng", desc: "WTI · Brent · NG" },
+  { key: "energy", title: "Năng lượng", desc: "Dầu · Gas · Xăng dầu" },
   { key: "industrial", title: "Công nghiệp", desc: "Đồng · Thép" },
-  { key: "agriculture", title: "Nông sản", desc: "Cà phê · Đường" },
-  { key: "vietnam", title: "Việt Nam", desc: "SJC" },
+  { key: "agriculture", title: "Nông sản", desc: "Cà phê · Ngô · Gạo" },
+  { key: "livestock", title: "Chăn nuôi & Sữa", desc: "Heo hơi · Sữa bột" },
+  { key: "seafood", title: "Thủy sản", desc: "Tôm · Cá tra" },
+  { key: "vietnam", title: "Việt Nam", desc: "SJC · Xăng · Heo" },
 ];
 
 const DATE_RANGES: { label: string; tf: string; limit: number }[] = [
