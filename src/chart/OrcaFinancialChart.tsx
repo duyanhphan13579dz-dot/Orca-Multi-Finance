@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * ORCA FINANCIAL CHART — history from Binance (crypto) via /api/v1/chart/history.
+ * ORCA FINANCIAL CHART — full Binance history + indicators (EMA/BB/VWAP/RSI/MACD/S-R).
  * Types from chart-const only — never import server-only services.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -22,7 +22,7 @@ interface Props {
   extraLevels?: { label: string; price: number; color: string }[];
 }
 
-export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height = 430, title }: Props) {
+export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height = 430, title, extraLevels }: Props) {
   const { settings } = useSettings();
   const prefs = settings.chart;
   const tfs = useMemo(() => tfsFor(assetType), [assetType]);
@@ -39,9 +39,10 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
   );
   const loadSeqRef = useRef(0);
 
-  // useApi unwraps { success, data } → data is ChartMarketData directly
+  // Deep history for crypto (up to 1500 bars); other assets stay at 500
+  const limit = assetType === "crypto" ? 1500 : 500;
   const { data, meta, isLoading } = useApi<ChartMarketData>(
-    `/api/v1/chart/history?symbol=${encodeURIComponent(symbol)}&assetType=${assetType}&timeframe=${tf}&limit=500`,
+    `/api/v1/chart/history?symbol=${encodeURIComponent(symbol)}&assetType=${assetType}&timeframe=${tf}&limit=${limit}`,
   );
 
   useEffect(() => {
@@ -68,16 +69,15 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
       return;
     }
     chartRef.current = chart;
-    mgrRef.current = new SeriesManager(chart);
-    mgrRef.current.createBase(kindRef.current);
-    if (hostRef.current.clientWidth) {
-      chart.applyOptions({ width: hostRef.current.clientWidth });
-    }
+    const mgr = new SeriesManager(chart);
+    mgr.createBase(kindRef.current);
+    mgrRef.current = mgr;
 
     const ro = new ResizeObserver(() => {
       if (hostRef.current) chart.applyOptions({ width: hostRef.current.clientWidth });
     });
     ro.observe(hostRef.current);
+    chart.applyOptions({ width: hostRef.current.clientWidth });
 
     return () => {
       ro.disconnect();
@@ -91,6 +91,7 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
     };
   }, [height]);
 
+  // Apply candles + indicators + markers + volume whenever data or prefs change
   useEffect(() => {
     const seq = ++loadSeqRef.current;
     const mgr = mgrRef.current;
@@ -100,11 +101,25 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
     if (seq !== loadSeqRef.current) return;
     try {
       mgr.setHistory(candles, kindRef.current);
+      mgr.setVolumeVisible(prefs.volume !== false);
+
+      const vis = {
+        ema: prefs.indicators?.ema !== false,
+        bollinger: !!prefs.indicators?.bollinger,
+        vwap: prefs.indicators?.vwap !== false,
+        rsi: prefs.indicators?.rsi !== false,
+        macd: prefs.indicators?.macd !== false,
+        srLevels: prefs.indicators?.srLevels !== false,
+      };
+      mgr.rebuildIndicators(data.indicators ?? null, vis);
+      mgr.rebuildSrLines(data.indicators ?? null, vis.srLevels);
+      if (data.markers?.length) mgr.applyMarkers(data.markers);
+      if (extraLevels?.length) mgr.rebuildExtraLevels(extraLevels);
       chart.timeScale().fitContent();
     } catch {
       /* keep page alive if series fails */
     }
-  }, [data]);
+  }, [data, prefs.volume, prefs.indicators, extraLevels]);
 
   return (
     <div className="relative rounded-xl border border-border-subtle bg-background-secondary">
@@ -113,6 +128,9 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
         {meta?.source && (
           <span className="text-[10px] uppercase tracking-wider text-text-muted">{meta.source}</span>
         )}
+        {data?.candles?.length ? (
+          <span className="text-[10px] text-text-muted">{data.candles.length} nến</span>
+        ) : null}
         <div className="seg ml-auto">
           {tfs.map((x) => (
             <button key={x} data-active={tf === x} onClick={() => setTf(x)} type="button">
