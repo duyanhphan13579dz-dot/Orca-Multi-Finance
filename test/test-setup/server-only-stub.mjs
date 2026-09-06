@@ -1,1 +1,2 @@
-export default {};
+const stub = {};
+export default stub;

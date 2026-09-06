@@ -53,6 +53,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
 
+  const toggle = () => {
+    setCollapsed((c) => {
+      localStorage.setItem(SB_KEY, c ? "0" : "1");
+      return !c;
+    });
+  };
+
   useEffect(() => {
     setCollapsed(localStorage.getItem(SB_KEY) === "1");
     const onKey = (e: KeyboardEvent) => {
@@ -65,13 +72,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     return () => window.removeEventListener("keydown", onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  const toggle = () => {
-    setCollapsed((c) => {
-      localStorage.setItem(SB_KEY, c ? "0" : "1");
-      return !c;
-    });
-  };
 
   useEffect(() => setMobileOpen(false), [pathname]);
 
