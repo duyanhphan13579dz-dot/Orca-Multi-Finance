@@ -8,8 +8,9 @@ import CommodityDetailView from "@/components/commodity-detail";
 import type { CommodityMarket } from "@/lib/services/commodities";
 import type { CommodityDef } from "@/lib/providers/commodities";
 import type { FreshnessStatus } from "@/lib/types";
-import { Badge, Chg, fmtNum, FreshnessDot, Loading, MetaLine, Panel, Unavailable } from "@/components/ui";
+import { Badge, Chg, fmtNum, fmtLocale, FreshnessDot, Loading, MetaLine, Panel, Unavailable } from "@/components/ui";
 import { AddToWatchlist } from "@/components/watchlist-button";
+import { CurrencyConverter, convertClient, useFxRates } from "@/components/currency-converter";
 import { Boxes, CalendarDays, LineChart, Search, X } from "lucide-react";
 
 /**
@@ -65,6 +66,8 @@ export default function CommoditiesPage() {
   const [range, setRange] = useState(DATE_RANGES[1]); // 1W default
   const [detail, setDetail] = useState<string | null>(null); // selected commodity key → floating overlay
   const { data, meta, isLoading } = useApi<Data>("/api/v1/commodities", { refreshInterval: 3_000 });
+  const fx = useFxRates();
+  const [displayCurrency, setDisplayCurrency] = useState<string>(""); // "" = giá gốc nguồn
 
   // Esc closes the floating landing page; lock body scroll while open
   useEffect(() => {
@@ -99,6 +102,29 @@ export default function CommoditiesPage() {
   /** WiFeed /goods không có OHLC → hasChart=false với mọi mục → không có chart từ nguồn khác */
   const chartable = useMemo(() => new Set((data?.catalog ?? []).filter((d) => d.hasChart).map((d) => d.symbol)), [data]);
   const chartDef = chart ? data?.catalog.find((d) => d.symbol === chart && d.hasChart) : null;
+
+  /** đơn vị vật lý từ unit nguồn ("CNY/tấn" → "tấn"; "USD/ounce" → "ounce"). */
+  const physUnit = (unit: string | null | undefined) => {
+    const u = (unit ?? "").trim();
+    const i = u.indexOf("/");
+    const p = i >= 0 ? u.slice(i + 1).trim() : "";
+    return p && !/^(VNĐ|VND|USD|CNY|JPY|MYR|EUR|GBP)$/i.test(p) ? p : u;
+  };
+
+  /** giá row quy đổi sang displayCurrency (null = không đổi được / đang chọn gốc). */
+  const convertedRow = (rowPrice: number, rowCurrency: string | null | undefined): number | null => {
+    if (!displayCurrency || !fx.rates) return null;
+    const cur = (rowCurrency ?? "").toUpperCase();
+    if (!cur || !fx.rates.currencies.some((c) => c.code === cur)) return null;
+    if (cur === displayCurrency) return rowPrice;
+    return convertClient(rowPrice, cur, displayCurrency, fx.rates.rates);
+  };
+
+  const fmtConverted = (v: number) =>
+    v.toLocaleString(fmtLocale(), {
+      minimumFractionDigits: v >= 1000 ? 0 : v >= 1 ? 2 : v >= 0.01 ? 4 : 6,
+      maximumFractionDigits: v >= 1000 ? 0 : v >= 1 ? 2 : v >= 0.01 ? 4 : 6,
+    });
 
   if (isLoading && !data) return <Loading rows={10} />;
 
@@ -142,6 +168,22 @@ export default function CommoditiesPage() {
               {g.desc && <span className="ml-1 text-[10px] text-text-muted group-hover:text-text-secondary">{g.desc}</span>}
             </button>
           ))}
+          {fx.rates && fx.rates.currencies.length > 0 && (
+            <span className="ml-auto flex items-center gap-1.5">
+              <span className="text-[10.5px] text-text-muted">Giá hiển thị theo</span>
+              <select
+                value={displayCurrency}
+                onChange={(e) => setDisplayCurrency(e.target.value)}
+                className="rounded-lg border border-border-subtle bg-surface-elevated px-2 py-1 text-[11px] text-text-secondary outline-none focus:border-accent-primary/50"
+                aria-label="Chọn tiền tệ hiển thị giá"
+              >
+                <option value="">Gốc (nguồn WiFeed)</option>
+                {fx.rates.currencies.map((c) => (
+                  <option key={c.code} value={c.code}>{c.code} — {c.label}</option>
+                ))}
+              </select>
+            </span>
+          )}
           <span className="ml-auto hidden md:block"><MetaLine meta={meta} /></span>
         </div>
       </div>
@@ -179,6 +221,9 @@ export default function CommoditiesPage() {
           </div>
         </div>
       )}
+
+      {/* MÁY TÍNH QUY ĐỔI TIỀN TỆ — tra giá hàng hóa theo 1 đồng tiền */}
+      <CurrencyConverter />
 
       {/* cards grid */}
       {!data ? (
@@ -236,9 +281,20 @@ export default function CommoditiesPage() {
                   </div>
                 </div>
                 <div className="mt-2 flex items-baseline justify-between pl-1.5">
-                  <span className="num text-[19px] font-semibold tracking-tight">
-                    {fmtNum(row.price, dgt)}
-                    <span className="ml-1 text-[10px] font-normal text-text-muted">{row.currency}</span>
+                  <span className="text-left">
+                    <span className="num text-[19px] font-semibold tracking-tight">
+                      {convertedRow(row.price, row.currency) != null
+                        ? fmtConverted(convertedRow(row.price, row.currency)!)
+                        : fmtNum(row.price, dgt)}
+                      <span className="ml-1 text-[10px] font-normal text-text-muted">
+                        {convertedRow(row.price, row.currency) != null ? displayCurrency : row.currency}
+                      </span>
+                    </span>
+                    {convertedRow(row.price, row.currency) != null && (
+                      <span className="block text-[9.5px] text-text-muted">
+                        ≈ {fmtNum(row.price, dgt)} {row.currency}/{physUnit(row.unit)} (tỷ giá WiFeed)
+                      </span>
+                    )}
                   </span>
                   <Chg value={row.changePercent} className="text-[12px]" arrow={false} />
                 </div>

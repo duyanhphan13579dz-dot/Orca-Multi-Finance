@@ -147,7 +147,7 @@ export function ErrorNote({ message }: { message: string }) {
 
 import { getSettingsSnapshot } from "@/lib/settings";
 
-function fmtLocale(): string {
+export function fmtLocale(): string {
   return getSettingsSnapshot().appearance.numberFormat ?? "en-US";
 }
 
