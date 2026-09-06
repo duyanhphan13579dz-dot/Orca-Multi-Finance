@@ -42,7 +42,14 @@ export async function executeTool(name: string, args: Record<string, unknown>, c
   if (tool.spec.requiresProfile && !ctx.profile) {
     return errResult("CONSENT_REQUIRED", `Tool "${name}" cần Financial Profile — hãy tạo/đồng ý lưu hồ sơ tài chính trước.`);
   }
-  return tool.execute(args, ctx);
+  try {
+    return await tool.execute(args, ctx);
+  } catch (e) {
+    // Tool Layer là ranh giới data engine: provider lỗi → DATA_UNAVAILABLE,
+    // không bao giờ để agent crash hay bịa dữ liệu.
+    const msg = e instanceof Error ? e.message : String(e);
+    return errResult("DATA_UNAVAILABLE", `Nguồn dữ liệu tạm lỗi: ${msg}`, { trace: [`tool:${name}`] });
+  }
 }
 
 export function toolNamesIn(domains: string[]): string[] {

@@ -71,7 +71,7 @@ export async function runStockAnalyst(symbol: string, ctx: { llm?: boolean } = {
 
   const sections: AgentSection[] = [];
 
-  // 1. THESIS (FACT/data-driven tổng hợp)
+  // 1. THESIS (FACT/data-driven tổng hợp) — luôn có section, thiếu → UNAVAILABLE
   if (quote?.ok) {
     const q = quote.data as { symbol: string; name: string | null; price: number; changePercent: number | null; high: number | null; low: number | null; volume: number | null; currency: string };
     sections.push({
@@ -82,6 +82,8 @@ export async function runStockAnalyst(symbol: string, ctx: { llm?: boolean } = {
       data: q,
       sources: [quote.meta?.source ?? "vndirect"],
     });
+  } else {
+    sections.push({ id: "quote", title: "Bức tranh hiện tại", label: "FACT", body: `Không lấy được báo giá ${symbol} (VNDirect offline) — không suy diễn giá.`, data: null, sources: [], unavailable: true });
   }
 
   if (profile?.ok) {
@@ -145,6 +147,8 @@ export async function runStockAnalyst(symbol: string, ctx: { llm?: boolean } = {
       sources: ["valuation-engine"],
       unavailable: !lines.length,
     });
+  } else {
+    sections.push({ id: "valuation", title: "Định giá", label: "DATA-DRIVEN", body: "Chưa lấy được dữ liệu định giá (cần báo cáo + giá từ VNDirect).", data: null, sources: [], unavailable: true });
   }
 
   // 4. KỸ THUẬT
@@ -173,6 +177,8 @@ export async function runStockAnalyst(symbol: string, ctx: { llm?: boolean } = {
       sources: ["technical-engine"],
       unavailable: !lines.length,
     });
+  } else {
+    sections.push({ id: "technicals", title: "Phân tích kỹ thuật", label: "DATA-DRIVEN", body: "Chưa đủ dữ liệu OHLCV (VNDirect offline) — không suy diễn tín hiệu.", data: null, sources: [], unavailable: true });
   }
 
   // 5. XÚC TÁC (news + market)
@@ -187,6 +193,8 @@ export async function runStockAnalyst(symbol: string, ctx: { llm?: boolean } = {
       sources: ["rss-multifeed"],
       unavailable: !n.articles.length,
     });
+  } else {
+    sections.push({ id: "catalysts", title: "Xúc tác gần đây", label: "FACT", body: "Không lấy được tin mới cho mã này — phần xúc tác bỏ trống (không bịa).", data: null, sources: [], unavailable: true });
   }
 
   // 6. RỦI RO & BỐI CẢNH
