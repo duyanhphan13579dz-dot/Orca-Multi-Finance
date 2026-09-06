@@ -120,7 +120,7 @@ export function computeMarketCondition(inp: ConditionInputs): MarketConditionRes
       available: true,
     });
   } else {
-    comps.push({ key: "liquidity", label: "Thanh khoản", score: null, weight: 0.16, formula: "50 + (value/baseline − 1) × 60", inputs: {}, available: false, note: "Cần dữ liệu giá trị giao dịch từ VNStock" });
+    comps.push({ key: "liquidity", label: "Thanh khoản", score: null, weight: 0.16, formula: "50 + (value/baseline − 1) × 60", inputs: {}, available: false, note: "Cần dữ liệu giá trị giao dịch từ VNDirect" });
   }
 
   /* ----------------------------- 4. flow (0.14) --------------------------- */

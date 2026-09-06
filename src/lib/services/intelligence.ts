@@ -1,6 +1,6 @@
 import "server-only";
 import { buildMeta, worstFreshness } from "../freshness";
-import { getVnStockDetail, vnstockConfigured, type VnStockDetail } from "./stocks";
+import { getVnEquityDetail, vndirectConfigured, type VnEquityDetail } from "./stocks";
 import { getCryptoDetail } from "./crypto";
 import { getForexDetail } from "./forex";
 import { getNews } from "./news";
@@ -17,7 +17,7 @@ import type { Meta, OhlcvBar, Quote, QualityStatus } from "../types";
 
 /**
  * MARKET INTELLIGENCE LAYER — builds LLM DATA CONTRACTS from verified data.
- * Pipeline: fetch → validate → quality → reconcile → quant engines →
+ * Pipeline: fetch → validate → quality → quant engines →
  * structured context → (optional) role-selected LLM → output validation.
  */
 
@@ -55,11 +55,11 @@ export async function buildStockAnalysis(symbol: string): Promise<{
   contract: StockAnalysisContract;
   meta: Meta;
   confidence: Confidence;
-  detail: VnStockDetail;
+  detail: VnEquityDetail;
 } | null> {
-  if (!vnstockConfigured()) return null;
+  if (!vndirectConfigured()) return null;
   const sym = symbol.toUpperCase();
-  const r = await getVnStockDetail(sym);
+  const r = await getVnEquityDetail(sym);
   if (!r) return null;
   const { detail } = r;
 

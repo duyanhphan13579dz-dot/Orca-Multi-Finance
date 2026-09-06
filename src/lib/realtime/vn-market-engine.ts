@@ -144,7 +144,7 @@ class VnMarketDataEngine {
     }
   }
 
-  /** Single-flight poll: multi-provider engine (health-aware + fallback + reconciliation). */
+  /** Single-flight poll: VNDirect Vietnam Data Engine (health-aware single-source). */
   private async poll(): Promise<void> {
     const syms = [...this.symbols];
     if (!syms.length) return;

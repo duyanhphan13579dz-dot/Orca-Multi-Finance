@@ -27,10 +27,12 @@ Envelope chuẩn cho mọi endpoint:
 
 | Endpoint | Mô tả | Nguồn |
 | --- | --- | --- |
-| `GET /api/v1/stocks?symbols=VCB,HPG` | Board VN: indices + quotes (UPSTREAM_UNAVAILABLE khi thiếu key) | VNStock |
-| `GET /api/v1/stocks/{symbol}` | Quote + OHLCV 250 + technical + patterns + financials | VNStock |
-| `GET /api/v1/stocks/{symbol}/technical` | OHLCV + full indicator snapshot | VNStock |
-| `GET /api/v1/stocks/{symbol}/financials` | income/balance/ratios theo quý | VNStock |
+| `GET /api/v1/stocks?symbols=VCB,HPG` | Board VN: indices + quotes (UNAVAILABLE khi VNDirect offline) | VNDirect |
+| `GET /api/v1/stocks/{symbol}` | Quote + OHLCV 250 + technical + patterns + financials (income/balance/cashflow/ratios) | VNDirect |
+| `GET /api/v1/stocks/{symbol}/technical` | OHLCV + full indicator snapshot | VNDirect |
+| `GET /api/v1/stocks/{symbol}/orderbook` | Top-of-book VNDirect (best bid/ask, spread); depth → `depthStatus: "UNAVAILABLE"` | VNDirect |
+| `GET /api/v1/stocks/{symbol}/recommendation` | `{status:"UNAVAILABLE", reason}` — VNDirect không công bố analyst recommendation; không tạo dữ liệu giả | VNDirect |
+| `GET /api/v1/stocks/{symbol}/financials` | income/balance/cashflow/ratios theo quý (ratios: VNDirect raw + deterministic engine) | VNDirect |
 | `GET /api/v1/stocks/{symbol}/analysis` | Structured contract: market-state + financial-health + valuation + news, kèm confidence | engine |
 | `GET /api/v1/reports/stock/{symbol}` | Stock Report analyst-style (FACT/CALCULATION/INTERPRETATION/SCENARIO) | engine |
 
@@ -79,7 +81,7 @@ Mọi topic đều có `snapshot` đầu tiên, heartbeat 20s, reconnect do clie
 | --- | --- | --- |
 | `GET /api/v1/commodities` | Catalog + rows đa nguồn + unavailable list + impact mapping | multi |
 | `GET /api/v1/news?category=&symbol=&sector=&limit=` | Tin tức đã dedupe/tag/validate timestamp | RSS multi-feed |
-| `GET /api/v1/screener?universe=crypto\|vn&minChange=&maxChange=&minQuoteVolume=&exchange=&sector=&limit=&sort=` | Screener rule-based. `vn` cần VNSTOCK_API_KEY; hỗ trợ lọc exchange/sector/symbols | Binance / VNStock |
+| `GET /api/v1/screener?universe=crypto\|vn&minChange=&maxChange=&minQuoteVolume=&exchange=&sector=&limit=&sort=` | Screener rule-based. `vn` = Security Master + quotes VNDirect; lọc exchange/sector/symbols | Binance / VNDirect |
 
 ## Market Intelligence (Phase 3 — backend-enabled, UI chưa hiển thị)
 

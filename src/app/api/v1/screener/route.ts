@@ -1,6 +1,6 @@
 import { ok, unavailable } from "@/lib/envelope";
 import { screenCrypto } from "@/lib/services/crypto";
-import { screenVnStocks } from "@/lib/services/stocks";
+import { screenVnEquities } from "@/lib/services/stocks";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -8,7 +8,7 @@ export const runtime = "nodejs";
 /**
  * Multi-asset screener.
  *  - universe=crypto → live Binance spot (default)
- *  - universe=vn     → VNStock universe + quotes (needs VNSTOCK_API_KEY),
+ *  - universe=vn     → Security Master + quotes từ VNDirect (keyless public),
  *                      optional filters: exchange=HOSE|HNX|UPCOM, sector=<taxonomy>
  */
 export async function GET(req: Request) {
@@ -33,7 +33,7 @@ export async function GET(req: Request) {
     const exchange = url.searchParams.get("exchange");
     const sector = url.searchParams.get("sector");
     const symbolsParam = url.searchParams.get("symbols");
-    const r = await screenVnStocks({
+    const r = await screenVnEquities({
       minChange: num("minChange"),
       maxChange: num("maxChange"),
       minQuoteVolume: num("minQuoteVolume"),
@@ -43,7 +43,7 @@ export async function GET(req: Request) {
       sector: sector?.trim() || undefined,
       symbols: symbolsParam?.split(",").map((s) => s.trim().toUpperCase()).filter(Boolean),
     });
-    if (!r) return unavailable("vnstock", "Screener cổ phiếu Việt Nam cần VNSTOCK_API_KEY — hiện tại UNAVAILABLE (không mock data).");
+    if (!r) return unavailable("vndirect", "Screener cổ phiếu Việt Nam cần dữ liệu VNDirect — provider offline lần này, UNAVAILABLE (không mock data).");
     return ok({ universe, rows: r.rows, note: r.note }, r.meta);
   }
 

@@ -3,7 +3,7 @@ import { cached } from "../cache";
 import { buildMeta } from "../freshness";
 import * as binance from "../providers/binance";
 import { getYahooChart, yahooSymbolForPair, yahooIntervalFor } from "../providers/yahoo";
-import { getVnOhlcv, vnstockConfigured } from "./stocks";
+import { getVnOhlcv, vndirectConfigured } from "./stocks";
 import { validateBars, detectGaps, logQualityEvent } from "../quality";
 import { aggregateCandles, binanceInterval, TF_MS, tfsFor, type ChartAssetType, type ChartCandle } from "../chart-const";
 import { ema, rsi, macd, sma, supportResistance } from "../technical";
@@ -197,9 +197,9 @@ async function forexCandles(pair: string, tf: string, limit: number): Promise<{ 
 }
 
 async function stockCandles(symbol: string, tf: string, limit: number): Promise<{ candles: ChartCandle[]; source: string; note?: string }> {
-  if (!vnstockConfigured()) throw new Error("vnstock_not_configured");
+  if (!vndirectConfigured()) throw new Error("vndirect_not_configured");
   const r = await getVnOhlcv(symbol, tf === "1d" ? Math.min(limit, 250) : Math.min(limit * 7, 500));
-  if (!r) throw new Error("vnstock_unavailable");
+  if (!r) throw new Error("vndirect_unavailable");
   let candles = r.bars.map(toCandle);
   if (tf === "1w") candles = aggregateCandles(candles, TF_MS["1w"]).slice(-limit);
   if (tf === "1M") candles = aggregateCandles(candles, TF_MS["1M"]).slice(-limit);

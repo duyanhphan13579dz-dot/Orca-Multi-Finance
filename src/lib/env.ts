@@ -15,9 +15,8 @@ export const INSECURE_JWT_SECRET = "orca-dev-insecure-secret-change-in-productio
 export const env = {
   nodeEnv: process.env.NODE_ENV ?? "development",
 
-  /* Vietnam stocks — official provider per product spec */
-  vnstockBaseUrl: opt(process.env.VNSTOCK_BASE_URL) ?? "https://api.vnstock.com",
-  vnstockApiKey: opt(process.env.VNSTOCK_API_KEY),
+  /* Vietnam stocks — VNDirect finfo (keyless public REST; env-overridable base) */
+  vndirectBaseUrl: opt(process.env.VNDIRECT_BASE_URL),
 
   /* Crypto — Binance */
   binanceBaseUrl: opt(process.env.BINANCE_BASE_URL),

@@ -1,26 +1,28 @@
 import "server-only";
 import { cached } from "../cache";
 import { buildMeta } from "../freshness";
-import * as vnstock from "../providers/vnstock";
-import { env } from "../env";
 import { validateBars, logQualityEvent } from "../quality";
 import { vnDataEngine } from "../engines/vn-data-engine";
+import { computeRatioRows } from "../engines/vn-ratio-engine";
 import { computeBarConfidence, aggregateConfidence, type DataConfidence } from "../confidence";
 import { vnSlasForSession } from "../vn/sessions";
 import { analyzeSeries, detectPatterns } from "../technical";
 import { filterAndSortRows } from "../engines/screener";
 import { VN_SECURITIES } from "../vn/master";
+import { getVndFinancials, getVndRatios, type FinancialPeriod, type FinancialReport } from "../providers/vndirect";
 import type { CandlePattern, IndexQuote, Meta, OhlcvBar, Quote, TechnicalSnapshot } from "../types";
 
 /**
- * Vietnam equity domain service.
- * Primary provider: VNStock (env-configured, API-key authenticated).
- * When the provider is not configured or degraded, every function returns
- * null and API layer surfaces UNAVAILABLE — never fabricated data.
+ * Vietnam equity domain service — VNDirect (finfo) là provider DUY NHẤT.
+ * Single-provider: không key, không fallback provider ngoài, không reconciliation.
+ * Khi provider offline/lỗi/empty → mọi hàm trả null (API tầng trên trả
+ * UNAVAILABLE) — không bao giờ chế số.
  */
 
-export function vnstockConfigured(): boolean {
-  return Boolean(env.vnstockApiKey);
+export function vndirectConfigured(): boolean {
+  // VNDirect finfo là REST public keyless — luôn "configured"; trạng thái thật
+  // (reachable/timeout/rate-limit) do provider + health circuit phản ánh.
+  return true;
 }
 
 export async function getVnIndices(): Promise<{ items: IndexQuote[]; meta: Meta } | null> {
@@ -40,7 +42,7 @@ export async function getVnIndices(): Promise<{ items: IndexQuote[]; meta: Meta 
       cached: res.cached,
       stale: res.stale,
       degraded: res.value.degraded,
-      note: res.value.degraded ? "Có nguồn index không khả dụng lần này" : undefined,
+      note: res.value.degraded ? "VNDirect index không khả dụng lần này" : undefined,
       slas: vnSlasForSession(),
     });
     if (res.value.confidence) meta.dataConfidence = res.value.confidence;
@@ -57,19 +59,17 @@ export async function getVnQuotes(symbols: string[]): Promise<{ quotes: Quote[];
       ttlMs: 15_000,
       staleMs: 24 * 3_600_000,
       producer: async () => {
-        // MULTI-PROVIDER: VNStock (primary) + VNDirect (secondary) —
-        // health-aware routing, graceful fallback, reconciliation + confidence.
+        // VNDirect single-source engine (health-aware + confidence).
         const r = await vnDataEngine.resolveQuotes(symbols);
-        if (!r.quotes.length) throw new Error("all vn providers failed");
+        if (!r.quotes.length) throw new Error("vndirect failed");
         const confidenceParts: DataConfidence[] = [...r.bySymbol.values()].map((x) => x.confidence);
         return {
           quotes: r.quotes,
           fetchedAt: Date.now(),
           bySymbol: r.bySymbol,
           providers: r.providers,
-          discrepancies: r.discrepancies.map((d) => ({ check: "provider_discrepancy", message: `${d.symbol}: ${d.values.map((v) => `${v.provider}=${v.price}`).join(" vs ")} (${d.deviationPct}%)` })),
           note: r.notes.join(" · ") || undefined,
-          source: r.providers.join("+") + (r.fallback ? " (fallback)" : ""),
+          source: r.providers.join("+"),
           degraded: r.degraded,
           confidence: aggregateConfidence(confidenceParts),
         };
@@ -84,7 +84,6 @@ export async function getVnQuotes(symbols: string[]): Promise<{ quotes: Quote[];
       note: res.value.note,
       slas: vnSlasForSession(),
     });
-    meta.discrepancies = res.value.discrepancies;
     if (res.value.confidence) meta.dataConfidence = res.value.confidence;
     if (res.value.providers?.length) meta.providers = res.value.providers;
     return { quotes: res.value.quotes, meta };
@@ -100,10 +99,9 @@ export async function getVnOhlcv(symbol: string, limit = 250): Promise<{ bars: O
       ttlMs: 60_000,
       staleMs: 7 * 24 * 3_600_000,
       producer: async () => {
-        // MULTI-PROVIDER + ARCHIVE FALLBACK: vnstock → vndirect → archive
+        // VNDirect dailies → archive fallback (lịch sử tự lưu, không provider ngoài)
         const r = await vnDataEngine.resolveOhlcv(sym, limit);
         if (!r) throw new Error("all vn ohlcv sources unavailable");
-        // DATA QUALITY: validate + sanitize (dupes/out-of-order/invalid bars)
         const q = validateBars(r.bars);
         if (q.status !== "VALID") void logQualityEvent(r.provider, `ohlcv:${sym}`, q);
         if (q.status === "INVALID") throw new Error("invalid ohlcv series");
@@ -111,11 +109,11 @@ export async function getVnOhlcv(symbol: string, limit = 250): Promise<{ bars: O
         const confidence = computeBarConfidence({
           quality: q.status,
           gapRatio,
-          source: r.provider === "archive" ? "archive" : r.provider === "vndirect" ? "secondary" : "primary",
+          source: r.provider === "archive" ? "archive" : "primary",
           barCount: q.cleaned.length,
           historySufficient: q.cleaned.length >= 120,
         });
-        const note = r.fallback ? (r.provider === "archive" ? "Provider OHLCV offline — phục vụ từ archive lịch sử" : "VNStock lỗi — fallback VNDirect cho chuỗi OHLCV") : undefined;
+        const note = r.fallback ? "VNDirect OHLCV offline — phục vụ từ archive lịch sử" : undefined;
         return { bars: q.cleaned, fetchedAt: Date.now(), source: r.provider, note, qualityStatus: q.status, confidence, degraded: r.degraded };
       },
     });
@@ -149,7 +147,7 @@ function gapRatioOf(bars: OhlcvBar[]): number {
   return gaps / (bars.length - 1);
 }
 
-export interface VnStockDetail {
+export interface VnEquityDetail {
   symbol: string;
   quote: Quote | null;
   bars: OhlcvBar[];
@@ -159,48 +157,79 @@ export interface VnStockDetail {
   notes: string[];
 }
 
-export async function getVnStockDetail(symbol: string): Promise<{ detail: VnStockDetail; meta: Meta } | null> {
+const finCache = (key: string, producer: () => Promise<Record<string, unknown>[]>) =>
+  cached(`vn:fin:${key}`, { ttlMs: 6 * 3_600_000, staleMs: 90 * 24 * 3_600_000, producer });
+
+async function loadStatements(sym: string, report: FinancialReport, period: FinancialPeriod, limit: number): Promise<Record<string, unknown>[]> {
+  try {
+    return await getVndFinancials(sym, report, period, limit);
+  } catch {
+    return [];
+  }
+}
+
+export async function getVnEquityDetail(symbol: string): Promise<{ detail: VnEquityDetail; meta: Meta } | null> {
   const sym = symbol.toUpperCase();
-  if (!vnstockConfigured()) return null;
   const [quotesRes, ohlcvRes, incomeRes, balanceRes, cashflowRes, ratiosRes] = await Promise.allSettled([
     getVnQuotes([sym]),
     getVnOhlcv(sym, 250),
-    cached(`vn:fin:${sym}:income`, { ttlMs: 6 * 3_600_000, staleMs: 90 * 24 * 3_600_000, producer: () => vnstock.getVnFinancials(sym, "income", "quarter", 8) }),
-    cached(`vn:fin:${sym}:balance`, { ttlMs: 6 * 3_600_000, staleMs: 90 * 24 * 3_600_000, producer: () => vnstock.getVnFinancials(sym, "balance", "quarter", 8) }),
-    cached(`vn:fin:${sym}:cashflow`, { ttlMs: 6 * 3_600_000, staleMs: 90 * 24 * 3_600_000, producer: () => vnstock.getVnFinancials(sym, "cashflow", "quarter", 8) }),
-    cached(`vn:fin:${sym}:ratios`, { ttlMs: 6 * 3_600_000, staleMs: 90 * 24 * 3_600_000, producer: () => vnstock.getVnFinancials(sym, "ratios", "quarter", 8) }),
+    finCache(`${sym}:income`, () => loadStatements(sym, "income", "quarter", 12)),
+    finCache(`${sym}:balance`, () => loadStatements(sym, "balance", "quarter", 12)),
+    finCache(`${sym}:cashflow`, () => loadStatements(sym, "cashflow", "quarter", 12)),
+    finCache(`${sym}:ratios`, async () => {
+      try {
+        const raw = await getVndRatios(sym, 200);
+        return raw as unknown as Record<string, unknown>[];
+      } catch {
+        return [];
+      }
+    }),
   ]);
   const quote = quotesRes.status === "fulfilled" ? quotesRes.value?.quotes[0] ?? null : null;
   const bars = ohlcvRes.status === "fulfilled" ? ohlcvRes.value?.bars ?? [] : [];
+  const income = incomeRes.status === "fulfilled" ? incomeRes.value.value : [];
+  const balance = balanceRes.status === "fulfilled" ? balanceRes.value.value : [];
+  const cashflow = cashflowRes.status === "fulfilled" ? cashflowRes.value.value : [];
   const failed: string[] = [];
   if (!quote) failed.push("quote");
   if (!bars.length) failed.push("ohlcv");
-  if (incomeRes.status === "rejected") failed.push("income");
-  if (balanceRes.status === "rejected") failed.push("balance");
-  if (cashflowRes.status === "rejected") failed.push("cashflow");
-  if (ratiosRes.status === "rejected") failed.push("ratios");
+  if (!income.length) failed.push("income");
+  if (!balance.length) failed.push("balance");
+  if (!cashflow.length) failed.push("cashflow");
+
+  const price = quote?.price ?? bars[bars.length - 1]?.close ?? null;
+  // Ratio: VNDirect raw (itemName) nếu có, cộng standard set từ deterministic engine;
+  // không bao giờ để trống khi có statements.
+  const providerRows = ratiosRes.status === "fulfilled" ? (ratiosRes.value.value as unknown[]) : [];
+  const ratioRows = computeRatioRows(income, balance, cashflow, {
+    price,
+    providerRatioRows: providerRows.length ? (providerRows as Record<string, unknown>[]) : undefined,
+  });
+
   if (!quote && !bars.length) return null;
-  const detail: VnStockDetail = {
+  const detail: VnEquityDetail = {
     symbol: sym,
     quote,
     bars,
     technical: bars.length ? analyzeSeries(bars) : null,
     patterns: bars.length ? detectPatterns(bars) : [],
     financials: {
-      income: incomeRes.status === "fulfilled" ? incomeRes.value.value.map((x) => x as Record<string, unknown>) : null,
-      balance: balanceRes.status === "fulfilled" ? balanceRes.value.value.map((x) => x as Record<string, unknown>) : null,
-      cashflow: cashflowRes.status === "fulfilled" ? cashflowRes.value.value.map((x) => x as Record<string, unknown>) : null,
-      ratios: ratiosRes.status === "fulfilled" ? ratiosRes.value.value.map((x) => x as Record<string, unknown>) : null,
+      income: income.length ? income : null,
+      balance: balance.length ? balance : null,
+      cashflow: cashflow.length ? cashflow : null,
+      ratios: ratioRows.length ? (ratioRows as unknown as Record<string, unknown>[]) : null,
     },
-    notes: failed.length ? [`Một số bộ dữ liệu chưa khả dụng từ VNStock: ${failed.join(", ")}`] : [],
+    notes: failed.length ? [`Một số bộ dữ liệu chưa khả dụng từ VNDirect: ${failed.join(", ")}`] : [],
   };
   const meta = buildMeta({
-    source: "vnstock",
+    source: "vndirect",
     sourceTimestampMs: quote?.updatedAt ? Date.parse(quote.updatedAt) : bars.length ? bars[bars.length - 1].time : Date.now(),
     degraded: failed.length > 0,
     partial: failed.length > 0,
     note: detail.notes[0],
+    slas: vnSlasForSession(),
   });
+  meta.providers = ["vndirect"];
   return { detail, meta };
 }
 
@@ -224,23 +253,18 @@ export interface VnScreenerRow extends Quote {
 }
 
 /**
- * VN equity screener — real provider data only.
- * Universe (name/exchange/industry) from VNStock; taxonomy (sector) from the
- * canonical Security Master; quotes fetched in chunks (≤30/call).
+ * VN equity screener — quotes thật từ VNDirect; universe = Security Master
+ * canonical (VN_SECURITIES); không phụ thuộc universe provider ngoài.
  */
-export async function screenVnStocks(params: VnScreenerParams): Promise<{ rows: VnScreenerRow[]; meta: Meta; note: string } | null> {
-  if (!vnstockConfigured()) return null;
+export async function screenVnEquities(params: VnScreenerParams): Promise<{ rows: VnScreenerRow[]; meta: Meta; note: string } | null> {
   try {
-    const universe = await vnstock.getVnUniverse();
-    if (!universe.length) return null;
-    let universeSymbols = universe.map((u) => u.symbol);
+    const master = new Map(VN_SECURITIES.map((s) => [s.symbol, s]));
+    let universeSymbols = VN_SECURITIES.map((s) => s.symbol);
     if (params.symbols && params.symbols.length > 0) {
-      const wanted = new Set(params.symbols);
+      const wanted = new Set(params.symbols.map((s) => s.toUpperCase()));
       universeSymbols = universeSymbols.filter((s) => wanted.has(s));
     }
-    const master = new Map(VN_SECURITIES.map((s) => [s.symbol, s]));
-    const bySym = new Map(universe.map((u) => [u.symbol, u]));
-    let candidates = universeSymbols.filter((s) => {
+    const candidates = universeSymbols.filter((s) => {
       const m = master.get(s);
       if (params.exchange && m && m.exchange !== params.exchange) return false;
       if (params.sector && m && m.sector !== params.sector) return false;
@@ -254,15 +278,15 @@ export async function screenVnStocks(params: VnScreenerParams): Promise<{ rows: 
       const q = await getVnQuotes(chunk);
       if (q) quotes.push(...q.quotes);
     }
+    if (!quotes.length) return null;
 
     const enriched: VnScreenerRow[] = quotes.map((quote) => {
       const m = master.get(quote.symbol);
-      const u = bySym.get(quote.symbol);
       return {
         ...quote,
-        name: m?.name ?? u?.name ?? null,
-        exchange: m?.exchange ?? u?.exchange ?? null,
-        sector: m?.sector ?? u?.industry ?? null,
+        name: m?.name ?? null,
+        exchange: m?.exchange ?? null,
+        sector: m?.sector ?? null,
       };
     });
 
@@ -275,11 +299,12 @@ export async function screenVnStocks(params: VnScreenerParams): Promise<{ rows: 
     });
 
     const meta = buildMeta({
-      source: "vnstock",
+      source: "vndirect",
       sourceTimestampMs: Date.now(),
       slas: { liveSlaMs: 60_000, freshSlaMs: 300_000, delayedSlaMs: 3_600_000 },
       note: `universe ${universeSymbols.length} · candidates ${candidates.length}`,
     });
+    meta.providers = ["vndirect"];
     return { rows, meta, note: `universe ${universeSymbols.length} · candidates ${candidates.length}` };
   } catch {
     return null;

@@ -3,8 +3,8 @@
  * Every module must resolve symbols/exchanges/sectors through this file.
  * Classification: HOSE / HNX / UPCOM · Vietnamese sector taxonomy.
  *
- * NOTE: entries are curated manually and reconciled against the official
- * VNStock universe (src/lib/providers/vnstock.ts#getVnUniverse) — verified
+ * NOTE: entries are curated manually, canonical Security Master của hệ
+ * thống (nền tảng dữ liệu VNDirect) — verified
  * 2026-09-06 via VSD/vietstock/BSC/TradingView for the corrected rows.
  */
 

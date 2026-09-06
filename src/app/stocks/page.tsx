@@ -66,8 +66,8 @@ export default function VnMarketCenterPage() {
 
       {!res?.success ? (
         <Unavailable
-          title="Cần kết nối VNStock + VNDirect"
-          note={res && !res.success ? res.error.message : "Cấu hình VNSTOCK_API_KEY trong .env — reconciliation engine đã sẵn sàng ưu tiên Vietnam securities."}
+          title="Cần kết nối VNDirect"
+          note={res && !res.success ? res.error.message : "Khi VNDirect kết nối, bảng cổ phiếu Vietnam sẽ hiển thị dữ liệu thật (không mock)."}
         />
       ) : (
         <>

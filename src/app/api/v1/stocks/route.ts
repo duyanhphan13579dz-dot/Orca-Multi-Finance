@@ -1,5 +1,5 @@
 import { ok, unavailable } from "@/lib/envelope";
-import { getVnIndices, getVnQuotes, vnstockConfigured } from "@/lib/services/stocks";
+import { getVnIndices, getVnQuotes, vndirectConfigured } from "@/lib/services/stocks";
 import { env } from "@/lib/env";
 
 export const dynamic = "force-dynamic";
@@ -13,19 +13,19 @@ export async function GET(req: Request) {
     .map((s) => s.trim().toUpperCase())
     .filter(Boolean)
     .slice(0, 40);
-  if (!vnstockConfigured()) {
+  if (!vndirectConfigured()) {
     return unavailable(
-      "vnstock",
-      "VNSTOCK_API_KEY chưa được cấu hình phía server — dữ liệu chứng khoán Việt Nam ở trạng thái UNAVAILABLE (không dùng mock data). Cấu hình key trong .env để kích hoạt.",
+      "vndirect",
+      "VNDirect chưa khả dụng phía server — dữ liệu chứng khoán Việt Nam ở trạng thái UNAVAILABLE (không dùng mock data).",
     );
   }
   const [indices, quotes] = await Promise.all([getVnIndices(), symbols.length ? getVnQuotes(symbols) : Promise.resolve(null)]);
   if (!indices && !quotes) {
-    return unavailable("vnstock", `VNStock (${env.vnstockBaseUrl}) không phản hồi — xem trạng thái provider tại /system.`);
+    return unavailable("vndirect", `VNDirect (${env.vndirectBaseUrl ?? "finfo-api.vndirect.com.vn"}) không phản hồi — xem trạng thái provider tại /system.`);
   }
   const meta = quotes?.meta ?? indices?.meta;
   return ok({ indices: indices?.items ?? null, quotes: quotes?.quotes ?? null }, {
-    source: "vnstock",
+    source: "vndirect",
     sourceTimestampMs: meta?.sourceTimestamp ? Date.parse(meta.sourceTimestamp) : null,
     cached: meta?.cached,
     stale: meta?.stale,

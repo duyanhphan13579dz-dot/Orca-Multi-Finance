@@ -69,7 +69,7 @@ export default function WatchlistPage() {
       <Panel pad={false}>
         <div className="p-4">
           <h1 className="flex items-center gap-2 text-lg font-semibold"><Eye className="size-5 text-accent" /> Watchlist của tôi</h1>
-          <p className="mt-0.5 text-[12px] text-ink-3">Lưu cục bộ trên trình duyệt; giá cập nhật realtime theo Data Engine (crypto/forex đang hoạt động, cổ phiếu VN chờ VNStock).</p>
+          <p className="mt-0.5 text-[12px] text-ink-3">Lưu cục bộ trên trình duyệt; giá cập nhật realtime theo Data Engine (crypto/forex đang hoạt động, cổ phiếu VN chờ VNDirect).</p>
           <div className="mt-3 flex gap-2">
             <input
               value={input}
@@ -115,7 +115,7 @@ export default function WatchlistPage() {
                       <Chg value={f.changePercent} className="text-[11px]" arrow={false} />
                     </div>
                   ) : it.assetType === "stock" ? (
-                    <Badge tone="warn">chờ VNStock</Badge>
+                    <Badge tone="warn">chờ VNDirect</Badge>
                   ) : (
                     <Badge>tải giá…</Badge>
                   )}

@@ -3,7 +3,7 @@ import { cached } from "../cache";
 import { buildMeta } from "../freshness";
 import { buildMarketSnapshot } from "./market";
 import { getCrossAsset, crossAssetChanges, type CrossAssetItem } from "./cross-asset";
-import { getVnQuotes, vnstockConfigured } from "./stocks";
+import { getVnQuotes, vndirectConfigured } from "./stocks";
 import { computeMarketCondition, computeContributions, type MarketConditionResult, type ContributionRow } from "../engines/market-condition";
 import { getVnSession, type VnSessionInfo } from "../vn/sessions";
 import { VN_INDICES, getSecurity } from "../vn/master";
@@ -59,7 +59,7 @@ export async function buildMarketIntel(): Promise<{ intel: MarketIntel; meta: Me
       const [snapRes, crossRes, boardRes] = await Promise.allSettled([
         buildMarketSnapshot(),
         getCrossAsset(),
-        vnstockConfigured() ? getVnQuotes(VN30_BOARD) : Promise.resolve(null),
+        vndirectConfigured() ? getVnQuotes(VN30_BOARD) : Promise.resolve(null),
       ]);
 
       const snap = snapRes.status === "fulfilled" ? snapRes.value : null;
@@ -79,9 +79,9 @@ export async function buildMarketIntel(): Promise<{ intel: MarketIntel; meta: Me
       } else {
         breadth = {
           advancers: 0, decliners: 0, unchanged: 0,
-          source: "vnstock",
+          source: "vndirect",
           available: false,
-          note: "Cần VNStock/VNDirect để tính độ rộng thực của HOSE/HNX/UPCoM — hệ thống không ước lượng thay.",
+          note: "Cần VNDirect để tính độ rộng thực của HOSE/HNX/UPCoM — hệ thống không ước lượng thay.",
         };
       }
 
@@ -97,7 +97,7 @@ export async function buildMarketIntel(): Promise<{ intel: MarketIntel; meta: Me
       /* capital flow — never fabricated */
       const flow: FlowData = {
         foreignNet: null, propNet: null, etfNet: null,
-        source: "vnstock/vndirect",
+        source: "vndirect",
         available: false,
         note: "Dòng vốn khối ngoại / tự doanh / ETF cần endpoint chuyên biệt từ provider VN. Hệ thống hiển thị UNAVAILABLE thay vì tạo số liệu giả định.",
       };
@@ -142,7 +142,7 @@ export async function buildMarketIntel(): Promise<{ intel: MarketIntel; meta: Me
           },
           news: snap?.snapshot.news?.slice(0, 6) ?? [],
           sections: (snap?.meta.sections ?? {}) as Record<string, FreshnessStatus>,
-          vnDataNote: indicesAvailable ? null : "VNStock/VNDirect chưa kết nối — các cấu phần VN hiển thị UNAVAILABLE, engine tự hạ độ tin cậy thay vì suy diễn.",
+          vnDataNote: indicesAvailable ? null : "VNDirect chưa kết nối — các cấu phần VN hiển thị UNAVAILABLE, engine tự hạ độ tin cậy thay vì suy diễn.",
         } satisfies MarketIntel,
         newest: cross?.meta.sourceTimestamp ? Date.parse(cross.meta.sourceTimestamp) : Date.now(),
         crossMeta: cross?.meta ?? null,
@@ -185,7 +185,7 @@ export async function buildIndexDetail(codeRaw: string): Promise<{ detail: Index
 
   const { intel, meta } = await buildMarketIntel();
   const quote = intel.indices?.find((i) => i.code.replace(/[^A-Z0-9]/g, "") === def.code) ?? null;
-  const board = vnstockConfigured() ? await getVnQuotes(VN30_BOARD) : null;
+  const board = vndirectConfigured() ? await getVnQuotes(VN30_BOARD) : null;
 
   const constituents = (board?.quotes ?? []).map((q) => {
     const sec = getSecurity(q.symbol);
@@ -224,7 +224,7 @@ export async function buildIndexDetail(codeRaw: string): Promise<{ detail: Index
       risks: intel.condition.risks,
     },
     available: Boolean(quote),
-    note: quote ? null : "Chỉ số này cần VNStock/VNDirect để hiển thị giá trị realtime — cấu trúc phân tích đã sẵn sàng.",
+    note: quote ? null : "Chỉ số này cần VNDirect để hiển thị giá trị realtime — cấu trúc phân tích đã sẵn sàng.",
   };
   return { detail, meta };
 }

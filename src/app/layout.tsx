@@ -9,7 +9,7 @@ export const metadata: Metadata = {
     template: "%s | ORCA Financial",
   },
   description:
-    "Real-time, event-driven, multi-asset financial intelligence platform — VN stocks (VNStock), crypto (Binance), forex (Biquote), commodities (Vietnambiz/Simplize), news, reports and an AI research agent.",
+    "Real-time, event-driven, multi-asset financial intelligence platform — VN stocks (VNDirect), crypto (Binance), forex (Biquote), commodities (Vietnambiz/Simplize), news, reports and an AI research agent.",
   icons: { icon: "/icon.svg" },
 };
 

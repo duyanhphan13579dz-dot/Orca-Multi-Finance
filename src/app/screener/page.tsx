@@ -68,7 +68,7 @@ function VnScreener({ defaultSector }: { defaultSector: string | null }) {
             <Field label="GT GD tối thiểu (tỷ đ)" value={minVol} onChange={setMinVol} />
           </div>
         </Panel>
-        <Unavailable title="VNStock chưa kết nối" note={res && !res.success ? res.error.message : undefined} />
+        <Unavailable title="VNDirect chưa kết nối" note={res && !res.success ? res.error.message : undefined} />
       </>
     );
   }
@@ -115,7 +115,7 @@ function VnScreener({ defaultSector }: { defaultSector: string | null }) {
       </Panel>
       <Panel title="Chiến lược nâng cao — CANSLIM · Minervini · Wyckoff · Value">
         <div className="text-[12px] leading-relaxed text-ink-2">
-          Rule engines chuyên sâu (growth momentum theo CANSLIM, nền tích lũy kiểu Minervini, điểm Wyckoff, value theo Graham-điều chỉnh VN) chạy trên cùng pipeline này khi Financial Statements từ VNStock khả dụng — kết hợp Financial Health Engine + Valuation Engine đã triển khai.
+          Rule engines chuyên sâu (growth momentum theo CANSLIM, nền tích lũy kiểu Minervini, điểm Wyckoff, value theo Graham-điều chỉnh VN) chạy trên cùng pipeline này khi Financial Statements từ VNDirect khả dụng — kết hợp Financial Health Engine + Valuation Engine đã triển khai.
           <Badge tone="warn" >roadmap</Badge>
         </div>
       </Panel>

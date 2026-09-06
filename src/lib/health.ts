@@ -170,3 +170,8 @@ export function getProviderHealth(): ProviderStatus[] {
     };
   });
 }
+
+/** Test/ops helper: reset in-memory health state (circuit, counters). */
+export function resetProviderHealth(): void {
+  registry.clear();
+}

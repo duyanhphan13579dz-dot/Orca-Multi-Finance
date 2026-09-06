@@ -61,7 +61,7 @@ export async function generateMorningBrief(): Promise<{ report: Report; meta: Me
       heading: "Chứng khoán Việt Nam",
       tone: "neutral",
       paragraphs: [
-        "Nguồn dữ liệu VNStock hiện chưa sẵn sàng (chưa cấu hình khóa API hoặc kết nối gián đoạn), nên bản tin hôm nay tạm thiếu phần chỉ số trong nước. Hệ thống ghi nhận trạng thái này một cách minh bạch thay vì lấp vào bằng số liệu cũ — khi kết nối phục hồi, phần này sẽ tự động cập nhật.",
+        "Nguồn dữ liệu VNDirect hiện chưa sẵn sàng (kết nối gián đoạn), nên bản tin hôm nay tạm thiếu phần chỉ số trong nước. Hệ thống ghi nhận trạng thái này một cách minh bạch thay vì lấp vào bằng số liệu cũ — khi kết nối phục hồi, phần này sẽ tự động cập nhật.",
       ],
     });
   }

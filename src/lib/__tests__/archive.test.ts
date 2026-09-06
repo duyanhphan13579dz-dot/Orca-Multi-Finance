@@ -39,7 +39,7 @@ test("archive: quoteToArchiveRow — ts rounded + close = price + null-safe", ()
     volume: 1_000_000,
     updatedAt: new Date(Date.parse("2026-09-07T02:00:30Z")).toISOString(),
   };
-  const row = quoteToArchiveRow("HPG", q, "vn-engine:vnstock");
+  const row = quoteToArchiveRow("HPG", q, "vn-engine:vndirect");
   assert.equal(row.ts.toISOString(), new Date(Date.parse("2026-09-07T02:00:00Z")).toISOString());
   assert.equal(row.close, "30500");
   assert.equal(row.change, "200");

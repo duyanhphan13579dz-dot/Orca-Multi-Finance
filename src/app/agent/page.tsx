@@ -42,7 +42,7 @@ export default function AgentPage() {
   const [messages, setMessages] = useState<Msg[]>([
     {
       role: "agent",
-      text: "Chào bạn — mình là ORCA Agent. Nguyên tắc làm việc: truy xuất dữ liệu thật trước (Binance, ngoại hối, hàng hóa, tin tức…), sau đó mới lập luận. Mình không dùng dữ liệu cũ từ mô hình và sẽ nói rõ khi một nguồn dữ liệu chưa khả dụng (ví dụ VNStock đang chờ API key).",
+      text: "Chào bạn — mình là ORCA Agent. Nguyên tắc làm việc: truy xuất dữ liệu thật trước (Binance, ngoại hối, hàng hóa, tin tức…), sau đó mới lập luận. Mình không dùng dữ liệu cũ từ mô hình và sẽ nói rõ khi một nguồn dữ liệu chưa khả dụng (ví dụ nguồn chứng khoán VN đang offline).",
     },
   ]);
   const [input, setInput] = useState("");

@@ -47,7 +47,7 @@ export async function GET() {
         cache: cacheStats(),
       },
       features: {
-        vnstockConfigured: Boolean(process.env.VNSTOCK_API_KEY?.trim()),
+        vndirectConfigured: true, // VNDirect finfo public keyless
         biquoteConfigured: Boolean(process.env.BIQUOTE_API_KEY?.trim()),
         simplizeConfigured: Boolean(process.env.SIMPLIZE_API_KEY?.trim()),
         llmConfigured: Boolean(process.env.AI_PROVIDER_KEY?.trim()),

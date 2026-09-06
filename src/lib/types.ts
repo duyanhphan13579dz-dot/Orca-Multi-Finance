@@ -26,7 +26,7 @@ export interface Meta {
   outputValidation?: { validated: boolean; unsupportedClaims: number; recovered?: string };
   /** Phase 2 — data confidence (multi-provider agreement, quality, freshness, fallback) */
   dataConfidence?: { score: number; level: "high" | "medium" | "low" | "unverified"; factors: string[] } | null;
-  /** Phase 2 — provider source set tham gia resolution (vnstock, vndirect, archive…) */
+  /** Phase 2 — provider source set tham gia resolution (vndirect, archive…) */
   providers?: string[];
   /** Phase 4 — agent pipeline trace: question → realtime → quant → confidence → llm → output */
   pipeline?: {

@@ -57,8 +57,8 @@ export default function HeatmapPage() {
 
       <Panel title="Heatmap cổ phiếu Việt Nam">
         <Unavailable
-          title="Cần kết nối VNStock"
-          note="Khi VNSTOCK_API_KEY được cấu hình, heatmap HOSE/HNX/UPCOM theo ngành sẽ hiển thị tại đây với cùng cơ chế realtime qua provider abstraction."
+          title="Cần kết nối VNDirect"
+          note="Khi VNDirect kết nối, heatmap HOSE/HNX/UPCOM theo ngành sẽ hiển thị tại đây với cùng cơ chế realtime qua provider abstraction."
         />
       </Panel>
     </div>

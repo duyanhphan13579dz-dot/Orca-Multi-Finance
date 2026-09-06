@@ -41,7 +41,7 @@ Domain Services          src/lib/services/*
   ↓  — business logic, cache, freshness, compositional intelligence
 Provider Adapters        src/lib/providers/*
   ↓  — timeout, retry, backoff, circuit breaker, health registry
-External Sources         VNStock · Binance · Biquote · Vietnambiz · Simplize · RSS
+External Sources         VNDirect · Binance · Biquote · Vietnambiz · Simplize · RSS
 ```
 
 - **Không** logic provider nào xuất hiện trong React component.
@@ -77,7 +77,7 @@ SLA per-domain định nghĩa trong service tương ứng (crypto 30s/120s/600s,
 ```text
 crypto.price.updated (Binance 24h ticker, 12s cadence)
   → markets table, movers, heatmap, screener, watchlist, pulse, agent, reports
-stock.quote.updated (VNStock, khi được cấu hình)
+stock.quote.updated (VNDirect)
   → indices header, board, heatmap VN, technical incremental
 forex/commodity/news.updated
   → dashboards, pulse narrative, morning brief freshness gate
@@ -103,12 +103,12 @@ Ghi DB ở chế độ **best-effort, fire-and-forget** (không bao giờ chặn
 
 ```text
 DATA PROVIDERS
-  ↓ (VNStock⇄VNDirect reconciliation · Binance WS+REST · Biquote/fallback · multi-source commodities · RSS)
+  ↓ (VNDirect VN engine · Binance WS+REST · Biquote/fallback · multi-source commodities · RSS)
 VALIDATION + NORMALIZATION        src/lib/http.ts, providers/*
   ↓
 DATA QUALITY ENGINE               src/lib/quality.ts  (VALID/SUSPECT/INVALID/STALE + logged anomalies, dedupe, ordering, deviation, timestamp)
   ↓
-RECONCILIATION ENGINE             src/lib/reconcile.ts (priority rules, tolerance, discrepancy log — never averages providers)
+DATA CONFIDENCE ENGINE           src/lib/confidence.ts (single-source → max medium; worst-of across data blocks)
   ↓
 REALTIME STORE / CACHE            src/lib/realtime/binance-ws.ts (centralized !ticker@arr + !markPrice@arr) + src/lib/cache.ts
   ↓
@@ -134,7 +134,7 @@ Data contract per analysis: `{asset, market_data, technical_state, market_state,
 3. **Multi-TF Candle Engine** — `src/lib/realtime/multi-tf-candles.ts`: base 1m → resample mọi TF (5m/15m/1h/1d…); merge seed REST + live (contribution map theo baseOpen, fast-path O(1) khi bar hiện tại không phải extreme, rebuild khi cần); crypto kline WS + VN 1m frames; `seedTf` seed thẳng bucket đích (VN 1d). Emits `candle.updated`/`candle.closed` chỉ khi có subscriber.
 4. **Incremental Technical Engine** — `src/lib/engines/technical-incremental.ts`: stateful O(1)/tick (SMA window, EMA SMA-seeded, Wilder RSI, MACD(12,26,9), Bollinger σ population, ATR last-N); test đối chiếu full-recompute `technical.ts` tại từng bước (sai số 1e-6).
 5. **SSE Gateway** — `src/app/api/v1/realtime/stream/route.ts`: topic `market` (quote multi-asset + index events) / `watchlist` (auth) / `alerts` (auth, evaluate-on-quote + persist) / `candle` (multi-TF + REST seed). Redis fanout qua event model. Chart stream cũ vẫn giữ contract payload cũ (unwrap envelope).
-6. **VN Market Data Engine** — `src/lib/realtime/vn-market-engine.ts`: session-aware cadence (10s continuous, 15s ATO, 30s ATC/post, 60s pre-open/lunch, dừng + final poll sau close), single-flight, VNStock→VNDirect fallback, ghi store + emit `tick`/`vn.index`, 1m base frame → multi-TF.
+6. **VN Market Data Engine** — `src/lib/realtime/vn-market-engine.ts`: session-aware cadence (10s continuous, 15s ATO, 30s ATC/post, 60s pre-open/lunch, dừng + final poll sau close), single-flight, VNDirect engine, ghi store + emit `tick`/`vn.index`, 1m base frame → multi-TF.
 
 Còn lại roadmap: WS nâng cấp từ SSE, delta JSON patches, incremental chạy trực tiếp trên kline của store (đã có engine sẵn sàng), VN universe scheduler.
 
@@ -142,9 +142,9 @@ Còn lại roadmap: WS nâng cấp từ SSE, delta JSON patches, incremental ch�
 
 **Nguyên tắc:** UI giữ nguyên (ORCA UI/UX Stability Rule §0) — mọi thay đổi nằm ở lớp dữ liệu: dữ liệu hiển thị đáng tin cậy hơn, ít lỗi hơn, tự khôi phục tốt hơn.
 
-1. **Vietnam Multi-Provider Data Engine** — `src/lib/engines/vn-data-engine.ts`: N provider (VNStock primary, VNDirect secondary), adapter DI (test với fake), health-aware routing (circuit-open bị loại khỏi vòng gọi), telemetry `recordSuccess/recordFailure` per adapter.
-2. **Provider fallback** — quotes: chạy song song các provider sống → reconcile; OHLCV: fallback tuần tự VNStock → VNDirect → **archive**; indices: VNStock → null (UNAVAILABLE) → cache stale giữ bản cuối.
-3. **Reconciliation** — tái dùng `reconcile.ts` (không lấy trung bình): quality → freshness → priority; discrepancy > 0.8% ghi `providerLogs` + expose `meta.discrepancies`.
+1. **Vietnam Data Engine (VNDirect)** — `src/lib/engines/vn-data-engine.ts`: single-provider (VNDirect finfo keyless), adapter DI (test với fake), health-aware routing (circuit-open bị loại khỏi vòng gọi), telemetry `recordSuccess/recordFailure`; `vnDataState()` phân loại LIVE/FRESH/DELAYED/STALE/UNAVAILABLE.
+2. **Provider flow** — quotes/indices: VNDirect, fail → UNAVAILABLE → cache stale giữ bản cuối; OHLCV: VNDirect → **archive** (lịch sử tự lưu, không provider ngoài).
+3. **Single-source confidence** — không còn reconciliation (một provider); confidence dựa quality/freshness/health, 1 nguồn tối đa `medium`.
 4. **Data Confidence** — `src/lib/confidence.ts`: điểm 0..1 + level (high ≥.85 / medium ≥.55 / low ≥.30 / unverified): agreement đa nguồn (+.30 max), quality (+.30), freshness theo SLA phiên (+.20), provider health (+.20), fallback penalty (−.15). **1 nguồn tối đa .80 → không bao giờ high khi chưa đối chiếu chéo.** `meta.dataConfidence` (thêm mới, backward-compatible).
 5. **Market session awareness** — `vnSlasForSession()` trong `vn/sessions.ts`: trading 30s/3m/10m · pre-open+lunch 60m/2h/18h · ngoài phiên 18h/24h/7d → SLA động theo trạng thái phiên (trước đây hardcode); confidence dùng `vnValidSlaMs()` (3m phiên / 1h nghỉ / 18h ngoài).
 6. **Data freshness** — `freshness.ts` giữ nguyên model LIVE/FRESH/DELAYED/STALE/DEGRADED/UNAVAILABLE; meta.note minh bạch khi fallback/degraded.
@@ -194,3 +194,64 @@ Market Intel context chỉ gắn khi intent thị trường; nguồn VN offline 
 - **Security headers** (`next.config.ts`): X-Content-Type-Options, Referrer-Policy, Permissions-Policy, HSTS (production).
 - Input validation ở mọi route (symbol regex, cặp FX 6 ký tự, giới hạn length/limit).
 - Không trả internal stack trace: error envelope `{ code, message }` ngắn gọn.
+
+## 13. VNDirect Vietnam Data Engine (Phase 5)
+
+**Mục tiêu:** loại bỏ hoàn toàn provider VN cũ (client, adapter, env key cũ,
+reconciliation engine, fallback logic) — VNDirect finfo (public, keyless) là nguồn
+dữ liệu VN duy nhất. UI/UX, layout,
+component structure và API contract frontend **giữ nguyên**; mọi thay đổi nằm ở lớp dữ liệu
+(Data Engine + Compatibility Layer).
+
+### 13.1 Pipeline (LIVE DATA FIRST)
+
+```text
+VNDirect finfo (REST public, keyless)
+  → VNDirect Client/Provider         src/lib/providers/vndirect.ts
+  → Normalization (thuần, tolerant)  normalizeQuote/Index/Candle/Statement/Ratio/OrderBook/Profile…
+  → Validation + Data Quality        http.ts + quality.ts (ProviderError khi payload rỗng/không hợp lệ)
+  → VN Data Engine (single-provider) src/lib/engines/vn-data-engine.ts  (health-aware, adapter DI)
+  → VN Ratio Engine (deterministic)  src/lib/engines/vn-ratio-engine.ts (P/E, P/B, ROE, ROA, D/E…)
+  → Service + Cache                   src/lib/services/stocks.ts (TTL: indices 30s, quotes 15s, OHLCV 60s, fin 6h)
+  → API (backward-compatible)         /api/v1/{stocks,screener,reports/stock/*,chart/history}
+  → Existing UI (KHÔNG ĐỔI)
+```
+
+Không còn "mỗi user gọi provider trực tiếp": engine singleton `vnDataEngine` dùng chung,
+kết quả cache theo TTL + Market Store realtime.
+
+### 13.2 Data states & error handling (từng loại dữ liệu)
+
+| Nhóm | Nguồn | Khi VNDirect offline |
+| --- | --- | --- |
+| Indices (VNINDEX, VN30, HNX…) | `/v4/indices` (A) | `null` → API UNAVAILABLE, cache stale giữ bản cuối |
+| Quotes | `/v4/stock_latest` (B) | `null` → UNAVAILABLE (không trả numeric giả) |
+| OHLCV | `/v4/stock_prices` (C) với chỉ báo tuần/tháng deterministic | fallback **archive** tự lưu (`stock_ohlcv`), nhãn `degraded` |
+| Financials | `/v3/stocks/financialStatement` (D) 3 báo cáo × 4 modelType | `null` → `financials: UNAVAILABLE`, panel hiển thị "—" |
+| Ratios | `/v4/ratios` (E) + VN Ratio Engine | `null` → UNAVAILABLE, các tỷ số thiếu dữ liệu = `null` (không suy diễn) |
+| Order book | top-of-book từ quote (F) | `depthStatus: "UNAVAILABLE"` — không bịa depth levels |
+| Recommendation | — finfo không công bố | `{status:"UNAVAILABLE", reason}` — tuyệt đối không fake |
+
+### 13.3 Backward compatibility
+
+- Response shapes của `/api/v1/stocks*`, `/api/v1/screener?universe=vn`, `/api/v1/chart/history`,
+  `/api/v1/reports/stock/[symbol]`, `/api/v1/system/info` **giữ nguyên** (fields, envelope
+  `{success,data,meta}`).
+- `meta` additive: `meta.providers=["vndirect"]`, `meta.sourceTimestamp/updatedAt/freshness`
+  (LIVE|FRESH|DELAYED|STALE|UNAVAILABLE), `meta.partial` khi một nhóm dữ liệu thiếu.
+- Không đổi UI text/layout ngoài thay tên nguồn provider cũ → "VNDirect" trong note/help
+  (các file page/component đổi **chỉ text**, không đổi cấu trúc).
+- Không còn env key API cũ / không còn mã nguồn provider cũ / không còn reconcile trong
+  code, docs, tests; `.env.example` chỉ còn `VNDIRECT_BASE_URL` (optional, public).
+
+### 13.4 Giới hạn (declared)
+
+1. finfo public **không có** analyst recommendation → `UNAVAILABLE` (không dựng dữ liệu giả).
+2. finfo public **không có** order book depth nhiều mức → chỉ top-of-book.
+3. Sandbox dev không reach được finfo-api (network policy) — normalization/engine được test
+   bằng fixture + mock fetch; live chạy ở runtime triển khai.
+4. Một số endpoint (`/v4/stock_latest`, `/v4/indices`, `/v4/index_prices`,
+   `/v4/company_profile`) không có doc công khai xác nhận từ code third-party; payload
+   trả shape lạ → ProviderError/UNAVAILABLE (không đoán số), có thể gỡ/downgrade khi runtime xác minh.
+5. Single-source → Data Confidence tối đa `medium` (không còn đối chiếu chéo).
+6. Cache-stale giữ bản cuối hiển thị với freshness STALE — không bao giờ gắn nhãn realtime.

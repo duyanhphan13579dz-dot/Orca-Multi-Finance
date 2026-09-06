@@ -85,7 +85,7 @@ export async function buildMarketSnapshot(): Promise<{ snapshot: MarketSnapshot;
 
       const pulse = composePulse({ indices, crypto, forex, commodities, news, vnUnavailable: sections.vn_stocks === "UNAVAILABLE" });
       const notes: string[] = [];
-      if (sections.vn_stocks === "UNAVAILABLE") notes.push("VNStock chưa khả dụng — nhóm dữ liệu chứng khoán Việt Nam đang ở trạng thái UNAVAILABLE");
+      if (sections.vn_stocks === "UNAVAILABLE") notes.push("VNDirect chưa khả dụng — nhóm dữ liệu chứng khoán Việt Nam đang ở trạng thái UNAVAILABLE");
       if (sections.forex === "DELAYED" || sections.forex === "STALE") notes.push("Forex đang dùng tỷ giá tham chiếu ngày (ECB/exchangerate-api)");
       const vnSession = getVnSession();
       return {
@@ -182,7 +182,7 @@ function composePulse(args: {
     body.push(`Tại Việt Nam — sản phẩm lõi của ORCA — các chỉ số chính ghi nhận ${list}. Đây là tín hiệu ngắn hạn cần đối chiếu thêm với độ rộng và thanh khoản từng nhóm ngành trước khi kết luận về xu hướng trong nước.`);
   } else {
     body.push(
-      "Mảng chứng khoán Việt Nam hiện chưa có dữ liệu trực tiếp: kết nối VNStock chưa được cấu hình hoặc đang gián đoạn. Bức tranh tổng thể dưới đây được dựng từ crypto, ngoại hối, hàng hóa và dòng tin — các phần vẫn đang cập nhật bình thường và được ghi nhãn rõ ràng. Lịch phiên HOSE/HNX vẫn được theo dõi đầy đủ tại VN Market Center.",
+      "Mảng chứng khoán Việt Nam hiện chưa có dữ liệu trực tiếp: kết nối VNDirect đang gián đoạn. Bức tranh tổng thể dưới đây được dựng từ crypto, ngoại hối, hàng hóa và dòng tin — các phần vẫn đang cập nhật bình thường và được ghi nhãn rõ ràng. Lịch phiên HOSE/HNX vẫn được theo dõi đầy đủ tại VN Market Center.",
     );
   }
   if (forex) body.push(forex.usdStrengthNote);

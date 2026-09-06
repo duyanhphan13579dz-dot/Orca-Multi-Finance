@@ -87,7 +87,7 @@ function IntelView({ intel, meta }: { intel: MarketIntel; meta: Meta | null }) {
                 <span className="text-[13.5px] font-semibold">Chỉ số VN đang UNAVAILABLE</span>
               </div>
               <p className="text-[12.5px] leading-relaxed text-text-secondary">
-                VN-INDEX · VN30 · HNX-INDEX · UPCOM-INDEX cần <b>VNStock</b> (primary) + <b>VNDirect</b> (validation). Market Condition Engine bên dưới vẫn chạy với các cấu phần sẵn có và <b>tự hạ độ tin cậy</b> thay vì suy diễn số liệu trong nước.
+                VN-INDEX · VN30 · HNX-INDEX · UPCOM-INDEX cần <b>VNDirect</b> (public keyless). Market Condition Engine bên dưới vẫn chạy với các cấu phần sẵn có và <b>tự hạ độ tin cậy</b> thay vì suy diễn số liệu trong nước.
               </p>
               <div className="mt-2 flex flex-wrap gap-1.5">
                 {["VNINDEX", "VN30", "HNXINDEX", "UPCOM"].map((k) => (
@@ -244,7 +244,7 @@ function IntelView({ intel, meta }: { intel: MarketIntel; meta: Meta | null }) {
       >
         {intel.contributors.positive.length + intel.contributors.negative.length === 0 ? (
           <div className="p-4">
-            <Unavailable title="Chưa có dữ liệu cấu phần chỉ số" note="Cần VNStock/VNDirect cho giá cổ phiếu và tỷ trọng rổ chỉ số. Engine tính đóng góp = giá trị chỉ số × tỷ trọng × %thay đổi — không suy đoán từ mã tăng mạnh nhất." />
+            <Unavailable title="Chưa có dữ liệu cấu phần chỉ số" note="Cần VNDirect cho giá cổ phiếu và tỷ trọng rổ chỉ số. Engine tính đóng góp = giá trị chỉ số × tỷ trọng × %thay đổi — không suy đoán từ mã tăng mạnh nhất." />
           </div>
         ) : (
           <div className="grid gap-3 p-3 md:grid-cols-2">

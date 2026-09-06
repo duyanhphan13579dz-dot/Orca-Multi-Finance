@@ -5,7 +5,7 @@
 > VIETNAM SECURITIES FIRST — Market → Sector → Stock → Fundamentals → Valuation → Technical → News → AI Equity Research.
 > Crypto, Forex và Commodities là các supporting asset classes dùng chung data/chart engine chất lượng cao, nhưng không phải nhân diện sản phẩm.
 
-ORCA Financial được thiết kế xoay quanh thị trường chứng khoán Việt Nam: **Vietnam Security Master** (HOSE/HNX/UPCoM + taxonomy ngành Việt), **Market Session Engine** (ATO → khớp liên tục → nghỉ trưa → ATC với lịch lễ), **reconciliation VNStock⇄VNDirect**, **sector/macro/breadth engines** và **AI Equity Research analyst** — nhận dữ liệu đã calculate từ quant trước khi reasoning.
+ORCA Financial được thiết kế xoay quanh thị trường chứng khoán Việt Nam: **Vietnam Security Master** (HOSE/HNX/UPCoM + taxonomy ngành Việt), **Market Session Engine** (ATO → khớp liên tục → nghỉ trưa → ATC với lịch lễ), **VNDirect finfo — Vietnam Stock Data Provider chính (keyless public)**, **sector/macro/breadth engines** và **AI Equity Research analyst** — nhận dữ liệu đã calculate từ quant trước khi reasoning.
 
 ORCA Financial kết nối dữ liệu thị trường thật vào một **Centralized Real-Time Data Engine**, xử lý theo hướng event-driven, rồi phân phối tới Market Dashboard, Stock/Crypto/Forex/Commodity modules, News Engine, Reports, Alerts và AI Research Agent — với nguyên tắc tuyệt đối: **không mock data**, mọi dữ liệu đều gắn nguồn + timestamp + trạng thái độ mới.
 
@@ -16,7 +16,7 @@ ORCA Financial kết nối dữ liệu thị trường thật vào một **Centr
 
 | Asset          | Primary Source                    | Fallback (real data)                          |
 | -------------- | --------------------------------- | --------------------------------------------- |
-| Vietnam Stocks | **VNStock** (API key, env)        | — (UNAVAILABLE state until configured)        |
+| Vietnam Stocks | **VNDirect finfo** (keyless, public) | archive (lịch sử tự lưu OHLCV) · else UNAVAILABLE |
 | Crypto         | **Binance** REST/WS, host failover| Official Binance public data hosts            |
 | Forex          | **Biquote** (API key, env)        | Yahoo Finance (FX snapshot/OHLC) + exchangerate-api latest + ECB/Frankfurter |
 | Commodities    | **Vietnambiz** + **Simplize.vn**  | MSN Finance (env map) + Yahoo Finance (public futures quotes) + Binance PAXG (gold) |
@@ -31,12 +31,12 @@ Không có module nào dùng số liệu giả. Khi provider lỗi: **retry → 
 | **Vietnam Security Master** (HOSE/HNX/UPCoM, taxonomy) | Implemented | Symbol→exchange→sector→industry canonical registry + search index |
 | **VN Market Session Engine** | Implemented | ATO/liên tục/nghỉ trưa/ATC/post-trading + holidays; freshness theo session |
 | **VN Market Center** (dashboard ưu tiên 1) | Implemented | VN indices hero, sector taxonomy, tin VN doanh nghiệp ưu tiên |
-| VN Screener (universe tab đầu tiên) | Implemented | Filter theo ngành ±% · GT GD; `/api/v1/screener?universe=vn` (cần VNSTOCK_API_KEY) |
+| VN Screener (universe tab đầu tiên) | Implemented | Filter theo ngành ±% · GT GD; `/api/v1/screener?universe=vn` (VNDirect) |
 | Search VN-first (tên công ty không dấu) | Implemented | Security Master index, VN ticker rank trên mọi asset |
 | VN chart reference/ceiling/floor overlays | Implemented | ExtraLevels từ provider khi có dữ liệu |
 | Market Dashboard + ORCA Market Pulse | Implemented | Analyst-style narrative từ dữ liệu realtime, gauge risk-appetite |
 | Data Quality Engine | Implemented | VALID/SUSPECT/INVALID/STALE, deviation/timestamp/dup checks, anomaly log |
-| Reconciliation Engine (VNStock⇄VNDirect) | Implemented | Priority rules + tolerance + discrepancy log, không trung bình provider |
+| VNDirect Vietnam Data Engine (Phase 5) | Implemented | Indices/quotes/OHLCV/financials/ratios/top-of-book từ VNDirect finfo; ratio engine deterministic; archive fallback OHLCV |
 | Centralized Binance WebSocket Engine | Implemented | `!ticker@arr` + `!markPrice@arr` dùng chung; backoff + REST fallback minh bạch |
 | LLM Gateway (role-based) | Implemented | reasoning/analysis/classification, env-swappable, không hardcode model |
 | Output Validation (anti-hallucination) | Implemented | Numeric-claim tracing → repair/regenerate → deterministic recovery |
@@ -54,23 +54,24 @@ Không có module nào dùng số liệu giả. Khi provider lỗi: **retry → 
 | News Engine (RSS, dedupe, tagging) | Implemented | Timestamp validation, symbol/sector tagging |
 | Morning Brief (reports) | Implemented | Freshness gate, analyst narrative, lưu DB |
 | AI Agent Pipeline (Phase 4) | Implemented | Question → Realtime Context → Quant Engine → Data Confidence → LLM Reasoning → UI (không redesign); question-router thuần + 6 intent Market Intelligence; overlay `market_data.realtime` + `meta.pipeline`/`meta.dataConfidence` additive — chi tiết §11 |
+| VNDirect Vietnam Data Engine (Phase 5) | Implemented | VNDirect finfo keyless là **provider VN duy nhất** — provider cũ, reconciliation, env key VN đã loại bỏ hoàn toàn; indices/quotes/OHLCV/financials/ratios deterministic/top-of-book; recommendation & depth → UNAVAILABLE (không fake); Compatibility Layer giữ nguyên API contract + UI — chi tiết `docs/architecture.md` §13 |
 | Technical engine (RSI/MACD/BB/ATR/S-R/patterns) | Implemented | Pure quantitative, deterministic |
 | Watchlist + Trade Journal | Implemented | Local-first + server sync (`/api/v1/watchlist`, merge khi đăng nhập) |
 | Alerts | Implemented | CRUD `/api/v1/alerts*` + pure evaluator + scheduler poll 5 phút |
-| Data Reliability (Phase 2) | Implemented | VN multi-provider engine (VNStock⇄VNDirect) + fallback + reconciliation + Data Confidence (`meta.dataConfidence`) + session-aware SLA + async archive (`stock_quotes`/`stock_ohlcv`) — chi tiết `docs/architecture.md` §9 |
+| Data Reliability (Phase 2) | Implemented | VNDirect single-provider engine + archive fallback + Data Confidence (`meta.dataConfidence`, worst-of) + session-aware SLA + async archive (`stock_quotes`/`stock_ohlcv`) — chi tiết `docs/architecture.md` §9 |
 | Market Intelligence (Phase 3) | Implemented (backend) | Breadth · Sector Rotation · Market Regime · Leadership · Smart Alerts · Event Intelligence — 6 engine + `/api/v1/market/*`, ẩn sau UI (không redesign) — chi tiết §10 |
 | Auth (email/password, scrypt, JWT cookie) | Implemented | `/api/v1/auth/*` |
 | Ops/Observability (`/system`) | Implemented | Provider health, latency, circuit, cache stats |
-| VN Stocks: universe/quotes/OHLCV/financials | Implemented (needs key) | Tự kích hoạt khi `VNSTOCK_API_KEY` được cấu hình |
-| VN Screener / CANSLIM / Minervini / heatmap VN | Planned | Phụ thuộc VNStock reachability |
+| VN Stocks: universe/quotes/OHLCV/financials | Implemented | VNDirect finfo public — UNAVAILABLE minh bạch khi provider offline (no mock) |
+| VN Screener / CANSLIM / Minervini / heatmap VN | Planned | Phụ thuộc VNDirect reachability |
 | Realtime Core (Phase 1) | Implemented | Unified event model + Market Store + Multi-TF candle engine + incremental technical + SSE gateway (`/api/v1/realtime/stream`) + VN session-aware engine — chi tiết `/docs/architecture.md` §8 |
 | Google OAuth, 2FA/TOTP | Planned | |
-| Valuation engines (DCF/DDM/Graham) VN | Planned | Cần financial statements từ VNStock |
+| Valuation engines (DCF/DDM/Graham) VN | Planned | Cần financial statements từ VNDirect |
 
 ## Architecture
 
 ```text
-External Providers (VNStock · Binance · Biquote · Vietnambiz · Simplize · RSS)
+External Providers (VNDirect · Binance · Biquote · Vietnambiz · Simplize · RSS)
         │  timeout / retry / backoff / circuit breaker / health registry
         ▼
 Provider Adapter Layer            src/lib/providers/*
@@ -161,7 +162,7 @@ src/
   components/             terminal-grade UI (charts, panels, technical views)
   db/                     drizzle schema (22 tables) + client
   lib/
-    providers/            vnstock · binance · biquote/forex · commodities · news
+    providers/            vndirect · binance · biquote/forex · commodities · news
     services/             domain services (market, crypto, stocks, forex, news, agent, reports…)
     engines/              quant engines (market-state, market-condition, fundamental, valuation, scalp)
     vn/                   Vietnam Security Master (HOSE/HNX/UPCoM taxonomy) + session calendar

@@ -1,7 +1,7 @@
 "use client";
 
 import { useApi } from "@/lib/hooks";
-import type { VnStockDetail } from "@/lib/services/stocks";
+import type { VnEquityDetail } from "@/lib/services/stocks";
 import { Chg, fmtCompact, fmtNum, FreshnessDot, Loading, MetaLine, Panel, Unavailable } from "@/components/ui";
 import { OrcaChart } from "@/components/orca-chart";
 import { TechnicalPanel } from "@/components/technical-panel";
@@ -12,14 +12,14 @@ export default function StockDetailPage({ params }: { params: Promise<{ symbol: 
   useEffect(() => {
     params.then((p) => setSymbol(p.symbol.toUpperCase()));
   }, [params]);
-  const { res, data, meta, isLoading } = useApi<VnStockDetail>(symbol ? `/api/v1/stocks/${symbol}` : null, { refreshInterval: 30_000 });
+  const { res, data, meta, isLoading } = useApi<VnEquityDetail>(symbol ? `/api/v1/stocks/${symbol}` : null, { refreshInterval: 30_000 });
 
   if (!symbol || (isLoading && !res)) return <Loading rows={10} />;
   if (!res?.success || !data) {
     return (
       <Unavailable
         title={`Không lấy được dữ liệu ${symbol}`}
-        note={res && !res.success ? res.error.message : "VNStock chưa được cấu hình hoặc đang gián đoạn."}
+        note={res && !res.success ? res.error.message : "VNDirect chưa khả dụng hoặc đang gián đoạn."}
       />
     );
   }
@@ -73,7 +73,7 @@ export default function StockDetailPage({ params }: { params: Promise<{ symbol: 
 
 import { useEffect, useState } from "react";
 
-function FinancialsPanel({ detail }: { detail: VnStockDetail }) {
+function FinancialsPanel({ detail }: { detail: VnEquityDetail }) {
   const { financials } = detail;
   const tabs = [
     ["income", "Kết quả kinh doanh"],
@@ -84,7 +84,7 @@ function FinancialsPanel({ detail }: { detail: VnStockDetail }) {
   const rows = financials[tab];
   return (
     <Panel
-      title="Báo cáo tài chính (quý gần nhất — VNStock)"
+      title="Báo cáo tài chính (quý gần nhất — VNDirect)"
       right={
         <div className="flex gap-1">
           {tabs.map(([k, label]) => (

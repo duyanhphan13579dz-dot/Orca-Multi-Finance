@@ -94,7 +94,7 @@ function buildScenarios(ctx: DailyCtx): ReportScenario[] {
   const idx = ctx.snap.indices?.[0];
   const zones = idx
     ? `VN-Index ${idx.value.toLocaleString("vi-VN")} — theo dõi phản ứng quanh ${(idx.value * 0.99).toFixed(0)}–${(idx.value * 1.01).toFixed(0)} điểm trong phiên`
-    : "Vùng tham khảo kỹ thuật của VN-Index sẽ được định vị ngay khi VNStock kết nối (hệ thống không phác thảo vùng giá khi thiếu dữ liệu)";
+    : "Vùng tham khảo kỹ thuật của VN-Index sẽ được định vị ngay khi VNDirect kết nối (hệ thống không phác thảo vùng giá khi thiếu dữ liệu)";
 
   const cryptoDir = ctx.snap.crypto ? (ctx.snap.crypto.summary.avgChangePercent >= 0 ? "tích cực" : "tiêu cực") : "không rõ";
   const goldDir = (ctx.snap.commodities ?? []).find((c) => c.symbol === "XAUUSD");
@@ -143,7 +143,7 @@ function composeMorning(ctx: DailyCtx): { sections: DailyReport["sections"]; ass
       `${p.headline}. Trước giờ mở cửa phiên ${ctx.dateVi}, điểm tổng hợp risk-appetite của engine đang ở mức ${p.score >= 0 ? "+" : ""}${p.score.toFixed(2)} (thang -1..+1) — phản ánh cân bằng giữa dòng tiền rủi ro và phòng thủ trên toàn bộ không gian tài sản mà hệ thống theo dõi.`,
       vnSectionDataStatus(ctx) === "available"
         ? "Dữ liệu chứng khoán trong nước có sẵn đầy đủ — bản tin này đưa VN-Index vào trung tâm phân tích."
-        : "Dữ liệu chứng khoán trong nước chưa kết nối (VNStock/VNDirect). Bản tin vì vậy đánh trọng tâm vào khung tham chiếu toàn cầu và dòng tin Việt Nam — rõ ràng hơn là không suy diễn số liệu trong nước. Khi key API được cấu hình, phần VN sẽ tự động đầy đủ.",
+        : "Dữ liệu chứng khoán trong nước chưa kết nối (VNDirect). Bản tin vì vậy đánh trọng tâm vào khung tham chiếu toàn cầu và dòng tin Việt Nam — rõ ràng hơn là không suy diễn số liệu trong nước. Khi nguồn trở lại, phần VN sẽ tự động đầy đủ.",
     ],
   });
 
@@ -174,7 +174,7 @@ function composeMorning(ctx: DailyCtx): { sections: DailyReport["sections"]; ass
     paragraphs: [
       `Phiên hiện tại theo lịch HOSE/HNX: ${snap.vnSession.labelVi}. ${snap.vnSessionHint}.`,
       ...((snap.indices ?? []).slice(0, 4).map((i) => `${i.code}: ${i.value.toLocaleString("vi-VN")} (${pct(i.changePercent)})`)),
-      vnSectionDataStatus(ctx) === "unavailable" ? "Khi VNStock/VNDirect kết nối, phần này sẽ bao gồm VN-INDEX/VN30/HNX-INDEX/UPCOM-INDEX, độ rộng, giá trị giao dịch, dòng tiền tự doanh và khối ngoại — toàn bộ qua reconciliation engine." : "Cần quan sát độ rộng cùng thanh khoản đầu phiên để xác nhận chất lượng nhịp mở cửa.",
+      vnSectionDataStatus(ctx) === "unavailable" ? "Khi VNDirect kết nối, phần này sẽ bao gồm VN-INDEX/VN30/HNX-INDEX/UPCOM-INDEX, độ rộng, giá trị giao dịch, dòng tiền tự doanh và khối ngoại." : "Cần quan sát độ rộng cùng thanh khoản đầu phiên để xác nhận chất lượng nhịp mở cửa.",
     ],
   });
 
@@ -240,7 +240,7 @@ function composeSummary(ctx: DailyCtx): { sections: DailyReport["sections"]; ass
       paragraphs: [
         `Dòng tiền vào tài sản rủi ro trên thế giới: khối lượng quy đổi crypto 24h ${bigUsd(s.totalQuoteVolume)}, độ rộng ${s.advancers}/${s.marketCount} mã xanh (${((s.advancers / Math.max(1, s.marketCount)) * 100).toFixed(0)}%) — ${
           s.advancers > s.decliners ? "mở rộng tích cực" : "thu hẹp"
-        }. Khi dòng tiền trong nước khả dụng (VNStock), phần này sẽ chuyển sang giá trị giao dịch HOSE/HNX/UPCoM và breadth chính thống.`,
+        }. Khi dòng tiền trong nước khả dụng (VNDirect), phần này sẽ chuyển sang giá trị giao dịch HOSE/HNX/UPCoM và breadth chính thống.`,
       ],
     });
   }
@@ -250,7 +250,7 @@ function composeSummary(ctx: DailyCtx): { sections: DailyReport["sections"]; ass
       heading: "Đóng góp chỉ số & rotation",
       tone: "neutral",
       paragraphs: [
-        `Chi tiết top đóng góp VN-Index, rotation ngóm ngành và top gainers/losers sẽ được engine tính từ dữ liệu realtime đã reconciliation ngay khi VNStock kết nối — cùng taxonomy ${VN_SECTOR_MAP.length} nhóm ngành của Security Master.`,
+        `Chi tiết top đóng góp VN-Index, rotation ngóm ngành và top gainers/losers sẽ được engine tính từ dữ liệu realtime VNDirect ngay khi nguồn kết nối — cùng taxonomy ${VN_SECTOR_MAP.length} nhóm ngành của Security Master.`,
       ],
     });
   }
@@ -310,8 +310,8 @@ function assumptionsNote(ctx: DailyCtx): string[] {
   const out = [
     "Xác suất kịch bản được sinh từ pulse engine (risk-appetite composite + breadth share) — là ước tính mô hình minh bạch, KHÔNG phải dự báo; khôngai đảm bảo được xác suất đúng.",
     vnSectionDataStatus(ctx) === "unavailable"
-      ? "Dữ liệu VN (VNStock/VNDirect) chưa kết nối — các phần VN dùng khung domain đã xây sẵn và bối cảnh toàn cầu; không suy diễn số liệu trong nước."
-      : "Dữ liệu VN dùng từ reconciliation VNStock⇄VNDirect.",
+      ? "Dữ liệu VN (VNDirect) chưa kết nối — các phần VN dùng khung domain đã xây sẵn và bối cảnh toàn cầu; không suy diễn số liệu trong nước."
+      : "Dữ liệu VN dùng trực tiếp từ VNDirect.",
     ctx.meta.note ? `Ghi chú dữ liệu: ${ctx.meta.note}` : "",
   ];
   return out.filter(Boolean);

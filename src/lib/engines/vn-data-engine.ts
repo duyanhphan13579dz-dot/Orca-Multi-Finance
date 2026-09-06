@@ -1,46 +1,39 @@
 /**
- * VIETNAM MULTI-PROVIDER DATA ENGINE (Phase 2)
+ * VIETNAM DATA ENGINE (Phase 5) — VNDirect là provider CHÍNH & DUY NHẤT.
  *
- * Orchestrates every VN data fetch across N providers with:
- *   ✓ healthy-aware selection   — circuit-open providers bị loại khỏi vòng gọi
- *   ✓ graceful fallback          — VNStock (primary) → VNDirect (secondary)
- *   ✓ reconciliation             — reconcileQuotes (không lấy trung bình)
- *   ✓ data confidence            — per-symbol DataConfidence (xem confidence.ts)
- *   ✓ health telemetry           — recordSuccess/recordFailure trên từng adapter
+ *  ✓ healthy-aware selection   — circuit-open → bỏ qua adapter
+ *  ✓ VNDirect first            — single-provider, không reconciliation
+ *  ✓ archive fallback (OHLCV)  — chỉ fallback vào lịch sử tự lưu của hệ thống
+ *  ✓ data confidence           — Phase 2 worst-of, single-source → tối đa medium
+ *  ✓ health telemetry          — recordSuccess/recordFailure
  *
- * Adapters được inject (constructor) → deterministic unit tests với fake
- * provider; production dùng real adapters bao quanh src/lib/providers/*.
+ * Adapters inject được (constructor) → deterministic unit tests với fake
+ * provider; production dùng real adapter bao quanh src/lib/providers/vndirect.
  */
 
 import "server-only";
-import { buildQuoteSet, reconcileQuotes, logDiscrepancies } from "../reconcile";
 import { computeQuoteConfidence, type DataConfidence } from "../confidence";
 import { validateQuote } from "../quality";
 import { getVnSession, type VnSessionInfo } from "../vn/sessions";
 import { isCircuitOpen, recordSuccess, recordFailure } from "../health";
-import * as vnstock from "../providers/vnstock";
 import * as vndirect from "../providers/vndirect";
-import { env } from "../env";
 import type { IndexQuote, OhlcvBar, Quote } from "../types";
 
 export interface VnQuoteAdapter {
   id: string;
-  priority: number; // 1 = primary
-  requiresKey?: boolean;
+  priority: number; // 1 = primary (chỉ VNDirect trong production)
   getQuotes(symbols: string[]): Promise<{ quotes: Quote[]; sourceTs: number | null }>;
 }
 
 export interface VnIndicesAdapter {
   id: string;
   priority: number;
-  requiresKey?: boolean;
   getIndices(): Promise<{ items: IndexQuote[]; sourceTs: number | null }>;
 }
 
 export interface VnOhlcvAdapter {
   id: string;
   priority: number;
-  requiresKey?: boolean;
   getOhlcv(symbol: string, limit: number): Promise<OhlcvBar[]>;
 }
 
@@ -51,8 +44,8 @@ export interface VnQuoteResolution {
   discrepancies: { symbol: string; values: { provider: string; price: number | null }[]; deviationPct: number }[];
   notes: string[];
   sourceTs: number | null;
-  degraded: boolean; // có provider kế hoạch thất bại / vắng mặt
-  fallback: boolean; // primary không khả dụng
+  degraded: boolean;
+  fallback: boolean; // true khi nguồn ngày != VNDirect chính (vd archive/đã offline)
 }
 
 export interface VnOhlcvResolution {
@@ -64,36 +57,21 @@ export interface VnOhlcvResolution {
 
 /* --------------------------- default real adapters ------------------------- */
 
-const vnstockQuoteAdapter: VnQuoteAdapter = {
-  id: vnstock.VNSTOCK,
-  priority: 1,
-  requiresKey: true,
-  getQuotes: async (symbols) => ({ quotes: await vnstock.getVnQuotes(symbols), sourceTs: Date.now() }),
-};
-
 const vndirectQuoteAdapter: VnQuoteAdapter = {
   id: vndirect.VNDIRECT,
-  priority: 2,
+  priority: 1,
   getQuotes: async (symbols) => vndirect.getVndQuotes(symbols),
 };
 
-const vnstockIndicesAdapter: VnIndicesAdapter = {
-  id: vnstock.VNSTOCK,
+const vndirectIndicesAdapter: VnIndicesAdapter = {
+  id: vndirect.VNDIRECT,
   priority: 1,
-  requiresKey: true,
-  getIndices: async () => vnstock.getVnIndices(),
-};
-
-const vnstockOhlcvAdapter: VnOhlcvAdapter = {
-  id: vnstock.VNSTOCK,
-  priority: 1,
-  requiresKey: true,
-  getOhlcv: async (symbol, limit) => vnstock.getVnOhlcv(symbol, limit),
+  getIndices: async () => vndirect.getVndIndices(),
 };
 
 const vndirectOhlcvAdapter: VnOhlcvAdapter = {
   id: vndirect.VNDIRECT,
-  priority: 2,
+  priority: 1,
   getOhlcv: async (symbol, limit) => vndirect.getVndOhlcv(symbol, limit),
 };
 
@@ -101,19 +79,31 @@ export interface VnDataEngineOptions {
   quoteAdapters?: VnQuoteAdapter[];
   indicesAdapters?: VnIndicesAdapter[];
   ohlcvAdapters?: VnOhlcvAdapter[];
-  /** health gate mặc định = circuit breaker của health.ts (inject được trong test) */
   isProviderHealthy?: (id: string) => boolean;
-  /** adapter tùy chọn cần key đã cấu hình chưa (mặc định: VNSTOCK_API_KEY) */
-  isConfigured?: (adapter: { id: string; requiresKey?: boolean }) => boolean;
-  /** cung cấp dữ liệu 1m/BASE (không dùng — giữ interface mở rộng) */
+  isConfigured?: (adapter: { id: string }) => boolean;
   archiveOhlcv?: (symbol: string, limit: number) => Promise<OhlcvBar[] | null>;
+  /** SLA theo phiên VN (TEST hook) */
+  slaMs?: (session?: VnSessionInfo) => number;
 }
 
-/** SLA theo phiên VN cho quotes (age threshold tính confidence). */
+/** SLA theo phiên VN cho quotes (age tính confidence). */
 export function vnValidSlaMs(session: VnSessionInfo = getVnSession()): number {
   if (session.trading) return 3 * 60_000; // 3 phút trong phiên khớp lệnh
   if (session.state === "pre_open" || session.state === "lunch_break") return 60 * 60_000;
   return 18 * 3_600_000; // ngoài phiên: dữ liệu chốt phiên là bản mới nhất hợp lệ
+}
+
+/**
+ * Phân loại trạng thái dữ liệu (LIVE/FRESH/DELAYED/STALE/UNAVAILABLE) theo
+ * tuổi dữ liệu + phiên VN — dùng cho meta.freshness của mọi response VN.
+ */
+export function vnDataState(ageMs: number | null, session: VnSessionInfo = getVnSession()): "LIVE" | "FRESH" | "DELAYED" | "STALE" | "UNAVAILABLE" {
+  if (ageMs == null) return "UNAVAILABLE";
+  const sla = vnValidSlaMs(session);
+  if (ageMs <= sla / 3) return "LIVE";
+  if (ageMs <= sla) return "FRESH";
+  if (ageMs <= sla * 3) return "DELAYED";
+  return "STALE";
 }
 
 export class VnDataEngine {
@@ -121,20 +111,21 @@ export class VnDataEngine {
   private indicesAdapters: VnIndicesAdapter[];
   private ohlcvAdapters: VnOhlcvAdapter[];
   private isProviderHealthy: (id: string) => boolean;
-  private isConfigured: (adapter: { id: string; requiresKey?: boolean }) => boolean;
+  private isConfigured: (adapter: { id: string }) => boolean;
   private archiveOhlcv?: (symbol: string, limit: number) => Promise<OhlcvBar[] | null>;
+  private slaMs: (session?: VnSessionInfo) => number;
 
   constructor(opts: VnDataEngineOptions = {}) {
-    this.quoteAdapters = opts.quoteAdapters ?? [vnstockQuoteAdapter, vndirectQuoteAdapter];
-    this.indicesAdapters = opts.indicesAdapters ?? [vnstockIndicesAdapter];
-    this.ohlcvAdapters = opts.ohlcvAdapters ?? [vnstockOhlcvAdapter, vndirectOhlcvAdapter];
+    this.quoteAdapters = opts.quoteAdapters ?? [vndirectQuoteAdapter];
+    this.indicesAdapters = opts.indicesAdapters ?? [vndirectIndicesAdapter];
+    this.ohlcvAdapters = opts.ohlcvAdapters ?? [vndirectOhlcvAdapter];
     this.isProviderHealthy = opts.isProviderHealthy ?? ((id) => !isCircuitOpen(id));
-    this.isConfigured =
-      opts.isConfigured ?? ((a) => (a.requiresKey ? Boolean(env.vnstockApiKey) : true));
+    this.isConfigured = opts.isConfigured ?? (() => true); // VNDirect finfo keyless
     this.archiveOhlcv = opts.archiveOhlcv;
+    this.slaMs = opts.slaMs ?? vnValidSlaMs;
   }
 
-  private available<T extends { id: string; priority: number; requiresKey?: boolean }>(adapters: T[]): T[] {
+  private available<T extends { id: string; priority: number }>(adapters: T[]): T[] {
     return adapters
       .filter((a) => this.isConfigured(a))
       .filter((a) => this.isProviderHealthy(a.id))
@@ -143,85 +134,62 @@ export class VnDataEngine {
 
   /* --------------------------------- quotes --------------------------------- */
 
+  /** First-success (VNDirect duy nhất): không merge, không reconciliation. */
   async resolveQuotes(symbols: string[]): Promise<VnQuoteResolution> {
     const syms = [...new Set(symbols.map((s) => s.toUpperCase()))];
     const planned = this.available(this.quoteAdapters);
-    const results = await Promise.all(
-      planned.map(async (a) => {
-        const started = Date.now();
-        try {
-          const r = await a.getQuotes(syms);
-          recordSuccess(a.id, Date.now() - started, "vn-quotes");
-          return { adapter: a, ...r };
-        } catch (err) {
-          recordFailure(a.id, err instanceof Error ? err.message : "adapter failed", "vn-quotes");
-          return null;
+    for (const a of planned) {
+      const started = Date.now();
+      try {
+        const r = await a.getQuotes(syms);
+        recordSuccess(a.id, Date.now() - started, "vn-quotes");
+        const bySymbol = new Map<string, { provider: string; providerCount: number; deviationPct: number | null; confidence: DataConfidence }>();
+        for (const q of r.quotes) {
+          const ts = q.updatedAt ? Date.parse(q.updatedAt) : null;
+          const quality = validateQuote(q, {
+            assetClass: "stock",
+            staleMs: this.slaMs(),
+            sourceTimestampMs: ts,
+          }).status;
+          bySymbol.set(q.symbol, {
+            provider: a.id,
+            providerCount: 1,
+            deviationPct: null,
+            confidence: computeQuoteConfidence({
+              providerCount: 1,
+              deviationPct: null,
+              quality,
+              ageMs: ts != null ? Math.max(0, Date.now() - ts) : null,
+              validSlaMs: this.slaMs(),
+              providerHealthy: this.isProviderHealthy(a.id),
+              secondaryOnly: false,
+            }),
+          });
         }
-      }),
-    );
-    const ok = results.filter((r): r is NonNullable<typeof r> => r != null);
-    const fell = planned.length;
-    const providersUsed: string[] = [];
-    const notes: string[] = [];
-    const degraded = ok.length < planned.length;
-    const fallback = !ok.some((r) => r.adapter.priority === 1);
-
-    if (!ok.length) {
-      return { quotes: [], bySymbol: new Map(), providers: [], discrepancies: [], notes: ["Không provider nào trả dữ liệu"], sourceTs: null, degraded: true, fallback };
+        return {
+          quotes: r.quotes,
+          bySymbol,
+          providers: [a.id],
+          discrepancies: [],
+          notes: ["Nguồn duy nhất VNDirect (finfo) — single-source, không đối chiếu chéo"],
+          sourceTs: r.sourceTs,
+          degraded: false,
+          fallback: false,
+        };
+      } catch (err) {
+        recordFailure(a.id, err instanceof Error ? err.message : "adapter failed", "vn-quotes");
+      }
     }
-
-    const sets = ok.map((r) => {
-      providersUsed.push(r.adapter.id);
-      return buildQuoteSet(r.adapter.id, r.adapter.priority, r.quotes);
-    });
-    const reconciled = reconcileQuotes(sets);
-    const winnersProvider = reconciled.winnerProviders;
-    const discrepancies = reconciled.discrepancies;
-    notes.push(...reconciled.notes);
-
-    // Per-symbol confidence
-    const bySymbol = new Map<string, { provider: string; providerCount: number; deviationPct: number | null; confidence: DataConfidence }>();
-    const providerCountBySymbol = new Map<string, number>();
-    for (const r of ok) for (const q of r.quotes) providerCountBySymbol.set(q.symbol, (providerCountBySymbol.get(q.symbol) ?? 0) + 1);
-    for (const q of reconciled.quotes) {
-      const winner = winnersProvider.get(q.symbol);
-      const ts = q.updatedAt ? Date.parse(q.updatedAt) : null;
-      const dev = discrepancies.find((d) => d.symbol === q.symbol)?.deviationPct ?? null;
-      const quality = validateQuote(q, {
-        assetClass: "stock",
-        staleMs: vnValidSlaMs(),
-        sourceTimestampMs: ts,
-      }).status;
-      bySymbol.set(q.symbol, {
-        provider: winner ?? providersUsed[0],
-        providerCount: providerCountBySymbol.get(q.symbol) ?? 1,
-        deviationPct: dev,
-        confidence: computeQuoteConfidence({
-          providerCount: providerCountBySymbol.get(q.symbol) ?? 1,
-          deviationPct: dev,
-          quality,
-          ageMs: ts != null ? Math.max(0, Date.now() - ts) : null,
-          validSlaMs: vnValidSlaMs(),
-          providerHealthy: this.isProviderHealthy(winner ?? providersUsed[0] ?? ""),
-          secondaryOnly: fallback,
-        }),
-      });
-    }
-
-    const sourceTs = reconciled.quotes.reduce((acc, q) => {
-      const t = q.updatedAt ? Date.parse(q.updatedAt) : 0;
-      return Number.isFinite(t) && t > acc ? t : acc;
-    }, 0) || null;
-
-    if (fallback) notes.unshift("VNStock (primary) không khả dụng — dùng VNDirect (fallback)");
-    if (degraded) {
-      const missing = planned.filter((p) => !providersUsed.includes(p.id)).map((p) => p.id);
-      notes.unshift(`${missing.join(", ")} khả dụng nhưng thất bại lần này — hệ thống tự chọn nguồn còn lại`);
-    }
-    void logDiscrepancies(reconciled).catch(() => {});
-    void fell;
-
-    return { quotes: reconciled.quotes, bySymbol, providers: providersUsed, discrepancies, notes, sourceTs, degraded, fallback };
+    return {
+      quotes: [],
+      bySymbol: new Map(),
+      providers: [],
+      discrepancies: [],
+      notes: ["VNDirect không trả dữ liệu (timeout/lỗi/empty) — UNAVAILABLE"],
+      sourceTs: null,
+      degraded: true,
+      fallback: true,
+    };
   }
 
   /* --------------------------------- indices -------------------------------- */
@@ -239,7 +207,7 @@ export class VnDataEngine {
           deviationPct: null,
           quality: "VALID",
           ageMs: ts != null ? Math.max(0, Date.now() - ts) : null,
-          validSlaMs: vnValidSlaMs(),
+          validSlaMs: this.slaMs(),
           providerHealthy: this.isProviderHealthy(a.id),
         });
         return { items: r.items, providers: [a.id], confidence, degraded: false, sourceTs: ts };
@@ -261,12 +229,12 @@ export class VnDataEngine {
         const bars = await a.getOhlcv(sym, limit);
         if (!bars?.length) throw new Error("empty bars");
         recordSuccess(a.id, Date.now() - started, "vn-ohlcv");
-        return { bars, provider: a.id, fallback: a.priority !== 1, degraded: false };
+        return { bars, provider: a.id, fallback: false, degraded: false };
       } catch (err) {
         recordFailure(a.id, err instanceof Error ? err.message : "adapter failed", "vn-ohlcv");
       }
     }
-    // Archive fallback — giữ lịch sử phục vụ được khi provider offline
+    // Archive fallback — lịch sử tự lưu (không phải provider ngoài)
     if (this.archiveOhlcv) {
       try {
         const bars = await this.archiveOhlcv(sym, limit);
@@ -283,7 +251,6 @@ const g = globalThis as typeof globalThis & { __orcaVnDataEngine?: VnDataEngine 
 export const vnDataEngine =
   g.__orcaVnDataEngine ??
   new VnDataEngine({
-    // Archive fallback: provider offline → vẫn phục vụ lịch sử đã lưu
     archiveOhlcv: async (symbol, limit) => {
       try {
         const { getArchivedOhlcv } = await import("../services/archive");

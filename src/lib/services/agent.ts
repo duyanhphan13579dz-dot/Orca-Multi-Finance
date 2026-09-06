@@ -4,7 +4,7 @@ import { buildMeta, worstFreshness } from "../freshness";
 import { getCryptoDetail } from "./crypto";
 import { getForexDetail, fmtRate } from "./forex";
 import { getCommodityMarket } from "./commodities";
-import { vnstockConfigured } from "./stocks";
+import { vndirectConfigured } from "./stocks";
 import { getNews } from "./news";
 import { buildMarketSnapshot } from "./market";
 import { buildStockAnalysis, computeConfidence, type Confidence } from "./intelligence";
@@ -182,13 +182,13 @@ async function buildCommodity(kw: string): Promise<Built> {
 }
 
 async function buildVn(symbol: string, deep: boolean): Promise<Built> {
-  if (!vnstockConfigured()) {
+  if (!vndirectConfigured()) {
     const news = await getNews({ symbol, limit: 3 });
-    const ctx: Record<string, unknown> = { asset: { symbol, asset_type: "stock" }, status: "vnstock_not_configured" };
+    const ctx: Record<string, unknown> = { asset: { symbol, asset_type: "stock" }, status: "vndirect_unavailable" };
     if (news?.articles.length) ctx.news_context = news.articles.map((a) => ({ title: a.title, source: a.source }));
     return {
       narrative:
-        `${symbol} thuộc chứng khoán Việt Nam — phân khúc phụ thuộc VNStock. Hệ thống chưa có VNSTOCK_API_KEY (hoặc kết nối gián đoạn) nên không có số liệu thật để phân tích, và sẽ không đưa con số suy diễn. Pipeline phân tích đầy đủ (reconciliation VNStock↔VNDirect, financial health engine, valuation engine, market-state engine) đã sẵn sàng và sẽ chạy ngay khi key được cấu hình.` +
+        `${symbol} thuộc chứng khoán Việt Nam — phân khúc lấy từ VNDirect. Hệ thống chưa kết nối được VNDirect (timeout/offline) nên không có số liệu thật để phân tích, và sẽ không đưa con số suy diễn. Pipeline phân tích đầy đủ (financial health engine, valuation engine, market-state engine) đã sẵn sàng và sẽ chạy ngay khi nguồn trở lại.` +
         (news?.articles.length ? `\n\nTin mới liên quan: ${news.articles.map((a) => `"${a.title}" (${a.source})`).join("; ")}.` : ""),
       contract: ctx,
       sectionsUsed: news?.articles.length ? ["news"] : [],
@@ -199,7 +199,7 @@ async function buildVn(symbol: string, deep: boolean): Promise<Built> {
   }
   const analysis = await buildStockAnalysis(symbol);
   if (!analysis) {
-    return { narrative: `Không lấy được dữ liệu ${symbol} từ VNStock/VNDirect — xem /system.`, contract: { asset: { symbol, asset_type: "stock" }, error: "provider_unavailable" }, sectionsUsed: [], symbols: [symbol], freshnesses: [], unavailable: true };
+    return { narrative: `Không lấy được dữ liệu ${symbol} từ VNDirect — xem /system.`, contract: { asset: { symbol, asset_type: "stock" }, error: "provider_unavailable" }, sectionsUsed: [], symbols: [symbol], freshnesses: [], unavailable: true };
   }
   const c = analysis.contract;
   const cAny = c as unknown as Record<string, Record<string, unknown> | null>;
@@ -207,7 +207,7 @@ async function buildVn(symbol: string, deep: boolean): Promise<Built> {
   const fh = c.fundamental_state?.financial_health;
   const v = c.fundamental_state?.valuation;
   const lines = [
-    c.market_data ? `${symbol}: giá ${(c.market_data.price as number).toLocaleString("vi-VN")} (${(c.market_data.change_percent as number)?.toFixed(2) ?? "?"}%).` : `${symbol} (dữ liệu VNStock).`,
+    c.market_data ? `${symbol}: giá ${(c.market_data.price as number).toLocaleString("vi-VN")} (${(c.market_data.change_percent as number)?.toFixed(2) ?? "?"}%).` : `${symbol} (dữ liệu VNDirect).`,
     ms ? `Market state (engine): ${ms.labelVi} — strength ${ms.strength}/100. ${ms.evidence[0] ?? ""}` : "",
     fh && fh.scores.overall != null ? `Financial Health (engine): ${fh.scores.overall}/100 · ROE ${fh.groups.profitability.roe != null ? (fh.groups.profitability.roe * 100).toFixed(1) + "%" : "—"} · D/E ${fh.groups.leverage.debtToEquity?.toFixed(2) ?? "—"}x · FCF ${fh.groups.cashflow.fcfTtm != null ? fh.groups.cashflow.fcfTtm.toLocaleString("vi-VN") : "—"}.` : "",
     v && deep ? `Định giá: P/E ${v.multiples.pe ?? "—"}x · P/B ${v.multiples.pb ?? "—"}x${v.dcf ? ` · DCF Base ${v.dcf.find((s) => s.label === "Base")?.intrinsicPerShare.toLocaleString("vi-VN")}đ` : ""}.` : v ? `Định giá: P/E ${v.multiples.pe ?? "—"}x · P/B ${v.multiples.pb ?? "—"}x.` : "",
@@ -250,7 +250,7 @@ async function buildMarket(): Promise<Built> {
 type IntelKind = "market-breadth" | "market-sectors" | "market-state" | "market-leaders" | "market-events" | "market-smart-alerts";
 
 const intelUnavailable = (title: string, kind: IntelKind): Built => ({
-  narrative: `${title}: chưa có dữ liệu từ market-intelligence (VNSTOCK_API_KEY chưa cấu hình hoặc provider VN offline) — hệ thống không suy diễn số liệu; kiểm tra /system.`,
+  narrative: `${title}: chưa có dữ liệu từ market-intelligence (VNDirect offline) — hệ thống không suy diễn số liệu; kiểm tra /system.`,
   contract: { scope: kind, status: "unavailable" },
   sectionsUsed: [`market-intel:${kind}`],
   symbols: [],

@@ -7,7 +7,7 @@ Mọi provider phía sau **Provider Adapter Interface** và bị metadata health
 
 | Domain | Primary | Fallbacks |
 | --- | --- | --- |
-| stocks (VN) | VNStock (env: `VNSTOCK_BASE_URL`, `VNSTOCK_API_KEY`) | — (UNAVAILABLE nếu chưa cấu hình) |
+| stocks (VN) | **VNDirect finfo** (keyless public; env override `VNDIRECT_BASE_URL`) | archive lịch sử tự lưu (OHLCV); ngoài ra UNAVAILABLE minh bạch |
 | crypto | Binance spot REST (`api.binance.com` → `api{1,2}.binance.com` → `data-api.binance.vision`) | Binance fapi cho futures (geo-dependent) |
 | forex | Biquote (env) | Yahoo Finance (FX snapshot + OHLC chart, public no-key); exchangerate-api open latest; Frankfurter/ECB daily history + previous fix |
 | commodities | Vietnambiz (SJC gold board) · Simplize (env key) | MSN Finance quotes (env instrument map) · Yahoo Finance (public futures quotes) · Binance PAXGUSDT (vàng) |
@@ -24,11 +24,21 @@ interface MarketDataProvider {
 }
 ```
 
-Adapter **không trả số suy diễn**. Parse schema linh hoạt (VNStock field aliases), sanity-check giá trị (giá phải hữu hạn, volume ≥ 0), ném `ProviderError` khi payload rỗng/không hợp lệ.
+Adapter **không trả số suy diễn**. Parse schema linh hoạt (VNDirect field aliases), sanity-check giá trị (giá phải hữu hạn, volume ≥ 0), ném `ProviderError` khi payload rỗng/không hợp lệ.
 
-### VNStock (`src/lib/providers/vnstock.ts`)
+### VNDirect (`src/lib/providers/vndirect.ts`) — Vietnam Stock Data Provider CHÍNH
 
-Endpoints thử lần lượt (graceful với biến thể base URL): `/v1/market/indices`, `/v1/market/quotes?symbols=`, `/v1/symbols/{sym}/ohlcv`, `/v1/symbols/{sym}/financials/{income|balance|cashflow|ratios}`, `/v1/symbols` (universe). Header: `Authorization: Bearer <key>` + `x-api-key`. Khi không có circuit/recoverable: service trả `null` → API `502 UPSTREAM_UNAVAILABLE` với ghi chú cấu hình.
+| Nhóm dữ liệu | Endpoint (finfo REST) | Chuẩn hoá |
+| --- | --- | --- |
+| Market indices (A) | `GET /v4/indices` (snapshot) · `GET /v4/index_prices` (history) | `IndexQuote` {code,value,change,changePercent,volume,updatedAt} + `OhlcvBar[]` |
+| Stock quotes (B) | `GET /v4/stock_latest?q=code:A,B` | `Quote` + reference/ceiling/floor + top-of-book bid/ask + sourceTs |
+| OHLCV/chart (C) | `GET /v4/stock_prices` (daily) | `OhlcvBar[]`; 1W/1M aggregate deterministic; intraday 1m/5m/15m/30m/1h từ Realtime Multi-TF engine (live) |
+| Financial statements (D) | `GET /v3/stocks/financialStatement?secCodes=…&reportTypes=QUARTER|YEAR&modelTypes=…` (modelTypes 1/89/101/411 income · 2/90/102/412 balance · 3/91/103/413 cashflow) | pivot rows {period,year,quarter,itemName…} + canonical keys |
+| Financial ratios (E) | `GET /v4/ratios?q=code:…` (itemName/itemCode) + deterministic engine | `vn-ratio-engine.ts` (P/E, P/B, ROE, ROA, margins, D/E, current/quick, EPS, BVPS, EBITDA/Assets, EBITDA/Interest, FCF/EBIT) |
+| Order book (F) | top-of-book từ `stock_latest` (bid/ask 1) | `{symbol,timestamp,bids,asks,spread,…}`; depth → `UNAVAILABLE` (không suy diễn) |
+| Recommendations (G) | — VNDirect finfo không công bố | `{status:"UNAVAILABLE", reason}` — tuyệt đối không fake |
+
+Không còn khái niệm primary/secondary/reconciliation: một source duy nhất + `archive` tự lưu cho OHLCV. Khi provider offline → `null`/`UNAVAILABLE` + cache stale giữ bản cuối; `http.ts` xử lý timeout/rate-limit/circuit.
 
 ### Binance (`src/lib/providers/binance.ts`)
 
