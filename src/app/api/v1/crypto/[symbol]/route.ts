@@ -1,10 +1,12 @@
 import { ok, unavailable, badRequest } from "@/lib/envelope";
 import { getCryptoDetail } from "@/lib/services/crypto";
+import { CRYPTO_TFS } from "@/lib/chart-const";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-const VALID_INTERVALS = new Set(["5m", "15m", "1h", "4h", "1d", "1w"]);
+// Phase 6: full timeframe coverage 1m..1M (Binance klines hỗ trợ trực tiếp).
+const VALID_INTERVALS = new Set<string>(CRYPTO_TFS);
 
 export async function GET(req: Request, ctx: { params: Promise<{ symbol: string }> }) {
   const { symbol } = await ctx.params;

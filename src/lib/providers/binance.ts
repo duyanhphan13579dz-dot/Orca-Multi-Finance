@@ -63,6 +63,25 @@ export interface FundingInfo {
   nextFundingTime: number;
 }
 
+export interface OrderBookLevel {
+  price: number;
+  qty: number;
+}
+
+export interface OrderBook {
+  symbol: string;
+  bids: OrderBookLevel[];
+  asks: OrderBookLevel[];
+  lastUpdateId: number;
+  sourceTimestampMs: number;
+}
+
+type RawDepth = {
+  lastUpdateId: number;
+  bids: [string, string][];
+  asks: [string, string][];
+};
+
 export const BINANCE_SPOT = "binance-spot";
 export const BINANCE_FUTURES = "binance-futures";
 
@@ -114,6 +133,33 @@ export async function getKlines(symbol: string, interval: string, limit = 200): 
     close: Number(k[4]),
     volume: Number(k[5]),
   }));
+}
+
+/**
+ * Public order book (depth) — real market data, no key.
+ * Validation: price/qty finite + > 0; invalid levels dropped; both sides
+ * non-empty required (else ProviderError → UI shows UNAVAILABLE, never fake).
+ */
+export async function getOrderBook(symbol: string, limit = 20): Promise<OrderBook> {
+  const clamped = Math.min(Math.max(limit, 5), 100);
+  const { data, hostIdx } = await getFromHosts<RawDepth>(
+    SPOT_HOSTS,
+    lastGoodSpot,
+    `/api/v3/depth?symbol=${encodeURIComponent(symbol)}&limit=${clamped}`,
+    BINANCE_SPOT,
+  );
+  lastGoodSpot = hostIdx;
+  const levels = (rows: [string, string][]): OrderBookLevel[] =>
+    rows
+      .map(([p, q]) => ({ price: Number(p), qty: Number(q) }))
+      .filter((l) => Number.isFinite(l.price) && l.price > 0 && Number.isFinite(l.qty) && l.qty > 0)
+      .sort((a, b) => a.price - b.price);
+  const bids = levels(data.bids ?? []).reverse(); // best bid first
+  const asks = levels(data.asks ?? []);
+  if (!bids.length || !asks.length || !Number.isFinite(data.lastUpdateId)) {
+    throw new ProviderError(`binance: empty/invalid depth for ${symbol}`, BINANCE_SPOT);
+  }
+  return { symbol, bids, asks, lastUpdateId: data.lastUpdateId, sourceTimestampMs: Date.now() };
 }
 
 /** Futures mark price + funding rate (may be geo-blocked → throws ProviderError). */

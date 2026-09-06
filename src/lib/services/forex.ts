@@ -4,7 +4,28 @@ import { buildMeta } from "../freshness";
 import { getBiquoteQuotes, getErApiLatest, getFrankfurterSeries, type FxLatest } from "../providers/forex";
 import { getYahooQuotes, yahooSymbolForPair } from "../providers/yahoo";
 import { analyzeSeries } from "../technical";
+import { marketStore } from "../realtime/market-store";
 import type { ForexRow, Meta, OhlcvBar, TechnicalSnapshot } from "../types";
+
+/** Phase 6 — feed validated forex quotes into the shared Realtime Market Store. */
+function ingestRows(rows: ForexRow[], source: string): void {
+  for (const r of rows) {
+    if (!Number.isFinite(r.price) || r.price <= 0) continue;
+    marketStore.setQuote({
+      assetType: "forex",
+      symbol: r.pair,
+      price: r.price,
+      change: r.change,
+      changePercent: r.changePercent,
+      open: r.open,
+      high: r.high,
+      low: r.low,
+      volume: r.volume,
+      source,
+      ts: r.updatedAt ? Date.parse(r.updatedAt) : Date.now(),
+    });
+  }
+}
 
 /**
  * Forex domain service.
@@ -104,6 +125,7 @@ export async function getForexMarkets(): Promise<{ data: ForexMarket; meta: Meta
       } satisfies ForexRow;
     }).filter((x): x is ForexRow => x !== null);
     if (rows.length) {
+      ingestRows(rows, "biquote");
       const meta = buildMeta({ source: "biquote", sourceTimestampMs: ts, note: prev ? undefined : "Không lấy được mức tham chiếu ngày trước (ECB) — thiếu cột change" });
       return { data: { rows, usdStrengthNote: usdNote(rows) }, meta };
     }
@@ -143,6 +165,7 @@ export async function getForexMarkets(): Promise<{ data: ForexMarket; meta: Meta
         note: "Biquote chưa cấu hình → nguồn FX snapshot tham chiếu; % thay đổi so với fix ECB gần nhất",
         slas: { liveSlaMs: 120_000, freshSlaMs: 30 * 60_000, delayedSlaMs: 24 * 3_600_000 },
       });
+      ingestRows(rows, "yahoo-fx");
       return { data: { rows, usdStrengthNote: usdNote(rows) }, meta };
     }
   } catch {
@@ -170,6 +193,7 @@ export async function getForexMarkets(): Promise<{ data: ForexMarket; meta: Meta
       } satisfies ForexRow;
     }).filter((x): x is ForexRow => x !== null);
     if (!rows.length) return null;
+    ingestRows(rows, "exchangerate-api");
     const meta = buildMeta({
       source: latest.value.source,
       sourceTimestampMs: latest.value.ts,
