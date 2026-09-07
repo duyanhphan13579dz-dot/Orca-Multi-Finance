@@ -9,15 +9,20 @@ export async function GET() {
   if (!r) {
     return unavailable(
       "commodity-providers",
-      "Không có nguồn hàng hóa nào phản hồi (Vietnambiz/Simplize/MSN/Binance-PAXG) — xem /system.",
+      "VietnamBiz không phản hồi hoặc không parse được bảng giá — xem /system.",
     );
   }
   return ok(
     {
       ...r.data,
       catalog: CATALOG.map((c) => ({
-        key: c.key, name: c.name, nameVi: c.nameVi, group: c.group, symbol: c.symbol,
-        unit: c.unit, vnImpact: c.vnImpact ?? null,
+        key: c.key,
+        name: c.name,
+        nameVi: c.nameVi,
+        group: c.group,
+        symbol: c.symbol,
+        unit: c.unit,
+        vnImpact: c.vnImpact ?? null,
       })),
     },
     r.meta,
