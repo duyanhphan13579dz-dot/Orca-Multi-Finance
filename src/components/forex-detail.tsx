@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
+import dynamic from "next/dynamic";
 import { useApi } from "@/lib/hooks";
 import type { CandlePattern, ForexRow, NewsArticle, OhlcvBar, TechnicalSnapshot } from "@/lib/types";
 
@@ -29,15 +30,55 @@ interface SentimentApi {
 }
 
 import { Badge, Chg, FreshnessDot, Loading, MetaLine, Panel, Unavailable } from "@/components/ui";
-import { OrcaChart } from "@/components/orca-chart";
-import { TechnicalPanel } from "@/components/technical-panel";
 import { ForexScalpPanel } from "@/components/forex-scalp-panel";
 import { AddToWatchlist } from "@/components/watchlist-button";
 import { Brain, Layers, Newspaper, ExternalLink } from "lucide-react";
 
+/** Lazy-load heavy chart + technical modules — keeps first paint lighter */
+const OrcaChart = dynamic(
+  () => import("@/components/orca-chart").then((m) => m.OrcaChart),
+  {
+    ssr: false,
+    loading: () => (
+      <Panel title="Biểu đồ">
+        <div className="flex h-[320px] items-center justify-center text-[12px] text-text-muted">
+          Đang tải biểu đồ…
+        </div>
+      </Panel>
+    ),
+  },
+);
+
+const TechnicalPanel = dynamic(
+  () => import("@/components/technical-panel").then((m) => m.TechnicalPanel),
+  {
+    ssr: false,
+    loading: () => (
+      <Panel title="Phân tích kỹ thuật">
+        <Loading rows={3} />
+      </Panel>
+    ),
+  },
+);
+
 export function ForexDetailPage({ pair }: { pair: string }) {
-  const { data, meta, isLoading } = useApi<ForexDetail>(`/api/v1/forex/${pair}`, { refreshInterval: 120_000 });
-  if (isLoading && !data) return <Loading rows={10} />;
+  // Quote/tech: 3 phút — đủ tươi, giảm tải mạng & re-render
+  const { data, meta, isLoading } = useApi<ForexDetail>(`/api/v1/forex/${pair}`, { refreshInterval: 180_000 });
+
+  // Mount panel phụ sau frame đầu — ưu tiên Signal + header trước
+  const [showSecondary, setShowSecondary] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    const t = window.setTimeout(() => {
+      if (!cancelled) setShowSecondary(true);
+    }, 100);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(t);
+    };
+  }, [pair]);
+
+  if (isLoading && !data) return <Loading rows={8} />;
   if (!data) return <Unavailable title={`Không lấy được ${pair}`} meta={meta} />;
 
   const cur = data.current;
@@ -89,40 +130,63 @@ export function ForexDetailPage({ pair }: { pair: string }) {
             symbol={pair}
             assetType="forex"
             defaultTimeframe="15m"
-            height={400}
+            height={360}
             title={`${data.base}/${data.quote}`}
           />
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-            <CandlePatternsPanel patterns={patterns} />
-            <ForexNewsPanel pair={pair} base={data.base} quote={data.quote} />
+          {showSecondary ? (
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+              <CandlePatternsPanel patterns={patterns} />
+              <ForexNewsPanel pair={pair} base={data.base} quote={data.quote} />
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+              <Panel title="Nhận diện mẫu hình nến">
+                <Loading rows={2} />
+              </Panel>
+              <Panel title="Tin tức">
+                <Loading rows={2} />
+              </Panel>
+            </div>
+          )}
+        </div>
+
+        {showSecondary && (
+          <div className="col-span-12">
+            <Panel pad={false} title="Ghi chú phương pháp">
+              <p className="px-4 pb-3 text-[11px] leading-relaxed text-ink-3">
+                {data.referenceNote} Scalping M15→M5→M1 dùng nến public (Yahoo) khi Biquote chưa có intraday; filter
+                session/spread bắt buộc theo đặc tả Forex.
+              </p>
+            </Panel>
           </div>
-        </div>
+        )}
 
-        <div className="col-span-12">
-          <Panel pad={false} title="Ghi chú phương pháp">
-            <p className="px-4 pb-3 text-[11px] leading-relaxed text-ink-3">
-              {data.referenceNote} Scalping M15→M5→M1 dùng nến public (Yahoo) khi Biquote chưa có intraday; filter
-              session/spread bắt buộc theo đặc tả Forex.
-            </p>
-          </Panel>
-        </div>
-
-        <div className="col-span-12">
-          <TechnicalPanel tech={tech} patterns={patterns} />
-        </div>
+        {showSecondary && (
+          <div className="col-span-12">
+            <TechnicalPanel tech={tech} patterns={patterns} />
+          </div>
+        )}
       </div>
     </div>
   );
 }
 
-function SentimentPanel({ pair, current, tech }: { pair: string; current: ForexRow | null; tech: TechnicalSnapshot | null }) {
+const SentimentPanel = memo(function SentimentPanel({
+  pair,
+  current,
+  tech,
+}: {
+  pair: string;
+  current: ForexRow | null;
+  tech: TechnicalSnapshot | null;
+}) {
   const fallback = useMemo(
     () => computeLocalSentiment({ changePercent: current?.changePercent, price: current?.price }, tech, "forex"),
     [current, tech],
   );
   const { data, meta, isLoading } = useApi<SentimentApi>(
     `/api/v1/sentiment?assetType=forex&symbol=${encodeURIComponent(pair)}`,
-    { refreshInterval: 90_000 },
+    { refreshInterval: 180_000 },
   );
 
   const quant = data?.quant ?? fallback;
@@ -195,7 +259,7 @@ function SentimentPanel({ pair, current, tech }: { pair: string; current: ForexR
       </div>
     </Panel>
   );
-}
+});
 
 function computeLocalSentiment(
   t: { changePercent?: number | null; price?: number },
@@ -262,7 +326,7 @@ function computeLocalSentiment(
   return { score, label, tone, factors: factors.slice(0, 5) };
 }
 
-function CandlePatternsPanel({ patterns }: { patterns: CandlePattern[] }) {
+const CandlePatternsPanel = memo(function CandlePatternsPanel({ patterns }: { patterns: CandlePattern[] }) {
   return (
     <Panel
       title={
@@ -293,11 +357,19 @@ function CandlePatternsPanel({ patterns }: { patterns: CandlePattern[] }) {
       )}
     </Panel>
   );
-}
+});
 
-function ForexNewsPanel({ pair, base, quote }: { pair: string; base: string; quote: string }) {
+const ForexNewsPanel = memo(function ForexNewsPanel({
+  pair,
+  base,
+  quote,
+}: {
+  pair: string;
+  base: string;
+  quote: string;
+}) {
   const { data, meta, isLoading } = useApi<NewsPayload>(`/api/v1/news?category=forex&limit=12`, {
-    refreshInterval: 120_000,
+    refreshInterval: 300_000,
   });
 
   const articles = useMemo(() => {
@@ -349,7 +421,7 @@ function ForexNewsPanel({ pair, base, quote }: { pair: string; base: string; quo
       )}
     </Panel>
   );
-}
+});
 
 function formatAge(iso: string): string {
   const t = Date.parse(iso);
