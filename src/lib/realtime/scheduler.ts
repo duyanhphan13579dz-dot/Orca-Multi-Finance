@@ -3,16 +3,24 @@ import "server-only";
 /**
  * REPORT SCHEDULER — timezone-aware (Asia/Ho_Chi_Minh), config-driven.
  * Fires each report type once per VN date after its configured time.
+ * Also refreshes commodities once per VN calendar day.
  * Started lazily by any report-center API hit; idempotent per date+type.
  */
 
-interface ScheduleCfg { morningTime: string; summaryTime: string; autoDaily: boolean }
+interface ScheduleCfg {
+  morningTime: string;
+  summaryTime: string;
+  autoDaily: boolean;
+  commoditiesTime: string;
+  autoCommodities: boolean;
+}
 
 const g = globalThis as typeof globalThis & { __orcaScheduler?: Scheduler };
 
 class Scheduler {
   private timer: ReturnType<typeof setInterval> | null = null;
   private running = new Set<string>();
+  private commoditiesDoneOn: string | null = null;
 
   start() {
     if (this.timer) return;
@@ -27,13 +35,12 @@ class Scheduler {
   }
 
   private async loadCfg(): Promise<ScheduleCfg> {
-    // scheduler times are user-configurable via Settings (server persisted prefs
-    // require a user context; for the automation loop we honor env overrides with
-    // the same defaults the UI exposes)
     return {
       autoDaily: (process.env.REPORT_AUTO_DAILY ?? "true") !== "false",
       morningTime: process.env.REPORT_MORNING_TIME ?? "08:15",
       summaryTime: process.env.REPORT_SUMMARY_TIME ?? "15:45",
+      autoCommodities: (process.env.COMMODITIES_AUTO_DAILY ?? "true") !== "false",
+      commoditiesTime: process.env.COMMODITIES_REFRESH_TIME ?? "07:30",
     };
   }
 
@@ -41,7 +48,7 @@ class Scheduler {
     try {
       const { db } = await import("@/db");
       const { reports } = await import("@/db/schema");
-      const { and, eq, gte, sql } = await import("drizzle-orm");
+      const { and, eq, gte } = await import("drizzle-orm");
       const rows = await db
         .select({ id: reports.id })
         .from(reports)
@@ -49,7 +56,7 @@ class Scheduler {
         .limit(1);
       return rows.length > 0;
     } catch {
-      return true; // on DB failure, don't spam generation
+      return true;
     }
   }
 
@@ -66,25 +73,45 @@ class Scheduler {
     }
   }
 
+  private async fireCommodities(date: string) {
+    if (this.running.has("commodities")) return;
+    this.running.add("commodities");
+    try {
+      const { refreshCommodityMarket } = await import("../services/commodities");
+      const r = await refreshCommodityMarket();
+      if (r.ok) this.commoditiesDoneOn = date;
+    } catch {
+      /* provider health logs elsewhere */
+    } finally {
+      this.running.delete("commodities");
+    }
+  }
+
   private async tick() {
     const cfg = await this.loadCfg();
-    if (!cfg.autoDaily) return;
     const { minutes, date, dow } = this.vnNow();
-    if (dow === 0 || dow === 6) return;
     const parse = (t: string) => {
       const [h, m] = t.split(":").map(Number);
       return h * 60 + m;
     };
-    if (minutes >= parse(cfg.morningTime) && minutes < parse(cfg.summaryTime) && !(await this.already("morning_brief", date))) {
-      void this.fire("morning_brief");
+
+    if (cfg.autoDaily && dow !== 0 && dow !== 6) {
+      if (minutes >= parse(cfg.morningTime) && minutes < parse(cfg.summaryTime) && !(await this.already("morning_brief", date))) {
+        void this.fire("morning_brief");
+      }
+      if (minutes >= parse(cfg.summaryTime) && !(await this.already("market_summary", date))) {
+        void this.fire("market_summary");
+      }
     }
-    if (minutes >= parse(cfg.summaryTime) && !(await this.already("market_summary", date))) {
-      void this.fire("market_summary");
+
+    // Commodities: every calendar day (VN), once after configured time
+    if (cfg.autoCommodities && minutes >= parse(cfg.commoditiesTime) && this.commoditiesDoneOn !== date) {
+      void this.fireCommodities(date);
     }
   }
 
   stats() {
-    return { running: [...this.running], started: Boolean(this.timer) };
+    return { running: [...this.running], started: Boolean(this.timer), commoditiesDoneOn: this.commoditiesDoneOn };
   }
 }
 

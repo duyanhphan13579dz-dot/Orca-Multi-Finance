@@ -1,5 +1,5 @@
 import "server-only";
-import { cached } from "../cache";
+import { cached, invalidate } from "../cache";
 import { buildMeta } from "../freshness";
 import {
   fetchVietnambizGoods,
@@ -38,6 +38,8 @@ const GROUP_ORDER: CommodityGroup[] = [
   "nang_luong",
   "nhua_va_cao_su",
 ];
+
+export const CACHE_KEY = "commodities:vnb-data-goods";
 
 async function fetchAll(): Promise<CommodityMarket> {
   const snap = await fetchVietnambizGoods();
@@ -95,7 +97,7 @@ async function fetchAll(): Promise<CommodityMarket> {
 
 export async function getCommodityMarket(): Promise<{ data: CommodityMarket; meta: Meta } | null> {
   try {
-    const res = await cached("commodities:vnb-data-goods", {
+    const res = await cached(CACHE_KEY, {
       ttlMs: 5 * 60_000,
       staleMs: 12 * 3_600_000,
       producer: fetchAll,
@@ -140,6 +142,54 @@ async function persistQuotes(rows: CommodityRow[]) {
     }
   } catch {
     /* best-effort */
+  }
+}
+
+/**
+ * Force re-fetch from VietnamBiz Data, rewrite cache, persist quotes.
+ * Used by daily cron + in-process scheduler.
+ */
+export async function refreshCommodityMarket(): Promise<{
+  ok: boolean;
+  count: number;
+  groups: Record<string, number>;
+  errors: string[];
+  durationMs: number;
+  sourceTimestamp: string | null;
+}> {
+  const t0 = Date.now();
+  await invalidate(CACHE_KEY);
+  try {
+    const res = await cached(CACHE_KEY, {
+      ttlMs: 5 * 60_000,
+      staleMs: 12 * 3_600_000,
+      skipCache: true,
+      producer: fetchAll,
+    });
+    const groups: Record<string, number> = {};
+    for (const r of res.value.rows) {
+      groups[r.group] = (groups[r.group] ?? 0) + 1;
+    }
+    const ts = res.value.rows
+      .map((r) => (r.updatedAt ? Date.parse(r.updatedAt) : 0))
+      .filter((x) => x > 0);
+    return {
+      ok: true,
+      count: res.value.rows.length,
+      groups,
+      errors: res.value.errors,
+      durationMs: Date.now() - t0,
+      sourceTimestamp: ts.length ? new Date(Math.max(...ts)).toISOString() : null,
+    };
+  } catch (e) {
+    return {
+      ok: false,
+      count: 0,
+      groups: {},
+      errors: [e instanceof Error ? e.message : "refresh failed"],
+      durationMs: Date.now() - t0,
+      sourceTimestamp: null,
+    };
   }
 }
 

@@ -1,0 +1,12 @@
+{
+  "crons": [
+    {
+      "path": "/api/v1/cron/commodities",
+      "schedule": "0 1 * * *"
+    },
+    {
+      "path": "/api/v1/cron/commodities",
+      "schedule": "0 10 * * *"
+    }
+  ]
+}
