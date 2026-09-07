@@ -5,8 +5,7 @@ import { ProviderError } from "./binance";
 /**
  * Commodity data — VietnamBiz DATA portal ONLY.
  * Source: https://data.vietnambiz.vn/goods (Next.js SSG __NEXT_DATA__).
- * All groups: hang_tieu_dung, kim_loai_phi_kim, hoa_chat,
- * vat_lieu_xay_dung, nang_luong, nhua_va_cao_su.
+ * Optimized: indexOf extract (no full-body regex), single-pass parse, gzip-friendly fetch.
  */
 
 export const VIETNAMBIZ = "vietnambiz-data";
@@ -67,33 +66,51 @@ interface VnbItem {
 }
 
 function slugKey(title: string, group: string): string {
-  const base = title
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-|-$/g, "")
-    .slice(0, 48);
-  return `${group.slice(0, 3)}-${base || "item"}`;
+  let out = "";
+  const lower = title.toLowerCase();
+  for (let i = 0; i < lower.length && out.length < 48; i++) {
+    const c = lower.charCodeAt(i);
+    if ((c >= 97 && c <= 122) || (c >= 48 && c <= 57)) out += lower[i];
+    else if (out.length && out[out.length - 1] !== "-") out += "-";
+  }
+  while (out.endsWith("-")) out = out.slice(0, -1);
+  if (!out) {
+    out = title
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-|-$/g, "")
+      .slice(0, 48);
+  }
+  return `${group.slice(0, 3)}-${out || "item"}`;
 }
 
 function symbolFromTitle(title: string): string {
-  const s = title
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toUpperCase()
-    .replace(/[^A-Z0-9]+/g, "")
-    .slice(0, 12);
-  return s || "GOODS";
+  let s = "";
+  const up = title.toUpperCase();
+  for (let i = 0; i < up.length && s.length < 12; i++) {
+    const c = up.charCodeAt(i);
+    if ((c >= 65 && c <= 90) || (c >= 48 && c <= 57)) s += up[i];
+  }
+  if (s) return s;
+  return (
+    title
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toUpperCase()
+      .replace(/[^A-Z0-9]+/g, "")
+      .slice(0, 12) || "GOODS"
+  );
 }
 
 function currencyFromUnit(unit: string): string {
   const u = unit.toLowerCase();
   if (u.includes("đồng") || u.includes("dong") || u.includes("nghìn")) return "VND";
-  if (u.includes("cny") || u.includes("nhân dân")) return "CNY";
+  if (u.includes("cny")) return "CNY";
   if (u.includes("usd")) return "USD";
   if (u.includes("myr")) return "MYR";
-  if (u.includes("yên") || u.includes("jpy") || u.includes("yen")) return "JPY";
+  if (u.includes("yên") || u.includes("yen") || u.includes("jpy")) return "JPY";
   if (u.includes("eur")) return "EUR";
   return "—";
 }
@@ -110,14 +127,33 @@ function normalizeUnitPrice(unit: string, value: number): { unit: string; price:
 }
 
 function parseVnbDate(s: string): number | null {
-  const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-  if (!m) return null;
-  const t = Date.parse(`${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}T12:00:00+07:00`);
+  if (!s || s.length < 8) return null;
+  const p1 = s.indexOf("/");
+  const p2 = s.indexOf("/", p1 + 1);
+  if (p1 < 0 || p2 < 0) return null;
+  const d = Number(s.slice(0, p1));
+  const m = Number(s.slice(p1 + 1, p2));
+  const y = Number(s.slice(p2 + 1, p2 + 5));
+  if (!y || !m || !d) return null;
+  const t = Date.UTC(y, m - 1, d, 5, 0, 0);
   return Number.isFinite(t) ? t : null;
 }
 
 function isGroup(t: string): t is CommodityGroup {
   return t in GROUP_LABELS;
+}
+
+/** Extract __NEXT_DATA__ JSON via indexOf — avoids RegExp on multi-MB HTML. */
+function extractNextDataJson(html: string): string | null {
+  const marker = 'id="__NEXT_DATA__"';
+  let i = html.indexOf(marker);
+  if (i < 0) i = html.indexOf("id='__NEXT_DATA__'");
+  if (i < 0) return null;
+  const gt = html.indexOf(">", i);
+  if (gt < 0) return null;
+  const end = html.indexOf("</script>", gt);
+  if (end < 0) return null;
+  return html.slice(gt + 1, end);
 }
 
 export interface VnbGoodsSnapshot {
@@ -126,27 +162,40 @@ export interface VnbGoodsSnapshot {
     quote: RawCommodityQuote;
   }>;
   fetchedAt: number;
+  parseMs: number;
+  downloadMs: number;
 }
 
 export async function fetchVietnambizGoods(): Promise<VnbGoodsSnapshot> {
+  const t0 = Date.now();
   const res = await httpText(VNB_GOODS_URL, {
     provider: VIETNAMBIZ,
-    timeoutMs: 25_000,
+    timeoutMs: 20_000,
     retries: 1,
+    headers: {
+      Accept: "text/html,application/xhtml+xml",
+      "Accept-Encoding": "gzip, deflate, br",
+      "Accept-Language": "vi-VN,vi;q=0.9",
+    },
   });
+  const downloadMs = Date.now() - t0;
   if (!res.ok || !res.text) {
     throw new ProviderError(`vietnambiz-data: ${res.error ?? "unreachable"}`, VIETNAMBIZ);
   }
-  const m = res.text.match(/<script id="__NEXT_DATA__" type="application\/json">(.*?)<\/script>/);
-  if (!m?.[1]) {
+
+  const t1 = Date.now();
+  const jsonStr = extractNextDataJson(res.text);
+  if (!jsonStr) {
     throw new ProviderError("vietnambiz-data: __NEXT_DATA__ missing", VIETNAMBIZ);
   }
+
   let pageData: unknown;
   try {
-    pageData = JSON.parse(m[1]);
+    pageData = JSON.parse(jsonStr);
   } catch {
     throw new ProviderError("vietnambiz-data: JSON parse failed", VIETNAMBIZ);
   }
+
   const groups = (pageData as { props?: { pageProps?: { data?: Record<string, VnbItem[]> } } })?.props
     ?.pageProps?.data;
   if (!groups || typeof groups !== "object") {
@@ -156,47 +205,51 @@ export async function fetchVietnambizGoods(): Promise<VnbGoodsSnapshot> {
   const items: VnbGoodsSnapshot["items"] = [];
   const usedSymbols = new Set<string>();
 
-  for (const [type, list] of Object.entries(groups)) {
+  for (const type of Object.keys(groups)) {
+    const list = groups[type];
     if (!Array.isArray(list)) continue;
     const group: CommodityGroup = isGroup(type) ? type : "hang_tieu_dung";
-    for (const raw of list) {
-      if (!raw || typeof raw.title !== "string" || !Number.isFinite(Number(raw.value))) continue;
+    for (let i = 0; i < list.length; i++) {
+      const raw = list[i];
+      if (!raw || typeof raw.title !== "string") continue;
       const value = Number(raw.value);
-      if (!(value > 0)) continue;
+      if (!Number.isFinite(value) || !(value > 0)) continue;
+
       const { unit, price, currency } = normalizeUnitPrice(String(raw.unit ?? ""), value);
       let symbol = symbolFromTitle(raw.title);
       if (usedSymbols.has(symbol)) {
-        let i = 2;
-        while (usedSymbols.has(`${symbol}${i}`)) i++;
-        symbol = `${symbol}${i}`;
+        let n = 2;
+        while (usedSymbols.has(symbol + n)) n++;
+        symbol = symbol + n;
       }
       usedSymbols.add(symbol);
-      const key = slugKey(raw.title, group);
+
       const ts = parseVnbDate(String(raw.time_update ?? ""));
       const changePercent =
         raw.value_d != null && Number.isFinite(Number(raw.value_d)) ? Number(raw.value_d) : null;
 
-      const def: CommodityDef = {
-        key,
-        name: raw.title,
-        nameVi: raw.title,
-        group,
-        symbol,
-        unit,
-        currency,
-      };
-      const quote: RawCommodityQuote = {
-        source: "VietnamBiz Data",
-        price,
-        change: null,
-        changePercent,
-        unit,
-        currency,
-        timestamp: ts,
-        url: VNB_GOODS_URL,
-        note: raw.time_update ? `Cập nhật ${raw.time_update}` : null,
-      };
-      items.push({ def, quote });
+      items.push({
+        def: {
+          key: slugKey(raw.title, group),
+          name: raw.title,
+          nameVi: raw.title,
+          group,
+          symbol,
+          unit,
+          currency,
+        },
+        quote: {
+          source: "VietnamBiz Data",
+          price,
+          change: null,
+          changePercent,
+          unit,
+          currency,
+          timestamp: ts,
+          url: VNB_GOODS_URL,
+          note: raw.time_update ? `Cập nhật ${raw.time_update}` : null,
+        },
+      });
     }
   }
 
@@ -204,7 +257,7 @@ export async function fetchVietnambizGoods(): Promise<VnbGoodsSnapshot> {
     throw new ProviderError("vietnambiz-data: no items parsed", VIETNAMBIZ);
   }
 
-  return { items, fetchedAt: Date.now() };
+  return { items, fetchedAt: Date.now(), parseMs: Date.now() - t1, downloadMs };
 }
 
 export const COMMODITY_CATALOG: CommodityDef[] = [];
