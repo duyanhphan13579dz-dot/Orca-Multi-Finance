@@ -69,8 +69,8 @@ export async function getYahooChart(yahooSymbol: string, interval: string, range
 
 /** Yahoo symbols for FX (=X) and CFD/futures on the forex board. */
 const YAHOO_PAIR_SYMBOL: Record<string, string> = {
-  XAUUSD: "XAUUSD=X",
-  XAGUSD: "XAGUSD=X",
+  XAUUSD: "GC=F", // COMEX Gold futures — more reliable than XAUUSD=X
+  XAGUSD: "SI=F", // COMEX Silver futures
   USOIL: "CL=F",
   USTEC: "^NDX",
 };
