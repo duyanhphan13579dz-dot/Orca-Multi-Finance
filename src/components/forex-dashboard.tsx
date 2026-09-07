@@ -15,7 +15,7 @@ export function ForexDashboard() {
   const groups: { key: ForexRow["group"]; title: string }[] = [
     { key: "major", title: "Cặp chính" },
     { key: "minor", title: "Cặp phụ" },
-    { key: "exotic", title: "Ngoại lai / VND" },
+    { key: "exotic", title: "Kim loại · Dầu · Chỉ số / VND" },
   ];
 
   return (
@@ -55,7 +55,7 @@ export function ForexDashboard() {
       </div>
 
       <p className="text-[11px] leading-relaxed text-ink-3">
-        Phương pháp: tỷ giá realtime từ provider (Biquote khi được cấu hình, nguồn dự phòng exchangerate-api); % thay đổi đối chiếu với bản fix tham chiếu gần nhất của ECB (Frankfurter). Dữ liệu phù hợp quan sát xu hướng — cần đối chiếu giá sàn trước khi giao dịch.
+        Phương pháp: tỷ giá realtime từ provider (Biquote khi được cấu hình, nguồn dự phòng exchangerate-api); kim loại/dầu/chỉ số qua Yahoo Finance. % thay đổi FX đối chiếu ECB; CFD dùng % phiên Yahoo.
       </p>
     </div>
   );
