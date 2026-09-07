@@ -4,8 +4,8 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import {
-  Bell, Bot, Boxes, CandlestickChart, ChevronsLeft, ChevronsRight, Coins, DollarSign,
-  Eye, FlaskConical, GaugeCircle, Globe2, Grid2x2, Home, LogOut, Menu, Newspaper, NotebookPen, Settings, X,
+  Bell, Bot, Boxes, CandlestickChart, ChartNoAxesCombined, ChevronsLeft, ChevronsRight, Coins, DollarSign,
+  Eye, FlaskConical, GaugeCircle, Globe2, Grid2x2, Home, Landmark, LogOut, Menu, Newspaper, NotebookPen, Settings, X,
 } from "lucide-react";
 import { TickerTape } from "@/components/ticker-tape";
 import { GlobalSearch } from "@/components/search";
@@ -24,6 +24,8 @@ const NAV_SECTIONS: { title: string; items: { href: string; label: string; icon:
       { href: "/crypto", label: "Crypto", icon: Coins },
       { href: "/forex", label: "Forex", icon: DollarSign },
       { href: "/commodities", label: "Hàng hóa", icon: Boxes },
+      { href: "/macro-economic", label: "Kinh tế vĩ mô", icon: ChartNoAxesCombined },
+      { href: "/currency-interest-rate", label: "Lãi suất tiền tệ", icon: Landmark },
     ],
   },
   {
