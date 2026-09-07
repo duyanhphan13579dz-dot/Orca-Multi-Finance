@@ -186,7 +186,10 @@ class CandleAggregator {
         { assetClass: "crypto", staleMs: 5 * 60_000, sourceTimestampMs: tick.ts },
       );
       quality = q.status;
-      this.lastValidated.set(sym, { at: now, status: quality });
+      // Never cache an INVALID verdict: one malformed tick must not black-hole
+      // every following (valid) tick for the whole throttle window. Valid ticks
+      // are cached so the hot path still skips validation most of the time.
+      if (q.status !== "INVALID") this.lastValidated.set(sym, { at: now, status: quality });
       if (q.status === "INVALID") {
         void logQualityEvent("chart-engine", `tick:${tick.symbol}`, q);
         return;

@@ -123,6 +123,25 @@ npm run build
 npm run start
 ```
 
+Checks (chạy trước khi push):
+
+```bash
+npm run typecheck   # tsc --noEmit
+npm run lint        # eslint .
+npm test            # chart/quality/freshness engine suite (node:test)
+```
+
+### Deployment (Netlify)
+
+`netlify.toml` giữ build command/publish dir và các biến môi trường cần thiết. Hai quy tắc bắt buộc:
+
+1. **Gói cần cho `next build` phải nằm trong `dependencies`** — không phải `devDependencies`. Netlify cài đặt với `NODE_ENV=production`, npm sẽ bỏ qua toàn bộ devDependencies và build chết với `Cannot find module '@tailwindcss/postcss'` (import trace: `src/app/globals.css` → `src/app/layout.tsx`). Vì vậy `tailwindcss`, `@tailwindcss/postcss`, `postcss`, `typescript` và `@types/*` đều nằm trong `dependencies`; `netlify.toml` còn đặt thêm `NPM_FLAGS=--include=dev` làm lớp dự phòng.
+2. **`package-lock.json` được commit** để Netlify dùng `npm ci` (tái lập được).
+
+`DATABASE_URL` không còn bắt buộc ở *build time* — client DB khởi tạo lười (`src/db/index.ts`), nên bước "Collecting page data" của `next build` không còn fail khi host không inject DB URL vào môi trường build. Runtime vẫn cần nó cho auth/watchlist/reports.
+
+Trên host serverless (Netlify/Vercel Functions), đặt `BINANCE_WS_DISABLED=true`: instance ngắn hạn không giữ được WebSocket sống, engine sẽ tự chuyển sang REST polling với nhãn freshness trung thực (xem ghi chú trong `netlify.toml`).
+
 Health & diagnostics:
 
 - `GET /api/health` — liveness (DB check)

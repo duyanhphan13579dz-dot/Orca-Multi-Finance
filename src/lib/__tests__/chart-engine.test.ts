@@ -1,6 +1,15 @@
 /**
  * ORCA CHART ENGINE — test suite (§36).
- * Run: node --import tsx --import ./test/test-setup/register-stub.mjs src/lib/__tests__/chart-engine.test.ts
+ *
+ * Run:  npm test
+ *
+ * Which is: node --import tsx
+ *            --import  ./test/test-setup/register-stub.mjs   (ESM  'server-only' → stub)
+ *            --require ./test/test-setup/patch-server-only.cjs (CJS 'server-only' → stub)
+ *            src/lib/__tests__/chart-engine.test.ts
+ *
+ * Both stubs are required: tsx loads some of these modules through the CJS
+ * loader, where the ESM `resolve` hook alone does not intercept 'server-only'.
  */
 import test from "node:test";
 import assert from "node:assert/strict";

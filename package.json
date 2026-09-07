@@ -1,14 +1,24 @@
 {
-  "name": "nextjs-postgresql-template",
+  "name": "orca-financial",
+  "version": "1.0.0",
   "private": true,
+  "engines": {
+    "node": ">=20.9.0"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --import ./test/test-setup/register-stub.mjs --require ./test/test-setup/patch-server-only.cjs src/lib/__tests__/chart-engine.test.ts"
   },
   "dependencies": {
+    "@tailwindcss/postcss": "4.1.17",
+    "@types/node": "22.19.15",
+    "@types/pg": "8.18.0",
+    "@types/react": "19.2.14",
+    "@types/react-dom": "19.2.3",
     "clsx": "^2.1.1",
     "dotenv": "17.3.1",
     "drizzle-orm": "0.45.2",
@@ -18,23 +28,18 @@
     "lucide-react": "^0.545.0",
     "next": "16.2.6",
     "pg": "8.20.0",
+    "postcss": "8.5.8",
     "react": "19.2.6",
     "react-dom": "19.2.6",
     "server-only": "^0.0.1",
     "swr": "^2.3.3",
-    "tsx": "^4.20.6"
+    "tailwindcss": "4.1.17",
+    "tsx": "^4.20.6",
+    "typescript": "5.9.3"
   },
   "devDependencies": {
-    "@tailwindcss/postcss": "4.1.17",
-    "@types/node": "22.19.15",
-    "@types/pg": "8.18.0",
-    "@types/react": "19.2.14",
-    "@types/react-dom": "19.2.3",
     "drizzle-kit": "0.31.10",
     "eslint": "9.39.4",
-    "eslint-config-next": "16.2.6",
-    "postcss": "8.5.8",
-    "tailwindcss": "4.1.17",
-    "typescript": "5.9.3"
+    "eslint-config-next": "16.2.6"
   }
 }

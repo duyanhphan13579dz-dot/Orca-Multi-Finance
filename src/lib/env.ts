@@ -9,6 +9,19 @@ const opt = (v: string | undefined): string | undefined => {
   return t && t.length > 0 ? t : undefined;
 };
 
+/* Redis (optional cache mirror).
+   Hosts such as Netlify inject `UPSTASH_REDIS_URL` instead of `REDIS_URL`, so
+   both names are accepted. ioredis speaks the Redis TCP wire protocol only: an
+   Upstash *REST* endpoint (https://…) cannot be used by it, so a non-TCP value
+   is reported through `redisNote` instead of being silently ignored. */
+const redisCandidate = opt(process.env.REDIS_URL) ?? opt(process.env.UPSTASH_REDIS_URL);
+const redisIsTcp = Boolean(redisCandidate && /^rediss?:\/\//i.test(redisCandidate));
+const redisNote = !redisCandidate
+  ? undefined
+  : redisIsTcp
+    ? undefined
+    : "Giá trị Redis được cấu hình không phải redis:// hoặc rediss:// (Upstash REST URL không dùng được với ioredis) — mirror Redis đang TẮT, cache chỉ chạy in-memory.";
+
 export const env = {
   nodeEnv: process.env.NODE_ENV ?? "development",
 
@@ -43,7 +56,8 @@ export const env = {
     "0QfOX3Vn51YCzitbLaRkTTBadtWpgTN8NZLW0C1SEM", // public web key used by MSN frontend
 
   /* Platform */
-  redisUrl: opt(process.env.REDIS_URL),
+  redisUrl: redisIsTcp ? redisCandidate : undefined,
+  redisNote,
   jwtSecret: opt(process.env.JWT_SECRET) ?? "orca-dev-insecure-secret-change-in-production",
 
   /* Optional LLM for the AI Agent (OpenAI-compatible) */

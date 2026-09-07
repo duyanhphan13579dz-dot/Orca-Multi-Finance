@@ -126,13 +126,13 @@ export function peekStale<T>(key: string): CacheResult<T> | null {
 }
 
 export function cacheStats() {
-  return { entries: mem.size, hits, staleServed, inflight: inflight.size, redisEnabled: Boolean(env.redisUrl) };
+  return { entries: mem.size, hits, staleServed, inflight: inflight.size, redisEnabled: Boolean(env.redisUrl), redisNote: env.redisNote };
 }
 
-export async function redisStatus(): Promise<{ configured: boolean; connected: boolean }> {
-  if (!env.redisUrl) return { configured: false, connected: false };
+export async function redisStatus(): Promise<{ configured: boolean; connected: boolean; note?: string }> {
+  if (!env.redisUrl) return { configured: false, connected: false, note: env.redisNote };
   const r = await getRedis();
-  return { configured: true, connected: r !== null };
+  return { configured: true, connected: r !== null, note: r ? undefined : "Không kết nối được Redis (sai URL/chặn mạng) — cache vẫn chạy in-memory." };
 }
 
 /** Drop memory + Redis entry so next read re-produces. */
