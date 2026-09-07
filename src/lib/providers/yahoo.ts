@@ -67,9 +67,18 @@ export async function getYahooChart(yahooSymbol: string, interval: string, range
   throw new ProviderError(`yahoo: ${lastErr}`, YAHOO);
 }
 
-/** map "EURUSD" → "EURUSD=X" (works for all quoted-vs-USD and USD-base majors) */
+/** Yahoo symbols for FX (=X) and CFD/futures on the forex board. */
+const YAHOO_PAIR_SYMBOL: Record<string, string> = {
+  XAUUSD: "XAUUSD=X",
+  XAGUSD: "XAGUSD=X",
+  USOIL: "CL=F",
+  USTEC: "^NDX",
+};
+
+/** map "EURUSD" → "EURUSD=X"; metals/oil/index use dedicated tickers */
 export function yahooSymbolForPair(pair: string): string {
-  const p = pair.toUpperCase();
+  const p = pair.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  if (YAHOO_PAIR_SYMBOL[p]) return YAHOO_PAIR_SYMBOL[p];
   return `${p}=X`;
 }
 
