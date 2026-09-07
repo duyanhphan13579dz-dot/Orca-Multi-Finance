@@ -17,7 +17,7 @@ type CatalogItem = {
   vnImpact: { sector: string; stocks: string[]; mechanism: string } | null;
 };
 
-type Data = CommodityMarket & {
+type Data = Omit<CommodityMarket, "catalog"> & {
   catalog: CatalogItem[];
   groups?: Record<string, { title: string; desc: string }>;
 };
@@ -47,8 +47,8 @@ export default function CommoditiesPage() {
     return FALLBACK_GROUPS;
   }, [data]);
 
-  const catalog = useMemo(() => {
-    let defs = data?.catalog ?? [];
+  const catalog = useMemo((): CatalogItem[] => {
+    let defs: CatalogItem[] = data?.catalog ?? [];
     if (group) defs = defs.filter((d) => d.group === group);
     if (q.trim()) {
       const needle = q.trim().toLowerCase();
