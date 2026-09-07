@@ -20,6 +20,14 @@ interface NewsPayload {
   errors: string[];
 }
 
+interface SentimentApi {
+  assetType: "crypto" | "forex";
+  symbol: string;
+  quant: { score: number; label: string; tone: "up" | "down" | "neutral"; factors: { w: number; text: string }[] };
+  llm: { narrative: string; stance: "confirm" | "diverge" | "neutral"; risks: string[]; model: string; latencyMs: number } | null;
+  llmStatus: "ok" | "unavailable" | "skipped" | "failed";
+}
+
 import { Badge, Chg, FreshnessDot, Loading, MetaLine, Panel, Unavailable } from "@/components/ui";
 import { OrcaChart } from "@/components/orca-chart";
 import { TechnicalPanel } from "@/components/technical-panel";
@@ -81,7 +89,7 @@ export function ForexDetailPage({ pair }: { pair: string }) {
 
         <div className="col-span-12 flex flex-col gap-3 xl:col-span-4">
           <div className="min-h-0 flex-1">
-            <SentimentPanel current={cur} tech={tech} pair={pair} />
+            <SentimentPanel pair={pair} current={cur} tech={tech} />
           </div>
           <div className="min-h-0 flex-1">
             <CandlePatternsPanel patterns={patterns} />
@@ -112,133 +120,134 @@ export function ForexDetailPage({ pair }: { pair: string }) {
   );
 }
 
-function SentimentPanel({
-  current,
-  tech,
-  pair,
-}: {
-  current: ForexRow | null;
-  tech: TechnicalSnapshot | null;
-  pair: string;
-}) {
-  const s = useMemo(() => computeSentiment(current, tech), [current, tech]);
+function SentimentPanel({ pair, current, tech }: { pair: string; current: ForexRow | null; tech: TechnicalSnapshot | null }) {
+  const fallback = useMemo(
+    () => computeLocalSentiment({ changePercent: current?.changePercent, price: current?.price }, tech, "forex"),
+    [current, tech],
+  );
+  const { data, meta, isLoading } = useApi<SentimentApi>(
+    `/api/v1/sentiment?assetType=forex&symbol=${encodeURIComponent(pair)}`,
+    { refreshInterval: 90_000 },
+  );
+
+  const quant = data?.quant ?? fallback;
+  const llm = data?.llm ?? null;
+  const llmStatus = data?.llmStatus ?? "skipped";
 
   return (
     <Panel
       title={
         <span className="flex items-center gap-2">
           <Brain className="size-4 text-accent-primary" /> Tâm lý thị trường
+          {meta && <FreshnessDot status={meta.freshness} ageMs={meta.ageMs} />}
         </span>
       }
     >
       <div className="space-y-2.5">
         <div className="flex items-center justify-between gap-2">
-          <Badge tone={s.tone}>
-            <span className="font-bold">{s.label}</span>
+          <Badge tone={quant.tone}>
+            <span className="font-bold">{quant.label}</span>
           </Badge>
           <span className="num text-[18px] font-semibold text-text-primary">
-            {s.score > 0 ? "+" : ""}
-            {s.score}
+            {quant.score > 0 ? "+" : ""}
+            {quant.score}
           </span>
         </div>
 
         <div className="relative h-2 overflow-hidden rounded-full bg-background-secondary">
           <div className="absolute inset-y-0 left-1/2 w-px bg-border-subtle" />
           <div
-            className={`absolute inset-y-0 ${s.score >= 0 ? "left-1/2 bg-positive/70" : "right-1/2 bg-negative/70"}`}
-            style={{ width: `${Math.min(50, Math.abs(s.score) / 2)}%` }}
+            className={`absolute inset-y-0 ${quant.score >= 0 ? "left-1/2 bg-positive/70" : "right-1/2 bg-negative/70"}`}
+            style={{ width: `${Math.min(50, Math.abs(quant.score) / 2)}%` }}
           />
         </div>
 
         <ul className="space-y-1 text-[11.5px] leading-relaxed text-text-secondary">
-          {s.factors.map((f, i) => (
+          {quant.factors.map((f, i) => (
             <li key={i} className="flex items-start gap-1.5">
               <span className={f.w >= 0 ? "text-positive" : "text-negative"}>{f.w >= 0 ? "+" : "-"}</span>
               <span>{f.text}</span>
             </li>
           ))}
         </ul>
-        <p className="text-[10px] text-text-muted">
-          Điểm tổng hợp từ % ngày, RSI, trend SMA của {pair} — không phải khuyến nghị.
-        </p>
+
+        {isLoading && !data && <p className="text-[11px] text-text-muted">Đang tải diễn giải LLM…</p>}
+        {llm?.narrative && (
+          <div className="panel-inset space-y-1.5 p-2.5">
+            <div className="flex flex-wrap items-center gap-1.5 text-[10px] uppercase tracking-wider text-text-muted">
+              <span>AI insight</span>
+              <Badge tone={llm.stance === "confirm" ? "up" : llm.stance === "diverge" ? "down" : "neutral"}>
+                {llm.stance === "confirm" ? "Khớp quant" : llm.stance === "diverge" ? "Lệch quant" : "Trung lập"}
+              </Badge>
+            </div>
+            <p className="text-[12px] leading-relaxed text-text-primary">{llm.narrative}</p>
+            {llm.risks?.length > 0 && (
+              <ul className="space-y-0.5 text-[11px] text-text-muted">
+                {llm.risks.map((r, i) => (
+                  <li key={i}>• {r}</li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
+        {!llm && llmStatus === "skipped" && (
+          <p className="text-[10px] text-text-muted">LLM chưa bật (AI_PROVIDER_KEY) — chỉ điểm quant.</p>
+        )}
+        {!llm && (llmStatus === "unavailable" || llmStatus === "failed") && (
+          <p className="text-[10px] text-text-muted">LLM tạm không phản hồi — giữ điểm quant.</p>
+        )}
+        <p className="text-[10px] text-text-muted">Điểm quant từ % ngày, RSI, trend SMA — không phải khuyến nghị.</p>
       </div>
     </Panel>
   );
 }
 
-function computeSentiment(cur: ForexRow | null, tech: TechnicalSnapshot | null) {
+function computeLocalSentiment(
+  t: { changePercent?: number | null; price?: number },
+  tech: TechnicalSnapshot | null,
+  mode: "crypto" | "forex",
+) {
   let score = 0;
   const factors: { w: number; text: string }[] = [];
-
-  const chg = cur?.changePercent ?? null;
+  const chg = t.changePercent ?? null;
+  const hi = mode === "crypto" ? 3 : 0.4;
+  const mid = mode === "crypto" ? 0.5 : 0.08;
   if (chg != null) {
-    if (chg > 0.4) {
-      score += 24;
-      factors.push({ w: 1, text: `Tỷ giá +${chg.toFixed(2)}% /ngày — momentum tăng` });
-    } else if (chg > 0.08) {
-      score += 12;
-      factors.push({ w: 1, text: `Tỷ giá +${chg.toFixed(2)}% /ngày — bias nhẹ tăng` });
-    } else if (chg < -0.4) {
-      score -= 24;
-      factors.push({ w: -1, text: `Tỷ giá ${chg.toFixed(2)}% /ngày — áp lực bán` });
-    } else if (chg < -0.08) {
-      score -= 12;
-      factors.push({ w: -1, text: `Tỷ giá ${chg.toFixed(2)}% /ngày — bias nhẹ giảm` });
-    } else {
-      factors.push({ w: 0, text: `Tỷ giá ${chg.toFixed(2)}% /ngày — biên độ hẹp` });
-    }
-  } else {
-    factors.push({ w: 0, text: "Chưa có % thay đổi ngày (thiếu tham chiếu ECB)" });
+    if (chg > hi) {
+      score += 28;
+      factors.push({ w: 1, text: `Biến động +${chg.toFixed(2)}% — momentum tăng` });
+    } else if (chg > mid) {
+      score += 14;
+      factors.push({ w: 1, text: `Biến động +${chg.toFixed(2)}% — bias nhẹ tăng` });
+    } else if (chg < -hi) {
+      score -= 28;
+      factors.push({ w: -1, text: `Biến động ${chg.toFixed(2)}% — áp lực bán` });
+    } else if (chg < -mid) {
+      score -= 14;
+      factors.push({ w: -1, text: `Biến động ${chg.toFixed(2)}% — bias nhẹ giảm` });
+    } else factors.push({ w: 0, text: `Biến động ${chg.toFixed(2)}% — biên độ hẹp` });
   }
-
   if (tech?.rsi14 != null) {
     if (tech.rsi14 >= 70) {
       score -= 18;
-      factors.push({ w: -1, text: `RSI ${tech.rsi14.toFixed(0)} — vùng quá mua` });
+      factors.push({ w: -1, text: `RSI ${tech.rsi14.toFixed(0)} — quá mua` });
     } else if (tech.rsi14 <= 30) {
       score += 18;
-      factors.push({ w: 1, text: `RSI ${tech.rsi14.toFixed(0)} — vùng quá bán` });
+      factors.push({ w: 1, text: `RSI ${tech.rsi14.toFixed(0)} — quá bán` });
     } else if (tech.rsi14 >= 55) {
       score += 8;
       factors.push({ w: 1, text: `RSI ${tech.rsi14.toFixed(0)} — nghiêng mua` });
     } else if (tech.rsi14 <= 45) {
       score -= 8;
       factors.push({ w: -1, text: `RSI ${tech.rsi14.toFixed(0)} — nghiêng bán` });
-    } else {
-      factors.push({ w: 0, text: `RSI ${tech.rsi14.toFixed(0)} — trung tính` });
     }
   }
-
   if (tech?.trend) {
-    const map: Record<string, number> = {
-      "strong-up": 22,
-      up: 12,
-      sideways: 0,
-      down: -12,
-      "strong-down": -22,
-    };
+    const map: Record<string, number> = { "strong-up": 22, up: 12, sideways: 0, down: -12, "strong-down": -22 };
     const w = map[tech.trend.label] ?? 0;
     score += w;
-    const labelVi: Record<string, string> = {
-      "strong-up": "xu hướng tăng mạnh",
-      up: "xu hướng tăng",
-      sideways: "đi ngang",
-      down: "xu hướng giảm",
-      "strong-down": "xu hướng giảm mạnh",
-    };
-    factors.push({ w, text: `Trend: ${labelVi[tech.trend.label] ?? tech.trend.label} (score ${tech.trend.score})` });
+    factors.push({ w, text: `Trend: ${tech.trend.label} (${tech.trend.score})` });
   }
-
-  if (tech?.sma.sma50 != null && tech.last != null) {
-    if (tech.last >= tech.sma.sma50) {
-      score += 8;
-      factors.push({ w: 1, text: "Giá trên SMA50 — cấu trúc trung hạn ủng hộ" });
-    } else {
-      score -= 8;
-      factors.push({ w: -1, text: "Giá dưới SMA50 — cấu trúc trung hạn yếu" });
-    }
-  }
-
   score = Math.max(-100, Math.min(100, Math.round(score)));
   let label = "TRUNG LẬP";
   let tone: "up" | "down" | "neutral" = "neutral";
@@ -255,7 +264,6 @@ function computeSentiment(cur: ForexRow | null, tech: TechnicalSnapshot | null) 
     label = "HƠI BI QUAN";
     tone = "down";
   }
-
   return { score, label, tone, factors: factors.slice(0, 5) };
 }
 
