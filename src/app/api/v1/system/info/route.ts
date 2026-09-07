@@ -21,6 +21,8 @@ export async function GET() {
   }
   let dbOk = false;
   let dbLatencyMs: number | null = null;
+  const { databaseConfigured } = await import("@/db");
+  const dbConfigured = databaseConfigured();
   try {
     const t0 = performance.now();
     const { db } = await import("@/db");
@@ -38,7 +40,7 @@ export async function GET() {
     {
       app: { name: "ORCA Financial", version, environment: process.env.NODE_ENV ?? "development", nodeEnv: process.env.NODE_ENV },
       runtime: { uptimeSec: Math.round((Date.now() - startedAt) / 1000), serverTime: new Date().toISOString() },
-      database: { connected: dbOk, latencyMs: dbLatencyMs },
+      database: { configured: dbConfigured, connected: dbOk, latencyMs: dbLatencyMs },
       redis,
       dataEngine: {
         providersTotal: providers.length,
