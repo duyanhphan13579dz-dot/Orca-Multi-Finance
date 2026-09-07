@@ -8,7 +8,7 @@ import { Chg, FreshnessDot, Loading, MetaLine, Panel, Unavailable } from "@/comp
 import { Globe2 } from "lucide-react";
 
 export function ForexDashboard() {
-  const { data, meta, isLoading } = useApi<ForexMarket>("/api/v1/forex/markets", { refreshInterval: 60_000 });
+  const { data, meta, isLoading } = useApi<ForexMarket>("/api/v1/forex/markets", { refreshInterval: 90_000 });
   if (isLoading && !data) return <Loading rows={10} />;
   if (!data) return <Unavailable title="Forex chưa khả dụng" note="Biquote chưa cấu hình và nguồn dự phòng (exchangerate-api/ECB) đang gián đoạn. Xem /system." meta={meta} />;
 
