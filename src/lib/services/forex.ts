@@ -11,15 +11,16 @@ import type { CandlePattern, ForexRow, Meta, OhlcvBar, TechnicalSnapshot } from 
  * Priority: Biquote (when configured) → exchangerate-api latest → crosses
  * computed mathematically from real USD-based rates. Daily % change is derived
  * from the previous ECB reference fix (Frankfurter) — all real timestamps.
+ * Metals / energy / equity index CFDs are Yahoo-backed (yahoo-only pairs).
  */
 
 interface PairDef {
-  pair: string; // e.g. EURUSD
+  pair: string;
   base: string;
   quote: string;
   group: ForexRow["group"];
-  /** how to derive from USD-based rates */
-  kind: "usd-quote" | "usd-base" | "cross";
+  kind: "usd-quote" | "usd-base" | "cross" | "yahoo-only";
+  label?: string;
 }
 
 const PAIRS: PairDef[] = [
@@ -35,9 +36,19 @@ const PAIRS: PairDef[] = [
   { pair: "GBPJPY", base: "GBP", quote: "JPY", group: "minor", kind: "cross" },
   { pair: "AUDJPY", base: "AUD", quote: "JPY", group: "minor", kind: "cross" },
   { pair: "USDVND", base: "USD", quote: "VND", group: "exotic", kind: "usd-base" },
+  { pair: "XAUUSD", base: "XAU", quote: "USD", group: "exotic", kind: "yahoo-only", label: "Gold vs US Dollar" },
+  { pair: "XAGUSD", base: "XAG", quote: "USD", group: "exotic", kind: "yahoo-only", label: "Silver vs US Dollar" },
+  { pair: "USOIL", base: "WTI", quote: "USD", group: "exotic", kind: "yahoo-only", label: "Crude Oil" },
+  { pair: "USTEC", base: "NDX", quote: "USD", group: "exotic", kind: "yahoo-only", label: "US Tech 100 Index" },
 ];
 
+function displaySymbol(def: PairDef): string {
+  if (def.pair === "USOIL" || def.pair === "USTEC") return def.pair;
+  return `${def.base}/${def.quote}`;
+}
+
 function deriveRate(def: PairDef, usdRates: Record<string, number>): number | null {
+  if (def.kind === "yahoo-only") return null;
   if (def.kind === "usd-quote") {
     const perUsd = usdRates[def.base];
     return perUsd ? 1 / perUsd : null;
@@ -81,6 +92,34 @@ async function prevEcbRates(): Promise<PrevRates | null> {
   }
 }
 
+async function appendYahooOnly(rows: ForexRow[]): Promise<ForexRow[]> {
+  const have = new Set(rows.map((r) => r.pair));
+  const missing = PAIRS.filter((p) => p.kind === "yahoo-only" && !have.has(p.pair));
+  if (!missing.length) return rows;
+  try {
+    const m = await getYahooQuotes(missing.map((p) => yahooSymbolForPair(p.pair)));
+    for (const def of missing) {
+      const q = m.get(yahooSymbolForPair(def.pair));
+      if (!q || !Number.isFinite(q.price) || q.price <= 0) continue;
+      rows.push({
+        pair: def.pair,
+        base: def.base,
+        quote: def.quote,
+        group: def.group,
+        symbol: displaySymbol(def),
+        assetClass: "forex",
+        price: q.price,
+        change: q.change ?? null,
+        changePercent: q.changePercent ?? null,
+        updatedAt: q.marketTime ? new Date(q.marketTime).toISOString() : null,
+      });
+    }
+  } catch {
+    /* optional */
+  }
+  return rows;
+}
+
 export interface ForexMarket {
   rows: ForexRow[];
   usdStrengthNote: string;
@@ -91,20 +130,32 @@ export async function getForexMarkets(): Promise<{ data: ForexMarket; meta: Meta
   // 1) Biquote primary
   try {
     const { rates, ts } = await getBiquoteQuotes(PAIRS.map((p) => p.pair));
-    const rows = PAIRS.map((def): ForexRow | null => {
+    let rows = PAIRS.map((def): ForexRow | null => {
       const rate = rates[def.pair];
       if (rate == null) return null;
       return {
-        pair: def.pair, base: def.base, quote: def.quote, group: def.group,
-        symbol: `${def.base}/${def.quote}`, assetClass: "forex" as const,
+        pair: def.pair,
+        base: def.base,
+        quote: def.quote,
+        group: def.group,
+        symbol: displaySymbol(def),
+        assetClass: "forex" as const,
         price: rate,
         change: prev ? rate - (deriveRate(def, prev.rates) ?? rate) : null,
-        changePercent: prev && deriveRate(def, prev.rates) ? (rate / (deriveRate(def, prev.rates) as number) - 1) * 100 : null,
+        changePercent:
+          prev && deriveRate(def, prev.rates)
+            ? (rate / (deriveRate(def, prev.rates) as number) - 1) * 100
+            : null,
         updatedAt: ts ? new Date(ts).toISOString() : null,
       } satisfies ForexRow;
     }).filter((x): x is ForexRow => x !== null);
     if (rows.length) {
-      const meta = buildMeta({ source: "biquote", sourceTimestampMs: ts, note: prev ? undefined : "Không lấy được mức tham chiếu ngày trước (ECB) — thiếu cột change" });
+      rows = await appendYahooOnly(rows);
+      const meta = buildMeta({
+        source: "biquote",
+        sourceTimestampMs: ts,
+        note: prev ? undefined : "Không lấy được mức tham chiếu ngày trước (ECB) — thiếu cột change",
+      });
       return { data: { rows, usdStrengthNote: usdNote(rows) }, meta };
     }
   } catch {
@@ -123,13 +174,25 @@ export async function getForexMarkets(): Promise<{ data: ForexMarket; meta: Meta
     const rows = PAIRS.map((def): ForexRow | null => {
       const q = yahoo.value.m.get(yahooSymbolForPair(def.pair));
       if (!q || !Number.isFinite(q.price) || q.price <= 0) return null;
-      const prevRate = prev ? deriveRate(def, prev.rates) : null;
-      const change = prevRate != null ? q.price - prevRate : null;
-      const changePercent = prevRate ? (q.price / prevRate - 1) * 100 : null;
+      const prevRate = def.kind === "yahoo-only" ? null : prev ? deriveRate(def, prev.rates) : null;
+      const change =
+        def.kind === "yahoo-only" ? (q.change ?? null) : prevRate != null ? q.price - prevRate : null;
+      const changePercent =
+        def.kind === "yahoo-only"
+          ? (q.changePercent ?? null)
+          : prevRate
+            ? (q.price / prevRate - 1) * 100
+            : null;
       return {
-        pair: def.pair, base: def.base, quote: def.quote, group: def.group,
-        symbol: `${def.base}/${def.quote}`, assetClass: "forex" as const,
-        price: q.price, change, changePercent,
+        pair: def.pair,
+        base: def.base,
+        quote: def.quote,
+        group: def.group,
+        symbol: displaySymbol(def),
+        assetClass: "forex" as const,
+        price: q.price,
+        change,
+        changePercent,
         updatedAt: q.marketTime ? new Date(q.marketTime).toISOString() : null,
       };
     }).filter((x): x is ForexRow => x !== null);
@@ -140,7 +203,7 @@ export async function getForexMarkets(): Promise<{ data: ForexMarket; meta: Meta
         sourceTimestampMs: newest || yahoo.value.ts,
         cached: yahoo.cached,
         stale: yahoo.stale,
-        note: "Biquote chưa cấu hình → nguồn FX snapshot tham chiếu; % thay đổi so với fix ECB gần nhất",
+        note: "Biquote chưa cấu hình → nguồn FX/CFD snapshot; % FX so với ECB, kim loại/dầu/chỉ số theo phiên Yahoo",
         slas: { liveSlaMs: 120_000, freshSlaMs: 30 * 60_000, delayedSlaMs: 24 * 3_600_000 },
       });
       return { data: { rows, usdStrengthNote: usdNote(rows) }, meta };
@@ -156,26 +219,33 @@ export async function getForexMarkets(): Promise<{ data: ForexMarket; meta: Meta
       producer: () => getErApiLatest(),
     });
     const rates = latest.value.rates;
-    const rows = PAIRS.map((def): ForexRow | null => {
+    let rows = PAIRS.map((def): ForexRow | null => {
       const rate = deriveRate(def, rates);
       if (rate == null) return null;
       const prevRate = prev ? deriveRate(def, prev.rates) : null;
       const change = prevRate != null ? rate - prevRate : null;
       const changePercent = prevRate ? (rate / prevRate - 1) * 100 : null;
       return {
-        pair: def.pair, base: def.base, quote: def.quote, group: def.group,
-        symbol: `${def.base}/${def.quote}`, assetClass: "forex" as const,
-        price: rate, change, changePercent,
+        pair: def.pair,
+        base: def.base,
+        quote: def.quote,
+        group: def.group,
+        symbol: displaySymbol(def),
+        assetClass: "forex" as const,
+        price: rate,
+        change,
+        changePercent,
         updatedAt: new Date(latest.value.ts).toISOString(),
       } satisfies ForexRow;
     }).filter((x): x is ForexRow => x !== null);
+    rows = await appendYahooOnly(rows);
     if (!rows.length) return null;
     const meta = buildMeta({
       source: latest.value.source,
       sourceTimestampMs: latest.value.ts,
       cached: latest.cached,
       stale: latest.stale,
-      note: "Nguồn chính Biquote không khả dụng — dùng tỷ giá tham chiếu realtime từ exchangerate-api; % thay đổi so với fix ECB gần nhất",
+      note: "Nguồn chính Biquote không khả dụng — FX từ exchangerate-api; kim loại/dầu/chỉ số từ Yahoo",
       slas: { liveSlaMs: 3_600_000, freshSlaMs: 6 * 3_600_000, delayedSlaMs: 30 * 3_600_000 },
     });
     return { data: { rows, usdStrengthNote: usdNote(rows) }, meta };
@@ -207,41 +277,79 @@ export interface ForexDetail {
   base: string;
   quote: string;
   current: ForexRow | null;
-  series: OhlcvBar[]; // ECB daily reference closes (o=h=l=c=rate)
+  series: OhlcvBar[];
   technical: TechnicalSnapshot | null;
   patterns: CandlePattern[];
   referenceNote: string;
 }
 
 export async function getForexDetail(pairRaw: string): Promise<{ detail: ForexDetail; meta: Meta } | null> {
-  const pair = pairRaw.toUpperCase().replace(/[^A-Z]/g, "");
-  if (pair.length !== 6) return null;
-  const base = pair.slice(0, 3);
-  const quote = pair.slice(3);
+  const pair = pairRaw.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  const def = PAIRS.find((p) => p.pair === pair);
+  if (!def && pair.length !== 6) return null;
+  const base = def?.base ?? pair.slice(0, 3);
+  const quote = def?.quote ?? pair.slice(3);
   const markets = await getForexMarkets();
   const current = markets?.data.rows.find((r) => r.pair === pair) ?? null;
-  let series: { date: string; rate: number }[];
+
+  let bars: OhlcvBar[] = [];
   let seriesTs: number | null = null;
-  try {
-    const direct = await getFrankfurterSeries(base, quote, 370);
-    series = direct;
-    seriesTs = direct.length ? Date.parse(direct[direct.length - 1].date) : null;
-  } catch {
+  let source = "frankfurter-ecb";
+  let referenceNote =
+    "Chuỗi lịch sử: tỷ giá tham chiếu hằng ngày của Ngân hàng Trung ương châu Âu (ECB), cập nhật mỗi ngày làm việc ~16:00 CET. Chart intraday từ Yahoo FX.";
+
+  const useYahooHistory = def?.kind === "yahoo-only";
+
+  if (!useYahooHistory) {
     try {
-      const inverted = await getFrankfurterSeries(quote, base, 370);
-      series = inverted.map((x) => ({ date: x.date, rate: 1 / x.rate }));
-      seriesTs = inverted.length ? Date.parse(inverted[inverted.length - 1].date) : null;
+      const direct = await getFrankfurterSeries(base, quote, 370);
+      bars = direct.map((x) => ({
+        time: Date.parse(x.date),
+        open: x.rate,
+        high: x.rate,
+        low: x.rate,
+        close: x.rate,
+        volume: 0,
+      }));
+      seriesTs = direct.length ? Date.parse(direct[direct.length - 1].date) : null;
     } catch {
-      return null;
+      try {
+        const inverted = await getFrankfurterSeries(quote, base, 370);
+        bars = inverted.map((x) => ({
+          time: Date.parse(x.date),
+          open: 1 / x.rate,
+          high: 1 / x.rate,
+          low: 1 / x.rate,
+          close: 1 / x.rate,
+          volume: 0,
+        }));
+        seriesTs = inverted.length ? Date.parse(inverted[inverted.length - 1].date) : null;
+      } catch {
+        /* fall through */
+      }
     }
   }
-  const bars: OhlcvBar[] = series.map((x) => ({
-    time: Date.parse(x.date),
-    open: x.rate, high: x.rate, low: x.rate, close: x.rate, volume: 0,
-  }));
+
+  if (!bars.length) {
+    try {
+      const y = await getYahooChart(yahooSymbolForPair(pair), "1d", "1y");
+      if (y.candles?.length) {
+        bars = y.candles as OhlcvBar[];
+        seriesTs = bars[bars.length - 1]?.time ?? null;
+        source = "yahoo-finance";
+        if (def?.kind === "yahoo-only") {
+          referenceNote = `Kim loại / năng lượng / chỉ số: giá và lịch sử từ Yahoo Finance (${yahooSymbolForPair(pair)}). Không phải tỷ giá ECB.`;
+        }
+      }
+    } catch {
+      /* optional */
+    }
+  }
+
+  if (!bars.length && !current) return null;
+
   const technical = bars.length >= 30 ? analyzeSeries(bars) : null;
 
-  // Candle patterns from Yahoo intraday OHLC (ECB daily has o=h=l=c → no wick patterns)
   let patterns: CandlePattern[] = [];
   try {
     const cfg = yahooIntervalFor("1h");
@@ -254,14 +362,19 @@ export async function getForexDetail(pairRaw: string): Promise<{ detail: ForexDe
   }
 
   const detail: ForexDetail = {
-    pair, base, quote, current,
-    series: bars, technical, patterns,
-    referenceNote: "Chuỗi lịch sử: tỷ giá tham chiếu hằng ngày của Ngân hàng Trung ương châu Âu (ECB), cập nhật mỗi ngày làm việc ~16:00 CET. Chart intraday từ Yahoo FX.",
+    pair,
+    base,
+    quote,
+    current,
+    series: bars,
+    technical,
+    patterns,
+    referenceNote,
   };
   const meta = buildMeta({
-    source: "frankfurter-ecb",
+    source,
     sourceTimestampMs: seriesTs,
-    note: current ? undefined : "Giá hiện tại không khả dụng — chỉ còn chuỗi tham chiếu ECB",
+    note: current ? undefined : "Giá hiện tại không khả dụng — chỉ còn chuỗi lịch sử",
     slas: { liveSlaMs: 86_400_000, freshSlaMs: 2 * 86_400_000, delayedSlaMs: 5 * 86_400_000 },
   });
   return { detail, meta };
