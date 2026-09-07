@@ -135,6 +135,22 @@ export async function redisStatus(): Promise<{ configured: boolean; connected: b
   return { configured: true, connected: r !== null };
 }
 
+/** Drop memory + Redis entry so next read re-produces. */
+export async function invalidate(key: string): Promise<void> {
+  mem.delete(key);
+  inflight.delete(key);
+  const r = await getRedis();
+  if (r) {
+    try {
+      const client = r as RedisLike & { del?: (k: string) => Promise<unknown> };
+      if (typeof client.del === "function") await client.del(`orca:${key}`);
+      else await r.set(`orca:${key}`, "", "PX", 1);
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
 /** periodic GC to bound memory */
 if (typeof setInterval !== "undefined") {
   const t = setInterval(() => {
