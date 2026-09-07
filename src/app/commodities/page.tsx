@@ -6,6 +6,7 @@ import type { CommodityMarket } from "@/lib/services/commodities";
 import { Badge, Chg, fmtNum, FreshnessDot, Loading, MetaLine, Unavailable } from "@/components/ui";
 import { AddToWatchlist } from "@/components/watchlist-button";
 import { Boxes, Search, X } from "lucide-react";
+import { CurrencyConverter } from "@/components/currency-converter";
 
 type CatalogItem = {
   key: string;
@@ -119,6 +120,8 @@ export default function CommoditiesPage() {
           </p>
         )}
       </div>
+
+      <CurrencyConverter />
 
       {!data ? (
         <Unavailable title="VietnamBiz Data chưa phản hồi bảng giá" meta={meta} />
