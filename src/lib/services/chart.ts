@@ -204,12 +204,86 @@ async function stockCandles(symbol: string, tf: string, limit: number): Promise<
   return { candles: candles.slice(-limit), source: r.meta.source, note: r.meta.note };
 }
 
+/** Map VietnamBiz / common commodity codes → Yahoo futures tickers (real OHLC). */
+function yahooCommoditySymbol(symbol: string): string | null {
+  const s = symbol.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  const exact: Record<string, string> = {
+    GOLD: "GC=F",
+    XAU: "GC=F",
+    XAUUSD: "GC=F",
+    VANG: "GC=F",
+    SILVER: "SI=F",
+    XAG: "SI=F",
+    XAGUSD: "SI=F",
+    BAC: "SI=F",
+    WTI: "CL=F",
+    USOIL: "CL=F",
+    CRUDE: "CL=F",
+    CRUDEOIL: "CL=F",
+    BRENT: "BZ=F",
+    NATGAS: "NG=F",
+    NATURALGAS: "NG=F",
+    COPPER: "HG=F",
+    PLATINUM: "PL=F",
+    PALLADIUM: "PA=F",
+    CORN: "ZC=F",
+    WHEAT: "ZW=F",
+    SOYBEAN: "ZS=F",
+    SUGAR: "SB=F",
+    COFFEE: "KC=F",
+    COTTON: "CT=F",
+  };
+  if (exact[s]) return exact[s];
+  if (s.includes("VANG") || s.includes("GOLD") || s.includes("XAU")) return "GC=F";
+  if (s.includes("BAC") || s.includes("SILVER") || s.includes("XAG")) return "SI=F";
+  if (s.includes("WTI") || s.includes("CRUDE") || s.includes("USOIL")) return "CL=F";
+  if (s.includes("BRENT")) return "BZ=F";
+  if (s.includes("NATGAS") || s.includes("GAS")) return "NG=F";
+  if (s.includes("COPPER") || s.includes("DONGTHOI")) return "HG=F";
+  if (s.includes("CAFE") || s.includes("COFFEE")) return "KC=F";
+  if (s.includes("DUONG") || s.includes("SUGAR")) return "SB=F";
+  return null;
+}
+
+/** Commodities with a real Yahoo/Binance history series (for UI selectors). */
+export function isChartableCommodity(symbol: string): boolean {
+  if (symbol === "XAUUSD" || symbol === "GOLD" || symbol === "XAU") return true;
+  return yahooCommoditySymbol(symbol) != null;
+}
+
 async function commodityCandles(symbol: string, tf: string, limit: number): Promise<{ candles: ChartCandle[]; source: string; note?: string }> {
-  if (symbol === "XAUUSD" || symbol === "GOLD" || symbol === "XAU") {
-    const bars = await binance.getKlines("PAXGUSDT", binanceInterval(tf), Math.min(limit, 1000));
-    return { candles: bars.map(toCandle), source: "binance (PAXG ≈ XAU spot)", note: "Vàng thế giới qua PAXG (1:1 gold-ounce, USD) — nguồn thực thị trường 24/7" };
+  // Gold: prefer Binance PAXG (24/7) then Yahoo GC=F
+  if (symbol === "XAUUSD" || symbol === "GOLD" || symbol === "XAU" || symbol.toUpperCase().includes("VANG")) {
+    try {
+      const bars = await binance.getKlines("PAXGUSDT", binanceInterval(tf), Math.min(limit, 1000));
+      if (bars.length >= 10) {
+        return {
+          candles: bars.map(toCandle),
+          source: "binance (PAXG ≈ XAU spot)",
+          note: "Vàng thế giới qua PAXG (1:1 gold-ounce, USD) — nguồn thực thị trường 24/7",
+        };
+      }
+    } catch {
+      /* fall through to Yahoo */
+    }
   }
-  throw new Error("commodity_history_unavailable");
+
+  const ySym = yahooCommoditySymbol(symbol);
+  if (!ySym) throw new Error("commodity_history_unavailable");
+
+  const cfg = yahooIntervalFor(tf === "1w" ? "1w" : tf === "1M" ? "1M" : tf === "4h" ? "4h" : tf === "1h" ? "1h" : "1d");
+  if (!cfg) throw new Error("commodity_timeframe_unsupported");
+  const y = await getYahooChart(ySym, cfg.interval, cfg.range);
+  let candles = (y.candles as ChartCandle[]).slice(-limit);
+  if (cfg.aggregate4h) {
+    candles = aggregateCandles(candles, 4 * 3_600_000);
+  }
+  if (candles.length < 5) throw new Error("commodity_history_empty");
+  return {
+    candles,
+    source: `yahoo-finance (${ySym})`,
+    note: "Chuỗi OHLC futures/spot Yahoo — tham chiếu biến động quốc tế, có thể khác giá VietnamBiz (VND/nội địa).",
+  };
 }
 
 export async function getChartHistory(args: ChartArgs): Promise<{ data: ChartMarketData; meta: Meta } | null> {
