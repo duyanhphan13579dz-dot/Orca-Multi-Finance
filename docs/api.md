@@ -21,6 +21,8 @@ Envelope chuẩn cho mọi endpoint:
 | `GET /api/v1/forex/markets` | 12 cặp major/minor/exotic + note sức mạnh USD | Biquote/fallback |
 | `GET /api/v1/forex/{PAIR}` | Giá hiện tại + chuỗi ECB 12 tháng + technical | Biquote/ECB |
 | `GET /api/v1/commodities` | Catalog + rows đa nguồn + unavailable list + impact mapping | multi |
+| `GET /api/v1/macro-economic` | Chỉ tiêu vĩ mô: kỳ công bố, kỳ hiện tại/kỳ trước, lịch công bố tiếp theo | VietnamBiz Data |
+| `GET /api/v1/currency-interest-rate` | Cung tiền, tín dụng, tỷ giá và lãi suất theo kỳ công bố | VietnamBiz Data |
 | `GET /api/v1/news?category=&symbol=&limit=` | Tin tức đã dedupe/tag/validate timestamp | RSS multi-feed |
 | `GET /api/v1/screener?universe=crypto&minChange=&maxChange=&minQuoteVolume=&limit=` | Screener rule-based | Binance |
 | `GET /api/v1/reports/morning-brief` | Morning Brief analyst-style (freshness gate) | engine |
@@ -30,3 +32,5 @@ Envelope chuẩn cho mọi endpoint:
 | `POST /api/v1/auth/login` `{email,password}` | Đăng nhập | auth |
 | `POST /api/v1/auth/logout` | Xóa phiên | auth |
 | `GET /api/v1/auth/me` | Thông tin user hiện tại (401 nếu chưa login) | auth |
+
+Hai endpoint kinh tế mới giữ riêng **kỳ số liệu** và **lần lấy nguồn**: `data.fetchedAt` là thời điểm đồng bộ, `meta.sourceTimestamp`/`ageMs` là `null` do nguồn không cung cấp timestamp xuất bản chính xác. FRESH/STALE mô tả lần đồng bộ, không gắn LIVE. Cache 15 phút, bản STALE tối đa 24 giờ; không có dữ liệu hợp lệ trả `502 UPSTREAM_UNAVAILABLE`. Xem [chi tiết hai trang VietnamBiz](economic-data.md).

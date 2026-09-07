@@ -4,8 +4,8 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import {
-  Bell, Bot, Boxes, CandlestickChart, ChevronsLeft, ChevronsRight, Coins, DollarSign,
-  Eye, FlaskConical, GaugeCircle, Globe2, Grid2x2, Home, LogOut, Menu, Newspaper, NotebookPen, Settings, X,
+  Bell, Bot, Boxes, CandlestickChart, ChartNoAxesCombined, ChevronsLeft, ChevronsRight, Coins, DollarSign,
+  Eye, FlaskConical, GaugeCircle, Globe2, Grid2x2, Home, Landmark, LogOut, Menu, Newspaper, NotebookPen, Settings, X,
 } from "lucide-react";
 import { TickerTape } from "@/components/ticker-tape";
 import { GlobalSearch } from "@/components/search";
@@ -24,6 +24,8 @@ const NAV_SECTIONS: { title: string; items: { href: string; label: string; icon:
       { href: "/crypto", label: "Crypto", icon: Coins },
       { href: "/forex", label: "Forex", icon: DollarSign },
       { href: "/commodities", label: "Hàng hóa", icon: Boxes },
+      { href: "/macro-economic", label: "Kinh tế vĩ mô", icon: ChartNoAxesCombined },
+      { href: "/currency-interest-rate", label: "Lãi suất tiền tệ", icon: Landmark },
     ],
   },
   {
@@ -145,7 +147,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       {mobileOpen && (
         <div className="fixed inset-0 z-50 lg:hidden" role="dialog" aria-modal="true">
           <div className="absolute inset-0 bg-black/60 backdrop-blur-[2px]" onClick={() => setMobileOpen(false)} />
-          <div className="absolute inset-y-0 left-0 w-[240px] border-r border-border-subtle bg-background-secondary p-3">
+          <div className="absolute inset-y-0 left-0 w-[240px] overflow-y-auto border-r border-border-subtle bg-background-secondary p-3">
             <div className="mb-3 flex items-center justify-between">
               <OrcaWordmark size={28} />
               <button onClick={() => setMobileOpen(false)} aria-label="Đóng menu" className="rounded-md p-1 text-text-muted hover:text-text-primary">

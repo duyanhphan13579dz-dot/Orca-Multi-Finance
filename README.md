@@ -17,6 +17,8 @@ ORCA Financial kết nối dữ liệu thị trường thật vào một **Centr
 | Crypto         | **Binance** REST/WS, host failover| Official Binance public data hosts            |
 | Forex          | **Biquote** (API key, env)        | exchangerate-api latest + ECB/Frankfurter     |
 | Commodities    | **Vietnambiz** + **Simplize.vn**  | MSN Finance (env map) + Binance PAXG (gold)   |
+| Kinh tế vĩ mô | **VietnamBiz Data** (`/macro-economic`) | Cache STALE gần nhất; không dùng số liệu thay thế |
+| Lãi suất tiền tệ | **VietnamBiz Data** (`/currency-interest-rate`) | Cache STALE gần nhất; không dùng số liệu thay thế |
 | News           | RSS multi-feed (CafeF, VnExpress, VietnamBiz, CoinTelegraph) | per-feed failover |
 
 Không có module nào dùng số liệu giả. Khi provider lỗi: **retry → exponential backoff → circuit breaker → cache STALE gần nhất → trạng thái DEGRADED/UNAVAILABLE hiển thị công khai**.
@@ -129,6 +131,7 @@ Checks (chạy trước khi push):
 npm run typecheck   # tsc --noEmit
 npm run lint        # eslint .
 npm test            # chart/quality/freshness engine suite (node:test)
+npm run test:economy # hai trang VietnamBiz: parser, cache, metadata, API, tìm kiếm
 ```
 
 ### Deployment (Netlify)
@@ -156,7 +159,7 @@ Chỉ cần `DATABASE_URL` + `JWT_SECRET`: crypto (Binance, không cần key), f
 
 `GET /api/v1/market/snapshot` · `GET /api/v1/stocks?symbols=…` · `GET /api/v1/stocks/{sym}` · `/technical` · `/financials` · `GET /api/v1/crypto/markets` · `GET /api/v1/crypto/{sym}?interval=1h` · `GET /api/v1/forex/markets` · `GET /api/v1/forex/{PAIR}` · `GET /api/v1/commodities` · `GET /api/v1/news?category=&symbol=` · `GET /api/v1/screener?universe=crypto&minChange=&minQuoteVolume=` · `GET /api/v1/reports/morning-brief` · `POST /api/v1/agent {question}` · `GET /api/v1/system/providers` · `POST /api/v1/auth/{register,login,logout}` · `GET /api/v1/auth/me`.
 
-Chi tiết: [`/docs/api.md`](docs/api.md) · Kiến trúc: [`/docs/architecture.md`](docs/architecture.md) · Data providers: [`/docs/data-providers.md`](docs/data-providers.md)
+Chi tiết: [`/docs/api.md`](docs/api.md) · Kiến trúc: [`/docs/architecture.md`](docs/architecture.md) · Data providers: [`/docs/data-providers.md`](docs/data-providers.md) · Hai trang [Kinh tế vĩ mô & Lãi suất tiền tệ](docs/economic-data.md)
 
 ## Repository layout
 

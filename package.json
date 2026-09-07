@@ -11,7 +11,8 @@
     "start": "next start",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --import ./test/test-setup/register-stub.mjs --require ./test/test-setup/patch-server-only.cjs src/lib/__tests__/chart-engine.test.ts"
+    "test": "node --import tsx --import ./test/test-setup/register-stub.mjs --require ./test/test-setup/patch-server-only.cjs src/lib/__tests__/chart-engine.test.ts",
+    "test:economy": "node --import tsx --import ./test/test-setup/register-stub.mjs --require ./test/test-setup/patch-server-only.cjs src/lib/__tests__/economy.test.ts"
   },
   "dependencies": {
     "@tailwindcss/postcss": "4.1.17",
