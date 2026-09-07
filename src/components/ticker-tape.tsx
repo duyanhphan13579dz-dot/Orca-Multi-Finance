@@ -6,7 +6,7 @@ import type { MarketSnapshot } from "@/lib/services/market";
 
 /** Realtime ticker — crypto (Binance live) + FX majors, CSS marquee. */
 export function TickerTape() {
-  const { data } = useApi<MarketSnapshot>("/api/v1/market/snapshot", { refreshInterval: 20_000 });
+  const { data } = useApi<MarketSnapshot>("/api/v1/market/snapshot", { refreshInterval: 45_000 });
   const items: { key: string; label: string; href: string; price: number; chg: number | null; digits: number }[] = [];
 
   if (data?.indices) {
