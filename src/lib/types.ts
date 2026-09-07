@@ -143,7 +143,8 @@ export interface ForexRow extends Quote {
 export interface CommodityRow extends Quote {
   assetClass: "commodity";
   commodity: string;
-  group: "metals" | "energy" | "industrial" | "agriculture" | "vietnam";
+  /** VietnamBiz Data groups: hang_tieu_dung | kim_loai_phi_kim | hoa_chat | vat_lieu_xay_dung | nang_luong | nhua_va_cao_su */
+  group: string;
   sourceRecords: { source: string; price: number; timestamp: string | null; url?: string | null }[];
 }
 
