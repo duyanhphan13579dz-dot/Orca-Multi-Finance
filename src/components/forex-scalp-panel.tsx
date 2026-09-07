@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { memo, useMemo, useState } from "react";
 import { useApi } from "@/lib/hooks";
 import { Badge, fmtNum, FreshnessDot, Loading, MetaLine, Panel, Unavailable } from "@/components/ui";
 import { Crosshair, ShieldAlert, Timer, Zap } from "lucide-react";
@@ -78,9 +78,9 @@ function tierClass(t: string) {
   return "text-positive";
 }
 
-export function ForexScalpPanel({ pair }: { pair: string }) {
+export const ForexScalpPanel = memo(function ForexScalpPanel({ pair }: { pair: string }) {
   const { data, meta, isLoading } = useApi<FxScalpResult>(`/api/v1/forex/${encodeURIComponent(pair)}/scalp`, {
-    refreshInterval: 45_000,
+    refreshInterval: 90_000,
   });
 
   return (
@@ -101,9 +101,9 @@ export function ForexScalpPanel({ pair }: { pair: string }) {
       )}
     </Panel>
   );
-}
+});
 
-function View({ signal: s, meta }: { signal: FxSignal; meta: Meta | null }) {
+const View = memo(function View({ signal: s, meta }: { signal: FxSignal; meta: Meta | null }) {
   const dir = DIR[s.direction] ?? DIR.neutral;
   const digits = s.last >= 100 ? 2 : s.last >= 10 ? 3 : 5;
   const setup = s.primarySetup;
@@ -324,7 +324,7 @@ function View({ signal: s, meta }: { signal: FxSignal; meta: Meta | null }) {
       {meta && <MetaLine meta={meta} />}
     </div>
   );
-}
+});
 
 function Metric({
   label,
