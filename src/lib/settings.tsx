@@ -214,31 +214,6 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
     applyToDom();
     setHydrated(true);
 
-    // Soft-opt into lowDataMode on constrained networks (once, non-destructive if user already set)
-    try {
-      const nav = navigator as Navigator & {
-        connection?: { saveData?: boolean; effectiveType?: string };
-      };
-      const c = nav.connection;
-      const constrained =
-        !!c?.saveData || c?.effectiveType === "2g" || c?.effectiveType === "slow-2g";
-      if (constrained && !snapshot.realtime.lowDataMode) {
-        snapshot = {
-          ...snapshot,
-          realtime: {
-            ...snapshot.realtime,
-            lowDataMode: true,
-            refreshSeconds: Math.max(snapshot.realtime.refreshSeconds, 30),
-          },
-        };
-        persistLocal();
-        applyToDom();
-        notify();
-      }
-    } catch {
-      /* ignore */
-    }
-
     void (async () => {
       try {
         const meRes = await fetch("/api/v1/auth/me");
@@ -300,8 +275,5 @@ export function resolveRefresh(baseMs: number | undefined): number {
   if (!r.liveUpdates) return 0;
   if (baseMs === undefined || baseMs <= 0) return 0;
   const scaled = baseMs * (r.refreshSeconds / 15);
-  // Cap aggressive polling; lowDataMode floors at 60s and multiplies interval
-  if (r.lowDataMode) return Math.max(scaled * 4, 60_000);
-  // Desktop default: never faster than 5s, never slower than 3min from scaling alone
-  return Math.max(Math.min(scaled, 180_000), 5_000);
+  return r.lowDataMode ? Math.max(scaled * 4, 60_000) : Math.max(Math.min(scaled, 120_000), 3_000);
 }
