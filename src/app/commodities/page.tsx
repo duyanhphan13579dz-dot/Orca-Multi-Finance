@@ -2,45 +2,50 @@
 
 import { useMemo, useState } from "react";
 import { useApi } from "@/lib/hooks";
-import { OrcaChart } from "@/components/orca-chart";
 import type { CommodityMarket } from "@/lib/services/commodities";
-import type { CommodityDef } from "@/lib/providers/commodities";
-import { Badge, Chg, fmtNum, FreshnessDot, Loading, MetaLine, Panel, Unavailable } from "@/components/ui";
+import { Badge, Chg, fmtNum, FreshnessDot, Loading, MetaLine, Unavailable } from "@/components/ui";
 import { AddToWatchlist } from "@/components/watchlist-button";
-import { Boxes, CalendarDays, LineChart, Search, X } from "lucide-react";
+import { Boxes, Search, X } from "lucide-react";
 
-/**
- * COMMODITIES — VietnamBiz only.
- * Bảng giá hàng hóa trong nước, uniform cards, nguồn duy nhất VietnamBiz.
- */
+type CatalogItem = {
+  key: string;
+  name: string;
+  nameVi: string;
+  group: string;
+  symbol: string;
+  unit: string;
+  vnImpact: { sector: string; stocks: string[]; mechanism: string } | null;
+};
 
-type Data = CommodityMarket & { catalog: { key: string; name: string; nameVi: string; group: string; symbol: string; unit: string; vnImpact: CommodityDef["vnImpact"] }[] };
+type Data = CommodityMarket & {
+  catalog: CatalogItem[];
+  groups?: Record<string, { title: string; desc: string }>;
+};
 
-const GROUPS: { key: string; title: string; desc: string }[] = [
+const FALLBACK_GROUPS: { key: string; title: string; desc: string }[] = [
   { key: "", title: "Tất cả", desc: "" },
-  { key: "vietnam", title: "Vàng SJC", desc: "SJC" },
-  { key: "energy", title: "Năng lượng", desc: "Xăng · Diesel · Gas" },
-  { key: "agriculture", title: "Nông sản", desc: "Cà phê · Tiêu · Cao su · Heo" },
-  { key: "industrial", title: "Công nghiệp", desc: "Thép" },
+  { key: "hang_tieu_dung", title: "Hàng tiêu dùng", desc: "Heo · Cà phê · Gạo…" },
+  { key: "kim_loai_phi_kim", title: "Kim loại & phi kim", desc: "Vàng · Đồng…" },
+  { key: "hoa_chat", title: "Hóa chất", desc: "Ure · Phân…" },
+  { key: "vat_lieu_xay_dung", title: "Vật liệu XD", desc: "Thép · Xi măng…" },
+  { key: "nang_luong", title: "Năng lượng", desc: "WTI · Xăng…" },
+  { key: "nhua_va_cao_su", title: "Nhựa & cao su", desc: "PVC · PP…" },
 ];
-
-const DATE_RANGES: { label: string; tf: string; limit: number }[] = [
-  { label: "1D", tf: "15m", limit: 96 },
-  { label: "1W", tf: "1h", limit: 168 },
-  { label: "1M", tf: "1d", limit: 32 },
-  { label: "3M", tf: "1d", limit: 95 },
-  { label: "1Y", tf: "1d", limit: 250 },
-];
-
-/** VietnamBiz boards are price snapshots — no OHLC history chart from this source. */
-const CHARTABLE: Record<string, { symbol: string; title: string }> = {};
 
 export default function CommoditiesPage() {
   const [q, setQ] = useState("");
   const [group, setGroup] = useState("");
-  const [chart, setChart] = useState<string | null>(null);
-  const [range, setRange] = useState(DATE_RANGES[1]);
   const { data, meta, isLoading } = useApi<Data>("/api/v1/commodities", { refreshInterval: 5 * 60_000 });
+
+  const groups = useMemo(() => {
+    if (data?.groups) {
+      return [
+        { key: "", title: "Tất cả", desc: "" },
+        ...Object.entries(data.groups).map(([key, v]) => ({ key, title: v.title, desc: v.desc })),
+      ];
+    }
+    return FALLBACK_GROUPS;
+  }, [data]);
 
   const catalog = useMemo(() => {
     let defs = data?.catalog ?? [];
@@ -58,7 +63,6 @@ export default function CommoditiesPage() {
   }, [data, group, q]);
 
   const bySymbol = useMemo(() => new Map((data?.rows ?? []).map((r) => [r.symbol, r])), [data]);
-  const chartDef = chart ? CHARTABLE[chart] : null;
 
   if (isLoading && !data) return <Loading rows={10} />;
 
@@ -68,7 +72,7 @@ export default function CommoditiesPage() {
         <div className="flex flex-wrap items-center gap-3">
           <h1 className="flex items-center gap-2 text-lg font-semibold">
             <Boxes className="size-5 text-accent-primary" /> Hàng hóa
-            <Badge tone="neutral">VietnamBiz</Badge>
+            <Badge tone="neutral">VietnamBiz Data</Badge>
             {meta && <FreshnessDot status={meta.freshness} ageMs={meta.ageMs} />}
           </h1>
           <div className="relative ml-auto w-full max-w-sm">
@@ -76,7 +80,7 @@ export default function CommoditiesPage() {
             <input
               value={q}
               onChange={(e) => setQ(e.target.value)}
-              placeholder="Tìm: vàng SJC, cà phê, xăng, heo…"
+              placeholder="Tìm: vàng, cà phê, xăng, thép…"
               className="w-full rounded-xl border border-border-subtle bg-surface-elevated py-2 pl-9 pr-8 text-[13px] text-text-primary shadow-inner outline-none transition-all placeholder:text-text-muted focus:border-accent-primary/50 focus:ring-2 focus:ring-accent-primary/20"
               aria-label="Tìm kiếm hàng hóa"
             />
@@ -88,7 +92,7 @@ export default function CommoditiesPage() {
           </div>
         </div>
         <div className="mt-3 flex flex-wrap items-center gap-1.5">
-          {GROUPS.map((g) => (
+          {groups.map((g) => (
             <button
               key={g.key}
               onClick={() => setGroup(g.key)}
@@ -106,48 +110,23 @@ export default function CommoditiesPage() {
             <MetaLine meta={meta} />
           </span>
         </div>
+        {data?.rows && (
+          <p className="mt-2 text-[11px] text-text-muted">
+            {data.rows.length} mặt hàng · nguồn{" "}
+            <a href="https://data.vietnambiz.vn/goods" target="_blank" rel="noopener noreferrer" className="text-accent-primary hover:underline">
+              data.vietnambiz.vn/goods
+            </a>
+          </p>
+        )}
       </div>
 
-      {chartDef && (
-        <div className="panel overflow-hidden">
-          <div className="flex flex-wrap items-center gap-2 border-b border-border-subtle px-3.5 py-2.5">
-            <LineChart className="size-4 text-accent-primary" />
-            <span className="text-[13px] font-semibold">{chartDef.title}</span>
-            <div className="ml-auto flex items-center gap-1 rounded-lg border border-border-subtle bg-surface-elevated p-1">
-              <CalendarDays className="ml-1 size-3.5 text-text-muted" />
-              {DATE_RANGES.map((r) => (
-                <button
-                  key={r.label}
-                  onClick={() => setRange(r)}
-                  className={`rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors ${
-                    range.label === r.label ? "bg-accent-primary/15 text-accent-primary" : "text-text-muted hover:text-text-primary"
-                  }`}
-                >
-                  {r.label}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div className="p-1.5">
-            <OrcaChart
-              key={`${chartDef.symbol}-${range.tf}-${range.limit}`}
-              symbol={chartDef.symbol}
-              assetType="commodity"
-              defaultTimeframe={range.tf}
-              height={380}
-              title={chartDef.title}
-            />
-          </div>
-        </div>
-      )}
-
       {!data ? (
-        <Unavailable title="VietnamBiz chưa phản hồi bảng giá hàng hóa" meta={meta} />
+        <Unavailable title="VietnamBiz Data chưa phản hồi bảng giá" meta={meta} />
       ) : (
         <div className="grid grid-cols-1 gap-2.5 md:grid-cols-2 xl:grid-cols-3">
           {catalog.map((d) => {
             const row = bySymbol.get(d.symbol);
-            const groupMeta = GROUPS.find((x) => x.key === d.group);
+            const groupMeta = groups.find((x) => x.key === d.group);
             if (!row) {
               return (
                 <div key={d.key} className="panel flex items-center justify-between p-3 opacity-60">
@@ -161,9 +140,8 @@ export default function CommoditiesPage() {
                 </div>
               );
             }
-            const dgt = row.price >= 1000 ? 0 : 2;
+            const dgt = row.price >= 1000 ? 0 : row.price >= 10 ? 2 : 3;
             const up = (row.changePercent ?? 0) > 0;
-            const hasChart = Boolean(CHARTABLE[d.symbol]);
             return (
               <div key={d.key} className="panel hover-lift relative overflow-hidden p-3">
                 <div
@@ -174,29 +152,13 @@ export default function CommoditiesPage() {
                 <div className="flex items-start justify-between gap-2 pl-1.5">
                   <div className="min-w-0">
                     <div className="flex items-center gap-2">
-                      <span className="text-[13.5px] font-semibold">{d.nameVi}</span>
-                      <span className="text-[9.5px] uppercase tracking-wider text-text-muted">{groupMeta?.title}</span>
+                      <span className="text-[13.5px] font-semibold leading-snug">{d.nameVi}</span>
                     </div>
                     <div className="text-[10px] text-text-muted">
-                      {d.symbol} · {row.unit}
+                      {groupMeta?.title ?? d.group} · {row.unit}
                     </div>
                   </div>
-                  <div className="flex shrink-0 items-center gap-1">
-                    <AddToWatchlist assetType="commodity" symbol={d.symbol} />
-                    {hasChart && (
-                      <button
-                        onClick={() => setChart(chart === d.symbol ? null : d.symbol)}
-                        className={`rounded-md border p-1 ${
-                          chart === d.symbol
-                            ? "border-accent-primary/50 text-accent-primary"
-                            : "border-border-subtle text-text-muted hover:text-text-primary"
-                        }`}
-                        aria-label="Mở chart"
-                      >
-                        <LineChart className="size-3.5" />
-                      </button>
-                    )}
-                  </div>
+                  <AddToWatchlist assetType="commodity" symbol={d.symbol} />
                 </div>
                 <div className="mt-2 flex items-baseline justify-between pl-1.5">
                   <span className="num text-[19px] font-semibold tracking-tight">
@@ -218,8 +180,7 @@ export default function CommoditiesPage() {
                               timeZone: "Asia/Ho_Chi_Minh",
                               day: "2-digit",
                               month: "2-digit",
-                              hour: "2-digit",
-                              minute: "2-digit",
+                              year: "numeric",
                             })}
                           </>
                         )}
@@ -227,32 +188,10 @@ export default function CommoditiesPage() {
                     </div>
                   ))}
                 </div>
-                {d.vnImpact && (
-                  <p className="mt-1.5 rounded-md bg-surface-elevated p-1.5 pl-3 text-[10.5px] leading-relaxed text-text-muted">
-                    <span className="text-text-secondary">{d.vnImpact.sector}</span>
-                    {d.vnImpact.stocks.length > 0 && (
-                      <>
-                        {" "}·{" "}
-                        {d.vnImpact.stocks.map((s) => (
-                          <b key={s} className="text-accent-primary/90">
-                            {" "}
-                            {s}
-                          </b>
-                        ))}
-                      </>
-                    )}
-                  </p>
-                )}
               </div>
             );
           })}
         </div>
-      )}
-
-      {data && data.unavailable.length > 0 && (
-        <p className="text-[11px] text-text-muted">
-          {data.unavailable.length} mặt hàng chưa parse được từ VietnamBiz — hệ thống không mock data.
-        </p>
       )}
     </div>
   );
