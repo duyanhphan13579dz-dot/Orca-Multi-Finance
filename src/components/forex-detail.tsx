@@ -77,6 +77,7 @@ export function ForexDetailPage({ pair }: { pair: string }) {
       </Panel>
 
       <div className="grid grid-cols-12 gap-3">
+        {/* Signal panel first — confidence + leverage slider + Entry/SL/TP */}
         <div className="col-span-12 xl:col-span-4 order-1 xl:order-2">
           <div className="flex flex-col gap-3">
             <ForexScalpPanel pair={pair} />
@@ -202,31 +203,37 @@ function CandlePatternsPanel({ patterns }: { patterns: CandlePattern[] }) {
     <Panel
       title={
         <span className="flex items-center gap-2">
-          <Layers className="size-4 text-accent-primary" /> Mô hình nến
+          <Layers className="size-4 text-accent-primary" /> Nhận diện mẫu hình nến
         </span>
       }
     >
-      {patterns.length === 0 ? (
-        <p className="text-[12px] text-text-muted">Không phát hiện mô hình gần đây.</p>
+      {!patterns.length ? (
+        <p className="text-[12px] leading-relaxed text-text-muted">
+          Không có mô hình đáng chú ý trên nến intraday gần nhất — thị trường đang vận động theo cấu trúc thông thường.
+        </p>
       ) : (
-        <ul className="space-y-2">
-          {patterns.slice(0, 8).map((p, i) => (
-            <li key={i} className="flex items-start justify-between gap-2 text-[12px]">
-              <span className="font-medium text-text-primary">{p.name}</span>
-              <Badge tone={p.bias === "bullish" ? "up" : p.bias === "bearish" ? "down" : "neutral"}>{p.bias}</Badge>
-            </li>
+        <div className="max-h-[200px] space-y-2 overflow-y-auto">
+          {patterns.map((p) => (
+            <div key={p.name} className="panel-inset space-y-1 p-2.5">
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="text-[12px] font-medium text-text-primary">{p.nameVi}</span>
+                <Badge tone={p.type === "bullish" ? "up" : p.type === "bearish" ? "down" : "neutral"}>
+                  {p.type === "bullish" ? "Tăng" : p.type === "bearish" ? "Giảm" : "Trung lập"}
+                </Badge>
+                <Badge tone="neutral">{p.reliability}</Badge>
+              </div>
+              <p className="text-[11px] leading-relaxed text-text-secondary">{p.description}</p>
+            </div>
           ))}
-        </ul>
+        </div>
       )}
     </Panel>
   );
 }
 
 function ForexNewsPanel({ pair, base, quote }: { pair: string; base: string; quote: string }) {
-  const { data, isLoading } = useApi<NewsPayload>(
-    `/api/v1/news?q=${encodeURIComponent(`${base} ${quote} forex`)}&limit=6`,
-    { refreshInterval: 180_000 },
-  );
+  const q = encodeURIComponent(`${base} ${quote} OR ${pair}`);
+  const { data, isLoading } = useApi<NewsPayload>(`/api/v1/news?q=${q}&limit=8`, { refreshInterval: 300_000 });
   const articles = data?.articles ?? [];
 
   return (
@@ -237,14 +244,14 @@ function ForexNewsPanel({ pair, base, quote }: { pair: string; base: string; quo
         </span>
       }
     >
-      {isLoading && articles.length === 0 ? (
+      {isLoading && !articles.length ? (
         <Loading rows={3} />
-      ) : articles.length === 0 ? (
+      ) : !articles.length ? (
         <p className="text-[12px] text-text-muted">Chưa có tin gần đây cho {pair}.</p>
       ) : (
         <ul className="space-y-2.5">
-          {articles.slice(0, 6).map((a, i) => (
-            <li key={i}>
+          {articles.slice(0, 6).map((a) => (
+            <li key={a.url}>
               <a
                 href={a.url}
                 target="_blank"
@@ -278,40 +285,40 @@ function formatAge(iso: string): string {
 }
 
 function computeLocalSentiment(
-  price: { changePercent?: number | null; price?: number | null },
+  t: { changePercent?: number | null; price?: number | null },
   tech: TechnicalSnapshot | null,
-  _asset: string,
+  mode: "crypto" | "forex",
 ) {
   let score = 0;
   const factors: { w: number; text: string }[] = [];
-  const chg = price.changePercent;
+  const chg = t.changePercent;
   if (chg != null && Number.isFinite(chg)) {
     const w = Math.max(-25, Math.min(25, Math.round(chg * 3)));
     score += w;
     factors.push({ w, text: `Biến động ngày ${chg >= 0 ? "+" : ""}${chg.toFixed(2)}%` });
   }
-  if (tech?.rsi != null) {
-    if (tech.rsi < 30) {
+  if (tech?.rsi14 != null) {
+    const rsi = tech.rsi14;
+    if (rsi < 30) {
       score += 12;
-      factors.push({ w: 12, text: `RSI thấp (${tech.rsi.toFixed(0)}) — quá bán` });
-    } else if (tech.rsi > 70) {
+      factors.push({ w: 12, text: `RSI thấp (${rsi.toFixed(0)}) — quá bán` });
+    } else if (rsi > 70) {
       score -= 12;
-      factors.push({ w: -12, text: `RSI cao (${tech.rsi.toFixed(0)}) — quá mua` });
+      factors.push({ w: -12, text: `RSI cao (${rsi.toFixed(0)}) — quá mua` });
     } else {
-      factors.push({ w: 0, text: `RSI trung tính (${tech.rsi.toFixed(0)})` });
+      factors.push({ w: 0, text: `RSI trung tính (${rsi.toFixed(0)})` });
     }
   }
-  if (tech?.trend) {
-    if (tech.trend === "up") {
-      score += 10;
-      factors.push({ w: 10, text: "Xu hướng SMA tăng" });
-    } else if (tech.trend === "down") {
-      score -= 10;
-      factors.push({ w: -10, text: "Xu hướng SMA giảm" });
-    }
+  const trend = tech?.smaTrend ?? tech?.trend;
+  if (trend === "up" || trend === "bullish") {
+    score += 10;
+    factors.push({ w: 10, text: "Xu hướng SMA tăng" });
+  } else if (trend === "down" || trend === "bearish") {
+    score -= 10;
+    factors.push({ w: -10, text: "Xu hướng SMA giảm" });
   }
   score = Math.max(-50, Math.min(50, score));
   const label = score >= 15 ? "Tích cực" : score <= -15 ? "Tiêu cực" : "Trung lập";
-  const tone = score >= 15 ? "up" as const : score <= -15 ? "down" as const : "neutral" as const;
+  const tone = score >= 15 ? ("up" as const) : score <= -15 ? ("down" as const) : ("neutral" as const);
   return { score, label, tone, factors: factors.length ? factors : [{ w: 0, text: "Thiếu dữ liệu kỹ thuật" }] };
 }
