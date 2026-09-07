@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
-import { AlertTriangle, ChartNoAxesCombined, ExternalLink, Info, Landmark, RefreshCw, Search, X } from "lucide-react";
+import { AlertTriangle, ChartNoAxesCombined, ExternalLink, Landmark, RefreshCw, Search, X } from "lucide-react";
 import { Badge, Chg, FreshnessDot, Loading, Unavailable } from "@/components/ui";
 import { useApi } from "@/lib/hooks";
 import {
@@ -143,7 +143,7 @@ export function EconomicDataPage({ dataset }: { dataset: EconomicDataset }) {
       {stale && (
         <div role="status" className="flex items-start gap-2 rounded-lg border border-warning/30 bg-warning/5 p-3 text-[12px] leading-relaxed text-text-secondary">
           <AlertTriangle className="mt-0.5 size-4 shrink-0 text-warning" aria-hidden="true" />
-          <p>Đang hiển thị bản lưu gần nhất vì chưa lấy được bản mới. Vui lòng kiểm tra thời điểm lấy dữ liệu và kỳ công bố bên dưới; đây không phải dữ liệu trực tiếp.</p>
+          <p>Đang hiển thị bản lưu gần nhất vì chưa lấy được bản mới. Vui lòng kiểm tra kỳ công bố trong bảng; đây không phải dữ liệu trực tiếp.</p>
         </div>
       )}
       {data && data.warnings.length > 0 && (
@@ -222,21 +222,6 @@ export function EconomicDataPage({ dataset }: { dataset: EconomicDataset }) {
           </section>
         </>
       )}
-
-      <section className="panel p-4" aria-label="Thông tin nguồn dữ liệu">
-        <div className="flex items-start gap-2.5">
-          <Info className="mt-0.5 size-4 shrink-0 text-accent-primary" aria-hidden="true" />
-          <div className="min-w-0 space-y-2 text-[11px] leading-relaxed text-text-muted">
-            <div className="flex flex-wrap gap-x-5 gap-y-1 text-text-secondary">
-              <span>Nguồn: <a href={config.sourceUrl} target="_blank" rel="noopener noreferrer" className="text-accent-primary hover:underline">data.vietnambiz.vn/{dataset}</a></span>
-              {data && <span>Lấy dữ liệu lúc: <time dateTime={data.fetchedAt}>{new Date(data.fetchedAt).toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh", hour12: false })}</time> (giờ Việt Nam)</span>}
-            </div>
-            <p>Trạng thái FRESH/STALE phản ánh lần đồng bộ nguồn, không phải kỳ số liệu. Mỗi chỉ tiêu có lịch công bố riêng; không gán nhãn LIVE cho dữ liệu định kỳ. Bộ nhớ đệm nguồn tối đa 15 phút; khi nguồn lỗi, bản hợp lệ gần nhất có thể được giữ tối đa 24 giờ và gắn nhãn STALE.</p>
-            <p>Số liệu và cách ghi đơn vị được giữ theo nguồn. {config.hasReleaseSchedule ? "Lịch công bố là mô tả từ VietnamBiz, không phải ngày dự báo do ORCA tự tính." : "Nguồn không cung cấp lịch công bố tiếp theo cho bảng lãi suất tiền tệ."}</p>
-            <p className="border-t border-border-subtle pt-2">Dữ liệu thuộc bản quyền CTCP WiGroup · Xem chi tiết tại <a href="https://wichart.vn/" target="_blank" rel="noopener noreferrer" className="text-accent-primary hover:underline">WiChart.vn</a> · Nguồn dữ liệu <a href="https://www.wigroup.vn/san-pham/wifeed" target="_blank" rel="noopener noreferrer" className="text-accent-primary hover:underline">WiFeed.vn</a>.</p>
-          </div>
-        </div>
-      </section>
     </div>
   );
 }

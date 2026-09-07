@@ -44,9 +44,9 @@ Không dùng key/circuit `vietnambiz-data` của module hàng hóa.
 - Có một phần số liệu lỗi: giữ những chỉ tiêu đọc được, kèm `warnings`, `partial: true`, trạng thái `DEGRADED`.
 - Không có mock/fallback dữ liệu trong production. Bảng mất cấu trúc hoặc không có giá trị hiện tại hợp lệ không được ghi đè cache tốt.
 - `data.fetchedAt`, `meta.ingestedAt`, `meta.providerReceivedAt` giữ lần lấy nguồn thành công, **không đổi khi cache hit**.
-- Nguồn chỉ ghi kỳ thống kê, không cung cấp timestamp xuất bản chính xác: `sourceTimestamp` và `ageMs` luôn `null`. FRESH/STALE chỉ đánh giá **lần đồng bộ**, được giải thích ngay trên UI và `meta.note`; **không gắn LIVE** hay đánh giá chỉ tiêu năm cũ là lỗi.
+- Nguồn chỉ ghi kỳ thống kê, không cung cấp timestamp xuất bản chính xác: `sourceTimestamp` và `ageMs` luôn `null`. FRESH/STALE chỉ đánh giá **lần đồng bộ**, hiển thị dưới nhãn “Đồng bộ nguồn” và được giải thích trong `meta.note`; **không gắn LIVE** hay đánh giá chỉ tiêu năm cũ là lỗi.
 - Nút **Làm mới** tải lại API, vẫn tôn trọng TTL, không cho client bỏ qua cache/gây tải lên nguồn. Polling đi theo chính sách `useApi`/Settings hiện có.
-- Dữ liệu có liên kết gốc và ghi nhận bản quyền **CTCP WiGroup**, liên kết **WiChart.vn**, **WiFeed.vn**.
+- Giao diện giữ nút **VietnamBiz Data** dẫn tới nguồn gốc ở đầu trang; thông tin **CTCP WiGroup** vẫn được giữ trong `meta.source`. Khung thông tin nguồn dài ở cuối hai trang đã được bỏ; API, timestamp, cache và footer chung không thay đổi.
 
 Host triển khai cần cho phép HTTPS outbound đến `data.vietnambiz.vn:443`. Nếu môi trường chặn mạng/TLS hoặc nguồn đổi cấu trúc, hai trang hiển thị UNAVAILABLE/STALE độc lập; các module khác không phụ thuộc hai request này.
 
