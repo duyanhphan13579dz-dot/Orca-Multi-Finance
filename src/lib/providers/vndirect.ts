@@ -3,12 +3,6 @@ import { httpJson } from "../http";
 import type { IndexQuote, OhlcvBar, Quote } from "../types";
 import { ProviderError } from "./binance";
 
-/**
- * VNDIRECT provider — primary free source for full VN equity market board
- * (universe + indices + daily prices). Also secondary validation for VNStock.
- * Host: api-finfo.vndirect.com.vn (public finfo API).
- */
-
 export const VNDIRECT = "vndirect";
 
 const base = () =>
@@ -74,7 +68,6 @@ async function vndGet<T>(path: string, timeoutMs = 12_000): Promise<T> {
   return res.data;
 }
 
-/** Listed equity universe (HOSE / HNX / UPCOM). */
 export async function getVndUniverse(): Promise<
   { symbol: string; name: string | null; exchange: string | null; industry: string | null }[]
 > {
@@ -105,7 +98,6 @@ export async function getVndUniverse(): Promise<
   return out;
 }
 
-/** Resolve latest trading session date from VNINDEX. */
 export async function getVndLatestSessionDate(): Promise<string> {
   const payload = await vndGet<Page<{ date?: string; code?: string }>>(
     `/v4/vnmarket_prices?q=code:VNINDEX&size=1&sort=date:desc`,
@@ -115,7 +107,6 @@ export async function getVndLatestSessionDate(): Promise<string> {
   return d.slice(0, 10);
 }
 
-/** Market indices (VNINDEX, VN30, HNX, UPCOM, …). */
 export async function getVndIndices(): Promise<{ items: IndexQuote[]; sourceTs: number | null }> {
   const date = await getVndLatestSessionDate();
   const codes = ["VNINDEX", "VN30", "HNX", "UPCOM", "VN100", "HNX30"];
@@ -155,7 +146,6 @@ export async function getVndIndices(): Promise<{ items: IndexQuote[]; sourceTs: 
   return { items, sourceTs: newest };
 }
 
-/** Full market board for a session date (all floors), paginated. */
 export async function getVndMarketQuotes(
   sessionDate?: string,
 ): Promise<{ quotes: Quote[]; sourceTs: number | null; sessionDate: string }> {
@@ -212,7 +202,6 @@ export async function getVndMarketQuotes(
   return { quotes, sourceTs: newest, sessionDate: date };
 }
 
-/** latest daily quotes for a list of symbols (validation path) */
 export async function getVndQuotes(symbols: string[]): Promise<{ quotes: Quote[]; sourceTs: number | null }> {
   const chunks = symbols.slice(0, 40).map((s) => s.toUpperCase());
   if (!chunks.length) return { quotes: [], sourceTs: null };
@@ -256,7 +245,6 @@ export async function getVndQuotes(symbols: string[]): Promise<{ quotes: Quote[]
   return { quotes, sourceTs: newest };
 }
 
-/** daily OHLCV history (validation + fallback series) */
 export async function getVndOhlcv(symbol: string, size = 250): Promise<OhlcvBar[]> {
   const s = encodeURIComponent(symbol.toUpperCase());
   const res = await httpJson<{ data?: VndPriceRow[] }>(
@@ -280,7 +268,6 @@ export async function getVndOhlcv(symbol: string, size = 250): Promise<OhlcvBar[
   return bars;
 }
 
-/** Map internal index codes → VNDirect vnmarket_prices codes. */
 export function vndIndexCode(code: string): string {
   const c = code.toUpperCase().replace(/[^A-Z0-9]/g, "");
   const map: Record<string, string> = {
@@ -302,7 +289,6 @@ export function isVnIndexSymbol(symbol: string): boolean {
   return INDEX_CODES.has(symbol.toUpperCase().replace(/[^A-Z0-9]/g, ""));
 }
 
-/** Historical daily OHLCV for a VN market index (VNINDEX, VN30, HNX, …). */
 export async function getVndIndexOhlcv(code: string, size = 250): Promise<OhlcvBar[]> {
   const c = encodeURIComponent(vndIndexCode(code));
   const payload = await vndGet<Page<VndPriceRow>>(
@@ -337,7 +323,6 @@ export type VndIndexSessionStats = {
   sourceTs: number | null;
 };
 
-/** Latest session breadth / volume stats for an index. */
 export async function getVndIndexSessionStats(code: string): Promise<VndIndexSessionStats> {
   const c = encodeURIComponent(vndIndexCode(code));
   const payload = await vndGet<Page<VndPriceRow>>(`/v4/vnmarket_prices?q=code:${c}&size=1&sort=date:desc`);
@@ -354,5 +339,86 @@ export async function getVndIndexSessionStats(code: string): Promise<VndIndexSes
     value: num(r.nmValue) ?? num(r.accumulatedVal),
     date: r.date ?? null,
     sourceTs: ts != null && Number.isFinite(ts) ? ts : null,
+  };
+}
+
+export type VndForeignFlowRow = {
+  symbol: string;
+  buyVal: number;
+  sellVal: number;
+  netVal: number;
+  floor: string | null;
+};
+
+export type VndForeignFlowSummary = {
+  sessionDate: string;
+  buyVal: number;
+  sellVal: number;
+  netVal: number;
+  stockCount: number;
+  topNetBuy: VndForeignFlowRow[];
+  topNetSell: VndForeignFlowRow[];
+  sourceTs: number | null;
+};
+
+/** Aggregate foreign investor buy/sell for listed STOCK on a session date. */
+export async function getVndForeignFlow(sessionDate?: string): Promise<VndForeignFlowSummary> {
+  const date = sessionDate ?? (await getVndLatestSessionDate());
+  const pageSize = 200;
+  let page = 1;
+  let totalPages = 1;
+  let buyVal = 0;
+  let sellVal = 0;
+  let netVal = 0;
+  let stockCount = 0;
+  const rows: VndForeignFlowRow[] = [];
+
+  while (page <= totalPages && page <= 20) {
+    const payload = await vndGet<
+      Page<{
+        code?: string;
+        type?: string;
+        floor?: string;
+        buyVal?: number;
+        sellVal?: number;
+        netVal?: number;
+        tradingDate?: string;
+      }>
+    >(`/v4/foreigns?q=tradingDate:${date}~type:STOCK&size=${pageSize}&page=${page}`, 18_000);
+    const data = payload.data ?? [];
+    totalPages = Math.max(1, Number(payload.totalPages) || 1);
+    for (const r of data) {
+      if ((r.type ?? "STOCK").toUpperCase() !== "STOCK") continue;
+      const symbol = String(r.code ?? "").toUpperCase();
+      if (!symbol) continue;
+      const bv = num(r.buyVal) ?? 0;
+      const sv = num(r.sellVal) ?? 0;
+      const nv = num(r.netVal) ?? bv - sv;
+      buyVal += bv;
+      sellVal += sv;
+      netVal += nv;
+      stockCount += 1;
+      if (Math.abs(nv) > 0) {
+        rows.push({ symbol, buyVal: bv, sellVal: sv, netVal: nv, floor: r.floor ?? null });
+      }
+    }
+    if (!data.length) break;
+    page += 1;
+  }
+
+  rows.sort((a, b) => b.netVal - a.netVal);
+  const topNetBuy = rows.filter((r) => r.netVal > 0).slice(0, 8);
+  const topNetSell = [...rows].filter((r) => r.netVal < 0).sort((a, b) => a.netVal - b.netVal).slice(0, 8);
+  const ts = Date.parse(`${date}T15:00:00+07:00`);
+
+  return {
+    sessionDate: date,
+    buyVal,
+    sellVal,
+    netVal,
+    stockCount,
+    topNetBuy,
+    topNetSell,
+    sourceTs: Number.isFinite(ts) ? ts : null,
   };
 }
