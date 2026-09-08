@@ -1,6 +1,12 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  // Turbopack is used in Next 16 builds; keep config compatible with both bundlers.
+  // Previously a custom `webpack.splitChunks` was added for micro-optimization,
+  // but it breaks `next build --turbopack`. Turbopack's defaults are already
+  // highly optimized, and the real perf wins come from data-layer caching
+  // (cache.ts, SWR dedup) and UI virtualization - not manual chunk tuning.
+  turbopack: {},
   experimental: {
     optimizePackageImports: ["lucide-react", "recharts", "date-fns"],
   },
@@ -11,53 +17,6 @@ const nextConfig: NextConfig = {
   images: {
     formats: ["image/avif", "image/webp"],
     minimumCacheTTL: 60 * 60 * 24 * 30,
-  },
-  // Optimize bundle splitting for faster initial load and less JS main-thread work
-  webpack: (config, { dev, isServer }) => {
-    if (!dev && !isServer) {
-      config.optimization = {
-        ...config.optimization,
-        splitChunks: {
-          chunks: "all",
-          maxInitialRequests: 25,
-          minSize: 20000,
-          cacheGroups: {
-            // Vendor chunks split by library for better long-term caching
-            react: {
-              test: /[\\/]node_modules[\\/](react|react-dom|scheduler)[\\/]/,
-              name: "react-vendor",
-              priority: 40,
-              reuseExistingChunk: true,
-            },
-            charts: {
-              test: /[\\/]node_modules[\\/]lightweight-charts[\\/]/,
-              name: "charts",
-              priority: 30,
-              reuseExistingChunk: true,
-            },
-            icons: {
-              test: /[\\/]node_modules[\\/]lucide-react[\\/]/,
-              name: "icons",
-              priority: 20,
-              reuseExistingChunk: true,
-            },
-            vendor: {
-              test: /[\\/]node_modules[\\/]/,
-              name: "vendor",
-              priority: 10,
-              reuseExistingChunk: true,
-            },
-            common: {
-              minChunks: 2,
-              priority: 5,
-              reuseExistingChunk: true,
-              name: "common",
-            },
-          },
-        },
-      };
-    }
-    return config;
   },
   async headers() {
     return [
