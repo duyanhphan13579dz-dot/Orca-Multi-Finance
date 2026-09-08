@@ -248,7 +248,7 @@ function computeLocalSentiment(
     score += w;
     factors.push({ w, text: `Trend: ${tech.trend.label} (${tech.trend.score})` });
   }
-  score = Math.max(-100, Math.min(100, Math.round(score));
+  score = Math.max(-100, Math.min(100, Math.round(score)));
   let label = "TRUNG LẬP";
   let tone: "up" | "down" | "neutral" = "neutral";
   if (score >= 35) {
