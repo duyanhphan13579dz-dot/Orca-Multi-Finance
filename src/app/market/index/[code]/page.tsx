@@ -7,13 +7,8 @@ import { useSettings } from "@/lib/settings";
 import type { IndexDetail } from "@/lib/services/market-intel";
 import { Badge, Chg, fmtCompact, fmtNum, FreshnessDot, Loading, MetaLine, Panel, Unavailable } from "@/components/ui";
 import { OrcaChart } from "@/components/orca-chart";
-import { Activity, ArrowLeft, Gauge, Layers, TrendingDown, TrendingUp } from "lucide-react";
+import { Activity, ArrowLeft, ArrowLeftRight, Gauge, Layers, TrendingDown, TrendingUp } from "lucide-react";
 
-/**
- * INDEX DETAIL — VN-INDEX / VN30 / HNX-INDEX / UPCOM.
- * Price & performance · chart · buying/selling pressure (participation-based)
- * · flows · contributors (weight × change) · market intelligence summary.
- */
 export default function IndexDetailPage({ params }: { params: Promise<{ code: string }> }) {
   const { code } = use(params);
   const { settings } = useSettings();
@@ -31,7 +26,6 @@ export default function IndexDetailPage({ params }: { params: Promise<{ code: st
         <ArrowLeft className="size-3.5" /> Market Command Center
       </Link>
 
-      {/* header */}
       <Panel pad={false}>
         <div className="flex flex-wrap items-end justify-between gap-3 p-4">
           <div>
@@ -61,11 +55,9 @@ export default function IndexDetailPage({ params }: { params: Promise<{ code: st
         <div className="border-t border-border-subtle px-4 py-2"><MetaLine meta={meta} /></div>
       </Panel>
 
-      {/* chart */}
       <OrcaChart symbol={data.code} assetType="stock" defaultTimeframe="1d" height={400} title={`${data.name} — biểu đồ`} />
 
       <div className="grid grid-cols-12 gap-3">
-        {/* pressure */}
         <Panel className="col-span-12 lg:col-span-4" title={<span className="flex items-center gap-2"><Gauge className="size-4 text-accent-primary" /> Áp lực mua / bán</span>}>
           {data.pressure.available ? (
             <div className="space-y-2">
@@ -88,7 +80,6 @@ export default function IndexDetailPage({ params }: { params: Promise<{ code: st
           )}
         </Panel>
 
-        {/* breadth */}
         <Panel className="col-span-12 lg:col-span-4" title={<span className="flex items-center gap-2"><Layers className="size-4 text-accent-primary" /> Độ rộng</span>}>
           {data.breadth.available ? (
             <div className="flex gap-2">
@@ -101,7 +92,6 @@ export default function IndexDetailPage({ params }: { params: Promise<{ code: st
           )}
         </Panel>
 
-        {/* intel summary */}
         <Panel className="col-span-12 lg:col-span-4" title={<span className="flex items-center gap-2"><Activity className="size-4 text-accent-primary" /> Market Intelligence</span>}>
           <dl className="space-y-1 text-[12px]">
             {[
@@ -118,10 +108,78 @@ export default function IndexDetailPage({ params }: { params: Promise<{ code: st
           </dl>
         </Panel>
 
-        {/* contributors */}
+        <Panel
+          className="col-span-12"
+          title={
+            <span className="flex items-center gap-2">
+              <ArrowLeftRight className="size-4 text-accent-primary" /> Phân tích dòng tiền
+              {data.capitalFlow?.sessionDate && (
+                <span className="text-[10px] font-normal text-text-muted">phiên {data.capitalFlow.sessionDate}</span>
+              )}
+            </span>
+          }
+        >
+          {data.capitalFlow?.available ? (
+            <div className="space-y-3">
+              <div className="grid grid-cols-3 gap-2">
+                <div className="rounded-lg border border-border-subtle bg-surface-elevated p-3 text-center">
+                  <div className="text-[10px] uppercase tracking-wider text-text-muted">NN mua</div>
+                  <div className="num mt-1 text-[16px] font-semibold text-up">{fmtCompact(data.capitalFlow.foreignBuy)}</div>
+                </div>
+                <div className="rounded-lg border border-border-subtle bg-surface-elevated p-3 text-center">
+                  <div className="text-[10px] uppercase tracking-wider text-text-muted">NN bán</div>
+                  <div className="num mt-1 text-[16px] font-semibold text-down">{fmtCompact(data.capitalFlow.foreignSell)}</div>
+                </div>
+                <div className="rounded-lg border border-border-subtle bg-surface-elevated p-3 text-center">
+                  <div className="text-[10px] uppercase tracking-wider text-text-muted">Ròng</div>
+                  <div className={`num mt-1 text-[16px] font-semibold ${(data.capitalFlow.foreignNet ?? 0) >= 0 ? "text-up" : "text-down"}`}>
+                    {(data.capitalFlow.foreignNet ?? 0) >= 0 ? "+" : ""}
+                    {fmtCompact(data.capitalFlow.foreignNet)}
+                  </div>
+                </div>
+              </div>
+              <div className="grid gap-3 md:grid-cols-2">
+                <div className="panel-inset p-2.5">
+                  <div className="mb-1.5 flex items-center gap-1 text-[10px] font-semibold uppercase tracking-widest text-positive">
+                    <TrendingUp className="size-3" /> Top NN mua ròng
+                  </div>
+                  <ul className="space-y-0.5">
+                    {data.capitalFlow.topNetBuy.map((r) => (
+                      <li key={r.symbol} className="flex items-center justify-between text-[12px]">
+                        <Link href={`/stocks/${r.symbol}`} className="font-semibold hover:text-accent-primary">{r.symbol}</Link>
+                        <span className="num text-up">+{fmtCompact(r.netVal)}</span>
+                      </li>
+                    ))}
+                    {!data.capitalFlow.topNetBuy.length && <li className="text-[11px] text-text-muted">—</li>}
+                  </ul>
+                </div>
+                <div className="panel-inset p-2.5">
+                  <div className="mb-1.5 flex items-center gap-1 text-[10px] font-semibold uppercase tracking-widest text-negative">
+                    <TrendingDown className="size-3" /> Top NN bán ròng
+                  </div>
+                  <ul className="space-y-0.5">
+                    {data.capitalFlow.topNetSell.map((r) => (
+                      <li key={r.symbol} className="flex items-center justify-between text-[12px]">
+                        <Link href={`/stocks/${r.symbol}`} className="font-semibold hover:text-accent-primary">{r.symbol}</Link>
+                        <span className="num text-down">{fmtCompact(r.netVal)}</span>
+                      </li>
+                    ))}
+                    {!data.capitalFlow.topNetSell.length && <li className="text-[11px] text-text-muted">—</li>}
+                  </ul>
+                </div>
+              </div>
+              <p className="text-[10.5px] text-text-muted">{data.capitalFlow.note}</p>
+            </div>
+          ) : (
+            <p className="text-[11px] leading-relaxed text-text-muted">
+              {data.capitalFlow?.note ?? "Chưa có dữ liệu dòng tiền khối ngoại cho phiên này."}
+            </p>
+          )}
+        </Panel>
+
         <Panel className="col-span-12" pad={false} title="Cổ phiếu tác động chỉ số">
           {data.contributors.positive.length + data.contributors.negative.length === 0 ? (
-            <div className="p-4"><Unavailable title="Chưa có dữ liệu cấu phần" note="Cần VNStock/VNDirect cho giá cấu phần và tỷ trọng rổ chỉ số." /></div>
+            <div className="p-4"><Unavailable title="Chưa có dữ liệu cấu phần" note="Cần dữ liệu giá cấu phần từ VNDirect." /></div>
           ) : (
             <div className="grid gap-3 p-3 md:grid-cols-2">
               {([["Đóng góp tích cực", data.contributors.positive, "up"], ["Đóng góp tiêu cực", data.contributors.negative, "down"]] as const).map(([title, rows, tone]) => (
@@ -148,7 +206,6 @@ export default function IndexDetailPage({ params }: { params: Promise<{ code: st
           )}
         </Panel>
 
-        {/* constituents */}
         {data.constituents.length > 0 && (
           <Panel className="col-span-12" pad={false} title={`Cấu phần theo dõi (${data.constituents.length} mã)`}>
             <div className="overflow-x-auto">
