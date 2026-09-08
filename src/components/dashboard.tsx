@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { memo, useMemo } from "react";
 import { useApi } from "@/lib/hooks";
 import { useSettings } from "@/lib/settings";
 import type { MarketIntel } from "@/lib/services/market-intel";
@@ -16,7 +17,7 @@ import { Activity, ArrowRight, ArrowUpRight, BrainCircuit, Factory, Globe2, KeyR
  */
 
 export function Dashboard() {
-  const { data, meta, isLoading } = useApi<MarketIntel>("/api/v1/market/intel", { refreshInterval: 15_000 });
+  const { data, meta, isLoading } = useApi<MarketIntel>("/api/v1/market/intel", { refreshInterval: 20_000 });
   if (isLoading && !data) return <div className="space-y-3"><Loading rows={6} /><Loading rows={8} /></div>;
   if (!data) return <Unavailable title="Market Intelligence Engine chưa sẵn sàng" note="Không dựng được payload. Kiểm tra /system." />;
   return <IntelView intel={data} meta={meta} />;

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { memo, useDeferredValue, useMemo, useState } from "react";
 import { useApi } from "@/lib/hooks";
 import type { CryptoSummary } from "@/lib/services/crypto";
 import type { CryptoMarketRow, Meta } from "@/lib/types";
@@ -11,20 +11,49 @@ import { Search, TrendingDown, TrendingUp, Waves } from "lucide-react";
 
 type MarketsData = { rows: CryptoMarketRow[]; summary: CryptoSummary };
 
+const CryptoRow = memo(function CryptoRow({ r, i, fmtUsd }: { r: CryptoMarketRow; i: number; fmtUsd: (v:number|null|undefined)=>string }) {
+  return (
+    <tr className="row-hover border-b border-line/40">
+      <td className="num px-3.5 py-2 text-ink-3">{i + 1}</td>
+      <td className="py-2">
+        <Link href={`/crypto/${r.symbol}`} className="font-semibold text-ink hover:text-accent">
+          {r.baseAsset}
+          <span className="ml-1 text-[10px] font-normal text-ink-3">USDT</span>
+        </Link>
+      </td>
+      <td className="num py-2 text-right">{fmtNum(r.price, priceDigits(r.price))}</td>
+      <td className="py-2 text-right"><Chg value={r.changePercent} arrow={false} /></td>
+      <td className="num py-2 text-right text-ink-3">
+        {fmtNum(r.low, priceDigits(r.price))}–{fmtNum(r.high, priceDigits(r.price))}
+      </td>
+      <td className="num py-2 text-right text-ink-2">{fmtUsd(r.quoteVolume)}</td>
+      <td className="py-2 pr-3.5 text-right">
+        {(r.changePercent ?? 0) >= 5 ? (
+          <Badge tone="up"><TrendingUp className="size-3" /> mạnh</Badge>
+        ) : (r.changePercent ?? 0) <= -5 ? (
+          <Badge tone="down"><TrendingDown className="size-3" /> yếu</Badge>
+        ) : (
+          <Badge>—</Badge>
+        )}
+      </td>
+    </tr>
+  );
+});
 export function CryptoMarketPage() {
-  const { data, meta, isLoading } = useApi<MarketsData>("/api/v1/crypto/markets?limit=120", { refreshInterval: 15_000 });
+  const { data, meta, isLoading } = useApi<MarketsData>("/api/v1/crypto/markets?limit=120", { refreshInterval: 20_000 });
   const { fmtUsd } = usePrefCurrency();
   const [tab, setTab] = useState<"volume" | "gainers" | "losers">("volume");
   const [q, setQ] = useState("");
+  const deferredQ = useDeferredValue(q);
 
   const rows = useMemo(() => {
     if (!data) return [];
     let r = data.rows;
     if (tab === "gainers") r = [...r].sort((a, b) => (b.changePercent ?? 0) - (a.changePercent ?? 0));
     if (tab === "losers") r = [...r].sort((a, b) => (a.changePercent ?? 0) - (b.changePercent ?? 0));
-    if (q) r = r.filter((x) => x.symbol.includes(q.toUpperCase()) || x.baseAsset.includes(q.toUpperCase()));
+    if (deferredQ) r = r.filter((x) => x.symbol.includes(deferredQ.toUpperCase()) || x.baseAsset.includes(deferredQ.toUpperCase()));
     return r.slice(0, 60);
-  }, [data, tab, q]);
+  }, [data, tab, deferredQ]);
 
   if (isLoading && !data) return <Loading rows={12} />;
   if (!data) return <Unavailable title="Binance spot không khả dụng" note="Kết nối Binance đang bị gián đoạn hoặc circuit breaker đang mở. Xem chi tiết tại /system — hệ thống sẽ tự phục hồi." meta={meta} />;
@@ -104,30 +133,7 @@ export function CryptoMarketPage() {
             </thead>
             <tbody>
               {rows.map((r, i) => (
-                <tr key={r.symbol} className="row-hover border-b border-line/40">
-                  <td className="num px-3.5 py-2 text-ink-3">{i + 1}</td>
-                  <td className="py-2">
-                    <Link href={`/crypto/${r.symbol}`} className="font-semibold text-ink hover:text-accent">
-                      {r.baseAsset}
-                      <span className="ml-1 text-[10px] font-normal text-ink-3">USDT</span>
-                    </Link>
-                  </td>
-                  <td className="num py-2 text-right">{fmtNum(r.price, priceDigits(r.price))}</td>
-                  <td className="py-2 text-right"><Chg value={r.changePercent} arrow={false} /></td>
-                  <td className="num py-2 text-right text-ink-3">
-                    {fmtNum(r.low, priceDigits(r.price))}–{fmtNum(r.high, priceDigits(r.price))}
-                  </td>
-                  <td className="num py-2 text-right text-ink-2">{fmtUsd(r.quoteVolume)}</td>
-                  <td className="py-2 pr-3.5 text-right">
-                    {(r.changePercent ?? 0) >= 5 ? (
-                      <Badge tone="up"><TrendingUp className="size-3" /> mạnh</Badge>
-                    ) : (r.changePercent ?? 0) <= -5 ? (
-                      <Badge tone="down"><TrendingDown className="size-3" /> yếu</Badge>
-                    ) : (
-                      <Badge>—</Badge>
-                    )}
-                  </td>
-                </tr>
+                <CryptoRow key={r.symbol} r={r} i={i} fmtUsd={fmtUsd} />
               ))}
             </tbody>
           </table>

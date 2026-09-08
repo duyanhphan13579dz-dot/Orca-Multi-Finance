@@ -38,7 +38,7 @@ export async function getYahooChart(yahooSymbol: string, interval: string, range
     const idx = (lastGood + i) % HOSTS.length;
     const res = await httpJson<YahooChartResp>(
       `${HOSTS[idx]}/v8/finance/chart/${encodeURIComponent(yahooSymbol)}?interval=${encodeURIComponent(interval)}&range=${encodeURIComponent(range)}&includePrePost=false`,
-      { provider: YAHOO, timeoutMs: 9_000, retries: 1 },
+      { provider: YAHOO, timeoutMs: 6_000, retries: 1 },
     );
     if (res.ok && res.data?.chart?.result?.[0]) {
       lastGood = idx;
@@ -120,7 +120,7 @@ export async function getYahooQuote(yahooSymbol: string): Promise<YahooQuote> {
     const idx = (lastGood + i) % HOSTS.length;
     const res = await httpJson<YahooMetaResp>(
       `${HOSTS[idx]}/v8/finance/chart/${encodeURIComponent(yahooSymbol)}?interval=1d&range=5d`,
-      { provider: YAHOO, timeoutMs: 8_000, retries: 1 },
+      { provider: YAHOO, timeoutMs: 6_000, retries: 1 },
     );
     const m = res.data?.chart?.result?.[0]?.meta;
     if (res.ok && m && typeof m.regularMarketPrice === "number") {
@@ -147,7 +147,7 @@ export async function getYahooQuote(yahooSymbol: string): Promise<YahooQuote> {
 /** Batch quotes with bounded concurrency; partial success is preserved. */
 export async function getYahooQuotes(symbols: string[]): Promise<Map<string, YahooQuote>> {
   const out = new Map<string, YahooQuote>();
-  const chunk = 6;
+  const chunk = 8;
   for (let i = 0; i < symbols.length; i += chunk) {
     const batch = symbols.slice(i, i + chunk);
     const results = await Promise.allSettled(batch.map((s) => getYahooQuote(s)));

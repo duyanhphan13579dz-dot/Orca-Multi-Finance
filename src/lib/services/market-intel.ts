@@ -68,8 +68,8 @@ const VN30_BOARD = ["VCB", "BID", "CTG", "TCB", "MBB", "VPB", "ACB", "STB", "HDB
 
 export async function buildMarketIntel(): Promise<{ intel: MarketIntel; meta: Meta }> {
   const res = await cached("market:intel:v3", {
-    ttlMs: 15_000,
-    staleMs: 20 * 60_000,
+    ttlMs: 20_000,
+    staleMs: 10 * 60_000,
     producer: async () => {
       const [snapRes, crossRes, boardRes, foreignRes] = await Promise.allSettled([
         buildMarketSnapshot(),

@@ -32,7 +32,7 @@ export function vnstockConfigured(): boolean {
 export async function getVnIndices(): Promise<{ items: IndexQuote[]; meta: Meta } | null> {
   try {
     const res = await cached("vn:indices:v3", {
-      ttlMs: 45_000,
+      ttlMs: 60_000,
       staleMs: 24 * 3_600_000,
       producer: async () => {
         if (vnstockConfigured()) {
@@ -69,8 +69,8 @@ export async function getVnMarketBoard(): Promise<{
 } | null> {
   try {
     const res = await cached("vn:market-board:v2", {
-      ttlMs: 60_000,
-      staleMs: 24 * 3_600_000,
+      ttlMs: 90_000,
+      staleMs: 12 * 3_600_000,
       producer: async () => {
         const [board, indices, universe] = await Promise.all([
           vndirect.getVndMarketQuotes(),

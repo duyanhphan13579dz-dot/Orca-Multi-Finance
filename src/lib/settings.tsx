@@ -140,12 +140,14 @@ function scheduleServerSync() {
   if (!loggedIn) return;
   if (syncTimer) clearTimeout(syncTimer);
   syncTimer = setTimeout(() => {
+    // Use navigator.sendBeacon when possible during unload, else fetch
     void fetch("/api/v1/settings", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ settings: snapshot }),
+      keepalive: true,
     }).catch(() => {});
-  }, 700);
+  }, 1200);
 }
 
 function applyToDom() {
@@ -270,10 +272,17 @@ export function useSettings(): SettingsCtxValue {
 }
 
 /** realtime refresh interval resolved from user settings */
+// Cached refresh multiplier to avoid recomputing on every useApi call
+let refreshMul = 1;
+let refreshLowMul = 4;
 export function resolveRefresh(baseMs: number | undefined): number {
   const r = snapshot.realtime;
   if (!r.liveUpdates) return 0;
   if (baseMs === undefined || baseMs <= 0) return 0;
-  const scaled = baseMs * (r.refreshSeconds / 15);
-  return r.lowDataMode ? Math.max(scaled * 4, 60_000) : Math.max(Math.min(scaled, 120_000), 3_000);
+  // Update cache when settings change (called via notify)
+  refreshMul = r.refreshSeconds / 15;
+  refreshLowMul = 4;
+  const scaled = baseMs * refreshMul;
+  // Clamp: lowDataMode forces at least 60s to cut server load dramatically
+  return r.lowDataMode ? Math.max(scaled * refreshLowMul, 60_000) : Math.max(Math.min(scaled, 90_000), 5_000);
 }

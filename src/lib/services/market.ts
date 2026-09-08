@@ -51,8 +51,8 @@ function fmtPct(x: number | null | undefined, digits = 2): string {
 
 export async function buildMarketSnapshot(): Promise<{ snapshot: MarketSnapshot; meta: Meta }> {
   const res = await cached("market:snapshot", {
-    ttlMs: 10_000,
-    staleMs: 30 * 60_000,
+    ttlMs: 20_000,
+    staleMs: 5 * 60_000,
     producer: async (): Promise<SnapshotPayload> => {
       const [vnRes, cryptoRes, forexRes, commRes, newsRes] = await Promise.allSettled([
         getVnIndices(),

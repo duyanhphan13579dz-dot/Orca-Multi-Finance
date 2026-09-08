@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { Suspense, useMemo, useState } from "react";
+import { Suspense, useDeferredValue, useMemo, useState } from "react";
 import { useApi } from "@/lib/hooks";
 import { VN_SECTOR_MAP, sectorOf } from "@/lib/vn/master";
 import type { CryptoMarketRow, Quote, IndexQuote } from "@/lib/types";
@@ -41,20 +41,24 @@ function ScreenerInner() {
 /* ------------------------------ VN screener ------------------------------- */
 
 function VnScreener({ defaultSector }: { defaultSector: string | null }) {
-  const { res, data, meta, isLoading } = useApi<StocksData>(`/api/v1/stocks?symbols=${VN_BOARD}`, { refreshInterval: 20_000 });
+  const { res, data, meta, isLoading } = useApi<StocksData>(`/api/v1/stocks?symbols=${VN_BOARD}`, { refreshInterval: 30_000 });
   const [sector, setSector] = useState(defaultSector ?? "");
   const [minChg, setMinChg] = useState("");
   const [maxChg, setMaxChg] = useState("");
   const [minVol, setMinVol] = useState("");
+  const dSector = useDeferredValue(sector);
+  const dMinChg = useDeferredValue(minChg);
+  const dMaxChg = useDeferredValue(maxChg);
+  const dMinVol = useDeferredValue(minVol);
 
   const rows = useMemo(() => {
     let list = data?.quotes ?? [];
-    if (sector) list = list.filter((q) => sectorOf(q.symbol) === sector);
-    if (minChg) list = list.filter((q) => (q.changePercent ?? 0) >= Number(minChg));
-    if (maxChg) list = list.filter((q) => (q.changePercent ?? 0) <= Number(maxChg));
-    if (minVol) list = list.filter((q) => (q.quoteVolume ?? q.volume ?? 0) >= Number(minVol) * 1_000_000);
+    if (dSector) list = list.filter((q) => sectorOf(q.symbol) === dSector);
+    if (dMinChg) list = list.filter((q) => (q.changePercent ?? 0) >= Number(dMinChg));
+    if (dMaxChg) list = list.filter((q) => (q.changePercent ?? 0) <= Number(dMaxChg));
+    if (dMinVol) list = list.filter((q) => (q.quoteVolume ?? q.volume ?? 0) >= Number(dMinVol) * 1_000_000);
     return [...list].sort((a, b) => (b.quoteVolume ?? b.volume ?? 0) - (a.quoteVolume ?? a.volume ?? 0));
-  }, [data, sector, minChg, maxChg, minVol]);
+  }, [data, dSector, dMinChg, dMaxChg, dMinVol]);
 
   if (isLoading && !res) return <Loading rows={8} />;
   if (!res?.success) {
@@ -87,7 +91,7 @@ function VnScreener({ defaultSector }: { defaultSector: string | null }) {
         }
         pad={false}
       >
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto" style={{ contentVisibility: "auto", containIntrinsicSize: "400px" }}>
           <table className="w-full min-w-[560px] text-[12px]">
             <thead>
               <tr className="border-b border-line text-left text-[10px] uppercase tracking-wider text-ink-3">

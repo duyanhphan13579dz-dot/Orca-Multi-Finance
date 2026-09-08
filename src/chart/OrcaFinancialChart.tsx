@@ -62,7 +62,9 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
   const kindRef = useRef<ChartKind>(normalizeKind(prefs.chartType));
   const loadSeqRef = useRef(0);
 
-  const limit = assetType === "crypto" ? 1500 : 500;
+  // Adaptive limit: smaller on mobile/lowDataMode to cut rendering cost
+  const isLowData = settings.realtime.lowDataMode;
+  const limit = assetType === "crypto" ? (isLowData ? 600 : 1000) : 400;
   const { data, meta, isLoading } = useApi<ChartMarketData>(
     `/api/v1/chart/history?symbol=${encodeURIComponent(symbol)}&assetType=${assetType}&timeframe=${tf}&limit=${limit}`,
   );
@@ -86,6 +88,8 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
         crosshair: { mode: CrosshairMode.Normal },
         rightPriceScale: { borderVisible: false, scaleMargins: { top: 0.08, bottom: 0.18 } },
         timeScale: { borderVisible: false, timeVisible: true, secondsVisible: false },
+        handleScroll: { mouseWheel: true, pressedMouseMove: true },
+        handleScale: { axisPressedMouseMove: true, mouseWheel: true, pinch: true },
       });
     } catch {
       return;
@@ -122,31 +126,41 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
     const mgr = mgrRef.current;
     const chart = chartRef.current;
     if (!mgr || !chart || !data?.candles?.length) return;
-    if (seq !== loadSeqRef.current) return;
 
     const payload = data;
     const candles = payload.candles;
-
-    try {
-      mgr.setHistory(candles, kindRef.current);
-      mgr.setVolumeVisible(prefs.volume !== false);
-
-      const vis = {
-        ema: prefs.indicators?.ema !== false,
-        bollinger: !!prefs.indicators?.bollinger,
-        vwap: prefs.indicators?.vwap !== false,
-        rsi: prefs.indicators?.rsi !== false,
-        macd: prefs.indicators?.macd !== false,
-        srLevels: prefs.indicators?.srLevels !== false,
-      };
-      mgr.rebuildIndicators(payload.indicators ?? null, vis);
-      mgr.rebuildSrLines(payload.indicators ?? null, vis.srLevels);
-      if (payload.markers?.length) mgr.applyMarkers(payload.markers);
-      if (extraLevels?.length) mgr.rebuildExtraLevels(extraLevels);
-      chart.timeScale().fitContent();
-    } catch {
-      /* keep page alive if series fails */
+    let raf = 0;
+    const run = () => {
+      if (seq !== loadSeqRef.current) return;
+      try {
+        mgr.setHistory(candles, kindRef.current);
+        mgr.setVolumeVisible(prefs.volume !== false);
+        const vis = {
+          ema: prefs.indicators?.ema !== false,
+          bollinger: !!prefs.indicators?.bollinger,
+          vwap: prefs.indicators?.vwap !== false,
+          rsi: prefs.indicators?.rsi !== false,
+          macd: prefs.indicators?.macd !== false,
+          srLevels: prefs.indicators?.srLevels !== false,
+        };
+        mgr.rebuildIndicators(payload.indicators ?? null, vis);
+        mgr.rebuildSrLines(payload.indicators ?? null, vis.srLevels);
+        if (payload.markers?.length) mgr.applyMarkers(payload.markers);
+        if (extraLevels?.length) mgr.rebuildExtraLevels(extraLevels);
+        chart.timeScale().fitContent();
+      } catch {
+        /* keep page alive if series fails */
+      }
+    };
+    // Defer heavy chart work to next frame to keep UI responsive
+    if (typeof requestAnimationFrame !== "undefined") {
+      raf = requestAnimationFrame(run);
+    } else {
+      run();
     }
+    return () => {
+      if (raf) cancelAnimationFrame(raf);
+    };
   }, [data, prefs.volume, prefs.indicators, prefs.chartType, extraLevels]);
 
   const setKind = (kind: ChartKind) => {

@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { useApi } from "@/lib/hooks";
 import { getSettingsSnapshot } from "@/lib/settings";
 import { searchSecurities, VN_INDICES, sectorOf } from "@/lib/vn/master";
@@ -41,15 +41,18 @@ export function GlobalSearch() {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
+  const deferredQ = useDeferredValue(q);
   const [sel, setSel] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const { data } = useApi<MarketsData>(open ? "/api/v1/crypto/markets?limit=300" : null, { refreshInterval: 0 });
 
   const items = useMemo<Item[]>(() => {
     const all: Item[] = [];
+    const needleTrim = deferredQ.trim();
+    const needleUpper = needleTrim.toUpperCase();
     // 1) Vietnam Securities via Security Master (highest priority)
-    if (q.trim()) {
-      for (const sec of searchSecurities(q, 10)) {
+    if (needleTrim) {
+      for (const sec of searchSecurities(deferredQ, 10)) {
         all.push({
           key: `vn-${sec.symbol}`,
           label: sec.symbol,
@@ -64,21 +67,21 @@ export function GlobalSearch() {
         all.push({ key: `hn-${idx.code}`, label: idx.name, sub: `Chỉ số ${idx.exchange}`, href: "/stocks", icon: <ListTree className="size-3.5" />, rank: 93 });
       }
     }
-    // 2) crypto (supporting asset class)
-    for (const r of (data?.rows ?? []).slice(0, 60)) {
-      const match = q.trim() && (r.symbol.includes(q.toUpperCase()) || r.baseAsset.includes(q.toUpperCase()));
-      if (!q.trim() || match) {
+    // 2) crypto (supporting asset class) - limit scan to 60 for perf
+    for (const r of (data?.rows ?? []).slice(0, 40)) {
+      const match = needleTrim && (r.symbol.includes(needleUpper) || r.baseAsset.includes(needleUpper));
+      if (!needleTrim || match) {
         all.push({
           key: `c-${r.symbol}`,
           label: r.baseAsset,
           sub: `Crypto · ${r.changePercent != null ? (r.changePercent >= 0 ? "+" : "") + r.changePercent.toFixed(2) + "%" : ""}`,
           href: `/crypto/${r.symbol}`,
           icon: <Coins className="size-3.5" />,
-          rank: q.trim() && r.baseAsset === q.trim().toUpperCase() ? 70 : 20,
+          rank: needleTrim && r.baseAsset === needleUpper ? 70 : 20,
         });
       }
     }
-    const needle = q.trim().toUpperCase();
+    const needle = needleUpper;
     const staticHits = STATIC_ITEMS.filter((i) => !needle || i.label.toUpperCase().includes(needle) || i.sub.toUpperCase().includes(needle));
     const merged = [...all, ...staticHits];
     const uniq = new Map<string, Item>();
@@ -93,7 +96,7 @@ export function GlobalSearch() {
         return b.rank - a.rank;
       })
       .slice(0, 12);
-  }, [q, data]);
+  }, [deferredQ, data]);
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {

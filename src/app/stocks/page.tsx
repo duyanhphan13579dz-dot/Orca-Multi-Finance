@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { memo, useDeferredValue, useEffect, useMemo, useState } from "react";
 import { useApi } from "@/lib/hooks";
 import { VN_SECTOR_MAP, DEFAULT_VN_WATCHLIST, sectorOf } from "@/lib/vn/master";
 import type { MarketSnapshot } from "@/lib/services/market";
@@ -9,6 +9,33 @@ import type { IndexQuote, Quote } from "@/lib/types";
 import { Badge, Chg, fmtCompact, fmtNum, FreshnessDot, Loading, MetaLine, Panel, Unavailable } from "@/components/ui";
 import { AddToWatchlist } from "@/components/watchlist-button";
 import { CandlestickChart, KeyRound, Search } from "lucide-react";
+
+const PAGE_SIZE = 80;
+
+const Row = memo(function Row({ qu }: { qu: Quote }) {
+  return (
+    <tr className="border-t border-border-subtle/70 hover:bg-surface-elevated/50">
+      <td className="py-2 pl-1">
+        <Link href={`/stocks/${qu.symbol}`} className="font-semibold text-accent-primary hover:underline">
+          {qu.symbol}
+        </Link>
+        {qu.name && <div className="max-w-[140px] truncate text-[10px] text-text-muted">{qu.name}</div>}
+      </td>
+      <td className="num py-2 text-right font-medium">{fmtNum(qu.price, 2)}</td>
+      <td className="py-2 text-right">
+        <Chg value={qu.changePercent} arrow={false} />
+      </td>
+      <td className="num py-2 text-right text-text-muted">
+        {qu.referencePrice != null ? fmtNum(qu.referencePrice, 2) : "—"}
+      </td>
+      <td className="num py-2 text-right text-ink-2">{fmtCompact(qu.volume)}</td>
+      <td className="num py-2 text-right text-ink-2">{fmtCompact(qu.quoteVolume)}</td>
+      <td className="py-2 pr-3.5 text-right">
+        <AddToWatchlist assetType="stock" symbol={qu.symbol} />
+      </td>
+    </tr>
+  );
+});
 
 type StocksData = {
   indices: IndexQuote[] | null;
@@ -20,17 +47,26 @@ type StocksData = {
 
 export default function VnMarketCenterPage() {
   const { res, data, meta, isLoading } = useApi<StocksData>(`/api/v1/stocks?board=full`, { refreshInterval: 45_000 });
-  const { data: snap } = useApi<MarketSnapshot>("/api/v1/market/snapshot", { refreshInterval: 30_000 });
+  const { data: snap } = useApi<MarketSnapshot>("/api/v1/market/snapshot", { refreshInterval: 60_000 });
   const [q, setQ] = useState("");
   const [sector, setSector] = useState<string>("");
+  const [page, setPage] = useState(1);
+  const deferredQ = useDeferredValue(q);
+  const deferredSector = useDeferredValue(sector);
 
   const session = snap?.vnSession;
   const quotes = useMemo(() => {
     let list = data?.quotes ?? [];
-    if (q) list = list.filter((x) => x.symbol.includes(q.toUpperCase()) || (x.name ?? "").toUpperCase().includes(q.toUpperCase()));
-    if (sector) list = list.filter((x) => sectorOf(x.symbol) === sector);
+    if (deferredQ) list = list.filter((x) => x.symbol.includes(deferredQ.toUpperCase()) || (x.name ?? "").toUpperCase().includes(deferredQ.toUpperCase()));
+    if (deferredSector) list = list.filter((x) => sectorOf(x.symbol) === deferredSector);
     return list;
-  }, [data, q, sector]);
+  }, [data, deferredQ, deferredSector]);
+  const totalPages = Math.max(1, Math.ceil(quotes.length / PAGE_SIZE));
+  const visible = useMemo(() => quotes.slice(0, page * PAGE_SIZE), [quotes, page]);
+  // Reset paging when filter changes - useEffect avoids setState during render
+  useEffect(() => {
+    setPage(1);
+  }, [deferredQ, deferredSector]);
 
   if (isLoading && !res) return <Loading rows={12} />;
 
@@ -111,9 +147,9 @@ export default function VnMarketCenterPage() {
                 ))}
               </select>
             </div>
-            <div className="max-h-[520px] overflow-auto">
+            <div className="max-h-[520px] overflow-auto" style={{ contentVisibility: "auto", containIntrinsicSize: "520px" }}>
               <table className="w-full text-left text-[12px]">
-                <thead className="sticky top-0 bg-background-secondary text-[10px] uppercase tracking-wider text-text-muted">
+                <thead className="sticky top-0 z-[1] bg-background-secondary text-[10px] uppercase tracking-wider text-text-muted">
                   <tr>
                     <th className="py-2 pl-1">Mã</th>
                     <th className="py-2 text-right">Giá</th>
@@ -125,31 +161,25 @@ export default function VnMarketCenterPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {quotes.map((qu) => (
-                    <tr key={qu.symbol} className="border-t border-border-subtle/70 hover:bg-surface-elevated/50">
-                      <td className="py-2 pl-1">
-                        <Link href={`/stocks/${qu.symbol}`} className="font-semibold text-accent-primary hover:underline">
-                          {qu.symbol}
-                        </Link>
-                        {qu.name && <div className="max-w-[140px] truncate text-[10px] text-text-muted">{qu.name}</div>}
-                      </td>
-                      <td className="num py-2 text-right font-medium">{fmtNum(qu.price, 2)}</td>
-                      <td className="py-2 text-right">
-                        <Chg value={qu.changePercent} arrow={false} />
-                      </td>
-                      <td className="num py-2 text-right text-text-muted">
-                        {qu.referencePrice != null ? fmtNum(qu.referencePrice, 2) : "—"}
-                      </td>
-                      <td className="num py-2 text-right text-ink-2">{fmtCompact(qu.volume)}</td>
-                      <td className="num py-2 text-right text-ink-2">{fmtCompact(qu.quoteVolume)}</td>
-                      <td className="py-2 pr-3.5 text-right">
-                        <AddToWatchlist assetType="stock" symbol={qu.symbol} />
-                      </td>
-                    </tr>
+                  {visible.map((qu) => (
+                    <Row key={qu.symbol} qu={qu} />
                   ))}
                 </tbody>
               </table>
             </div>
+            {visible.length < quotes.length && (
+              <div className="flex items-center justify-between border-t border-border-subtle px-3 py-2">
+                <span className="text-[11px] text-text-muted">
+                  Hiển thị {visible.length} / {quotes.length} mã
+                </span>
+                <button
+                  onClick={() => setPage((p) => Math.min(p + 1, totalPages))}
+                  className="rounded-md border border-accent-primary/30 bg-accent-primary/10 px-3 py-1 text-[12px] font-medium text-accent-primary hover:bg-accent-primary/15"
+                >
+                  Tải thêm {Math.min(PAGE_SIZE, quotes.length - visible.length)} mã →
+                </button>
+              </div>
+            )}
           </Panel>
 
           <Panel title="Ngành chứng khoán Việt Nam (Security Master)" pad={false}>

@@ -43,9 +43,10 @@ export async function httpText(url: string, opts: HttpOptions): Promise<HttpResu
 
 async function httpRequest<T>(url: string, opts: HttpOptions): Promise<HttpResult<T>> {
   const provider = opts.provider;
-  const timeoutMs = opts.timeoutMs ?? 9_000;
-  const retries = opts.retries ?? 2;
-  const backoffBase = opts.backoffBaseMs ?? 400;
+  // Tighten defaults: 6s timeout + 1 retry is faster failover than 9s + 2 retries (27s worst)
+  const timeoutMs = opts.timeoutMs ?? 6_000;
+  const retries = opts.retries ?? 1;
+  const backoffBase = opts.backoffBaseMs ?? 300;
 
   if (isCircuitOpen(provider)) {
     return { ok: false, status: 0, data: null, text: null, error: `circuit_open:${provider}`, latencyMs: 0, attempts: 0 };

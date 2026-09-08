@@ -212,7 +212,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 /* --------------------------------- pieces --------------------------------- */
 
 function MarketChip() {
-  const { meta } = useApi<Record<string, unknown>>("/api/v1/market/snapshot", { refreshInterval: 20_000 });
+  const { meta } = useApi<Record<string, unknown>>("/api/v1/market/snapshot", { refreshInterval: 60_000 });
   return (
     <Link
       href="/system"
@@ -229,8 +229,27 @@ function Clock() {
   const [now, setNow] = useState<Date | null>(null);
   useEffect(() => {
     setNow(new Date());
-    const t = setInterval(() => setNow(new Date()), 1000);
-    return () => clearInterval(t);
+    // Throttle to 1s but pause when tab hidden (saves CPU on background tabs)
+    let timer: ReturnType<typeof setInterval> | null = null;
+    const start = () => {
+      if (timer) return;
+      timer = setInterval(() => {
+        if (document.visibilityState === "visible") setNow(new Date());
+      }, 1000);
+    };
+    const stop = () => {
+      if (timer) { clearInterval(timer); timer = null; }
+    };
+    start();
+    const onVis = () => {
+      if (document.visibilityState === "visible") { setNow(new Date()); start(); }
+      else stop();
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      if (timer) clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVis);
+    };
   }, []);
   const tz = settings.profile.timezone || "Asia/Ho_Chi_Minh";
   return (
@@ -247,7 +266,7 @@ function NotificationsBell() {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const enabled = settings.notifications.marketNews;
-  const { data } = useApi<{ articles: NewsArticle[] }>(enabled ? "/api/v1/news?limit=5" : null, { refreshInterval: 60_000 });
+  const { data } = useApi<{ articles: NewsArticle[] }>(enabled ? "/api/v1/news?limit=5" : null, { refreshInterval: 120_000 });
 
   useEffect(() => {
     const onDoc = (e: MouseEvent) => {

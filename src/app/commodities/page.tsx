@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useState } from "react";
 import { useApi } from "@/lib/hooks";
 import type { CommodityMarket } from "@/lib/services/commodities";
 import { Badge, Chg, fmtNum, FreshnessDot, Loading, MetaLine, Unavailable } from "@/components/ui";
@@ -39,7 +39,9 @@ const FALLBACK_GROUPS: { key: string; title: string; desc: string }[] = [
 
 export default function CommoditiesPage() {
   const [q, setQ] = useState("");
+  const deferredQ = useDeferredValue(q);
   const [group, setGroup] = useState("");
+  const [visibleCount, setVisibleCount] = useState(24);
   const { data, meta, isLoading } = useApi<Data>("/api/v1/commodities", { refreshInterval: 5 * 60_000 });
 
   const groups = useMemo(() => {
@@ -55,8 +57,8 @@ export default function CommoditiesPage() {
   const catalog = useMemo((): CatalogItem[] => {
     let defs: CatalogItem[] = data?.catalog ?? [];
     if (group) defs = defs.filter((d) => d.group === group);
-    if (q.trim()) {
-      const needle = q.trim().toLowerCase();
+    if (deferredQ.trim()) {
+      const needle = deferredQ.trim().toLowerCase();
       defs = defs.filter(
         (d) =>
           d.nameVi.toLowerCase().includes(needle) ||
@@ -65,9 +67,15 @@ export default function CommoditiesPage() {
       );
     }
     return defs;
-  }, [data, group, q]);
+  }, [data, group, deferredQ]);
 
   const bySymbol = useMemo(() => new Map((data?.rows ?? []).map((r) => [r.symbol, r])), [data]);
+
+  const visibleCatalog = useMemo(() => catalog.slice(0, visibleCount), [catalog, visibleCount]);
+  // Reset pagination when filters change - effect avoids setState during render
+  useEffect(() => {
+    setVisibleCount(24);
+  }, [group, deferredQ]);
 
   const chartOptions = useMemo(() => {
     const acc: { chartSymbol: string; label: string }[] = [];
@@ -154,8 +162,9 @@ export default function CommoditiesPage() {
       {!data ? (
         <Unavailable title="VietnamBiz Data chưa phản hồi bảng giá" meta={meta} />
       ) : (
-        <div className="grid grid-cols-1 gap-2.5 md:grid-cols-2 xl:grid-cols-3">
-          {catalog.map((d) => {
+        <>
+          <div className="grid grid-cols-1 gap-2.5 md:grid-cols-2 xl:grid-cols-3" style={{ contentVisibility: "auto", containIntrinsicSize: "1000px" }}>
+            {visibleCatalog.map((d) => {
             const row = bySymbol.get(d.symbol);
             const groupMeta = groups.find((x) => x.key === d.group);
             if (!row) {
@@ -221,8 +230,19 @@ export default function CommoditiesPage() {
                 </div>
               </div>
             );
-          })}
-        </div>
+            })}
+          </div>
+          {visibleCatalog.length < catalog.length && (
+            <div className="mt-3 flex justify-center">
+              <button
+                onClick={() => setVisibleCount((c) => Math.min(c + 24, catalog.length))}
+                className="rounded-md border border-accent-primary/30 bg-accent-primary/10 px-4 py-1.5 text-[12px] font-medium text-accent-primary hover:bg-accent-primary/15"
+              >
+                Xem thêm {Math.min(24, catalog.length - visibleCatalog.length)} mặt hàng ({visibleCatalog.length}/{catalog.length})
+              </button>
+            </div>
+          )}
+        </>
       )}
     </div>
   );

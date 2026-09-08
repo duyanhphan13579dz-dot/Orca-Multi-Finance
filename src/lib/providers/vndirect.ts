@@ -71,29 +71,42 @@ async function vndGet<T>(path: string, timeoutMs = 12_000): Promise<T> {
 export async function getVndUniverse(): Promise<
   { symbol: string; name: string | null; exchange: string | null; industry: string | null }[]
 > {
+  // Parallelize discovery: fetch first page to learn totalPages, then fetch remaining in bounded concurrency
   const pageSize = 200;
-  const out: { symbol: string; name: string | null; exchange: string | null; industry: string | null }[] = [];
-  let page = 1;
-  let totalPages = 1;
-  while (page <= totalPages && page <= 20) {
-    const payload = await vndGet<Page<VndStockMeta>>(
-      `/v4/stocks?q=type:stock~status:listed&size=${pageSize}&page=${page}&fields=code,companyName,floor,industryName,status,type`,
-    );
-    const rows = payload.data ?? [];
-    totalPages = Math.max(1, Number(payload.totalPages) || 1);
-    for (const r of rows) {
-      const symbol = String(r.code ?? "").toUpperCase();
-      if (!symbol) continue;
-      out.push({
-        symbol,
-        name: r.companyName ?? r.companyNameEng ?? null,
-        exchange: (r.floor ?? null)?.toUpperCase() ?? null,
-        industry: r.industryName ?? null,
-      });
+  const first = await vndGet<Page<VndStockMeta>>(
+    `/v4/stocks?q=type:stock~status:listed&size=${pageSize}&page=1&fields=code,companyName,floor,industryName,status,type`,
+  );
+  const totalPages = Math.min(20, Math.max(1, Number(first.totalPages) || 1));
+  const allRows: VndStockMeta[] = [...(first.data ?? [])];
+
+  if (totalPages > 1) {
+    // Bounded concurrency 5 to avoid overwhelming provider while still ~5x faster than sequential
+    const concurrency = 5;
+    const pages = Array.from({ length: totalPages - 1 }, (_, i) => i + 2);
+    for (let i = 0; i < pages.length; i += concurrency) {
+      const batch = pages.slice(i, i + concurrency);
+      const results = await Promise.allSettled(
+        batch.map((page) =>
+          vndGet<Page<VndStockMeta>>(
+            `/v4/stocks?q=type:stock~status:listed&size=${pageSize}&page=${page}&fields=code,companyName,floor,industryName,status,type`,
+          ),
+        ),
+      );
+      for (const r of results) {
+        if (r.status === "fulfilled") allRows.push(...(r.value.data ?? []));
+      }
     }
-    if (!rows.length) break;
-    page += 1;
   }
+
+  const out = allRows
+    .map((r) => ({
+      symbol: String(r.code ?? "").toUpperCase(),
+      name: r.companyName ?? r.companyNameEng ?? null,
+      exchange: (r.floor ?? null)?.toUpperCase() ?? null,
+      industry: r.industryName ?? null,
+    }))
+    .filter((x) => x.symbol);
+
   if (!out.length) throw new ProviderError("vndirect: empty universe", VNDIRECT);
   return out;
 }
@@ -151,19 +164,35 @@ export async function getVndMarketQuotes(
 ): Promise<{ quotes: Quote[]; sourceTs: number | null; sessionDate: string }> {
   const date = sessionDate ?? (await getVndLatestSessionDate());
   const pageSize = 200;
-  const quotes: Quote[] = [];
-  let page = 1;
-  let totalPages = 1;
-  let newest: number | null = null;
 
-  while (page <= totalPages && page <= 25) {
-    const payload = await vndGet<Page<VndPriceRow>>(
-      `/v4/stock_prices?q=date:${date}&size=${pageSize}&page=${page}&sort=code:asc`,
-      18_000,
-    );
-    const rows = payload.data ?? [];
-    totalPages = Math.max(1, Number(payload.totalPages) || 1);
-    for (const r of rows) {
+  // Fetch first page to discover totalPages, then parallelize remaining pages
+  const firstPayload = await vndGet<Page<VndPriceRow>>(
+    `/v4/stock_prices?q=date:${date}&size=${pageSize}&page=1&sort=code:asc`,
+    12_000,
+  );
+  const totalPages = Math.min(25, Math.max(1, Number(firstPayload.totalPages) || 1));
+  const payloads: Page<VndPriceRow>[] = [firstPayload];
+
+  if (totalPages > 1) {
+    const concurrency = 6;
+    const pages = Array.from({ length: totalPages - 1 }, (_, i) => i + 2);
+    for (let i = 0; i < pages.length; i += concurrency) {
+      const batch = pages.slice(i, i + concurrency);
+      const results = await Promise.allSettled(
+        batch.map((page) =>
+          vndGet<Page<VndPriceRow>>(`/v4/stock_prices?q=date:${date}&size=${pageSize}&page=${page}&sort=code:asc`, 12_000),
+        ),
+      );
+      for (const r of results) {
+        if (r.status === "fulfilled") payloads.push(r.value);
+      }
+    }
+  }
+
+  const quotes: Quote[] = [];
+  let newest: number | null = null;
+  for (const payload of payloads) {
+    for (const r of payload.data ?? []) {
       const symbol = String(r.code ?? "").toUpperCase();
       const price = num(r.close);
       if (!symbol || price == null || price <= 0) continue;
@@ -194,8 +223,6 @@ export async function getVndMarketQuotes(
         updatedAt: r.date ?? null,
       });
     }
-    if (!rows.length) break;
-    page += 1;
   }
 
   if (!quotes.length) throw new ProviderError("vndirect: empty market board", VNDIRECT);
@@ -365,29 +392,49 @@ export type VndForeignFlowSummary = {
 export async function getVndForeignFlow(sessionDate?: string): Promise<VndForeignFlowSummary> {
   const date = sessionDate ?? (await getVndLatestSessionDate());
   const pageSize = 200;
-  let page = 1;
-  let totalPages = 1;
+  const first = await vndGet<
+    Page<{
+      code?: string;
+      type?: string;
+      floor?: string;
+      buyVal?: number;
+      sellVal?: number;
+      netVal?: number;
+      tradingDate?: string;
+    }>
+  >(`/v4/foreigns?q=tradingDate:${date}~type:STOCK&size=${pageSize}&page=1`, 12_000);
+  const totalPages = Math.min(20, Math.max(1, Number(first.totalPages) || 1));
+  const payloads: typeof first[] = [first];
+  if (totalPages > 1) {
+    const concurrency = 5;
+    const pages = Array.from({ length: totalPages - 1 }, (_, i) => i + 2);
+    for (let i = 0; i < pages.length; i += concurrency) {
+      const batch = pages.slice(i, i + concurrency);
+      const results = await Promise.allSettled(
+        batch.map((page) =>
+          vndGet<
+            Page<{
+              code?: string;
+              type?: string;
+              floor?: string;
+              buyVal?: number;
+              sellVal?: number;
+              netVal?: number;
+              tradingDate?: string;
+            }>
+          >(`/v4/foreigns?q=tradingDate:${date}~type:STOCK&size=${pageSize}&page=${page}`, 12_000),
+        ),
+      );
+      for (const r of results) if (r.status === "fulfilled") payloads.push(r.value);
+    }
+  }
   let buyVal = 0;
   let sellVal = 0;
   let netVal = 0;
   let stockCount = 0;
   const rows: VndForeignFlowRow[] = [];
-
-  while (page <= totalPages && page <= 20) {
-    const payload = await vndGet<
-      Page<{
-        code?: string;
-        type?: string;
-        floor?: string;
-        buyVal?: number;
-        sellVal?: number;
-        netVal?: number;
-        tradingDate?: string;
-      }>
-    >(`/v4/foreigns?q=tradingDate:${date}~type:STOCK&size=${pageSize}&page=${page}`, 18_000);
-    const data = payload.data ?? [];
-    totalPages = Math.max(1, Number(payload.totalPages) || 1);
-    for (const r of data) {
+  for (const payload of payloads) {
+    for (const r of payload.data ?? []) {
       if ((r.type ?? "STOCK").toUpperCase() !== "STOCK") continue;
       const symbol = String(r.code ?? "").toUpperCase();
       if (!symbol) continue;
@@ -402,8 +449,6 @@ export async function getVndForeignFlow(sessionDate?: string): Promise<VndForeig
         rows.push({ symbol, buyVal: bv, sellVal: sv, netVal: nv, floor: r.floor ?? null });
       }
     }
-    if (!data.length) break;
-    page += 1;
   }
 
   rows.sort((a, b) => b.netVal - a.netVal);

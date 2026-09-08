@@ -63,8 +63,8 @@ export interface CryptoSummary {
 export async function getCryptoMarkets(): Promise<{ rows: CryptoMarketRow[]; summary: CryptoSummary; meta: Meta } | null> {
   try {
     const res = await cached<AllMarket>("crypto:all", {
-      ttlMs: 12_000,
-      staleMs: 10 * 60_000,
+      ttlMs: 15_000,
+      staleMs: 5 * 60_000,
       producer: async () => {
         const tickers = await binance.getAllSpotTickers();
         let rows = tickers

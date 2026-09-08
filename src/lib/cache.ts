@@ -23,6 +23,21 @@ const inflight = new Map<string, Promise<unknown>>();
 let hits = 0;
 let staleServed = 0;
 
+// Bound memory: LRU eviction when exceeding limit (prevents unbounded growth under many keys like chart histories)
+const MAX_ENTRIES = 600;
+const GC_INTERVAL_MS = 30_000;
+
+function touchLRU(key: string, entry: Entry) {
+  // Re-insert to mark as recently used (Map preserves insertion order)
+  mem.delete(key);
+  mem.set(key, entry);
+  // Evict oldest if over capacity
+  if (mem.size > MAX_ENTRIES) {
+    const oldestKey = mem.keys().next().value as string | undefined;
+    if (oldestKey) mem.delete(oldestKey);
+  }
+}
+
 /* ------------------------------ Redis (optional) ----------------------------- */
 
 type RedisLike = { get(k: string): Promise<string | null>; set(k: string, v: string, ...a: unknown[]): Promise<unknown> };
@@ -65,9 +80,12 @@ export async function cached<T>(
     const e = mem.get(key);
     if (e && now < e.expiresAt) {
       hits++;
+      touchLRU(key, e);
       return { value: e.value as T, cached: true, stale: false, producedAt: e.producedAt };
     }
-    // redis mirror (only fills memory, never authoritative)
+    // Also serve stale while revalidating in background? No - let producer handle SWR
+    // redis mirror (only fills memory, never authoritative) — fire without awaiting when possible
+    // to avoid adding latency to hot path when Redis is slow
     const r = await getRedis();
     if (r) {
       try {
@@ -75,7 +93,7 @@ export async function cached<T>(
         if (raw) {
           const parsed = JSON.parse(raw) as Entry & { value: T };
           if (Date.now() < parsed.expiresAt) {
-            mem.set(key, parsed);
+            touchLRU(key, parsed);
             hits++;
             return { value: parsed.value, cached: true, stale: false, producedAt: parsed.producedAt };
           }
@@ -93,20 +111,24 @@ export async function cached<T>(
     try {
       const value = await producer();
       const entry: Entry = { value, expiresAt: Date.now() + ttlMs, staleUntil: Date.now() + staleMs, producedAt: Date.now() };
-      mem.set(key, entry);
-      const r = await getRedis();
-      if (r) {
-        try {
-          await r.set(`orca:${key}`, JSON.stringify(entry), "PX", Math.max(ttlMs, staleMs));
-        } catch {
-          /* ignore */
+      touchLRU(key, entry);
+      // Fire-and-forget Redis write (don't block response latency)
+      void (async () => {
+        const r = await getRedis();
+        if (r) {
+          try {
+            await r.set(`orca:${key}`, JSON.stringify(entry), "PX", Math.max(ttlMs, staleMs));
+          } catch {
+            /* ignore */
+          }
         }
-      }
+      })();
       return { value, cached: false, stale: false, producedAt: entry.producedAt };
     } catch (err) {
       const e = mem.get(key);
       if (e && Date.now() < e.staleUntil) {
         staleServed++;
+        touchLRU(key, e);
         return { value: e.value as T, cached: true, stale: true, producedAt: e.producedAt };
       }
       throw err;
@@ -151,11 +173,25 @@ export async function invalidate(key: string): Promise<void> {
   }
 }
 
-/** periodic GC to bound memory */
+/** periodic GC to bound memory — also evicts LRU tail if still over limit */
 if (typeof setInterval !== "undefined") {
   const t = setInterval(() => {
     const now = Date.now();
-    for (const [k, e] of mem) if (now > e.staleUntil) mem.delete(k);
-  }, 60_000);
+    let expired = 0;
+    for (const [k, e] of mem) {
+      if (now > e.staleUntil) {
+        mem.delete(k);
+        expired++;
+        // avoid blocking event loop on huge maps
+        if (expired > 200) break;
+      }
+    }
+    // If still over capacity, evict oldest
+    while (mem.size > MAX_ENTRIES) {
+      const oldestKey = mem.keys().next().value as string | undefined;
+      if (!oldestKey) break;
+      mem.delete(oldestKey);
+    }
+  }, GC_INTERVAL_MS);
   if (typeof t.unref === "function") t.unref();
 }
