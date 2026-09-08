@@ -9,12 +9,6 @@ import type { ApiResponse } from "@/lib/types";
 import { Badge, FreshnessDot, Loading, MetaLine, Panel, Unavailable } from "@/components/ui";
 import { BookOpenText, FileText, History, Play, Printer } from "lucide-react";
 
-/**
- * ORCA REPORT CENTER — Vietnam-first financial intelligence reports.
- * Morning Brief (chuẩn bị phiên) · Market Summary (giải mã phiên) ·
- * Strategy (market view + scenarios) · Company Reports (on-demand).
- */
-
 type Tab = "morning_brief" | "market_summary" | "strategy" | "company";
 
 const TABS: { id: Tab; label: string; desc: string }[] = [
@@ -53,11 +47,9 @@ export default function ReportCenterPage() {
   );
 }
 
-/* ------------------------------ daily reports ------------------------------ */
-
 function DailyReportView({ type }: { type: Exclude<Tab, "company"> }) {
   const [current, setCurrent] = useState<DailyReport | null>(null);
-  const [meta, setMeta] = useState<DailyReport["generatedAt"] extends string ? import("@/lib/types").Meta | null : never>(null as never);
+  const [meta, setMeta] = useState<import("@/lib/types").Meta | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const { data: history, mutate: reloadHistory } = useApi<{ items: ReportListItem[] }>(`/api/v1/reports?type=${type}&limit=20`, { refreshInterval: 120_000 });
@@ -92,7 +84,6 @@ function DailyReportView({ type }: { type: Exclude<Tab, "company"> }) {
     }
   };
 
-  // auto-load latest from history on first mount
   useEffect(() => {
     if (firstLoad.current && history?.items.length && !current) {
       void loadById(history.items[0].id);
@@ -130,7 +121,6 @@ function DailyReportView({ type }: { type: Exclude<Tab, "company"> }) {
 
   return (
     <div className="grid grid-cols-12 gap-3">
-      {/* history */}
       <Panel className="col-span-12 max-h-[70dvh] overflow-y-auto lg:col-span-3" title={<span className="flex items-center gap-1.5"><History className="size-3.5" /> Lịch sử {TABS.find((t) => t.id === type)?.label}</span>} pad={false}>
         <button onClick={generate} disabled={busy} className="m-2 mb-1 flex w-[calc(100%-16px)] items-center justify-center gap-1.5 rounded-md bg-accent-primary px-3 py-2 text-[12px] font-semibold text-white disabled:opacity-60">
           <Play className="size-3.5" /> {busy ? "Đang dựng báo cáo…" : "Tạo báo cáo mới"}
@@ -151,13 +141,12 @@ function DailyReportView({ type }: { type: Exclude<Tab, "company"> }) {
         </ul>
       </Panel>
 
-      {/* report body */}
       <div className="col-span-12 lg:col-span-9">
         {busy && <Loading rows={10} />}
         {error && !busy && <Unavailable title="Không tạo được báo cáo" note={error} />}
         {current && !busy && <ReportView report={current} meta={meta} onPrint={print} />}
         {!current && !busy && !error && (
-          <Unavailable title="Chọn hoặc tạo một báo cáo" note="Báo cáo được dựng từ dữ liệu thị trường đã xác minh tại thờ điểm phát hành (freshness gate) — không dùng dữ liệu cũ che giấu." />
+          <Unavailable title="Chọn hoặc tạo một báo cáo" note="Báo cáo được dựng từ dữ liệu thị trường đã xác minh tại thời điểm phát hành (freshness gate) — không dùng dữ liệu cũ che giấu." />
         )}
       </div>
     </div>
@@ -167,10 +156,9 @@ function DailyReportView({ type }: { type: Exclude<Tab, "company"> }) {
 function ReportView({ report, meta, onPrint }: { report: DailyReport; meta: import("@/lib/types").Meta | null; onPrint: () => void }) {
   return (
     <article className="panel p-5 pb-4 print:shadow-none">
-      {/* report header */}
       <div id="report-print-area">
         <div className="hd flex items-center gap-3 border-b border-line pb-3">
-          <img src="/brand/orca-mark.png" alt="ORCA" className="size-11 rounded-lg" />
+          <OrcaMark size={44} />
           <div className="min-w-0">
             <h2 className="text-[19px] font-semibold leading-tight">{report.title}</h2>
             <p className="text-[12px] text-text-muted">{report.subtitle}</p>
@@ -190,7 +178,6 @@ function ReportView({ report, meta, onPrint }: { report: DailyReport; meta: impo
           ))}
         </div>
 
-        {/* sections */}
         <div className="mt-4 space-y-4">
           {report.sections.map((s, i) => (
             <section key={i}>
@@ -204,7 +191,6 @@ function ReportView({ report, meta, onPrint }: { report: DailyReport; meta: impo
             </section>
           ))}
 
-          {/* scenarios */}
           <section>
             <h2 className="mb-1.5 flex items-center gap-2 text-[14px] font-semibold">
               <span className="size-1.5 rounded-full bg-accent-primary" /> Kịch bản thị trường (Base / Bull / Bear)
@@ -226,7 +212,6 @@ function ReportView({ report, meta, onPrint }: { report: DailyReport; meta: impo
           </section>
         </div>
 
-        {/* assumptions / traceability */}
         <footer className="assump mt-5 border-t border-dashed border-line pt-3 text-[10.5px] leading-relaxed text-text-muted">
           <b className="text-text-secondary">Assumptions & data traceability:</b>
           <ul className="mt-1 list-disc space-y-0.5 pl-4">
@@ -238,7 +223,6 @@ function ReportView({ report, meta, onPrint }: { report: DailyReport; meta: impo
         </footer>
       </div>
 
-      {/* actions + meta */}
       <div className="mt-4 flex items-center justify-between border-t border-line pt-3">
         {meta ? <MetaLine meta={meta} /> : <span />}
         <button onClick={onPrint} className="flex items-center gap-1.5 rounded-md border border-border-default px-3 py-1.5 text-[12px] text-text-secondary hover:border-accent-primary/50 hover:text-accent-primary">
