@@ -10,12 +10,6 @@ import { getVnSession, type VnSessionInfo } from "../vn/sessions";
 import { VN_INDICES, getSecurity } from "../vn/master";
 import type { FreshnessStatus, IndexQuote, Meta, NewsArticle } from "../types";
 
-/**
- * MARKET INTELLIGENCE ENGINE — the homepage command center payload.
- * Composes: VN indices + breadth + liquidity + flow + cross-asset + condition
- * scores + index contributions, each carrying source/timestamp/freshness.
- */
-
 export interface BreadthData {
   advancers: number;
   decliners: number;
@@ -31,6 +25,26 @@ export interface FlowData {
   etfNet: number | null;
   source: string;
   available: boolean;
+  note: string;
+}
+
+export interface CapitalFlowRow {
+  symbol: string;
+  buyVal: number;
+  sellVal: number;
+  netVal: number;
+}
+
+export interface CapitalFlowAnalysis {
+  available: boolean;
+  sessionDate: string | null;
+  foreignBuy: number | null;
+  foreignSell: number | null;
+  foreignNet: number | null;
+  stockCount: number;
+  topNetBuy: CapitalFlowRow[];
+  topNetSell: CapitalFlowRow[];
+  source: string;
   note: string;
 }
 
@@ -53,25 +67,26 @@ export interface MarketIntel {
 const VN30_BOARD = ["VCB", "BID", "CTG", "TCB", "MBB", "VPB", "ACB", "STB", "HDB", "VIC", "VHM", "VRE", "HPG", "FPT", "VNM", "MSN", "MWG", "GAS", "PLX", "SSI", "POW", "SAB", "BCM", "GVR", "SHB", "TPB", "BVH", "PDR", "KDH", "VJC"];
 
 export async function buildMarketIntel(): Promise<{ intel: MarketIntel; meta: Meta }> {
-  const res = await cached("market:intel:v2", {
+  const res = await cached("market:intel:v3", {
     ttlMs: 15_000,
     staleMs: 20 * 60_000,
     producer: async () => {
-      const [snapRes, crossRes, boardRes] = await Promise.allSettled([
+      const [snapRes, crossRes, boardRes, foreignRes] = await Promise.allSettled([
         buildMarketSnapshot(),
         getCrossAsset(),
-        getVnQuotes(VN30_BOARD), // VNDirect path — không bắt buộc VNSTOCK_API_KEY
+        getVnQuotes(VN30_BOARD),
+        vndirect.getVndForeignFlow(),
       ]);
 
       const snap = snapRes.status === "fulfilled" ? snapRes.value : null;
       const cross = crossRes.status === "fulfilled" ? crossRes.value : null;
       const board = boardRes.status === "fulfilled" ? boardRes.value : null;
+      const foreign = foreignRes.status === "fulfilled" ? foreignRes.value : null;
 
       const indices = snap?.snapshot.indices ?? null;
       const indicesAvailable = Boolean(indices?.length);
       const session = getVnSession();
 
-      /* breadth — prefer official index advances/declines, else VN30 board participation */
       let breadth: BreadthData;
       const idxStats = await vndirect.getVndIndexSessionStats("VNINDEX").catch(() => null);
       if (idxStats && (idxStats.advances > 0 || idxStats.declines > 0)) {
@@ -96,7 +111,6 @@ export async function buildMarketIntel(): Promise<{ intel: MarketIntel; meta: Me
         };
       }
 
-      /* liquidity — traded value vs baseline (requires VN value data) */
       const valueTraded =
         idxStats?.value ??
         board?.quotes?.reduce((sum, q) => sum + (q.quoteVolume ?? 0), 0) ??
@@ -110,28 +124,36 @@ export async function buildMarketIntel(): Promise<{ intel: MarketIntel; meta: Me
           : "Cần dữ liệu giá trị giao dịch từ provider VN.",
       };
 
-      /* capital flow — never fabricated */
-      const flow: FlowData = {
-        foreignNet: null, propNet: null, etfNet: null,
-        source: "vnstock/vndirect",
-        available: false,
-        note: "Dòng vốn khối ngoại / tự doanh / ETF cần endpoint chuyên biệt từ provider VN. Hệ thống hiển thị UNAVAILABLE thay vì tạo số liệu giả định.",
-      };
+      const flow: FlowData = foreign
+        ? {
+            foreignNet: foreign.netVal,
+            propNet: null,
+            etfNet: null,
+            source: "vndirect foreigns",
+            available: true,
+            note: `Khối ngoại phiên ${foreign.sessionDate}: mua ${foreign.buyVal.toExponential(2)} / bán ${foreign.sellVal.toExponential(2)} (VND). Tự doanh & ETF: chưa có nguồn.`,
+          }
+        : {
+            foreignNet: null,
+            propNet: null,
+            etfNet: null,
+            source: "vndirect",
+            available: false,
+            note: "Dòng vốn khối ngoại / tự doanh / ETF chưa khả dụng — không tạo số liệu giả định.",
+          };
 
-      /* condition engine */
       const cryptoSum = snap?.snapshot.crypto?.summary ?? null;
       const condition = computeMarketCondition({
         index: indices?.[0] ? { changePercent: indices[0].changePercent, value: indices[0].value, code: indices[0].code } : null,
         breadth: breadth.available ? { advancers: breadth.advancers, decliners: breadth.decliners, unchanged: breadth.unchanged } : null,
         liquidity: liquidity.available ? { valueTraded: liquidity.valueTraded, baseline: liquidity.baseline } : null,
-        flow: null,
+        flow: foreign ? { foreignNet: foreign.netVal, propNet: null, etfNet: null } : null,
         crossAsset: cross ? crossAssetChanges(cross.items) : null,
         cryptoBreadth: cryptoSum
           ? { advancers: cryptoSum.advancers, decliners: cryptoSum.decliners, total: cryptoSum.marketCount, avgChange: cryptoSum.avgChangePercent }
           : null,
       });
 
-      /* index contributions (weight × change) */
       const contribRows = (board?.quotes ?? []).map((q) => ({
         symbol: q.symbol,
         changePercent: q.changePercent ?? null,
@@ -154,13 +176,13 @@ export async function buildMarketIntel(): Promise<{ intel: MarketIntel; meta: Me
             ...contrib,
             note: contrib.hasWeights
               ? "Đóng góp điểm = giá trị chỉ số × tỷ trọng × %thay đổi."
-              : "Chưa có tỷ trọng cấu phần chỉ số từ provider — bảng xếp theo %thay đổi và ghi rõ chưa quy đổi ra điểm số đóng góp.",
+              : "Chưa có tỷ trọng cấu phần chỉ số từ provider — bảng xếp theo %thay đổi.",
           },
           news: snap?.snapshot.news?.slice(0, 6) ?? [],
           sections: (snap?.meta.sections ?? {}) as Record<string, FreshnessStatus>,
           vnDataNote: indicesAvailable ? null : "VNDirect/VNStock chưa phản hồi chỉ số — engine tự hạ độ tin cậy.",
         } satisfies MarketIntel,
-        newest: cross?.meta.sourceTimestamp ? Date.parse(cross.meta.sourceTimestamp) : Date.now(),
+        newest: foreign?.sourceTs ?? (cross?.meta.sourceTimestamp ? Date.parse(cross.meta.sourceTimestamp) : Date.now()),
         crossMeta: cross?.meta ?? null,
       };
     },
@@ -177,8 +199,6 @@ export async function buildMarketIntel(): Promise<{ intel: MarketIntel; meta: Me
   return { intel: res.value.intel, meta };
 }
 
-/* --------------------------- index detail payload -------------------------- */
-
 export interface IndexDetail {
   code: string;
   name: string;
@@ -187,6 +207,7 @@ export interface IndexDetail {
   session: VnSessionInfo;
   breadth: BreadthData;
   pressure: { buying: number | null; selling: number | null; net: number | null; basis: string; available: boolean };
+  capitalFlow: CapitalFlowAnalysis;
   contributors: { positive: ContributionRow[]; negative: ContributionRow[]; hasWeights: boolean; note: string };
   constituents: { symbol: string; name: string | null; sector: string | null; changePercent: number | null; price: number | null }[];
   intel: { trend: string; momentum: string; breadthState: string; liquidity: string; risks: string[] };
@@ -199,10 +220,11 @@ export async function buildIndexDetail(codeRaw: string): Promise<{ detail: Index
   const def = VN_INDICES.find((i) => i.code === code || i.aliases.some((a) => a.toUpperCase().replace(/[^A-Z0-9]/g, "") === code));
   if (!def) return null;
 
-  const [{ intel, meta }, statsRes, marketRes] = await Promise.all([
+  const [{ intel, meta }, statsRes, marketRes, foreignRes] = await Promise.all([
     buildMarketIntel(),
     vndirect.getVndIndexSessionStats(def.code).catch(() => null),
     getVnMarketBoard().catch(() => null),
+    vndirect.getVndForeignFlow().catch(() => null),
   ]);
 
   const aliases = new Set(
@@ -276,8 +298,44 @@ export async function buildIndexDetail(codeRaw: string): Promise<{ detail: Index
     ...computed,
     note: computed.hasWeights
       ? "Đóng góp điểm theo tỷ trọng chính thức"
-      : "Chưa có bộ tỷ trọng rổ — hiển thị mã biến động mạnh nhất theo % (không quy đổi điểm chỉ số).",
+      : "Chưa có bộ tỷ trọng rổ — hiển thị mã biến động mạnh nhất theo %.",
   };
+
+  const capitalFlow: CapitalFlowAnalysis = foreignRes
+    ? {
+        available: true,
+        sessionDate: foreignRes.sessionDate,
+        foreignBuy: foreignRes.buyVal,
+        foreignSell: foreignRes.sellVal,
+        foreignNet: foreignRes.netVal,
+        stockCount: foreignRes.stockCount,
+        topNetBuy: foreignRes.topNetBuy.map((r) => ({
+          symbol: r.symbol,
+          buyVal: r.buyVal,
+          sellVal: r.sellVal,
+          netVal: r.netVal,
+        })),
+        topNetSell: foreignRes.topNetSell.map((r) => ({
+          symbol: r.symbol,
+          buyVal: r.buyVal,
+          sellVal: r.sellVal,
+          netVal: r.netVal,
+        })),
+        source: "vndirect foreigns",
+        note: `Dòng tiền khối ngoại phiên ${foreignRes.sessionDate} (cổ phiếu listed) — không gồm tự doanh/ETF trừ khi provider bổ sung.`,
+      }
+    : {
+        available: false,
+        sessionDate: null,
+        foreignBuy: null,
+        foreignSell: null,
+        foreignNet: null,
+        stockCount: 0,
+        topNetBuy: [],
+        topNetSell: [],
+        source: "vndirect foreigns",
+        note: "Chưa lấy được thống kê khối ngoại phiên — hiển thị UNAVAILABLE, không ước lượng.",
+      };
 
   const liquidityAvailable = statsRes?.value != null || intel.liquidity.available;
   const liquidityNote =
@@ -300,6 +358,7 @@ export async function buildIndexDetail(codeRaw: string): Promise<{ detail: Index
     session: intel.session,
     breadth,
     pressure,
+    capitalFlow,
     contributors,
     constituents: constituents.slice(0, 40),
     intel: {
@@ -330,7 +389,7 @@ export async function buildIndexDetail(codeRaw: string): Promise<{ detail: Index
 
   const mergedMeta = buildMeta({
     source: meta.source,
-    sourceTimestampMs: statsRes?.sourceTs ?? (meta.sourceTimestamp ? Date.parse(meta.sourceTimestamp) : null),
+    sourceTimestampMs: foreignRes?.sourceTs ?? statsRes?.sourceTs ?? (meta.sourceTimestamp ? Date.parse(meta.sourceTimestamp) : null),
     cached: meta.cached,
     stale: meta.stale,
     note: detail.note ?? meta.note,
