@@ -42,6 +42,9 @@ export interface AgentPrefs {
   riskDisclosure?: "standard" | "detailed" | "off";
 }
 
+/** Prior turns from the client (oldest → newest). role "agent" is normalized to assistant upstream. */
+export type AgentHistoryTurn = { role: "user" | "assistant" | "agent"; content: string };
+
 interface AgentAnswer {
   answer: string;
   mode: "deterministic" | "llm";
@@ -88,6 +91,36 @@ function detectIntent(q: string): Intent {
   return { kind: "general" };
 }
 
+/** Keep persona/context when user sends a short follow-up without re-stating the topic. */
+function resolveIntent(question: string, history: AgentHistoryTurn[]): Intent {
+  const direct = detectIntent(question);
+  if (direct.kind !== "general" && direct.kind !== "market") return direct;
+
+  const recentUser = [...history].reverse().filter((h) => h.role === "user").slice(0, 4);
+  for (const turn of recentUser) {
+    const prev = detectIntent(turn.content);
+    if (prev.kind === "personal_finance" || prev.kind === "wealth") return prev;
+    if (prev.kind === "crypto" || prev.kind === "forex" || prev.kind === "vn-stock" || prev.kind === "commodity") {
+      if (/^(thế |còn |và |với |nếu |vậy |ok |được |rồi |tiếp)/i.test(question.trim()) || question.trim().length < 48) {
+        return prev;
+      }
+    }
+  }
+
+  const recentAgent = [...history].reverse().filter((h) => h.role === "assistant" || h.role === "agent").slice(0, 2);
+  for (const turn of recentAgent) {
+    if (/phong bì tuần|đ\/ngày|đ\/tuần|quỹ đệm|chi tiêu tuần|khẩu vị rủi ro|gia sản/i.test(turn.content)) {
+      if (direct.kind === "general" || question.trim().length < 80) {
+        return /khẩu vị|gia sản|danh mục|tỷ trọng/i.test(turn.content)
+          ? { kind: "wealth" }
+          : { kind: "personal_finance" };
+      }
+    }
+  }
+
+  return direct;
+}
+
 function collectUserNumbers(question: string): Set<number> {
   const acc = new Set<number>();
   for (const c of extractNumericClaims(question)) if (Number.isFinite(c.value)) acc.add(Number(c.value.toPrecision(8)));
@@ -117,7 +150,8 @@ const SYS_BASE = `Bạn là chuyên viên của ORCA Financial.
 - CHỈ dùng số liệu trong STRUCTURED CONTEXT (gồm user_inputs/plan). Không dùng giá cũ từ model.
 - Phân biệt FACT / INTERPRETATION / SCENARIO. Thiếu dữ liệu thì nói rõ.
 - Văn phong tự nhiên, đủ ý; không nhãn máy móc.
-- Tài chính cá nhân/gia sản: không dòng nguồn hay disclaimer dài.`;
+- Tài chính cá nhân/gia sản: không dòng nguồn hay disclaimer dài.
+- Nếu có lịch sử hội thoại: giữ nguyên bối cảnh (số tiền, thời hạn, ràng buộc) — không nhảy sang chủ đề khác trừ khi người dùng đổi rõ ràng.`;
 
 const SYS_STOCK = `${SYS_BASE}
 
@@ -246,7 +280,7 @@ async function buildForex(pair: string): Promise<Built> {
   const r = await getForexDetail(pair);
   if (!r) return { narrative: `Không lấy được dữ liệu ${pair}.`, contract: { asset: { symbol: pair, asset_type: "forex" }, error: "unavailable" }, sectionsUsed: [], symbols: [pair], freshnesses: [], unavailable: true, persona: "stock_analyst" };
   const d = r.detail;
-  const contract = { asset: { symbol: d.pair, asset_type: "forex" }, market_data: d.current ? { price: d.current.price, change_pct_vs_prev_fix: d.current.changePercent } : null, technical_state: d.technical ? { trend: d.technical.trend.label, rsi14: d.technical.rsi14, returns: d.technical.returns, support: d.technical.support, resistance: d.technical.resistance, signals: d.technical.signals } : null, data_meta: { source: r.meta.source, freshness: r.meta.freshness, fetched_at: new Date().toISOString() } };
+  const contract = { asset: { symbol: d.pair, asset_type: "forex" }, market_data: d.current ? { price: d.current.price, change_pct_vs_prev_close: d.current.changePercent } : null, technical_state: d.technical ? { trend: d.technical.trend.label, rsi14: d.technical.rsi14, returns: d.technical.returns, support: d.technical.support, resistance: d.technical.resistance, signals: d.technical.signals } : null, data_meta: { source: r.meta.source, freshness: r.meta.freshness, fetched_at: new Date().toISOString() } };
   const narrative = [d.current ? `${d.base}/${d.quote}: ${fmtRate(d.current.price)}.` : `${d.base}/${d.quote}: chỉ có chuỗi tham chiếu.`, d.technical ? `Kỹ thuật: xu hướng ${trendVi[d.technical.trend.label]}, RSI14 ${d.technical.rsi14?.toFixed(1) ?? "?"}.` : ""];
   return { narrative: narrative.filter(Boolean).join("\n\n"), contract, sectionsUsed: ["forex-detail", "technical"], symbols: [pair], freshnesses: [r.meta.freshness], persona: "stock_analyst" };
 }
@@ -286,12 +320,20 @@ async function buildMarket(): Promise<Built> {
   return { narrative: `${p.headline}.\n\n${p.body.join("\n\n")}`, contract, sectionsUsed: ["market-snapshot", "pulse-engine"], symbols: [], freshnesses: Object.values(snap.meta.sections ?? {}), persona: "stock_analyst" };
 }
 
-export async function answerQuestion(question: string, prefs: AgentPrefs = {}): Promise<{ result: AgentAnswer; meta: Meta }> {
-  const intent = detectIntent(question);
+export async function answerQuestion(
+  question: string,
+  prefs: AgentPrefs = {},
+  history: AgentHistoryTurn[] = [],
+): Promise<{ result: AgentAnswer; meta: Meta }> {
+  const intent = resolveIntent(question, history);
+  const contextQuestion =
+    intent.kind === "personal_finance" || intent.kind === "wealth"
+      ? `${history.filter((h) => h.role === "user").slice(-3).map((h) => h.content).join("\n")}\n${question}`.trim()
+      : question;
   const deep = prefs.depth === "deep";
   let built: Built;
-  if (intent.kind === "personal_finance") built = await buildPersonalFinance(question);
-  else if (intent.kind === "wealth") built = await buildWealth(question);
+  if (intent.kind === "personal_finance") built = await buildPersonalFinance(contextQuestion);
+  else if (intent.kind === "wealth") built = await buildWealth(contextQuestion);
   else if (intent.kind === "crypto") built = await buildCrypto(intent.symbol);
   else if (intent.kind === "forex") built = await buildForex(intent.pair);
   else if (intent.kind === "commodity") built = await buildCommodity(intent.query);
@@ -319,14 +361,24 @@ export async function answerQuestion(question: string, prefs: AgentPrefs = {}): 
   let outputValidation: Meta["outputValidation"];
   const factNums = collectFactNumbers(built.contract);
   for (const n of collectUserNumbers(question)) factNums.add(n);
+  for (const h of history) {
+    if (h.role === "user") for (const n of collectUserNumbers(h.content)) factNums.add(n);
+  }
   const canLlm = llmConfigured() && !(built.unavailable && built.persona === "stock_analyst");
   if (canLlm) {
     const role = intent.kind === "compare" || intent.kind === "market" || intent.kind === "wealth" ? "reasoning" : "analysis";
     const styleVi = prefs.style === "technical" ? "súc tích, nhấn chỉ báo kỹ thuật" : prefs.style === "brief" ? "rất ngắn gọn (3-5 câu)" : "phân tích chuyên sâu, 2-4 đoạn mạch lạc";
     const user = built.persona === "personal_finance" || built.persona === "wealth"
-      ? `CÂU HỎI: ${question}\n\nSTRUCTURED CONTEXT:\n${JSON.stringify(built.contract, null, 1).slice(0, 11_000)}\n\nYêu cầu: trả lời đủ ý, dùng đúng số user_inputs/plan, lịch chi theo ngày/tuần, có bước hành động. Không template 50/30/20 suông. Không dòng Nguồn/disclaimer.`
-      : `CÂU HỎI: ${question}\n\nSTRUCTURED CONTEXT:\n${JSON.stringify(built.contract, null, 1).slice(0, 11_000)}\n\nTrả lời — phong cách: ${styleVi}.`;
-    const first = await llmChat(role, { system: sys, user, temperature: 0.35, maxTokens: prefs.depth === "deep" ? 1400 : 1100 });
+      ? `CÂU HỎI HIỆN TẠI: ${question}\n\nSTRUCTURED CONTEXT:\n${JSON.stringify(built.contract, null, 1).slice(0, 11_000)}\n\nYêu cầu: Giữ nguyên bối cảnh hội thoại trước (số tiền, thời hạn, ràng buộc đã nêu). Trả lời tiếp nối — không reset sang chủ đề khác. Dùng đúng số user_inputs/plan, lịch chi theo ngày/tuần. Không template 50/30/20 suông. Không dòng Nguồn/disclaimer.`
+      : `CÂU HỎI: ${question}\n\nSTRUCTURED CONTEXT:\n${JSON.stringify(built.contract, null, 1).slice(0, 11_000)}\n\nTrả lời — phong cách: ${styleVi}. Giữ ngữ cảnh hội thoại trước nếu liên quan.`;
+    const chatHistory = history
+      .filter((h) => h.content?.trim())
+      .slice(-8)
+      .map((h) => ({
+        role: (h.role === "user" ? "user" : "assistant") as "user" | "assistant",
+        content: h.content.trim().slice(0, 2_500),
+      }));
+    const first = await llmChat(role, { system: sys, user, history: chatHistory, temperature: 0.35, maxTokens: prefs.depth === "deep" ? 1400 : 1100 });
     if (first) {
       const use = await validateMaybeRepair(first, user, factNums, role, sys);
       if (use.text) { finalAnswer = use.text; mode = "llm"; model = first.model; outputValidation = use.validation; }
