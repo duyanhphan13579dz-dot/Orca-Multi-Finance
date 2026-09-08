@@ -62,8 +62,9 @@ export const env = {
 
   /* Optional LLM for the AI Agent (OpenAI-compatible) */
   aiProviderKey: opt(process.env.AI_PROVIDER_KEY),
-  aiBaseUrl: opt(process.env.AI_BASE_URL) ?? "https://api.openai.com/v1",
-  aiModel: opt(process.env.AI_MODEL) ?? "gpt-4o-mini",
+  /* Base URL chỉ cần khi provider không dùng default gateway; để trống nếu host đã inject. */
+  aiBaseUrl: opt(process.env.AI_BASE_URL) ?? "",
+  aiModel: opt(process.env.AI_MODEL) ?? "qwen/qwen3.8-27b",
 };
 
 export const isProd = env.nodeEnv === "production";
