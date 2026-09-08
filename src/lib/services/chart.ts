@@ -4,6 +4,7 @@ import { buildMeta } from "../freshness";
 import * as binance from "../providers/binance";
 import { getYahooChart, yahooSymbolForPair, yahooIntervalFor } from "../providers/yahoo";
 import { getVnOhlcv, vnstockConfigured } from "./stocks";
+import * as vndirect from "../providers/vndirect";
 import { validateBars, detectGaps, logQualityEvent } from "../quality";
 import { aggregateCandles, binanceInterval, TF_MS, tfsFor, type ChartAssetType, type ChartCandle } from "../chart-const";
 import { ema, rsi, macd, sma, supportResistance } from "../technical";
@@ -195,9 +196,20 @@ async function forexCandles(pair: string, tf: string, limit: number): Promise<{ 
 }
 
 async function stockCandles(symbol: string, tf: string, limit: number): Promise<{ candles: ChartCandle[]; source: string; note?: string }> {
-  if (!vnstockConfigured()) throw new Error("vnstock_not_configured");
-  const r = await getVnOhlcv(symbol, tf === "1d" ? Math.min(limit, 250) : Math.min(limit * 7, 500));
-  if (!r) throw new Error("vnstock_unavailable");
+  const dayLimit = tf === "1d" ? Math.min(limit, 400) : Math.min(limit * 7, 500);
+
+  // VN market indices — daily series from VNDirect vnmarket_prices
+  if (vndirect.isVnIndexSymbol(symbol)) {
+    const bars = await vndirect.getVndIndexOhlcv(symbol, dayLimit);
+    let candles = bars.map(toCandle);
+    if (tf === "1w") candles = aggregateCandles(candles, TF_MS["1w"]).slice(-limit);
+    if (tf === "1M") candles = aggregateCandles(candles, TF_MS["1M"]).slice(-limit);
+    return { candles: candles.slice(-limit), source: "vndirect-index", note: "Chuỗi chỉ số VN (OHLCV ngày)" };
+  }
+
+  // Individual equities — VNStock or VNDirect fallback via getVnOhlcv
+  const r = await getVnOhlcv(symbol, dayLimit);
+  if (!r) throw new Error("stock_ohlcv_unavailable");
   let candles = r.bars.map(toCandle);
   if (tf === "1w") candles = aggregateCandles(candles, TF_MS["1w"]).slice(-limit);
   if (tf === "1M") candles = aggregateCandles(candles, TF_MS["1M"]).slice(-limit);
@@ -252,7 +264,6 @@ export function isChartableCommodity(symbol: string): boolean {
 }
 
 async function commodityCandles(symbol: string, tf: string, limit: number): Promise<{ candles: ChartCandle[]; source: string; note?: string }> {
-  // Gold: prefer Binance PAXG (24/7) then Yahoo GC=F
   if (symbol === "XAUUSD" || symbol === "GOLD" || symbol === "XAU" || symbol.toUpperCase().includes("VANG")) {
     try {
       const bars = await binance.getKlines("PAXGUSDT", binanceInterval(tf), Math.min(limit, 1000));
