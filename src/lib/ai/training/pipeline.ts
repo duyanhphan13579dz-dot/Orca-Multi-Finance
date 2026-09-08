@@ -64,7 +64,7 @@ export async function trainingStatus(): Promise<{ tiers: PipelineStep[]; llm: { 
       { name: "Tầng 3 — RAG (in-memory PGVector-ready)", status: "done", detail: `chunks: ${ragStore.count()}`, count: ragStore.count() },
       { name: "Tầng 4 — Eval harness (intent/hallucination)", status: "done", detail: "DEFAULT_EVAL_SET 7 cases, runEval" },
       { name: "Tầng 4b — DPO/RLHF (feedback loop)", status: "pending", detail: "agent_feedback → DPO pairs" },
-      { name: "Tầng 5 — LoRA fine-tune qwen3.8-27b", status: "pending", detail: "scripts/train-llm/sft.py (cần GPU)" },
+      { name: "Tầng 5 — LoRA fine-tune qwen3-32b 128K", status: "pending", detail: "scripts/train-llm/sft.py (cần GPU, max_seq 4096)" },
     ],
   };
 }

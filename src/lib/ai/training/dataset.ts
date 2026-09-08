@@ -2,7 +2,7 @@ import "server-only";
 
 /**
  * Tầng 2 — Dataset Builder cho SFT / DPO
- * Chuyển log hội thoại thành JSONL cho LoRA fine-tune Qwen3.8-27b
+ * Chuyển log hội thoại thành JSONL cho LoRA fine-tune Qwen3-32b 128K
  */
 
 export interface SftExample {

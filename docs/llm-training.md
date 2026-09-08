@@ -1,6 +1,6 @@
-# ORCA LLM — Huấn luyện đa ngữ cảnh 4 tầng (qwen3.8-27b cố định)
+# ORCA LLM — Huấn luyện đa ngữ cảnh 4 tầng (qwen3-32b 128K long-context)
 
-`model` toàn hệ thống đã **cố định `qwen/qwen3.8-27b`** (`src/lib/env.ts` + `src/lib/ai/gateway.ts` normalize). Mọi `AI_MODEL*` override đều được chuẩn hoá về id này.
+`model` toàn hệ thống đã **cố định `qwen/qwen3-32b` 128K** (`src/lib/env.ts` + `src/lib/ai/gateway.ts` normalize, alias cũ `qwen3.8-27b` tự chuyển). Mọi `AI_MODEL*` override đều được chuẩn hoá. Nguồn Groq console (OpenAI-compatible) giữ nguyên, chỉ đổi model sang 32B long-context miễn phí (Apache 2.0).
 
 ## Kiến trúc hiện tại
 
@@ -33,7 +33,7 @@ Kiểm: `GET /api/v1/training/status` → Tầng 1 `done`
   import { runTier2_DatasetBuild } from "@/lib/ai/training/pipeline";
   const { stats, trainCount } = await runTier2_DatasetBuild(1000);
   ```
-- **Xuất JSONL:** `training/sft_qwen3.8-27b_20250919.jsonl` (mỗi dòng `{system,user,assistant}`)
+- **Xuất JSONL:** `training/sft_qwen3-32b_20250919.jsonl` (mỗi dòng `{system,user,assistant}`)
 
 ### Tầng 3 — RAG đa ngữ cảnh
 - **Store:** `src/lib/ai/training/rag.ts` → `InMemoryRag` (prototype, thay bằng PGVector khi bật `pgvector` extension)
@@ -47,13 +47,13 @@ Kiểm: `GET /api/v1/training/status` → Tầng 1 `done`
   const { runTier4_Eval } = await import("@/lib/ai/training/pipeline");
   const r = await runTier4_Eval(); // intentAccuracy 0.85 = đạt
   ```
-- **DPO:** `agent_feedback.correctedAnswer` → `toDpoExample()` → `dpo_qwen3.8-27b.jsonl` (`prompt/chosen/rejected`)
-- **LoRA SFT:** `scripts/train-llm/sft.py` (template) — Qwen3 8B, rank 16, alpha 32, lr 2e-4, epoch 3, batch 4, max_seq 2048
+- **DPO:** `agent_feedback.correctedAnswer` → `toDpoExample()` → `dpo_qwen3-32b.jsonl` (`prompt/chosen/rejected`)
+- **LoRA SFT:** `scripts/train-llm/sft.py` (template) — Qwen3 32B, rank 16, alpha 32, lr 2e-4, epoch 3, batch 4, max_seq 4096 (tận dụng 128K)
   ```bash
-  python scripts/train-llm/sft.py --base qwen/qwen3-8b --data training/sft_qwen3.8-27b.jsonl --output adapters/qwen3.8-27b-orca --lora-r 16
-  python scripts/train-llm/dpo.py --base adapters/qwen3.8-27b-orca --data training/dpo.jsonl
+  python scripts/train-llm/sft.py --base qwen/qwen3-32b --data training/sft_qwen3-32b.jsonl --output adapters/qwen3-32b-orca --lora-r 16
+  python scripts/train-llm/dpo.py --base adapters/qwen3-32b-orca --data training/dpo.jsonl
   ```
-- **Deploy:** merge LoRA → `qwen3.8-27b-orca` → push OpenRouter private hoặc self-host `vllm` → trỏ `AI_BASE_URL` về endpoint mới (không cần đổi `AI_MODEL` vì đã cố định)
+- **Deploy:** merge LoRA → `qwen3-32b-orca` → push OpenRouter private hoặc self-host `vllm` → trỏ `AI_BASE_URL` về endpoint mới (không cần đổi `AI_MODEL` vì đã chuẩn hoá)
 
 ## Vận hành
 
@@ -64,4 +64,4 @@ Kiểm: `GET /api/v1/training/status` → Tầng 1 `done`
 ## Bảo vệ
 
 - Mọi tầng đều **giữ nguyên** `validateOutput` — LLM không được bịa số ngoài `contract`
-- Model **cố định** `qwen/qwen3.8-27b` — không cho phép `AI_MODEL_*` lệch, tránh drift đa ngữ cảnh
+- Model **cố định** `qwen/qwen3-32b` 128K — alias cũ tự chuyển, giữ Groq console, chỉ đổi model để có long-context

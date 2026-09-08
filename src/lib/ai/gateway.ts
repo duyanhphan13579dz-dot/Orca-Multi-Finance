@@ -21,20 +21,20 @@ export interface LlmResult {
 
 export type ChatTurn = { role: "user" | "assistant"; content: string };
 
-/** Cố định model qwen3.8-27b cho toàn hệ thống */
+/** Model mặc định: Qwen3-32B 128K long-context — miễn phí công khai (Apache 2.0) qua Hugging Face / Groq / OpenRouter */
 function normalizeModel(raw: string): string {
   const t = raw.trim();
-  if (!t) return "qwen/qwen3.8-27b";
-  // mọi alias qwen đều cố định về qwen/qwen3.8-27b theo yêu cầu
-  if (t.includes("qwen")) return "qwen/qwen3.8-27b";
+  if (!t) return "qwen/qwen3-32b";
+  // alias cũ qwen3.8-27b → chuyển sang qwen3-32b 128K
+  if (t.includes("qwen3.8-27b") || t === "qwen/qwen3.8-27b") return "qwen/qwen3-32b";
+  if (t.includes("qwen")) return t.includes("/") ? t : `qwen/${t}`;
   return t;
 }
 
 export function modelFor(role: LlmRole): string {
   const raw = process.env[`AI_MODEL_${role.toUpperCase()}`]?.trim() ?? env.aiModel;
   const m = normalizeModel(raw);
-  // env default đã là qwen/qwen3.8-27b nhưng vẫn chuẩn hoá để cố định
-  return m.includes("qwen") ? "qwen/qwen3.8-27b" : m;
+  return m;
 }
 
 function resolveBaseUrl(model: string): string {
@@ -80,12 +80,13 @@ export async function llmChat(role: LlmRole, opts: ChatOptions): Promise<LlmResu
   const baseUrl = resolveBaseUrl(model);
   const t0 = performance.now();
 
+  // Long-context: giữ tới 16 turns, mỗi turn 3.5k ký tự (~1k tokens) để tận dụng 128K
   const history = (opts.history ?? [])
     .filter((t) => t.content?.trim())
-    .slice(-8)
+    .slice(-16)
     .map((t) => ({
       role: t.role === "assistant" ? ("assistant" as const) : ("user" as const),
-      content: t.content.trim().slice(0, 2_500),
+      content: t.content.trim().slice(0, 3_500),
     }));
 
   const messages: { role: "system" | "user" | "assistant"; content: string }[] = [
@@ -97,13 +98,13 @@ export async function llmChat(role: LlmRole, opts: ChatOptions): Promise<LlmResu
   const res = await httpJson<ChatResponse>(`${baseUrl}/chat/completions`, {
     provider: `llm:${role}`,
     method: "POST",
-    timeoutMs: opts.timeoutMs ?? 28_000,
+    timeoutMs: opts.timeoutMs ?? 45_000,
     retries: 0,
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${env.aiProviderKey}` },
     body: JSON.stringify({
       model,
       temperature: opts.temperature ?? 0.3,
-      max_tokens: opts.maxTokens ?? 900,
+      max_tokens: opts.maxTokens ?? 2_048,
       messages,
     }),
   });
