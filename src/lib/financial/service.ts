@@ -1,8 +1,6 @@
 import "server-only";
 import { cached } from "../cache";
 import { buildMeta } from "../freshness";
-import { env } from "../env";
-import * as vnstock from "../providers/vnstock";
 import { computeFinancialHealth, type FinancialHealthResult } from "../engines/fundamental";
 import { fetchVndirectFinancials, periodsToLegacyRows } from "./vndirect-fs";
 import type {
@@ -16,36 +14,10 @@ import type { Meta } from "../types";
 
 /**
  * FINANCIAL DATA RELIABILITY LAYER
- * Priority: VNStock (if key) → VNDirect structured FS → cache stale.
+ * Temporary primary: VNDirect structured financial_statements.
+ * Next: SSI Flashconnect primary → VNDirect fallback.
  * Never fabricates numbers. Always returns best available + metadata.
  */
-
-function vnstockOn() {
-  return Boolean(env.vnstockApiKey);
-}
-
-async function tryVnstock(symbol: string): Promise<{
-  income: Record<string, unknown>[];
-  balance: Record<string, unknown>[];
-  cashflow: Record<string, unknown>[];
-  ratios: Record<string, unknown>[];
-  latencyMs: number;
-} | null> {
-  if (!vnstockOn()) return null;
-  const t0 = performance.now();
-  try {
-    const [income, balance, cashflow, ratios] = await Promise.all([
-      vnstock.getVnFinancials(symbol, "income", "quarter", 8),
-      vnstock.getVnFinancials(symbol, "balance", "quarter", 8),
-      vnstock.getVnFinancials(symbol, "cashflow", "quarter", 8),
-      vnstock.getVnFinancials(symbol, "ratios", "quarter", 8).catch(() => [] as Record<string, unknown>[]),
-    ]);
-    if (!income.length && !balance.length) return null;
-    return { income, balance, cashflow, ratios, latencyMs: Math.round(performance.now() - t0) };
-  } catch {
-    return null;
-  }
-}
 
 function labelPeriod(periods: NormalizedPeriod[]): string | null {
   return periods[0]?.period ?? null;
@@ -85,45 +57,16 @@ export async function getFinancialPackage(symbol: string): Promise<{
   const sym = symbol.toUpperCase();
   const sources: FinancialSourceMeta[] = [];
 
-  const cachedRes = await cached(`fin:pkg:${sym}:v1`, {
+  const cachedRes = await cached(`fin:pkg:${sym}:vnd:v1`, {
     ttlMs: 6 * 3_600_000,
     staleMs: 90 * 24 * 3_600_000,
     producer: async () => {
-      // STEP: structured / official-capable sources
-      const vs = await tryVnstock(sym);
-      if (vs) {
-        sources.push({
-          id: "vnstock",
-          role: "FAST_STRUCTURED_DATA_SOURCE",
-          priority: 2,
-          success: true,
-          latencyMs: vs.latencyMs,
-        });
-        return {
-          income: vs.income,
-          balance: vs.balance,
-          cashflow: vs.cashflow,
-          ratios: vs.ratios,
-          periods: [] as NormalizedPeriod[],
-          sourceId: "vnstock",
-          fallbackLevel: 0 as const,
-          note: "Dữ liệu cấu trúc từ VNStock",
-        };
-      }
-      sources.push({
-        id: "vnstock",
-        role: "FAST_STRUCTURED_DATA_SOURCE",
-        priority: 2,
-        success: false,
-        note: vnstockOn() ? "empty_or_error" : "not_configured",
-      });
-
       const vd = await fetchVndirectFinancials(sym, { limitPeriods: 8 });
       if (vd) {
         sources.push({
           id: "vndirect-fs",
           role: "FAST_STRUCTURED_DATA_SOURCE",
-          priority: 2,
+          priority: 1,
           success: true,
           latencyMs: vd.latencyMs,
         });
@@ -132,18 +75,17 @@ export async function getFinancialPackage(symbol: string): Promise<{
           ...legacy,
           periods: vd.periods,
           sourceId: "vndirect-fs",
-          fallbackLevel: 2 as const,
-          note: "Dữ liệu cấu trúc từ VNDirect (báo cáo tài chính). Ưu tiên hiển thị kỳ gần nhất có sẵn.",
+          fallbackLevel: 0 as const,
+          note: "Báo cáo tài chính từ VNDirect (nguồn tạm thời — sẽ ưu tiên SSI khi sẵn sàng).",
         };
       }
       sources.push({
         id: "vndirect-fs",
         role: "FAST_STRUCTURED_DATA_SOURCE",
-        priority: 2,
+        priority: 1,
         success: false,
         note: "unavailable",
       });
-
       return null;
     },
   }).catch(() => null);
@@ -157,7 +99,7 @@ export async function getFinancialPackage(symbol: string): Promise<{
       cashflow: [],
       ratios: [],
       periods: [],
-      meta: buildMetaPackage(sym, [], sources, 4, "SOURCE_UNAVAILABLE", "Không có dữ liệu báo cáo từ mọi nguồn."),
+      meta: buildMetaPackage(sym, [], sources, 4, "SOURCE_UNAVAILABLE", "Không có dữ liệu báo cáo từ VNDirect."),
     };
     return {
       pkg,
@@ -177,7 +119,6 @@ export async function getFinancialPackage(symbol: string): Promise<{
   const ratios = v.ratios ?? [];
   const periods = v.periods ?? [];
 
-  // Re-record sources for response (cache may hide attempt list on hit)
   if (!sources.length) {
     sources.push({
       id: v.sourceId,
@@ -189,11 +130,7 @@ export async function getFinancialPackage(symbol: string): Promise<{
   }
 
   const health = computeFinancialHealth({ income, balance, cashflow });
-  const freshness: FreshnessStatus = cachedRes.stale
-    ? "STALE"
-    : v.sourceId === "vnstock"
-      ? "VERIFIED"
-      : "LATEST_AVAILABLE";
+  const freshness: FreshnessStatus = cachedRes.stale ? "STALE" : "LATEST_AVAILABLE";
 
   const pkg: FinancialPackage = {
     symbol: sym,
@@ -202,14 +139,7 @@ export async function getFinancialPackage(symbol: string): Promise<{
     cashflow,
     ratios,
     periods,
-    meta: buildMetaPackage(
-      sym,
-      periods,
-      sources,
-      v.fallbackLevel,
-      freshness,
-      v.note ?? null,
-    ),
+    meta: buildMetaPackage(sym, periods, sources, v.fallbackLevel, freshness, v.note ?? null),
   };
 
   const meta = buildMeta({
@@ -239,13 +169,11 @@ export async function getFinancialsForSymbol(symbol: string): Promise<{
 } | null> {
   const r = await getFinancialPackage(symbol);
   if (!r) return null;
-  const has =
-    r.pkg.income.length + r.pkg.balance.length + r.pkg.cashflow.length > 0;
+  const has = r.pkg.income.length + r.pkg.balance.length + r.pkg.cashflow.length > 0;
   const notes: string[] = [];
   if (r.pkg.meta.note) notes.push(r.pkg.meta.note);
   if (r.pkg.meta.freshnessStatus === "STALE") notes.push("Dữ liệu đang dùng bản lưu gần nhất (stale cache).");
-  if (r.pkg.meta.fallbackLevel >= 2) notes.push("Nguồn chính thức/VNStock không khả dụng — đang dùng nguồn cấu trúc dự phòng.");
-  if (!has) notes.push("Chưa có báo cáo tài chính khả dụng.");
+  if (!has) notes.push("Chưa có báo cáo tài chính khả dụng từ VNDirect.");
 
   return {
     financials: {
