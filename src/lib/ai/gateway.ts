@@ -5,6 +5,9 @@ import { httpJson } from "../http";
 /**
  * LLM GATEWAY — model selection by task role, provider-agnostic.
  * Supports optional multi-turn history for conversation continuity.
+ *
+ * AI_BASE_URL is optional: if omitted, namespace models (e.g. qwen/…)
+ * route to OpenRouter; otherwise OpenAI-compatible default.
  */
 
 export type LlmRole = "reasoning" | "analysis" | "classification";
@@ -22,14 +25,23 @@ export function modelFor(role: LlmRole): string {
   return process.env[`AI_MODEL_${role.toUpperCase()}`]?.trim() ?? env.aiModel;
 }
 
+function resolveBaseUrl(model: string): string {
+  const explicit = env.aiBaseUrl?.replace(/\/$/, "");
+  if (explicit) return explicit;
+  // provider/model ids (OpenRouter-style) — no AI_BASE_URL required
+  if (model.includes("/")) return "https://openrouter.ai/api/v1";
+  return "https://api.openai.com/v1";
+}
+
 export function llmConfigured(): boolean {
   return Boolean(env.aiProviderKey);
 }
 
 export function llmRegistryInfo() {
+  const model = env.aiModel;
   return {
     configured: llmConfigured(),
-    baseUrl: env.aiBaseUrl,
+    baseUrl: resolveBaseUrl(model),
     models: {
       reasoning: modelFor("reasoning"),
       analysis: modelFor("analysis"),
@@ -53,6 +65,7 @@ type ChatResponse = { choices?: { message?: { content?: string } }[] };
 export async function llmChat(role: LlmRole, opts: ChatOptions): Promise<LlmResult | null> {
   if (!env.aiProviderKey) return null;
   const model = modelFor(role);
+  const baseUrl = resolveBaseUrl(model);
   const t0 = performance.now();
 
   const history = (opts.history ?? [])
@@ -69,7 +82,7 @@ export async function llmChat(role: LlmRole, opts: ChatOptions): Promise<LlmResu
     { role: "user", content: opts.user },
   ];
 
-  const res = await httpJson<ChatResponse>(`${env.aiBaseUrl.replace(/\/$/, "")}/chat/completions`, {
+  const res = await httpJson<ChatResponse>(`${baseUrl}/chat/completions`, {
     provider: `llm:${role}`,
     method: "POST",
     timeoutMs: opts.timeoutMs ?? 28_000,
