@@ -11,9 +11,8 @@ import type { CandlePattern, IndexQuote, Meta, OhlcvBar, Quote, TechnicalSnapsho
 
 /**
  * Vietnam equity domain service.
- * Primary provider: VNStock (env-configured, API-key authenticated).
- * When the provider is not configured or degraded, every function returns
- * null and API layer surfaces UNAVAILABLE — never fabricated data.
+ * Full market board via VNDirect (api-finfo); VNStock optional for enrichment/reconcile.
+ * Never fabricates Vietnam market numbers.
  */
 
 export function vnstockConfigured(): boolean {
@@ -22,19 +21,107 @@ export function vnstockConfigured(): boolean {
 
 export async function getVnIndices(): Promise<{ items: IndexQuote[]; meta: Meta } | null> {
   try {
-    const res = await cached("vn:indices", {
-      ttlMs: 30_000,
+    const res = await cached("vn:indices:v2", {
+      ttlMs: 45_000,
       staleMs: 24 * 3_600_000,
-      producer: () => vnstock.getVnIndices(),
+      producer: async () => {
+        if (vnstockConfigured()) {
+          try {
+            return await vnstock.getVnIndices();
+          } catch {
+            /* fall through */
+          }
+        }
+        return vndirect.getVndIndices();
+      },
     });
     const meta = buildMeta({
-      source: "vnstock",
+      source: res.value.sourceTs != null ? "vndirect|vnstock" : "vndirect",
       sourceTimestampMs: res.value.sourceTs,
       cached: res.cached,
       stale: res.stale,
+      note: "Chỉ số VN (VNINDEX/VN30/HNX/UPCOM)",
       slas: { liveSlaMs: 30_000, freshSlaMs: 300_000, delayedSlaMs: 3_600_000 },
     });
     return { items: res.value.items, meta };
+  } catch {
+    return null;
+  }
+}
+
+/** Full VN equity market board — all listed stocks for latest session. */
+export async function getVnMarketBoard(): Promise<{
+  quotes: Quote[];
+  indices: IndexQuote[];
+  universe: { symbol: string; name: string | null; exchange: string | null; industry: string | null }[];
+  sessionDate: string;
+  meta: Meta;
+} | null> {
+  try {
+    const res = await cached("vn:market-board:v1", {
+      ttlMs: 60_000,
+      staleMs: 24 * 3_600_000,
+      producer: async () => {
+        const [board, indices, universe] = await Promise.all([
+          vndirect.getVndMarketQuotes(),
+          vndirect.getVndIndices().catch(() => ({ items: [] as IndexQuote[], sourceTs: null as number | null })),
+          vndirect.getVndUniverse().catch(
+            () => [] as { symbol: string; name: string | null; exchange: string | null; industry: string | null }[],
+          ),
+        ]);
+        const bySym = new Map(universe.map((u) => [u.symbol, u]));
+        const quotes = board.quotes.map((q) => {
+          const u = bySym.get(q.symbol);
+          return u ? { ...q, name: q.name ?? u.name } : q;
+        });
+        return {
+          quotes,
+          indices: indices.items,
+          universe,
+          sessionDate: board.sessionDate,
+          sourceTs: board.sourceTs ?? indices.sourceTs,
+        };
+      },
+    });
+    const meta = buildMeta({
+      source: "vndirect (api-finfo) full market",
+      sourceTimestampMs: res.value.sourceTs,
+      cached: res.cached,
+      stale: res.stale,
+      note: `Phiên ${res.value.sessionDate} · ${res.value.quotes.length} mã · ${res.value.universe.length} listed`,
+      slas: { liveSlaMs: 60_000, freshSlaMs: 600_000, delayedSlaMs: 6 * 3_600_000 },
+    });
+    return {
+      quotes: res.value.quotes,
+      indices: res.value.indices,
+      universe: res.value.universe,
+      sessionDate: res.value.sessionDate,
+      meta,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export async function getVnUniverseList(): Promise<
+  { symbol: string; name: string | null; exchange: string | null; industry: string | null }[] | null
+> {
+  try {
+    const res = await cached("vn:universe:v1", {
+      ttlMs: 6 * 3_600_000,
+      staleMs: 48 * 3_600_000,
+      producer: async () => {
+        if (vnstockConfigured()) {
+          try {
+            return await vnstock.getVnUniverse();
+          } catch {
+            /* fall through */
+          }
+        }
+        return vndirect.getVndUniverse();
+      },
+    });
+    return res.value;
   } catch {
     return null;
   }
@@ -47,8 +134,10 @@ export async function getVnQuotes(symbols: string[]): Promise<{ quotes: Quote[];
       ttlMs: 15_000,
       staleMs: 24 * 3_600_000,
       producer: async () => {
-        // RECONCILIATION: VNStock (primary) + VNDirect (secondary/validation)
-        const [pri, sec] = await Promise.allSettled([vnstock.getVnQuotes(symbols), vndirect.getVndQuotes(symbols)]);
+        const [pri, sec] = await Promise.allSettled([
+          vnstockConfigured() ? vnstock.getVnQuotes(symbols) : Promise.reject(new Error("vnstock off")),
+          vndirect.getVndQuotes(symbols),
+        ]);
         const priQuotes = pri.status === "fulfilled" ? pri.value : null;
         const secQuotes = sec.status === "fulfilled" ? sec.value : null;
         if (!priQuotes && !secQuotes) throw new Error("both providers failed");
@@ -62,12 +151,17 @@ export async function getVnQuotes(symbols: string[]): Promise<{ quotes: Quote[];
             buildQuoteSet("vndirect", 2, secQuotes.quotes),
           ]);
           quotes = r.quotes;
-          discrepancies.push(...r.discrepancies.map((d) => ({ check: "provider_discrepancy", message: `${d.symbol}: ${d.values.map((v) => `${v.provider}=${v.price}`).join(" vs ")} (${d.deviationPct}%)` })));
+          discrepancies.push(
+            ...r.discrepancies.map((d) => ({
+              check: "provider_discrepancy",
+              message: `${d.symbol}: ${d.values.map((v) => `${v.provider}=${v.price}`).join(" vs ")} (${d.deviationPct}%)`,
+            })),
+          );
           note = r.notes.join(" · ");
           source = "vnstock+vndirect (reconciled)";
           void logDiscrepancies(r);
         } else if (!priQuotes && secQuotes) {
-          note = "VNStock lỗi — fallback VNDirect (secondary)";
+          note = "VNStock không dùng/lỗi — VNDirect full path";
           source = "vndirect";
         }
         return { quotes, fetchedAt: Date.now(), discrepancies, note, source };
@@ -99,13 +193,13 @@ export async function getVnOhlcv(symbol: string, limit = 250): Promise<{ bars: O
         let source = "vnstock";
         let note: string | undefined;
         try {
+          if (!vnstockConfigured()) throw new Error("vnstock off");
           bars = await vnstock.getVnOhlcv(sym, limit);
         } catch {
           bars = await vndirect.getVndOhlcv(sym, limit);
           source = "vndirect";
-          note = "VNStock lỗi — fallback VNDirect cho chuỗi OHLCV";
+          note = "Chuỗi OHLCV từ VNDirect";
         }
-        // DATA QUALITY: validate + sanitize (dupes/out-of-order/invalid bars)
         const q = validateBars(bars);
         if (q.status !== "VALID") void logQualityEvent(source, `ohlcv:${sym}`, q);
         if (q.status === "INVALID") throw new Error("invalid ohlcv series");
@@ -134,20 +228,48 @@ export interface VnStockDetail {
   bars: OhlcvBar[];
   technical: TechnicalSnapshot | null;
   patterns: CandlePattern[];
-  financials: { income: Record<string, unknown>[] | null; balance: Record<string, unknown>[] | null; cashflow: Record<string, unknown>[] | null; ratios: Record<string, unknown>[] | null };
+  financials: {
+    income: Record<string, unknown>[] | null;
+    balance: Record<string, unknown>[] | null;
+    cashflow: Record<string, unknown>[] | null;
+    ratios: Record<string, unknown>[] | null;
+  };
   notes: string[];
 }
 
 export async function getVnStockDetail(symbol: string): Promise<{ detail: VnStockDetail; meta: Meta } | null> {
   const sym = symbol.toUpperCase();
-  if (!vnstockConfigured()) return null;
   const [quotesRes, ohlcvRes, incomeRes, balanceRes, cashflowRes, ratiosRes] = await Promise.allSettled([
     getVnQuotes([sym]),
     getVnOhlcv(sym, 250),
-    cached(`vn:fin:${sym}:income`, { ttlMs: 6 * 3_600_000, staleMs: 90 * 24 * 3_600_000, producer: () => vnstock.getVnFinancials(sym, "income", "quarter", 8) }),
-    cached(`vn:fin:${sym}:balance`, { ttlMs: 6 * 3_600_000, staleMs: 90 * 24 * 3_600_000, producer: () => vnstock.getVnFinancials(sym, "balance", "quarter", 8) }),
-    cached(`vn:fin:${sym}:cashflow`, { ttlMs: 6 * 3_600_000, staleMs: 90 * 24 * 3_600_000, producer: () => vnstock.getVnFinancials(sym, "cashflow", "quarter", 8) }),
-    cached(`vn:fin:${sym}:ratios`, { ttlMs: 6 * 3_600_000, staleMs: 90 * 24 * 3_600_000, producer: () => vnstock.getVnFinancials(sym, "ratios", "quarter", 8) }),
+    vnstockConfigured()
+      ? cached(`vn:fin:${sym}:income`, {
+          ttlMs: 6 * 3_600_000,
+          staleMs: 90 * 24 * 3_600_000,
+          producer: () => vnstock.getVnFinancials(sym, "income", "quarter", 8),
+        })
+      : Promise.reject(new Error("vnstock off")),
+    vnstockConfigured()
+      ? cached(`vn:fin:${sym}:balance`, {
+          ttlMs: 6 * 3_600_000,
+          staleMs: 90 * 24 * 3_600_000,
+          producer: () => vnstock.getVnFinancials(sym, "balance", "quarter", 8),
+        })
+      : Promise.reject(new Error("vnstock off")),
+    vnstockConfigured()
+      ? cached(`vn:fin:${sym}:cashflow`, {
+          ttlMs: 6 * 3_600_000,
+          staleMs: 90 * 24 * 3_600_000,
+          producer: () => vnstock.getVnFinancials(sym, "cashflow", "quarter", 8),
+        })
+      : Promise.reject(new Error("vnstock off")),
+    vnstockConfigured()
+      ? cached(`vn:fin:${sym}:ratios`, {
+          ttlMs: 6 * 3_600_000,
+          staleMs: 90 * 24 * 3_600_000,
+          producer: () => vnstock.getVnFinancials(sym, "ratios", "quarter", 8),
+        })
+      : Promise.reject(new Error("vnstock off")),
   ]);
   const quote = quotesRes.status === "fulfilled" ? quotesRes.value?.quotes[0] ?? null : null;
   const bars = ohlcvRes.status === "fulfilled" ? ohlcvRes.value?.bars ?? [] : [];
@@ -171,11 +293,15 @@ export async function getVnStockDetail(symbol: string): Promise<{ detail: VnStoc
       cashflow: cashflowRes.status === "fulfilled" ? cashflowRes.value.value.map((x) => x as Record<string, unknown>) : null,
       ratios: ratiosRes.status === "fulfilled" ? ratiosRes.value.value.map((x) => x as Record<string, unknown>) : null,
     },
-    notes: failed.length ? [`Một số bộ dữ liệu chưa khả dụng từ VNStock: ${failed.join(", ")}`] : [],
+    notes: failed.length ? [`Một số bộ dữ liệu chưa khả dụng: ${failed.join(", ")}`] : [],
   };
   const meta = buildMeta({
-    source: "vnstock",
-    sourceTimestampMs: quote?.updatedAt ? Date.parse(quote.updatedAt) : bars.length ? bars[bars.length - 1].time : Date.now(),
+    source: quote || bars.length ? "vndirect|vnstock" : "unavailable",
+    sourceTimestampMs: quote?.updatedAt
+      ? Date.parse(quote.updatedAt)
+      : bars.length
+        ? bars[bars.length - 1].time
+        : Date.now(),
     degraded: failed.length > 0,
     partial: failed.length > 0,
     note: detail.notes[0],
