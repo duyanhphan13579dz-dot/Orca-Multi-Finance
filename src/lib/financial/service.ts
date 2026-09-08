@@ -6,6 +6,7 @@ import { periodsToLegacyRows } from "./vndirect-fs";
 import { runSourceRouter } from "./provider";
 import { listFinancialProviders } from "./providers-registry";
 import { buildTtmPeriod, computeGrowth, sortPeriodsNewestFirst } from "./normalize";
+import { runOfficialDocumentPipeline } from "./official/pipeline";
 import type {
   FinancialPackage,
   FinancialPackageMeta,
@@ -17,9 +18,8 @@ import type {
 import type { Meta } from "../types";
 
 /**
- * FINANCIAL DATA RELIABILITY LAYER — Phase 1 + Phase 3
- * Router → normalize → TTM/Growth → health → metadata
- * Never fabricates numbers. Always returns best available + metadata.
+ * FINANCIAL DATA RELIABILITY LAYER — Phase 1–4
+ * Official pipeline (meta) ∥ Router → normalize → TTM/Growth → industry health
  */
 
 function labelPeriod(periods: NormalizedPeriod[]): string | null {
@@ -36,6 +36,8 @@ function buildMetaPackage(
   note: string | null,
   ttm: NormalizedPeriod | null,
   growth: GrowthSnapshot | null,
+  auditFromFiling?: FinancialPackageMeta["auditStatus"],
+  scopeFromFiling?: FinancialPackageMeta["statementScope"],
 ): FinancialPackageMeta {
   const primary = sources.find((s) => s.success)?.id ?? "none";
   const head = periods.find((p) => p.periodType !== "ttm") ?? periods[0];
@@ -43,8 +45,8 @@ function buildMetaPackage(
     ticker: symbol,
     latestPeriod: labelPeriod(periods),
     reportTypeLabel: head?.periodType === "year" ? "Báo cáo năm" : "Báo cáo quý",
-    statementScope: head?.statementScope ?? "unknown",
-    auditStatus: head?.auditStatus ?? "unknown",
+    statementScope: scopeFromFiling ?? head?.statementScope ?? "unknown",
+    auditStatus: auditFromFiling ?? head?.auditStatus ?? "unknown",
     primarySource: primary,
     sourcesAttempted: sources,
     fallbackLevel,
@@ -64,7 +66,10 @@ export async function getFinancialPackage(symbol: string): Promise<{
 } | null> {
   const sym = symbol.toUpperCase();
 
-  const cachedRes = await cached(`fin:pkg:${sym}:router:v2`, {
+  // Phase 2: official discovery runs in parallel (does not block structured numbers)
+  const officialPromise = runOfficialDocumentPipeline(sym).catch(() => null);
+
+  const cachedRes = await cached(`fin:pkg:${sym}:router:v3`, {
     ttlMs: 6 * 3_600_000,
     staleMs: 90 * 24 * 3_600_000,
     producer: async () => {
@@ -90,8 +95,10 @@ export async function getFinancialPackage(symbol: string): Promise<{
     },
   }).catch(() => null);
 
+  const official = await officialPromise;
+
   if (!cachedRes?.value) {
-    const emptyHealth = computeFinancialHealth({ income: [], balance: [], cashflow: [] });
+    const emptyHealth = computeFinancialHealth({ income: [], balance: [], cashflow: [] }, { symbol: sym });
     const pkg: FinancialPackage = {
       symbol: sym,
       income: [],
@@ -145,9 +152,32 @@ export async function getFinancialPackage(symbol: string): Promise<{
     ];
   }
 
-  const health = computeFinancialHealth({ income, balance, cashflow });
-  const freshness: FreshnessStatus = cachedRes.stale ? "STALE" : "LATEST_AVAILABLE";
+  // Record official pipeline attempt in source meta
+  sources.push({
+    id: "official-pipeline",
+    role: "PRIMARY_SOURCE_OF_TRUTH",
+    priority: 0,
+    success: Boolean(official?.latestFsFiling),
+    note: official?.latestFsFiling
+      ? `filing:${official.latestFsFiling.period ?? official.latestFsFiling.kind}`
+      : official
+        ? "no_fs_filing"
+        : "pipeline_error",
+  });
 
+  const health = computeFinancialHealth({ income, balance, cashflow }, { symbol: sym });
+  const freshness: FreshnessStatus = cachedRes.stale
+    ? "STALE"
+    : official?.latestFsFiling && official.latestFsFiling.confidence >= 0.85
+      ? "VERIFIED"
+      : "LATEST_AVAILABLE";
+
+  let note = v.note ?? null;
+  if (official?.notes?.length) {
+    note = [note, ...official.notes.slice(0, 2)].filter(Boolean).join(" · ");
+  }
+
+  const filing = official?.latestFsFiling;
   const pkg: FinancialPackage = {
     symbol: sym,
     income,
@@ -163,9 +193,11 @@ export async function getFinancialPackage(symbol: string): Promise<{
       sources,
       v.fallbackLevel,
       freshness,
-      v.note ?? null,
+      note,
       ttm,
       growth,
+      filing?.auditStatus,
+      filing?.statementScope,
     ),
   };
 
@@ -204,6 +236,8 @@ export async function getFinancialsForSymbol(symbol: string): Promise<{
   if (r.pkg.meta.freshnessStatus === "STALE") notes.push("Dữ liệu đang dùng bản lưu gần nhất (stale cache).");
   if (r.pkg.ttm) notes.push(`TTM sẵn sàng: ${r.pkg.ttm.period}`);
   else notes.push("TTM chưa tính được (cần ≥4 quý).");
+  if (r.health.industry) notes.push(`Profile ngành: ${r.health.industry.labelVi} (${r.health.industry.id})`);
+  if (r.health.riskFlags?.length) notes.push(...r.health.riskFlags.slice(0, 3));
   if (!has) notes.push("Chưa có báo cáo tài chính khả dụng.");
 
   return {
