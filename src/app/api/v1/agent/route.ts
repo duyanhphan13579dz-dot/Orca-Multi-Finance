@@ -37,6 +37,20 @@ export async function POST(req: Request) {
 
   try {
     const { result, meta } = await answerQuestion(question, body?.preferences ?? {}, history);
+    // Tầng 2 — thu thập dữ liệu đa ngữ cảnh cho SFT/DPO (best-effort, không chặn response)
+    void (async () => {
+      try {
+        const { logConversation } = await import("@/lib/ai/training/collector");
+        const { retrieveForQuestion } = await import("@/lib/ai/training/rag");
+        const ragExtra = retrieveForQuestion(question, 2);
+        if (ragExtra) meta.note = (meta.note ? meta.note + " · " : "") + `RAG: ${ragExtra.slice(0, 80)}...`;
+        await logConversation({
+          question, answer: result.answer, intent: result.intent, persona: result.persona,
+          mode: result.mode, model: result.model, context: result.context as unknown as Record<string, unknown>,
+          meta: meta as unknown as Record<string, unknown>, latencyMs: (meta as unknown as { latencyMs?: number })?.latencyMs ?? null,
+        });
+      } catch {}
+    })();
     return ok(result, meta);
   } catch (e) {
     return fail("AGENT_FAILED", e instanceof Error ? e.message : "unknown", 502);

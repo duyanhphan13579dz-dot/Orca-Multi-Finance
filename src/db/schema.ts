@@ -290,3 +290,41 @@ export const alerts = pgTable("alerts", {
   triggeredAt: timestamp("triggered_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
+
+/* --------------------------- LLM Training / Agent -------------------------- */
+export const agentConversations = pgTable("agent_conversations", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  userId: uuid("user_id"),
+  sessionId: text("session_id"),
+  question: text("question").notNull(),
+  answer: text("answer").notNull(),
+  intent: text("intent"),
+  persona: text("persona"),
+  mode: text("mode"), // deterministic | llm
+  model: text("model"),
+  context: jsonb("context"),
+  meta: jsonb("meta"),
+  latencyMs: integer("latency_ms"),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+}, (t) => [index("agent_conv_created_idx").on(t.createdAt), index("agent_conv_intent_idx").on(t.intent)]);
+
+export const agentFeedback = pgTable("agent_feedback", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  conversationId: uuid("conversation_id").references(() => agentConversations.id, { onDelete: "cascade" }),
+  userId: uuid("user_id"),
+  rating: integer("rating").notNull(), // -1 | 0 | 1  (down / neutral / up)
+  reason: text("reason"),
+  correctedAnswer: text("corrected_answer"),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+}, (t) => [index("agent_feedback_conv_idx").on(t.conversationId)]);
+
+export const trainingDatasets = pgTable("training_datasets", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  name: text("name").notNull(),
+  version: text("version").notNull(),
+  tier: text("tier").notNull(), // sft | dpo | rag
+  split: text("split").notNull(), // train | eval | test
+  exampleCount: integer("example_count").notNull().default(0),
+  config: jsonb("config"),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
