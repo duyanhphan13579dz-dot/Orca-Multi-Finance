@@ -3,6 +3,7 @@ import "./globals.css";
 import { AppShell } from "@/components/shell";
 import { SettingsProvider } from "@/lib/settings";
 import { ErrorBoundary } from "@/components/error-boundary";
+import { AppSWRProvider } from "@/components/swr-provider";
 
 export const metadata: Metadata = {
   title: {
@@ -29,14 +30,16 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body className="min-h-dvh">
         <script dangerouslySetInnerHTML={{ __html: themeInit }} />
         <ErrorBoundary>
-          <SettingsProvider>
-            <AppShell>{children}</AppShell>
-          </SettingsProvider>
+          <AppSWRProvider>
+            <SettingsProvider>
+              <AppShell>{children}</AppShell>
+            </SettingsProvider>
+          </AppSWRProvider>
         </ErrorBoundary>
-        {/* Global window error guard — prevents silent white-screen loops */}
+        {/* Global window error guard — auto-recovery for stale chunks / React #310 */}
         <script
           dangerouslySetInnerHTML={{
-            __html: `(function(){try{window.addEventListener('unhandledrejection',function(e){console.warn('[orca] unhandledrejection',e.reason&&e.reason.message);});window.addEventListener('error',function(e){if(e.message&&/ChunkLoadError|Loading chunk/i.test(e.message)){console.warn('[orca] chunk error',e.message);}});}catch(e){}})();`,
+            __html: `(function(){try{window.addEventListener('unhandledrejection',function(e){try{var m=(e.reason&&e.reason.message)||'';console.warn('[orca] unhandledrejection',m);if(/ChunkLoadError|Loading chunk|Minified React error #310|Rendered more hooks/i.test(m)){var k='orca.chunkReload';var last=sessionStorage.getItem(k);var now=Date.now();if(!last||now-parseInt(last,10)>30000){sessionStorage.setItem(k,String(now));setTimeout(function(){try{var u=new URL(location.href);u.searchParams.set('_r',String(now));location.replace(u.toString());}catch{location.reload();}},900);}}}catch{}});window.addEventListener('error',function(e){try{var m=e.message||'';if(/ChunkLoadError|Loading chunk|Minified React error #310|Rendered more hooks/i.test(m)){console.warn('[orca] chunk error',m);var k='orca.chunkReload';var last=sessionStorage.getItem(k);var now=Date.now();if(!last||now-parseInt(last,10)>30000){sessionStorage.setItem(k,String(now));setTimeout(function(){try{var u=new URL(location.href);u.searchParams.set('_r',String(now));location.replace(u.toString());}catch{location.reload();}},900);}}}catch{}});}catch(e){}})();`,
           }}
         />
       </body>

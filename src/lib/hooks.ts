@@ -19,7 +19,7 @@ const FETCH_TIMEOUT_MS = 8_000;
 const fetchDedup = new Map<string, Promise<unknown>>();
 const FETCH_DEDUP_TTL = 2_000;
 
-const fetcher = async <T>(url: string): Promise<ApiResponse<T>> => {
+export const fetcher = async <T>(url: string): Promise<ApiResponse<T>> => {
   const dedupKey = url;
   const existing = fetchDedup.get(dedupKey) as Promise<ApiResponse<T>> | undefined;
   if (existing) return existing;
@@ -89,12 +89,12 @@ export function useApi<T>(url: string | null, opts?: { refreshInterval?: number 
     revalidateOnFocus: rt.backgroundRefresh ? true : false,
     revalidateOnReconnect: rt.autoReconnect,
     revalidateIfStale: true,
-    focusThrottleInterval: rt.lowDataMode ? 90_000 : 45_000,
+    focusThrottleInterval: rt.lowDataMode ? 90_000 : 60_000,
     shouldRetryOnError: rt.autoReconnect,
-    errorRetryInterval: rt.lowDataMode ? 45_000 : 8_000,
-    errorRetryCount: rt.autoReconnect ? 3 : 0,
+    errorRetryInterval: rt.lowDataMode ? 45_000 : 12_000,
+    errorRetryCount: rt.autoReconnect ? 2 : 0,
     keepPreviousData: true,
-    dedupingInterval: rt.lowDataMode ? 20_000 : 6_000,
+    dedupingInterval: rt.lowDataMode ? 45_000 : 30_000,
     // Reduce loading flash: deliver stale data while revalidating — tăng tốc first paint
     suspense: false,
     // Avoid fetching same key multiple times within short window across components

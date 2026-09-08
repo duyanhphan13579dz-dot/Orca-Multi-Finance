@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Bot, CornerDownLeft, ShieldCheck } from "lucide-react";
 import type { ApiResponse, Meta } from "@/lib/types";
 import { Badge, Panel } from "@/components/ui";
@@ -50,9 +50,10 @@ export default function AgentPage() {
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
-  // Keep a ref so history is consistent even before React state flushes
-  const messagesRef = useRef(messages);
-  messagesRef.current = messages;
+  const messagesRef = useRef<Msg[]>(messages);
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
 
   async function ask(q: string) {
     const question = q.trim();

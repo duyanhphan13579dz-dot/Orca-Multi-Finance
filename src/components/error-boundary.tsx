@@ -24,7 +24,39 @@ export class ErrorBoundary extends React.Component<Props, State> {
 
   componentDidCatch(error: Error, info: React.ErrorInfo) {
     // Log for debugging but never throw further
-    console.error("[orca] boundary caught", error, info.componentStack?.slice(0, 800));
+    try {
+      console.error("[orca] boundary caught", error, info.componentStack?.slice(0, 800));
+    } catch {}
+    // Auto-recovery for chunk / React #310 (hooks mismatch due to stale chunk cache)
+    // This is the most common “intermittent” crash after deploy — user sees it once, auto reload fixes it.
+    try {
+      const msg = (error as Error)?.message ?? "";
+      const isStaleChunk =
+        /ChunkLoadError|Loading chunk|Failed to fetch.*chunk|Minified React error #310|Rendered more hooks/i.test(msg) ||
+        /#310/.test(msg);
+      if (isStaleChunk) {
+        const key = "orca.autoReload.310";
+        const last = typeof sessionStorage !== "undefined" ? sessionStorage.getItem(key) : null;
+        const now = Date.now();
+        // throttle: at most 1 auto reload per 30s to avoid loop
+        if (!last || now - parseInt(last, 10) > 30_000) {
+          try {
+            sessionStorage.setItem(key, String(now));
+          } catch {}
+          // give user a moment to see fallback, then hard reload bypassing cache
+          setTimeout(() => {
+            try {
+              // bust chunk cache via query
+              const url = new URL(window.location.href);
+              url.searchParams.set("_r", String(now));
+              window.location.replace(url.toString());
+            } catch {
+              window.location.reload();
+            }
+          }, 900);
+        }
+      }
+    } catch {}
     // Report to server best-effort
     try {
       fetch("/api/v1/system/info", { method: "GET", cache: "no-store" }).catch(() => {});
@@ -59,7 +91,7 @@ export class ErrorBoundary extends React.Component<Props, State> {
     if (this.state.hasError) {
       if (this.props.fallback) return this.props.fallback;
       const msg = this.state.error?.message ?? "unknown";
-      const isChunk = /ChunkLoadError|Loading chunk|Failed to fetch.*chunk/i.test(msg);
+      const isChunk = /ChunkLoadError|Loading chunk|Failed to fetch.*chunk|Minified React error #310|Rendered more hooks/i.test(msg);
       return (
         <div className="mx-auto flex min-h-[50vh] max-w-lg flex-col items-center justify-center gap-3 px-4 py-10 text-center">
           <p className="text-[11px] uppercase tracking-widest text-text-muted">ORCA — phục hồi lỗi</p>

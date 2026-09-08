@@ -107,10 +107,19 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
 
+  const toggle = () => {
+    setCollapsed((c) => {
+      try {
+        localStorage.setItem(SB_KEY, c ? "0" : "1");
+      } catch {}
+      return !c;
+    });
+  };
+
   useEffect(() => {
     try {
       const v = localStorage.getItem(SB_KEY);
-      setCollapsed(v === "1");
+      if (v === "1") setCollapsed(true);
     } catch {}
     const onKey = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "b") {
@@ -120,17 +129,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  const toggle = () => {
-    setCollapsed((c) => {
-      try {
-        localStorage.setItem(SB_KEY, c ? "0" : "1");
-      } catch {}
-      return !c;
-    });
-  };
 
   useEffect(() => setMobileOpen(false), [pathname]);
 
