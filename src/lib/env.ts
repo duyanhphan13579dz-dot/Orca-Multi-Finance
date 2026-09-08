@@ -60,13 +60,20 @@ export const env = {
   redisNote,
   jwtSecret: opt(process.env.JWT_SECRET) ?? "orca-dev-insecure-secret-change-in-production",
 
-  /* LLM 2-model, cùng nguồn SiliconFlow (OpenAI-compatible) */
-  // Model1 Agent: Qwen/Qwen3-32B 128K — long-context, linh hoạt (AI_MODEL / AI_MODEL_REASONING)
-  // Model2 Reports: Qwen/Qwen3-235B-A22B 128K — deep analytical (AI_MODEL_REPORT, xem gateway.ts modelFor)
-  aiProviderKey: opt(process.env.AI_PROVIDER_KEY),
-  /* Base URL - mặc định SiliconFlow (miễn phí, ưu tiên Qwen, 128K). Groq không ưu tiên 32B nên đã bỏ. */
-  aiBaseUrl: opt(process.env.AI_BASE_URL) ?? "https://api.siliconflow.cn/v1",
-  aiModel: opt(process.env.AI_MODEL) ?? "Qwen/Qwen3-32B",
+  /* LLM 2-model kết hợp Groq + OpenRouter (OpenAI-compatible, full free) */
+  // Groq (Agent): free 30 req/min, nhanh 500 tok/s — model 1 long-context linh hoạt
+  // OpenRouter (Reports): free 50/ngày/model :free — model 2 deep analytical
+  // Legacy aliases: AI_PROVIDER_KEY/AI_BASE_URL/AI_MODEL map về Groq để không gãy deploy cũ
+  groqApiKey: opt(process.env.GROQ_API_KEY) ?? opt(process.env.AI_PROVIDER_KEY),
+  openRouterApiKey: opt(process.env.OPENROUTER_API_KEY) ?? opt(process.env.AI_PROVIDER_KEY),
+  groqBaseUrl: opt(process.env.GROQ_BASE_URL) ?? opt(process.env.AI_BASE_URL) ?? "https://api.groq.com/openai/v1",
+  openRouterBaseUrl: opt(process.env.OPENROUTER_BASE_URL) ?? "https://openrouter.ai/api/v1",
+  groqModel: opt(process.env.GROQ_MODEL) ?? opt(process.env.AI_MODEL) ?? "openai/gpt-oss-120b",
+  openRouterModel: opt(process.env.OPENROUTER_MODEL) ?? opt(process.env.AI_MODEL_REPORT) ?? "qwen/qwen3-235b-a22b:free",
+  // legacy single fields (để code cũ vẫn chạy)
+  aiProviderKey: opt(process.env.GROQ_API_KEY) ?? opt(process.env.AI_PROVIDER_KEY) ?? opt(process.env.OPENROUTER_API_KEY),
+  aiBaseUrl: opt(process.env.GROQ_BASE_URL) ?? opt(process.env.AI_BASE_URL) ?? "https://api.groq.com/openai/v1",
+  aiModel: opt(process.env.GROQ_MODEL) ?? opt(process.env.AI_MODEL) ?? "openai/gpt-oss-120b",
 };
 
 export const isProd = env.nodeEnv === "production";

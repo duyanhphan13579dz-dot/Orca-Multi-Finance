@@ -1,8 +1,8 @@
-# ORCA LLM — Huấn luyện đa ngữ cảnh 4 tầng (2-model SiliconFlow)
+# ORCA LLM — Huấn luyện đa ngữ cảnh 4 tầng (2-model Groq + OpenRouter free)
 
-Hệ thống **tách 2 model cùng nguồn SiliconFlow** (`https://api.siliconflow.cn/v1`, miễn phí, ưu tiên Qwen) — thay Groq do Groq không ưu tiên 32B.
-- **Model 1 — AI Agent:** `Qwen/Qwen3-32B` 128K (`AI_MODEL` / `AI_MODEL_REASONING`/`AI_MODEL_ANALYSIS`) — long-context, đọc đúng ngữ cảnh, linh hoạt persona (stock/personal_finance/wealth). `src/lib/env.ts` default `Qwen/Qwen3-32B`, `gateway.normalizeModel` alias cũ `qwen3.8-27b` tự chuyển.
-- **Model 2 — Reports:** `Qwen/Qwen3-235B-A22B` 128K (`AI_MODEL_REPORT`, `gateway` role `report`) — deep analytical, tạo **Morning Brief / Market Summary / Market Strategy / Company Report** (xem `src/lib/services/intelligence.ts` `generateStockReport` dùng `llmChat("report")`). Fallback `deepseek-ai/DeepSeek-V3` nếu cần tiết kiệm.
+Hệ thống **tách 2 model kết hợp Groq + OpenRouter — full free không thẻ**, đã bỏ SiliconFlow theo yêu cầu.
+- **Model 1 — AI Agent (Groq):** `openai/gpt-oss-120b` 131K (`GROQ_MODEL` / `AI_MODEL` / `AI_MODEL_REASONING`) — long-context 16t×3.5k, linh hoạt persona, 500 tok/s, 30 req/min free. *Groq đã deprecated `qwen/qwen3-32b` 07/2026 → `gpt-oss-120b` là replacement chính thức*. Alias cũ `qwen3.8-27b` tự chuyển. `src/lib/env.ts` default `openai/gpt-oss-120b`, `gateway.normalizeModel` xử lý.
+- **Model 2 — Reports (OpenRouter):** `qwen/qwen3-235b-a22b:free` 131K (`OPENROUTER_MODEL` / `AI_MODEL_REPORT`, `gateway` role `report`) — deep analytical, tạo **Morning Brief / Market Summary / Market Strategy / Company Report** (`intelligence.ts` `generateStockReport` dùng `llmChat("report")` → OpenRouter 50 req/ngày/model). Fallback `deepseek/deepseek-r1:free` hoặc `openai/gpt-oss-120b:free`.
 
 ## Kiến trúc hiện tại
 
@@ -50,13 +50,13 @@ Kiểm: `GET /api/v1/training/status` → Tầng 1 `done`
   const r = await runTier4_Eval(); // intentAccuracy 0.85 = đạt
   ```
 - **DPO:** `agent_feedback.correctedAnswer` → `toDpoExample()` → `dpo_qwen3-32b.jsonl` (`prompt/chosen/rejected`)
-- **LoRA SFT:** `scripts/train-llm/sft.py` (template) — Qwen3 32B cho Agent, Qwen3-235B cho Reports, rank 16, alpha 32, lr 2e-4, epoch 3, batch 4, max_seq 4096 (tận dụng 128K)
+- **LoRA SFT:** `scripts/train-llm/sft.py` (template) — `gpt-oss-120b` cho Agent (Groq), `qwen3-235b` cho Reports (OpenRouter), rank 16, alpha 32, lr 2e-4, epoch 3, batch 4, max_seq 4096 (tận dụng 131K)
   ```bash
-  python scripts/train-llm/sft.py --base Qwen/Qwen3-32B --data training/sft_qwen3-32b.jsonl --output adapters/qwen3-32b-orca --lora-r 16
-  python scripts/train-llm/dpo.py --base adapters/qwen3-32b-orca --data training/dpo.jsonl
-  # Reports (company/morning): fine-tune riêng trên Qwen/Qwen3-235B-A22B với dataset reports
+  python scripts/train-llm/sft.py --base openai/gpt-oss-120b --data training/sft_agent.jsonl --output adapters/gpt-oss-120b-orca --lora-r 16
+  python scripts/train-llm/dpo.py --base adapters/gpt-oss-120b-orca --data training/dpo.jsonl
+  # Reports (company/morning): fine-tune riêng trên qwen/qwen3-235b-a22b:free với dataset reports
   ```
-- **Deploy:** merge LoRA → `qwen3-32b-orca` (Agent) / `qwen3-235b-orca-reports` → push **SiliconFlow** private hoặc self-host `vllm` → trỏ `AI_BASE_URL` về endpoint mới (Agent `AI_MODEL_REASONING=Qwen/Qwen3-32B`, Reports `AI_MODEL_REPORT=Qwen/Qwen3-235B-A22B`)
+- **Deploy:** merge LoRA → `gpt-oss-120b-orca` (Agent/Groq) / `qwen3-235b-orca-reports` (OpenRouter) hoặc self-host `vllm` → Groq `GROQ_MODEL=openai/gpt-oss-120b`, OpenRouter `OPENROUTER_MODEL=qwen/qwen3-235b-a22b:free`
 
 ## Vận hành
 
@@ -64,8 +64,8 @@ Kiểm: `GET /api/v1/training/status` → Tầng 1 `done`
 - **Giám sát:** `GET /api/v1/training/status` → 7 tiers status + `llm.configured/model`
 - **Lịch:** cron `0 2 * * *` → `runTier3_RagIndex()` + `runTier2_DatasetBuild()` → nếu `trainCount>500` trigger SFT nightly
 
-## Bảo vệ & Vercel
+## Bảo vệ & Vercel (Groq + OpenRouter free)
 
 - Mọi tầng đều **giữ nguyên** `validateOutput` — LLM không được bịa số ngoài `contract`
-- **2-model SiliconFlow** cùng `https://api.siliconflow.cn/v1`: Agent `Qwen/Qwen3-32B` long-context 16 turns × 3.5k, Reports `Qwen/Qwen3-235B-A22B` deep 3k tokens — alias cũ tự chuyển, Groq đã bỏ.
-- **Vercel:** Project → Settings → Environment Variables → thêm `AI_PROVIDER_KEY` (SiliconFlow key), `AI_BASE_URL=https://api.siliconflow.cn/v1`, `AI_MODEL=Qwen/Qwen3-32B`, `AI_MODEL_REPORT=Qwen/Qwen3-235B-A22B` (scope Production/Preview/Development) → Redeploy. Override rẻ: `AI_MODEL_REPORT=deepseek-ai/DeepSeek-V3`.
+- **2-model Groq + OpenRouter** full free không thẻ: Agent `openai/gpt-oss-120b` 131K Groq 30/min, Reports `qwen/qwen3-235b-a22b:free` 131K OpenRouter 50/ngày, alias cũ tự chuyển.
+- **Vercel:** Project → Settings → Environment Variables → thêm `GROQ_API_KEY=gsk_...` (https://console.groq.com/keys), `OPENROUTER_API_KEY=sk-or-...` (https://openrouter.ai/keys), `GROQ_MODEL=openai/gpt-oss-120b`, `OPENROUTER_MODEL=qwen/qwen3-235b-a22b:free` (scope Production/Preview/Development) → Redeploy. Legacy `AI_PROVIDER_KEY` vẫn fallback về Groq nếu chỉ set 1 key. Fallback Reports: `deepseek/deepseek-r1:free`.
