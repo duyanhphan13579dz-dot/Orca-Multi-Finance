@@ -190,37 +190,47 @@ export async function getVnQuotes(symbols: string[]): Promise<{ quotes: Quote[];
 }
 
 export async function getVnOhlcv(symbol: string, limit = 250): Promise<{ bars: OhlcvBar[]; meta: Meta } | null> {
-  const sym = symbol.toUpperCase();
   try {
+    const sym = symbol.toUpperCase();
     const res = await cached(`vn:ohlcv:${sym}:${limit}`, {
-      ttlMs: 120_000,
+      ttlMs: 60_000,
       staleMs: 7 * 24 * 3_600_000,
       producer: async () => {
-        if (vndirect.isVnIndexSymbol(sym)) {
-          return vndirect.getVndIndexOhlcv(sym, limit);
-        }
-        if (vnstockConfigured()) {
-          try {
-            const bars = await vnstock.getVnOhlcv(sym, limit);
-            if (bars.length) return bars;
-          } catch {
-            /* fall through */
+        let bars: OhlcvBar[];
+        let source = "vnstock";
+        let note: string | undefined;
+        try {
+          if (vndirect.isVnIndexSymbol(sym)) {
+            bars = await vndirect.getVndIndexOhlcv(sym, limit);
+            source = "vndirect-index";
+            note = "Chuỗi OHLCV chỉ số từ VNDirect";
+          } else if (!vnstockConfigured()) {
+            throw new Error("vnstock off");
+          } else {
+            bars = await vnstock.getVnOhlcv(sym, limit);
           }
+        } catch {
+          bars = await vndirect.getVndOhlcv(sym, limit);
+          source = "vndirect";
+          note = "Chuỗi OHLCV từ VNDirect";
         }
-        return vndirect.getVndOhlcv(sym, limit);
+        const q = validateBars(bars);
+        if (q.status !== "VALID") void logQualityEvent(source, `ohlcv:${sym}`, q);
+        if (q.status === "INVALID") throw new Error("invalid ohlcv series");
+        return { bars: q.cleaned, fetchedAt: Date.now(), source, note, qualityStatus: q.status };
       },
     });
-    const v = validateBars(res.value);
-    if (v.events.length) logQualityEvent({ symbol: sym, events: v.events });
-    return {
-      bars: v.bars,
-      meta: buildMeta({
-        source: "vndirect|vnstock",
-        sourceTimestampMs: v.bars.length ? v.bars[v.bars.length - 1].time : Date.now(),
-        cached: res.cached,
-        stale: res.stale,
-      }),
-    };
+    const last = res.value.bars[res.value.bars.length - 1];
+    const meta = buildMeta({
+      source: res.value.source,
+      sourceTimestampMs: last?.time ?? res.value.fetchedAt,
+      cached: res.cached,
+      stale: res.stale,
+      note: res.value.note,
+      slas: { liveSlaMs: 3_600_000, freshSlaMs: 8 * 3_600_000, delayedSlaMs: 48 * 3_600_000 },
+    });
+    meta.qualityStatus = res.value.qualityStatus;
+    return { bars: res.value.bars, meta };
   } catch {
     return null;
   }
