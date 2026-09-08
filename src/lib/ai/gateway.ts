@@ -21,8 +21,19 @@ export interface LlmResult {
 
 export type ChatTurn = { role: "user" | "assistant"; content: string };
 
+/** Chuẩn hoá alias cũ "qwen3.8-27b" / "qwen/qwen3.8-27b" về id hợp lệ trên OpenRouter/Groq */
+function normalizeModel(raw: string): string {
+  const t = raw.trim();
+  if (!t) return t;
+  // alias lịch sử trong repo: "qwen/qwen3.8-27b" chưa từng tồn tại trên OpenRouter — map về qwen3-8b
+  if (t === "qwen/qwen3.8-27b" || t === "qwen3.8-27b" || t === "qwen3.8_27b") return "qwen/qwen3-8b";
+  if (t === "qwen/qwen3.8-27b:free") return "qwen/qwen3-8b:free";
+  return t;
+}
+
 export function modelFor(role: LlmRole): string {
-  return process.env[`AI_MODEL_${role.toUpperCase()}`]?.trim() ?? env.aiModel;
+  const raw = process.env[`AI_MODEL_${role.toUpperCase()}`]?.trim() ?? env.aiModel;
+  return normalizeModel(raw);
 }
 
 function resolveBaseUrl(model: string): string {
