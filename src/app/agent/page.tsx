@@ -3,7 +3,7 @@
 import { useRef, useState } from "react";
 import { Bot, CornerDownLeft, ShieldCheck } from "lucide-react";
 import type { ApiResponse, Meta } from "@/lib/types";
-import { Badge, FreshnessDot, Panel } from "@/components/ui";
+import { Badge, Panel } from "@/components/ui";
 import { useSettings } from "@/lib/settings";
 
 interface AgentResult {
@@ -42,7 +42,7 @@ export default function AgentPage() {
   const [messages, setMessages] = useState<Msg[]>([
     {
       role: "agent",
-      text: "Chào bạn — mình là ORCA Agent. Nguyên tắc làm việc: truy xuất dữ liệu thật trước (Binance, ngoại hối, hàng hóa, tin tức…), sau đó mới lập luận. Mình không dùng dữ liệu cũ từ mô hình và sẽ nói rõ khi một nguồn dữ liệu chưa khả dụng (ví dụ VNStock đang chờ API key).",
+      text: "Chào bạn — mình là ORCA Agent. Có thể hỏi về thị trường, cổ phiếu, hoặc tài chính cá nhân / gia sản. Mình lập luận trên dữ liệu thật và số liệu bạn đưa ra.",
     },
   ]);
   const [input, setInput] = useState("");
@@ -96,10 +96,10 @@ export default function AgentPage() {
               <Bot className="size-5 text-accent" /> ORCA Financial Agent
             </h1>
             <p className="mt-0.5 flex items-center gap-1.5 text-[12px] text-ink-3">
-              <ShieldCheck className="size-3.5 text-up" /> Fetch data first → reason second · Chống hallucination bằng structured context
+              <ShieldCheck className="size-3.5 text-up" /> Phân tích thị trường · Tài chính cá nhân · Quản lý gia sản
             </p>
           </div>
-          <Badge tone="accent">multi-asset</Badge>
+          <Badge tone="accent">multi-persona</Badge>
         </div>
       </Panel>
 
@@ -112,31 +112,12 @@ export default function AgentPage() {
               }`}
             >
               <div className="whitespace-pre-wrap">{m.text}</div>
-              {m.meta && (
-                <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-line/60 pt-1.5 text-[10px] text-ink-3">
-                  <FreshnessDot status={m.meta.freshness} ageMs={m.meta.ageMs} />
-                  <span>engine: {m.mode === "llm" ? `LLM${m.model ? ` · ${m.model}` : ""} (bounded)` : "deterministic"}</span>
-                  {m.confidence && (
-                    <span className={m.confidence === "HIGH" ? "text-up" : m.confidence === "MEDIUM" ? "text-warn" : "text-down"}>
-                      confidence {m.confidence}
-                    </span>
-                  )}
-                  {m.dataQuality && <span>quality {m.dataQuality}</span>}
-                  {m.intent && <span>intent: {m.intent}</span>}
-                  {m.meta.outputValidation && (
-                    <span className={m.meta.outputValidation.validated ? "text-up" : "text-warn"}>
-                      output {m.meta.outputValidation.validated ? "validated" : `recovered${m.meta.outputValidation.recovered ? `: ${m.meta.outputValidation.recovered}` : ""}`}
-                    </span>
-                  )}
-                  {m.meta.note && <span>{m.meta.note}</span>}
-                </div>
-              )}
             </div>
           </div>
         ))}
         {busy && (
           <div className="flex items-center gap-2 text-[12px] text-ink-3">
-            <span className="size-1.5 animate-pulse rounded-full bg-accent" /> Đang truy xuất dữ liệu thị trường & phân tích…
+            <span className="size-1.5 animate-pulse rounded-full bg-accent" /> Đang phân tích…
           </div>
         )}
       </div>
@@ -159,7 +140,7 @@ export default function AgentPage() {
         <input
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          placeholder="Hỏi về thị trường: BTC, EUR/USD, vàng, bức tranh chung…"
+          placeholder="Hỏi về thị trường, cổ phiếu, hoặc tài chính cá nhân…"
           className="flex-1 rounded-lg border border-line bg-panel px-3.5 py-2.5 text-[13px] text-ink placeholder:text-ink-3 focus:border-accent/40"
         />
         <button type="submit" disabled={busy || !input.trim()} className="flex items-center gap-1.5 rounded-lg bg-accent/90 px-3.5 py-2.5 text-[13px] font-semibold text-canvas hover:bg-accent disabled:opacity-50">
