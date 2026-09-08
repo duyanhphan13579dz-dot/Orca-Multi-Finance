@@ -1,13 +1,16 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useApi } from "@/lib/hooks";
 import type { CommodityMarket } from "@/lib/services/commodities";
 import { Badge, Chg, fmtNum, FreshnessDot, Loading, MetaLine, Unavailable } from "@/components/ui";
 import { AddToWatchlist } from "@/components/watchlist-button";
-import { OrcaChart } from "@/components/orca-chart";
 import { CurrencyConverter } from "@/components/currency-converter";
-import { Boxes, LineChart, Search, X } from "lucide-react";
+import {
+  CommodityLineChart,
+  resolveCommodityChartSymbol,
+} from "@/components/commodity-line-chart";
+import { Boxes, Search, X } from "lucide-react";
 
 type CatalogItem = {
   key: string;
@@ -33,82 +36,6 @@ const FALLBACK_GROUPS: { key: string; title: string; desc: string }[] = [
   { key: "nang_luong", title: "Năng lượng", desc: "WTI · Xăng…" },
   { key: "nhua_va_cao_su", title: "Nhựa & cao su", desc: "PVC · PP…" },
 ];
-
-/** Heuristic: symbols with international futures/spot history (Yahoo / PAXG). */
-function isChartableCommodity(symbol: string, nameVi = ""): boolean {
-  const s = `${symbol} ${nameVi}`.toUpperCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-  return /VANG|GOLD|XAU|BAC|SILVER|XAG|WTI|CRUDE|USOIL|BRENT|NATGAS|COPPER|CAFE|COFFEE|SUGAR|DUONG|CORN|WHEAT|SOY|PLATINUM|PALLADIUM/.test(s);
-}
-
-function CommodityVolatilityChart({ catalog }: { catalog: CatalogItem[] }) {
-  const options = useMemo(
-    () => catalog.filter((d) => isChartableCommodity(d.symbol, d.nameVi)),
-    [catalog],
-  );
-  const [symbol, setSymbol] = useState(options[0]?.symbol ?? "");
-
-  useEffect(() => {
-    if (!options.length) {
-      setSymbol("");
-      return;
-    }
-    if (!options.some((o) => o.symbol === symbol)) {
-      setSymbol(options[0].symbol);
-    }
-  }, [options, symbol]);
-
-  if (!options.length) {
-    return (
-      <section className="panel overflow-hidden p-4">
-        <div className="flex items-center gap-2 text-[13px] font-semibold text-text-primary">
-          <LineChart className="size-4 text-accent-primary" /> Biểu đồ biến động
-        </div>
-        <p className="mt-2 text-[12px] text-text-muted">
-          Chưa có mặt hàng có chuỗi giá quốc tế (vàng, dầu, bạc…) trong bộ lọc hiện tại — thử chọn nhóm Kim loại / Năng lượng.
-        </p>
-      </section>
-    );
-  }
-
-  const active = options.find((o) => o.symbol === symbol) ?? options[0];
-
-  return (
-    <section className="panel overflow-hidden">
-      <header className="flex flex-wrap items-center justify-between gap-2 border-b border-border-subtle px-3.5 py-2.5">
-        <div className="flex items-center gap-2">
-          <LineChart className="size-4 text-accent-primary" />
-          <h2 className="text-[13px] font-semibold text-text-primary">Biểu đồ biến động</h2>
-          <Badge tone="neutral">OHLC tham chiếu</Badge>
-        </div>
-        <select
-          value={active.symbol}
-          onChange={(e) => setSymbol(e.target.value)}
-          className="rounded-lg border border-border-subtle bg-surface-elevated px-2.5 py-1.5 text-[12px] text-text-primary outline-none focus:border-accent-primary/60"
-          aria-label="Chọn mặt hàng xem biểu đồ"
-        >
-          {options.map((o) => (
-            <option key={o.symbol} value={o.symbol}>
-              {o.nameVi} ({o.symbol})
-            </option>
-          ))}
-        </select>
-      </header>
-      <div className="p-2">
-        <OrcaChart
-          key={active.symbol}
-          symbol={active.symbol}
-          assetType="commodity"
-          defaultTimeframe="1d"
-          height={340}
-          title={`${active.nameVi} · ${active.symbol}`}
-        />
-        <p className="px-2 pb-2 text-[10px] leading-relaxed text-text-muted">
-          Chuỗi nến từ Yahoo Futures / Binance PAXG (vàng) — tham chiếu biến động quốc tế, có thể khác giá VietnamBiz (VND/nội địa).
-        </p>
-      </div>
-    </section>
-  );
-}
 
 export default function CommoditiesPage() {
   const [q, setQ] = useState("");
@@ -141,6 +68,28 @@ export default function CommoditiesPage() {
   }, [data, group, q]);
 
   const bySymbol = useMemo(() => new Map((data?.rows ?? []).map((r) => [r.symbol, r])), [data]);
+
+  const chartOptions = useMemo(() => {
+    const acc: { chartSymbol: string; label: string }[] = [];
+    for (const d of data?.catalog ?? []) {
+      const cs = resolveCommodityChartSymbol(d.symbol, d.nameVi);
+      if (!cs || acc.some((x) => x.chartSymbol === cs)) continue;
+      acc.push({ chartSymbol: cs, label: d.nameVi });
+    }
+    for (const fallback of [
+      { chartSymbol: "GOLD", label: "Vàng (quốc tế)" },
+      { chartSymbol: "SILVER", label: "Bạc (quốc tế)" },
+      { chartSymbol: "WTI", label: "Dầu WTI" },
+      { chartSymbol: "BRENT", label: "Dầu Brent" },
+      { chartSymbol: "COPPER", label: "Đồng (Copper)" },
+      { chartSymbol: "COFFEE", label: "Cà phê (KC)" },
+    ] as const) {
+      if (!acc.some((x) => x.chartSymbol === fallback.chartSymbol)) {
+        acc.push({ chartSymbol: fallback.chartSymbol, label: fallback.label });
+      }
+    }
+    return acc;
+  }, [data?.catalog]);
 
   if (isLoading && !data) return <Loading rows={10} />;
 
@@ -200,7 +149,7 @@ export default function CommoditiesPage() {
 
       <CurrencyConverter />
 
-      <CommodityVolatilityChart catalog={data?.catalog ?? catalog} />
+      <CommodityLineChart options={chartOptions} height={320} />
 
       {!data ? (
         <Unavailable title="VietnamBiz Data chưa phản hồi bảng giá" meta={meta} />
