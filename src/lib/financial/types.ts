@@ -94,7 +94,12 @@ export interface FinancialPackageMeta {
   fetchedAt: string;
   lastVerifiedAt: string | null;
   note: string | null;
+  ttmPeriod: string | null;
+  hasGrowth: boolean;
 }
+
+/** Re-export growth shapes for consumers (defined in normalize.ts implementation). */
+export type { GrowthSnapshot, GrowthCell, GrowthMetricKey } from "./normalize";
 
 export interface FinancialPackage {
   symbol: string;
@@ -103,5 +108,9 @@ export interface FinancialPackage {
   cashflow: Record<string, unknown>[];
   ratios: Record<string, unknown>[];
   periods: NormalizedPeriod[];
+  /** Trailing twelve months derived from last 4 quarters when available. */
+  ttm: NormalizedPeriod | null;
+  /** YoY / QoQ comparisons — never fabricates missing baselines. */
+  growth: import("./normalize").GrowthSnapshot | null;
   meta: FinancialPackageMeta;
 }
