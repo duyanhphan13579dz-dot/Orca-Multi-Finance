@@ -50,6 +50,11 @@ const RATIO_LABEL: Record<string, string> = {
   assetTurnover: "Vòng quay TS",
   inventoryTurnover: "Vòng quay tồn kho",
   receivableTurnover: "Vòng quay phải thu",
+  debtToEquity: "Nợ / VCSH",
+  debtToAssets: "Nợ / Tổng TS",
+  netDebtToEbitda: "Net debt / EBITDA",
+  fcfConversion: "FCF / LN",
+  ocfMargin: "Biên OCF",
 };
 
 const GROWTH_LABEL: Record<string, string> = {
@@ -85,7 +90,7 @@ function RatioGrid({ title, ratios }: { title: string; ratios: Record<string, nu
               <span className="num text-ink-2">
                 {v == null
                   ? "—"
-                  : Math.abs(v) < 2 && !k.toLowerCase().includes("turnover")
+                  : Math.abs(v) < 2 && !k.toLowerCase().includes("turnover") && !k.toLowerCase().includes("ratio") && !k.toLowerCase().includes("coverage") && !k.toLowerCase().includes("debt")
                     ? `${(v * 100).toFixed(1)}%`
                     : v.toFixed(2)}
               </span>
@@ -203,6 +208,12 @@ export default function StockFundamentalsPage({ params }: { params: Promise<{ sy
       </Panel>
 
       <Panel title="Sức khỏe tài chính doanh nghiệp">
+        {h?.industry && (
+          <div className="mb-3 rounded-md border border-line/60 bg-bg-2/30 px-3 py-2 text-[11px] text-ink-2">
+            <strong>Profile ngành:</strong> {h.industry.labelVi} ({h.industry.id})
+            <span className="text-ink-3"> — {h.industry.note}</span>
+          </div>
+        )}
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           <div className="rounded-lg border border-line bg-bg-2/40 p-3">
             <div className="text-[10px] uppercase text-ink-3">Điểm tổng</div>
@@ -230,6 +241,16 @@ export default function StockFundamentalsPage({ params }: { params: Promise<{ sy
             </div>
           ))}
         </div>
+        {h?.riskFlags?.length ? (
+          <div className="mt-3">
+            <div className="text-[10px] uppercase text-ink-3">Cờ rủi ro theo ngành</div>
+            <ul className="mt-1 list-inside list-disc text-[11px] text-warn/90">
+              {h.riskFlags.map((f, i) => (
+                <li key={i}>{f}</li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
         {h?.warnings?.length ? (
           <p className="mt-2 text-[11px] text-warn/90">{h.warnings.join(" • ")}</p>
         ) : null}
@@ -273,7 +294,7 @@ export default function StockFundamentalsPage({ params }: { params: Promise<{ sy
 
       <Panel title="Định giá doanh nghiệp">
         <p className="text-[12px] text-ink-3">
-          P/E, P/B, EV/EBITDA sẽ hiển thị khi engine định giá có đủ giá + EPS/book. Industry scoring thuộc Phase 4.
+          P/E, P/B, EV/EBITDA hiển thị khi engine định giá có đủ giá thị trường + EPS/book (module valuation).
         </p>
       </Panel>
     </div>
