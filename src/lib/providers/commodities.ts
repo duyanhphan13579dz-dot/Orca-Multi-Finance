@@ -104,14 +104,24 @@ function symbolFromTitle(title: string): string {
   );
 }
 
+/**
+ * Đồng bộ tiền tệ 1-1 với Vietnambiz (nguồn duy nhất https://data.vietnambiz.vn/goods).
+ * Quan sát thực tế 08/09/2026:
+ *  Đồng/kg | Đồng/tấn | Đồng/m3 | Đồng/m2 | Đồng/lít | Đồng/lượng | Đồng/viên | Đồng/cọc | Đồng/m → VND
+ *  Nghìn/lít (xăng) → VND (quy về VND/lít, ×1000)
+ *  CNY/tấn → CNY ; USD/tấn|USD/ounce|USD/pound|USD/thùng|USD/Mmbtu → USD
+ *  MYR/tấn → MYR ; Yên/tấn → JPY ; EUR/... → EUR
+ */
 function currencyFromUnit(unit: string): string {
-  const u = unit.toLowerCase();
-  if (u.includes("đồng") || u.includes("dong") || u.includes("nghìn")) return "VND";
+  const u = unit.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/đ/g, "d");
+  if (u.includes("dong") || u.includes("nghin") || u.includes("vnd")) return "VND";
   if (u.includes("cny")) return "CNY";
   if (u.includes("usd")) return "USD";
   if (u.includes("myr")) return "MYR";
-  if (u.includes("yên") || u.includes("yen") || u.includes("jpy")) return "JPY";
+  if (u.includes("yen") || u.includes("jpy")) return "JPY";
   if (u.includes("eur")) return "EUR";
+  if (u.includes("gbp")) return "GBP";
+  if (unit.toLowerCase().includes("yên")) return "JPY";
   return "—";
 }
 
@@ -122,8 +132,12 @@ function normalizeUnitPrice(unit: string, value: number): { unit: string; price:
   }
   const currency = currencyFromUnit(u);
   let unitOut = u;
-  if (/^đồng\//i.test(u) || /^dong\//i.test(u)) unitOut = u.replace(/^đồng/i, "VND").replace(/^dong/i, "VND");
-  return { unit: unitOut, price: value, currency };
+  if (/^đồng\//i.test(u)) unitOut = u.replace(/^đồng/i, "VND");
+  else if (/^dong\//i.test(u) || /^đong\//i.test(u)) unitOut = u.replace(/^đong/i, "VND").replace(/^dong/i, "VND");
+  else if (/^yên\//i.test(u) || /^yen\//i.test(u)) unitOut = u.replace(/^yên/i, "JPY").replace(/^yen/i, "JPY").replace(/^Yên/i, "JPY");
+  else if (/^nghìn\//i.test(u)) unitOut = u.replace(/^nghìn/i, "VND");
+  if (currency === "VND" && /^đồng\b/i.test(unitOut)) unitOut = unitOut.replace(/^đồng/i, "VND");
+  return { unit: unitOut, price: value, currency: currency === "—" && /đồng|dong|nghìn/i.test(u) ? "VND" : currency };
 }
 
 function parseVnbDate(s: string): number | null {
