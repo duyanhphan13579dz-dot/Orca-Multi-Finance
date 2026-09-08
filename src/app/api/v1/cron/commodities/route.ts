@@ -31,20 +31,32 @@ export async function GET(req: Request) {
     );
   }
   const result = await refreshCommodityMarket();
+  // Nếu refresh fail nhưng vẫn còn cache/DB, cron vẫn coi là degraded success để không đánh thức cảnh báo ồn ào
+  let degradedNote: string | null = null;
+  if (!result.ok) {
+    try {
+      const { getCommodityMarket } = await import("@/lib/services/commodities");
+      const fallback = await getCommodityMarket();
+      if (fallback && fallback.data.rows.length) {
+        degradedNote = `Nguồn tạm lỗi (${result.errors.join("; ")}), vẫn phục vụ ${fallback.data.rows.length} mặt hàng từ cache`;
+      }
+    } catch {}
+  }
+  const okOrDegraded = result.ok || Boolean(degradedNote);
   const meta = buildMeta({
     source: "cron:commodities",
     sourceTimestampMs: result.sourceTimestamp ? Date.parse(result.sourceTimestamp) : Date.now(),
     note: result.ok
       ? `Đã đồng bộ ${result.count} mặt hàng (${result.durationMs}ms)`
-      : `Lỗi đồng bộ: ${result.errors.join("; ")}`,
+      : degradedNote ?? `Lỗi đồng bộ: ${result.errors.join("; ")}`,
   });
   return NextResponse.json(
     {
-      success: result.ok,
-      data: result,
+      success: okOrDegraded,
+      data: { ...result, degradedNote },
       meta,
     },
-    { status: result.ok ? 200 : 502 },
+    { status: okOrDegraded ? 200 : 502 },
   );
 }
 

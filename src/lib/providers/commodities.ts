@@ -168,25 +168,50 @@ export interface VnbGoodsSnapshot {
 
 export async function fetchVietnambizGoods(): Promise<VnbGoodsSnapshot> {
   const t0 = Date.now();
+  // Tăng cường: 2 retries, timeout 15s, header giống trình duyệt thực để tránh bị chặn
   const res = await httpText(VNB_GOODS_URL, {
     provider: VIETNAMBIZ,
-    timeoutMs: 20_000,
-    retries: 1,
+    timeoutMs: 15_000,
+    retries: 2,
     headers: {
-      Accept: "text/html,application/xhtml+xml",
+      Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
       "Accept-Encoding": "gzip, deflate, br",
-      "Accept-Language": "vi-VN,vi;q=0.9",
+      "Accept-Language": "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7",
+      Referer: "https://data.vietnambiz.vn/",
+      "Upgrade-Insecure-Requests": "1",
+      "Sec-Fetch-Dest": "document",
+      "Sec-Fetch-Mode": "navigate",
+      "Cache-Control": "no-cache",
+      Pragma: "no-cache",
     },
   });
   const downloadMs = Date.now() - t0;
   if (!res.ok || !res.text) {
-    throw new ProviderError(`vietnambiz-data: ${res.error ?? "unreachable"}`, VIETNAMBIZ);
+    throw new ProviderError(`vietnambiz-data: ${res.error ?? "unreachable"} (status ${res.status})`, VIETNAMBIZ);
   }
 
   const t1 = Date.now();
-  const jsonStr = extractNextDataJson(res.text);
+  // Thử nhiều cách trích xuất __NEXT_DATA__ để chống thay đổi cấu trúc HTML
+  let jsonStr = extractNextDataJson(res.text);
   if (!jsonStr) {
-    throw new ProviderError("vietnambiz-data: __NEXT_DATA__ missing", VIETNAMBIZ);
+    // Fallback 1: regex toàn cục tìm script id __NEXT_DATA__
+    const re = /<script[^>]*id=["']__NEXT_DATA__["'][^>]*>([\s\S]*?)<\/script>/i;
+    const m = re.exec(res.text);
+    if (m) jsonStr = m[1];
+  }
+  if (!jsonStr) {
+    // Fallback 2: tìm window.__NEXT_DATA__ hoặc self.__next_f
+    const re2 = /__NEXT_DATA__[^>]*>([\s\S]*?)<\/script>/i;
+    const m2 = re2.exec(res.text);
+    if (m2) jsonStr = m2[1];
+  }
+  if (!jsonStr) {
+    throw new ProviderError("vietnambiz-data: __NEXT_DATA__ missing (HTML có thể bị chặn/WAF hoặc cấu trúc đổi)", VIETNAMBIZ);
+  }
+  jsonStr = jsonStr.trim();
+  // Nếu HTML bị encode entities trong JSON, decode sơ
+  if (jsonStr.startsWith("&")) {
+    jsonStr = jsonStr.replace(/&quot;/g, '"').replace(/&amp;/g, "&");
   }
 
   let pageData: unknown;

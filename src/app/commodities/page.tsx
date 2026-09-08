@@ -42,7 +42,9 @@ export default function CommoditiesPage() {
   const deferredQ = useDeferredValue(q);
   const [group, setGroup] = useState("");
   const [visibleCount, setVisibleCount] = useState(24);
-  const { data, meta, isLoading } = useApi<Data>("/api/v1/commodities", { refreshInterval: 5 * 60_000 });
+  const { data, meta, isLoading, isValidating, error, mutate } = useApi<Data>("/api/v1/commodities", { refreshInterval: 5 * 60_000 });
+  const isStale = meta?.freshness === "STALE" || meta?.freshness === "DELAYED" || meta?.freshness === "DEGRADED" || meta?.stale;
+  const hasFallbackNote = Boolean(data?.errors?.length || (meta?.note && /cache/i.test(meta.note)));
 
   const groups = useMemo(() => {
     if (data?.groups) {
@@ -157,10 +159,49 @@ export default function CommoditiesPage() {
 
       <CurrencyConverter />
 
+      {(isStale || hasFallbackNote) && data && (
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[12px] leading-relaxed text-amber-900 dark:text-amber-200">
+          <span className="font-medium">Đang hiển thị dữ liệu cache</span>
+          <span className="text-amber-800/80 dark:text-amber-200/80">
+            VietnamBiz tạm chậm/không phản hồi — bạn vẫn xem được dữ liệu gần nhất. Hệ thống sẽ tự đồng bộ lại.
+          </span>
+          {meta?.note && <span className="text-[11px] text-amber-700/80 dark:text-amber-200/70">· {meta.note}</span>}
+          <button
+            onClick={() => mutate()}
+            disabled={isValidating}
+            className="ml-auto rounded-md bg-amber-500 px-2.5 py-1 text-[11px] font-medium text-white hover:bg-amber-600 disabled:opacity-50"
+          >
+            {isValidating ? "Đang thử…" : "Thử lại ngay"}
+          </button>
+        </div>
+      )}
+
       <CommodityLineChart options={chartOptions} height={320} />
 
       {!data ? (
-        <Unavailable title="VietnamBiz Data chưa phản hồi bảng giá" meta={meta} />
+        <div className="space-y-3">
+          <Unavailable title="VietnamBiz Data chưa phản hồi bảng giá" meta={meta} note={error ? String((error as Error).message ?? error) : undefined} />
+          <div className="flex flex-wrap gap-2">
+            <button
+              onClick={() => mutate()}
+              disabled={isValidating}
+              className="rounded-md bg-accent-primary px-3 py-1.5 text-[12px] font-medium text-white hover:bg-accent-primary/90 disabled:opacity-50"
+            >
+              {isValidating ? "Đang tải…" : "Thử lại"}
+            </button>
+            <a href="https://data.vietnambiz.vn/goods" target="_blank" rel="noopener noreferrer" className="rounded-md border border-border-subtle px-3 py-1.5 text-[12px] text-text-secondary hover:bg-surface-elevated">
+              Mở nguồn gốc
+            </a>
+            <a href="/system" className="rounded-md border border-border-subtle px-3 py-1.5 text-[12px] text-text-secondary hover:bg-surface-elevated">
+              Xem /system
+            </a>
+          </div>
+          {meta && (
+            <p className="text-[11px] text-text-muted">
+              Hệ thống tự thử lại sau 20–60s (có cache DB nếu từng đồng bộ). Nếu vẫn trắng trang, nguồn đang bảo trì/WAF chặn — thử lại sau.
+            </p>
+          )}
+        </div>
       ) : (
         <>
           <div className="grid grid-cols-1 gap-2.5 md:grid-cols-2 xl:grid-cols-3" style={{ contentVisibility: "auto", containIntrinsicSize: "1000px" }}>
