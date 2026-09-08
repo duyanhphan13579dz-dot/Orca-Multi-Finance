@@ -1,4 +1,5 @@
 import { ok, unavailable } from "@/lib/envelope";
+import { buildMeta } from "@/lib/freshness";
 import { getOfficialFilingsForSymbol } from "@/lib/financial/official/pipeline";
 
 export const dynamic = "force-dynamic";
@@ -8,6 +9,12 @@ export async function GET(_req: Request, ctx: { params: Promise<{ symbol: string
   const { symbol } = await ctx.params;
   try {
     const r = await getOfficialFilingsForSymbol(symbol);
+    const meta = buildMeta({
+      source: "official-pipeline",
+      sourceTimestampMs: Date.now(),
+      note: r.notes[0],
+      partial: !r.latestFsFiling,
+    });
     return ok(
       {
         ticker: r.discovery.ticker,
@@ -17,11 +24,7 @@ export async function GET(_req: Request, ctx: { params: Promise<{ symbol: string
         channelsAttempted: r.discovery.channelsAttempted,
         notes: r.notes,
       },
-      {
-        source: "official-pipeline",
-        sourceTimestampMs: Date.now(),
-        note: r.notes[0],
-      } as never,
+      meta,
     );
   } catch {
     return unavailable("official-pipeline", `Không chạy được pipeline công bố cho ${symbol.toUpperCase()}.`);
