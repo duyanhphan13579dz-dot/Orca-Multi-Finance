@@ -1,5 +1,5 @@
 /**
- * Centralized, server-side environment configuration.
+ * Centralized, server-only environment configuration.
  * Secrets are NEVER exposed to the browser (no NEXT_PUBLIC_* usage here).
  */
 import "server-only";
@@ -25,9 +25,15 @@ const redisNote = !redisCandidate
 export const env = {
   nodeEnv: process.env.NODE_ENV ?? "development",
 
-  /* Vietnam stocks — official provider per product spec */
+  /*
+   * Vietnam stocks provider strategy (temporary):
+   *   PRIMARY  = VNDirect (api-finfo) — no key required
+   *   NEXT     = SSI Flashconnect as primary, VNDirect as fallback
+   * VNStock vars kept only for backward-compat env files; service layer no longer calls VNStock.
+   */
   vnstockBaseUrl: opt(process.env.VNSTOCK_BASE_URL) ?? "https://api.vnstock.com",
   vnstockApiKey: opt(process.env.VNSTOCK_API_KEY),
+  vndirectBaseUrl: opt(process.env.VNDIRECT_BASE_URL) ?? "https://api-finfo.vndirect.com.vn",
 
   /* Crypto — Binance */
   binanceBaseUrl: opt(process.env.BINANCE_BASE_URL),
@@ -62,7 +68,7 @@ export const env = {
 
   /* Optional LLM for the AI Agent (OpenAI-compatible) */
   aiProviderKey: opt(process.env.AI_PROVIDER_KEY),
-  /* Base URL chỉ cần khi provider không dùng default gateway; để trống nếu host đã inject. */
+  /* Base URL optional; namespace models resolve via OpenRouter when unset. */
   aiBaseUrl: opt(process.env.AI_BASE_URL) ?? "",
   aiModel: opt(process.env.AI_MODEL) ?? "qwen/qwen3.8-27b",
 };
