@@ -37,29 +37,49 @@ const SUGGESTED = [
   "Tin tức đáng chú ý gần đây",
 ];
 
+const MAX_HISTORY = 8;
+
 export default function AgentPage() {
   const { settings } = useSettings();
   const [messages, setMessages] = useState<Msg[]>([
     {
       role: "agent",
-      text: "Chào bạn — mình là ORCA Agent. Có thể hỏi về thị trường, cổ phiếu, hoặc tài chính cá nhân / gia sản. Mình lập luận trên dữ liệu thật và số liệu bạn đưa ra.",
+      text: "Chào bạn — mình là ORCA Agent. Có thể hỏi về thị trường, cổ phiếu, hoặc tài chính cá nhân / gia sản. Mình nhớ ngữ cảnh trong phiên trò chuyện này.",
     },
   ]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
+  // Keep a ref so history is consistent even before React state flushes
+  const messagesRef = useRef(messages);
+  messagesRef.current = messages;
 
   async function ask(q: string) {
     const question = q.trim();
     if (!question || busy) return;
     setBusy(true);
+
+    // Build history from prior turns (exclude the brand-new user message)
+    const prior = messagesRef.current
+      .filter((m) => m.text?.trim())
+      // skip pure greeting if it is the only prior agent line
+      .slice(-MAX_HISTORY)
+      .map((m) => ({
+        role: m.role === "user" ? ("user" as const) : ("assistant" as const),
+        content: m.text.slice(0, 2_500),
+      }));
+
     setMessages((m) => [...m, { role: "user", text: question }]);
     setInput("");
     try {
       const res = await fetch("/api/v1/agent", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question, preferences: settings.ai }),
+        body: JSON.stringify({
+          question,
+          history: prior,
+          preferences: settings.ai,
+        }),
       });
       const json = (await res.json()) as ApiResponse<AgentResult>;
       if (json.success) {
@@ -96,7 +116,7 @@ export default function AgentPage() {
               <Bot className="size-5 text-accent" /> ORCA Financial Agent
             </h1>
             <p className="mt-0.5 flex items-center gap-1.5 text-[12px] text-ink-3">
-              <ShieldCheck className="size-3.5 text-up" /> Phân tích thị trường · Tài chính cá nhân · Quản lý gia sản
+              <ShieldCheck className="size-3.5 text-up" /> Nhớ ngữ cảnh phiên · Thị trường · Tài chính cá nhân · Gia sản
             </p>
           </div>
           <Badge tone="accent">multi-persona</Badge>
@@ -140,7 +160,7 @@ export default function AgentPage() {
         <input
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          placeholder="Hỏi về thị trường, cổ phiếu, hoặc tài chính cá nhân…"
+          placeholder="Hỏi tiếp trong cùng ngữ cảnh, hoặc đổi chủ đề bất kỳ lúc nào…"
           className="flex-1 rounded-lg border border-line bg-panel px-3.5 py-2.5 text-[13px] text-ink placeholder:text-ink-3 focus:border-accent/40"
         />
         <button type="submit" disabled={busy || !input.trim()} className="flex items-center gap-1.5 rounded-lg bg-accent/90 px-3.5 py-2.5 text-[13px] font-semibold text-canvas hover:bg-accent disabled:opacity-50">
