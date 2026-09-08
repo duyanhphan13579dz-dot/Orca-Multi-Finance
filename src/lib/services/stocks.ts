@@ -2,7 +2,7 @@ import "server-only";
 import { cached } from "../cache";
 import { buildMeta } from "../freshness";
 import { getFinancialsForSymbol } from "../financial/service";
-import type { FinancialPackageMeta } from "../financial/types";
+import type { FinancialPackageMeta, GrowthSnapshot, NormalizedPeriod } from "../financial/types";
 import type { FinancialHealthResult } from "../engines/fundamental";
 import * as vndirect from "../providers/vndirect";
 import { validateBars, logQualityEvent } from "../quality";
@@ -14,10 +14,9 @@ import type { CandlePattern, IndexQuote, Meta, OhlcvBar, Quote, TechnicalSnapsho
  *
  * Provider strategy (temporary):
  *   PRIMARY  = VNDirect (api-finfo) — market board, quotes, OHLCV, indices
- *   FINANCIAL = VNDirect financial_statements via Financial Report Engine
+ *   FINANCIAL = Financial Report Engine (Source Router → SSI stub / VNDirect)
  *
- * Next: SSI Flashconnect will become PRIMARY; VNDirect demoted to fallback.
- * VNStock is no longer called from this service.
+ * Next: SSI Flashconnect PRIMARY; VNDirect fallback.
  * Never fabricates Vietnam market numbers.
  */
 
@@ -31,12 +30,11 @@ function sortIndices(items: IndexQuote[]): IndexQuote[] {
   });
 }
 
-/** VN market path is ready when VNDirect public API is reachable (no API key). */
 export function vnMarketConfigured(): boolean {
   return true;
 }
 
-/** @deprecated Use vnMarketConfigured — kept so older callers compile. */
+/** @deprecated Use vnMarketConfigured */
 export function vnstockConfigured(): boolean {
   return vnMarketConfigured();
 }
@@ -62,7 +60,6 @@ export async function getVnIndices(): Promise<{ items: IndexQuote[]; meta: Meta 
   }
 }
 
-/** Full VN equity market board — all listed stocks for latest session. */
 export async function getVnMarketBoard(): Promise<{
   quotes: Quote[];
   indices: IndexQuote[];
@@ -224,6 +221,8 @@ export interface VnStockDetail {
   };
   financialHealth: FinancialHealthResult | null;
   financialMeta: FinancialPackageMeta | null;
+  financialGrowth: GrowthSnapshot | null;
+  financialTtm: NormalizedPeriod | null;
   notes: string[];
 }
 
@@ -257,6 +256,8 @@ export async function getVnStockDetail(symbol: string): Promise<{ detail: VnStoc
     financials: fin?.financials ?? { income: null, balance: null, cashflow: null, ratios: null },
     financialHealth: fin?.health ?? null,
     financialMeta: fin?.packageMeta ?? null,
+    financialGrowth: fin?.growth ?? null,
+    financialTtm: fin?.ttm ?? null,
     notes,
   };
   const meta = buildMeta({
