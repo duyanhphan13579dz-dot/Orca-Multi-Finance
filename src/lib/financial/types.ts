@@ -66,7 +66,7 @@ export type NormalizedMetrics = Partial<{
 }>;
 
 export interface NormalizedPeriod {
-  period: string; // e.g. 2026-Q1 or 2025
+  period: string;
   periodType: PeriodType;
   fiscalDate: string | null;
   year: number | null;
@@ -77,7 +77,7 @@ export interface NormalizedPeriod {
   source: string;
   sourceUrl?: string;
   filingDate?: string | null;
-  confidence: number; // 0-1
+  confidence: number;
   metrics: NormalizedMetrics;
 }
 
@@ -98,8 +98,23 @@ export interface FinancialPackageMeta {
   hasGrowth: boolean;
 }
 
-/** Re-export growth shapes for consumers (defined in normalize.ts implementation). */
-export type { GrowthSnapshot, GrowthCell, GrowthMetricKey } from "./normalize";
+/** Growth payload is produced by normalize.ts — kept structural here for consumers. */
+export interface GrowthCell {
+  metric: string;
+  current: number | null;
+  prior: number | null;
+  changePct: number | null;
+  currentPeriod: string | null;
+  priorPeriod: string | null;
+}
+
+export interface GrowthSnapshot {
+  yoy: GrowthCell[];
+  qoq: GrowthCell[];
+  latestPeriod: string | null;
+  priorYearPeriod: string | null;
+  priorQuarterPeriod: string | null;
+}
 
 export interface FinancialPackage {
   symbol: string;
@@ -108,9 +123,7 @@ export interface FinancialPackage {
   cashflow: Record<string, unknown>[];
   ratios: Record<string, unknown>[];
   periods: NormalizedPeriod[];
-  /** Trailing twelve months derived from last 4 quarters when available. */
   ttm: NormalizedPeriod | null;
-  /** YoY / QoQ comparisons — never fabricates missing baselines. */
-  growth: import("./normalize").GrowthSnapshot | null;
+  growth: GrowthSnapshot | null;
   meta: FinancialPackageMeta;
 }
