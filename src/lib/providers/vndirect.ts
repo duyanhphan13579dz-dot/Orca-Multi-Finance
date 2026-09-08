@@ -138,6 +138,15 @@ export async function getVndIndices(): Promise<{ items: IndexQuote[]; sourceTs: 
       };
     })
     .filter((x): x is IndexQuote => x != null);
+
+  // Prefer core benchmarks first (API returns alphabetical: HNX… before VNINDEX)
+  const PRIORITY = ["VNINDEX", "VN30", "HNX", "UPCOM", "HNX30", "VN100"];
+  items.sort((a, b) => {
+    const ia = PRIORITY.indexOf(a.code);
+    const ib = PRIORITY.indexOf(b.code);
+    return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
+  });
+
   if (!items.length) throw new ProviderError("vndirect: empty indices", VNDIRECT);
   return { items, sourceTs: newest };
 }
