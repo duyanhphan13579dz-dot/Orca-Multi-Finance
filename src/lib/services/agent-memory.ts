@@ -26,12 +26,13 @@ export interface HistoryTurn {
 }
 
 export function isFollowUpCue(q: string): boolean {
-  const t = q.trim();
-  return (
-    t.length < 56 ||
-    /^(thế |còn |và |với |nếu |vậy |ok |được |rồi |tiếp|còn lại|thêm|chi tiết|cụ thể hơn|chưa|đã )/i.test(t) ||
-    /tiền nhà|điện nước|nợ thẻ|trả góp|thu nhập phụ|đã trả|chưa trả/i.test(t)
-  );
+  const t = q.trim().toLowerCase();
+  // Chỉ coi là follow-up khi có cue rõ ràng, không phải mọi câu ngắn <56 ký tự (bug cũ khiến "Thị trường đang..." bị dính sticky wealth)
+  if (/^(thế |còn |và |với |nếu |vậy |ok |được |rồi |tiếp|còn lại|thêm|chi tiết|cụ thể hơn|chưa|đã |nữa|tiếp tục)/i.test(t)) return true;
+  if (/tiền nhà|điện nước|nợ thẻ|trả góp|thu nhập phụ|đã trả|chưa trả|phân bổ.*thế nào|chia.*thế nào/i.test(t)) return true;
+  // Câu rất ngắn + không có chủ ngữ rõ mới coi là follow-up (ví dụ "còn 2 tuần thì sao?", "thế còn BTC?")
+  if (t.length < 18 && !/(thị trường|btc|eth|vàng|chứng khoán|cổ phiếu|forex|usd)/i.test(t)) return true;
+  return false;
 }
 
 export function formatTopicMemory(slots: TopicSlot[]): string {
