@@ -77,39 +77,36 @@ export function ForexDetailPage({ pair }: { pair: string }) {
       </Panel>
 
       <div className="grid grid-cols-12 gap-3">
-        <div className="col-span-12 xl:col-span-4 order-1 xl:order-2">
-          <div className="flex flex-col gap-3">
-            <ForexScalpPanel pair={pair} />
-            <SentimentPanel pair={pair} current={cur} tech={tech} />
-          </div>
-        </div>
-
-        <div className="col-span-12 xl:col-span-8 order-2 xl:order-1 space-y-3">
+        <div className="col-span-12 space-y-3 xl:col-span-8">
           <OrcaChart
             symbol={pair}
             assetType="forex"
             defaultTimeframe="15m"
-            height={400}
+            height={420}
             title={`${data.base}/${data.quote}`}
           />
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <CandlePatternsPanel patterns={patterns} />
             <ForexNewsPanel pair={pair} base={data.base} quote={data.quote} />
           </div>
         </div>
 
-        <div className="col-span-12">
-          <Panel pad={false} title="Ghi chú phương pháp">
-            <p className="px-4 pb-3 text-[11px] leading-relaxed text-ink-3">
-              {data.referenceNote} Scalping M15→M5→M1 dùng nến public (Yahoo) khi Biquote chưa có intraday; filter
-              session/spread bắt buộc theo đặc tả Forex.
-            </p>
-          </Panel>
+        <div className="col-span-12 flex flex-col gap-3 xl:col-span-4">
+          <ForexScalpPanel pair={pair} />
+          <SentimentPanel pair={pair} current={cur} tech={tech} />
         </div>
 
         <div className="col-span-12">
           <TechnicalPanel tech={tech} patterns={patterns} />
         </div>
+
+        {data.referenceNote && (
+          <div className="col-span-12">
+            <p className="rounded-lg border border-border-subtle bg-surface-elevated/40 px-3 py-2 text-[10.5px] leading-relaxed text-text-muted">
+              {data.referenceNote}
+            </p>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -251,7 +248,7 @@ function computeLocalSentiment(
     score += w;
     factors.push({ w, text: `Trend: ${tech.trend.label} (${tech.trend.score})` });
   }
-  score = Math.max(-100, Math.min(100, Math.round(score)));
+  score = Math.max(-100, Math.min(100, Math.round(score));
   let label = "TRUNG LẬP";
   let tone: "up" | "down" | "neutral" = "neutral";
   if (score >= 35) {
