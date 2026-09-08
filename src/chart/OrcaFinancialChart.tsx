@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * ORCA FINANCIAL CHART — full Binance history + indicators (EMA/BB/VWAP/RSI/MACD/S-R).
+ * ORCA FINANCIAL CHART — history + toggleable indicators (EMA/BB/VWAP/RSI/MACD/S-R).
  * Types from chart-const only — never import server-only services.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -22,8 +22,33 @@ interface Props {
   extraLevels?: { label: string; price: number; color: string }[];
 }
 
+const CHART_KINDS: { id: ChartKind; label: string }[] = [
+  { id: "candles", label: "Nến" },
+  { id: "line", label: "Đường" },
+  { id: "area", label: "Vùng" },
+  { id: "bar", label: "Bar" },
+];
+
+type IndKey = "ema" | "bollinger" | "vwap" | "rsi" | "macd" | "srLevels";
+
+const IND_TOGGLES: { key: IndKey | "volume"; label: string }[] = [
+  { key: "ema", label: "EMA" },
+  { key: "bollinger", label: "BB" },
+  { key: "vwap", label: "VWAP" },
+  { key: "rsi", label: "RSI" },
+  { key: "macd", label: "MACD" },
+  { key: "srLevels", label: "S/R" },
+  { key: "volume", label: "Vol" },
+];
+
+function normalizeKind(raw: string | undefined): ChartKind {
+  if (raw === "candle") return "candles";
+  if (raw === "candles" || raw === "area" || raw === "line" || raw === "baseline" || raw === "bar") return raw;
+  return "candles";
+}
+
 export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height = 430, title, extraLevels }: Props) {
-  const { settings } = useSettings();
+  const { settings, update } = useSettings();
   const prefs = settings.chart;
   const tfs = useMemo(() => tfsFor(assetType), [assetType]);
   const [tf, setTf] = useState(() => {
@@ -34,12 +59,9 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
   const hostRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const mgrRef = useRef<SeriesManager | null>(null);
-  const kindRef = useRef<ChartKind>(
-    ((prefs.chartType as string) === "candle" ? "candles" : (prefs.chartType as ChartKind)) || "candles",
-  );
+  const kindRef = useRef<ChartKind>(normalizeKind(prefs.chartType));
   const loadSeqRef = useRef(0);
 
-  // Deep history for crypto (up to 1500 bars); other assets stay at 500
   const limit = assetType === "crypto" ? 1500 : 500;
   const { data, meta, isLoading } = useApi<ChartMarketData>(
     `/api/v1/chart/history?symbol=${encodeURIComponent(symbol)}&assetType=${assetType}&timeframe=${tf}&limit=${limit}`,
@@ -74,7 +96,7 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
     mgrRef.current = mgr;
 
     const ro = new ResizeObserver(() => {
-      if (hostRef.current) chart.applyOptions({ width: hostRef.current.clientWidth });
+      if (hostRef.current) chart.applyOptions({ width: hostRef.current.clientWidth, height });
     });
     ro.observe(hostRef.current);
     chart.applyOptions({ width: hostRef.current.clientWidth });
@@ -91,7 +113,10 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
     };
   }, [height]);
 
-  // Apply candles + indicators + markers + volume whenever data or prefs change
+  useEffect(() => {
+    kindRef.current = normalizeKind(prefs.chartType);
+  }, [prefs.chartType]);
+
   useEffect(() => {
     const seq = ++loadSeqRef.current;
     const mgr = mgrRef.current;
@@ -99,7 +124,7 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
     if (!mgr || !chart || !data?.candles?.length) return;
     if (seq !== loadSeqRef.current) return;
 
-    const payload = data; // narrowed: data is ChartMarketData here
+    const payload = data;
     const candles = payload.candles;
 
     try {
@@ -122,7 +147,38 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
     } catch {
       /* keep page alive if series fails */
     }
-  }, [data, prefs.volume, prefs.indicators, extraLevels]);
+  }, [data, prefs.volume, prefs.indicators, prefs.chartType, extraLevels]);
+
+  const setKind = (kind: ChartKind) => {
+    update({
+      chart: {
+        ...settings.chart,
+        chartType: kind,
+      },
+    });
+  };
+
+  const toggleInd = (key: IndKey | "volume") => {
+    if (key === "volume") {
+      update({ chart: { ...settings.chart, volume: !settings.chart.volume } });
+      return;
+    }
+    const ind = settings.chart.indicators;
+    update({
+      chart: {
+        ...settings.chart,
+        indicators: { ...ind, [key]: !ind[key] },
+      },
+    });
+  };
+
+  const isIndOn = (key: IndKey | "volume") => {
+    if (key === "volume") return prefs.volume !== false;
+    if (key === "bollinger") return !!prefs.indicators?.bollinger;
+    return prefs.indicators?.[key] !== false;
+  };
+
+  const activeKind = normalizeKind(prefs.chartType);
 
   return (
     <div className="relative rounded-xl border border-border-subtle bg-background-secondary">
@@ -142,6 +198,38 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
           ))}
         </div>
       </div>
+
+      <div className="flex flex-wrap items-center gap-1.5 border-b border-border-subtle px-3 py-1.5">
+        <div className="seg">
+          {CHART_KINDS.map((k) => (
+            <button key={k.id} type="button" data-active={activeKind === k.id} onClick={() => setKind(k.id)}>
+              {k.label}
+            </button>
+          ))}
+        </div>
+        <div className="mx-1 hidden h-4 w-px bg-border-subtle sm:block" />
+        <div className="flex flex-wrap gap-1">
+          {IND_TOGGLES.map((t) => {
+            const on = isIndOn(t.key);
+            return (
+              <button
+                key={t.key}
+                type="button"
+                onClick={() => toggleInd(t.key)}
+                className={`rounded-md border px-2 py-0.5 text-[10.5px] font-medium transition-colors ${
+                  on
+                    ? "border-accent-primary/45 bg-accent-primary/12 text-accent-primary"
+                    : "border-border-subtle text-text-muted hover:border-border-default hover:text-text-secondary"
+                }`}
+                aria-pressed={on}
+              >
+                {t.label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
       <div ref={hostRef} className="w-full" style={{ height }} />
       {isLoading && !data && (
         <div className="absolute inset-0 flex items-center justify-center bg-background-secondary/60">
@@ -150,7 +238,7 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
       )}
       {!isLoading && data && !data.candles?.length && (
         <div className="absolute inset-0 flex items-center justify-center text-[12px] text-text-muted">
-          Không có nến từ Binance
+          Không có dữ liệu nến
         </div>
       )}
     </div>
