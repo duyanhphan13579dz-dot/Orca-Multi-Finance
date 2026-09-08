@@ -1,6 +1,6 @@
 # ORCA LLM — Huấn luyện đa ngữ cảnh 4 tầng (qwen3-32b 128K long-context)
 
-`model` toàn hệ thống đã **cố định `qwen/qwen3-32b` 128K** (`src/lib/env.ts` + `src/lib/ai/gateway.ts` normalize, alias cũ `qwen3.8-27b` tự chuyển). Mọi `AI_MODEL*` override đều được chuẩn hoá. Nguồn Groq console (OpenAI-compatible) giữ nguyên, chỉ đổi model sang 32B long-context miễn phí (Apache 2.0).
+`model` toàn hệ thống đã **cố định `Qwen/Qwen3-32B` 128K** (`src/lib/env.ts` + `src/lib/ai/gateway.ts` normalize, alias cũ `qwen3.8-27b` tự chuyển). Mọi `AI_MODEL*` override đều được chuẩn hoá. **Nguồn mới: SiliconFlow** (`https://api.siliconflow.cn/v1`, miễn phí công khai, ưu tiên Qwen) thay Groq do Groq không ưu tiên 32B. Fallback OpenRouter vẫn hỗ trợ.
 
 ## Kiến trúc hiện tại
 
@@ -53,7 +53,7 @@ Kiểm: `GET /api/v1/training/status` → Tầng 1 `done`
   python scripts/train-llm/sft.py --base qwen/qwen3-32b --data training/sft_qwen3-32b.jsonl --output adapters/qwen3-32b-orca --lora-r 16
   python scripts/train-llm/dpo.py --base adapters/qwen3-32b-orca --data training/dpo.jsonl
   ```
-- **Deploy:** merge LoRA → `qwen3-32b-orca` → push OpenRouter private hoặc self-host `vllm` → trỏ `AI_BASE_URL` về endpoint mới (không cần đổi `AI_MODEL` vì đã chuẩn hoá)
+- **Deploy:** merge LoRA → `qwen3-32b-orca` → push **SiliconFlow** private hoặc self-host `vllm` → trỏ `AI_BASE_URL` về endpoint mới (không cần đổi `AI_MODEL` vì đã chuẩn hoá)
 
 ## Vận hành
 
@@ -64,4 +64,4 @@ Kiểm: `GET /api/v1/training/status` → Tầng 1 `done`
 ## Bảo vệ
 
 - Mọi tầng đều **giữ nguyên** `validateOutput` — LLM không được bịa số ngoài `contract`
-- Model **cố định** `qwen/qwen3-32b` 128K — alias cũ tự chuyển, giữ Groq console, chỉ đổi model để có long-context
+- Model **cố định** `Qwen/Qwen3-32B` 128K — alias cũ tự chuyển, **nguồn SiliconFlow** (Groq đã bỏ), long-context 16 turns × 3.5k

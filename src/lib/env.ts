@@ -62,9 +62,9 @@ export const env = {
 
   /* Optional LLM for the AI Agent (OpenAI-compatible) - Qwen3 32B 128K long-context */
   aiProviderKey: opt(process.env.AI_PROVIDER_KEY),
-  /* Base URL chỉ cần khi provider không dùng default gateway; để trống nếu host đã inject. */
-  aiBaseUrl: opt(process.env.AI_BASE_URL) ?? "",
-  aiModel: opt(process.env.AI_MODEL) ?? "qwen/qwen3-32b",
+  /* Base URL - mặc định SiliconFlow (miễn phí, ưu tiên Qwen3 32B, 128K). Groq không ưu tiên 32B nên đã bỏ. */
+  aiBaseUrl: opt(process.env.AI_BASE_URL) ?? "https://api.siliconflow.cn/v1",
+  aiModel: opt(process.env.AI_MODEL) ?? "Qwen/Qwen3-32B",
 };
 
 export const isProd = env.nodeEnv === "production";

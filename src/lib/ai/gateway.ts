@@ -3,11 +3,10 @@ import { env } from "../env";
 import { httpJson } from "../http";
 
 /**
- * LLM GATEWAY — model selection by task role, provider-agnostic.
- * Supports optional multi-turn history for conversation continuity.
- *
- * AI_BASE_URL is optional: if omitted, namespace models (e.g. qwen/…)
- * route to OpenRouter; otherwise OpenAI-compatible default.
+ * LLM GATEWAY — provider-agnostic, ưu tiên SiliconFlow cho Qwen3.
+ * Nguồn mới: SiliconFlow (https://api.siliconflow.cn/v1) — miễn phí công khai,
+ *            ưu tiên Qwen3-32B 128K, không như Groq.
+ * Hỗ trợ history 16 turns để tận dụng long-context.
  */
 
 export type LlmRole = "reasoning" | "analysis" | "classification";
@@ -21,13 +20,22 @@ export interface LlmResult {
 
 export type ChatTurn = { role: "user" | "assistant"; content: string };
 
-/** Model mặc định: Qwen3-32B 128K long-context — miễn phí công khai (Apache 2.0) qua Hugging Face / Groq / OpenRouter */
+/** Model mặc định: Qwen3-32B 128K long-context — SiliconFlow Qwen/Qwen3-32B (Apache 2.0, miễn phí, ưu tiên Qwen) */
 function normalizeModel(raw: string): string {
   const t = raw.trim();
-  if (!t) return "qwen/qwen3-32b";
-  // alias cũ qwen3.8-27b → chuyển sang qwen3-32b 128K
-  if (t.includes("qwen3.8-27b") || t === "qwen/qwen3.8-27b") return "qwen/qwen3-32b";
-  if (t.includes("qwen")) return t.includes("/") ? t : `qwen/${t}`;
+  if (!t) return "Qwen/Qwen3-32B";
+  // alias cũ qwen3.8-27b / qwen/qwen3-32b → chuẩn SiliconFlow
+  if (t.includes("qwen3.8-27b") || t === "qwen/qwen3.8-27b") return "Qwen/Qwen3-32B";
+  if (t.toLowerCase().includes("qwen3-32b") || t.toLowerCase().includes("qwen3.2")) return "Qwen/Qwen3-32B";
+  if (t.toLowerCase().includes("qwen")) {
+    // Giữ provider prefix nếu có, chuẩn hoá về Qwen/Qwen3-32B cho SiliconFlow
+    if (t.includes("/")) {
+      const lower = t.toLowerCase();
+      if (lower.includes("qwen3-32b")) return "Qwen/Qwen3-32B";
+      return t;
+    }
+    return `Qwen/${t}`;
+  }
   return t;
 }
 
@@ -37,12 +45,11 @@ export function modelFor(role: LlmRole): string {
   return m;
 }
 
-function resolveBaseUrl(model: string): string {
+function resolveBaseUrl(_model: string): string {
   const explicit = env.aiBaseUrl?.replace(/\/$/, "");
   if (explicit) return explicit;
-  // provider/model ids (OpenRouter-style) — no AI_BASE_URL required
-  if (model.includes("/")) return "https://openrouter.ai/api/v1";
-  return "https://api.openai.com/v1";
+  // Mặc định mới: SiliconFlow — miễn phí, ưu tiên Qwen3-32B (thay Groq)
+  return "https://api.siliconflow.cn/v1";
 }
 
 export function llmConfigured(): boolean {
