@@ -1,9 +1,11 @@
 import "server-only";
+import { getIndustryProfile } from "../financial/industry-profiles";
 
 /**
  * FINANCIAL HEALTH ENGINE — deterministic ratio computation from financial
  * statement rows (any provider shape; alias-based extraction). Pure code: the
  * LLM layer only ever receives these calculated results.
+ * Phase 4: industry-specific weights + risk flags.
  */
 
 type Row = Record<string, unknown>;
@@ -25,7 +27,6 @@ function findNum(row: Row, aliases: string[]): number | null {
   return null;
 }
 
-/** sort statement rows newest-first using period fields */
 function newestFirst(rows: Row[]): Row[] {
   const periodScore = (r: Row): number => {
     const y = findNum(r, ["year", "nam", "periodyear"]) ?? 0;
@@ -57,28 +58,28 @@ function ttm(rows: Row[], aliases: string[]): number | null {
 
 const AL = {
   revenue: ["revenue", "netsales", "netrevenue", "doanhthuthuan", "doanhthu"],
-  grossProfit: ["grossprofit", "loinhuan gop".replace(/\s/g, "")],
-  ebit: ["ebit", "operatingprofit", "loinhuan tumor ranh".replace(/\s/g, "")],
+  grossProfit: ["grossprofit", "loinhuangop"],
+  ebit: ["ebit", "operatingprofit", "loinhuantumohinhkinhdoanh", "loinhuantuhdkd"],
   ebitda: ["ebitda"],
-  interestExpense: ["interestexpense", "chiphilai vay".replace(/\s/g, ""), "laivay"],
-  netProfit: ["netprofit", "profitfortheyear", "loinhuansauthue", "loinhuanrong", "sauthue"],
+  interestExpense: ["interestexpense", "chiphilaivay", "laivay"],
+  netProfit: ["netprofit", "profitfortheyear", "loinhuansauthue", "loinhuanrong", "sauthue", "netincome"],
   totalAssets: ["totalassets", "tongtaisan", "tongcongtaisan"],
-  currentAssets: ["currentassets", "taisangan han".replace(/\s/g, ""), "taisannganhan", "taisannh"],
+  currentAssets: ["currentassets", "taisannganhan", "taisannh"],
   totalLiabilities: ["totalliabilities", "nophaitra", "tongno"],
   currentLiabilities: ["currentliabilities", "nonganhan"],
   equity: ["equity", "vonchusohuu", "ownerequity"],
-  cash: ["cashandequivalents", "cashequivalents", "tienvaucloaittd".replace(/\s/g, ""), "tienvatuongduong"],
-  shortDebt: ["shorttermdebt", "vayva nonganhan".replace(/\s/g, ""), "vaynganhan"],
-  longDebt: ["longtermdebt", "vayvadaihn".replace(/\s/g, ""), "vaydaihan"],
+  cash: ["cashandequivalents", "cashequivalents", "tienvatuongduong"],
+  shortDebt: ["shorttermdebt", "vaynganhan"],
+  longDebt: ["longtermdebt", "vaydaihan"],
   inventory: ["inventories", "inventory", "hangtonkho"],
   receivables: ["shorttermreceivables", "receivables", "phaithu"],
-  ocf: ["netcashflowoperating", "operatingcashflow", "cashfromoperations", "luuchuyentientuhoatdongkd".replace(/\s/g, ""), "luuchuyentientuhd kd".replace(/\s/g, "")],
+  ocf: ["netcashflowoperating", "operatingcashflow", "cashfromoperations", "luuchuyentientuhoatdongkd"],
   capex: ["capex", "muasamtscd", "chitieudautu"],
   buyInvest: ["purchasesoffixedassets", "muasamxaydungtscd"],
   dividends: ["dividendspaid", "cotucdachia", "cotuc"],
-  eps: ["eps", "loinhuan cobantrencophieu".replace(/\s/g, "")],
+  eps: ["eps", "loinhuancobantrencophieu"],
   bvps: ["bvps", "bookvaluepershare"],
-  shares: ["sharesoutstanding", "soluongcophieuluu hanh".replace(/\s/g, ""), "listedshare", "cophieuluuhanh"],
+  shares: ["sharesoutstanding", "soluongcophieuluuhanh", "listedshare", "cophieuluuhanh"],
 };
 
 export type RatioSet = Record<string, number | null>;
@@ -91,18 +92,42 @@ export interface FinancialHealthResult {
     cashflow: RatioSet;
     efficiency: RatioSet;
   };
-  scores: { profitability: number | null; liquidity: number | null; leverage: number | null; cashflow: number | null; efficiency: number | null; overall: number | null };
+  scores: {
+    profitability: number | null;
+    liquidity: number | null;
+    leverage: number | null;
+    cashflow: number | null;
+    efficiency: number | null;
+    overall: number | null;
+  };
   coverage: number;
   warnings: string[];
-  anchors: { revenue: number | null; netProfit: number | null; equity: number | null; totalDebt: number | null; ocfTtm: number | null; fcfTtm: number | null; shares: number | null; epsTtm: number | null; ebitdaTtm: number | null };
+  riskFlags: string[];
+  industry: { id: string; labelVi: string; note: string } | null;
+  anchors: {
+    revenue: number | null;
+    netProfit: number | null;
+    equity: number | null;
+    totalDebt: number | null;
+    ocfTtm: number | null;
+    fcfTtm: number | null;
+    shares: number | null;
+    epsTtm: number | null;
+    ebitdaTtm: number | null;
+  };
 }
 
-const div = (a: number | null, b: number | null): number | null => (a != null && b != null && b !== 0 ? a / b : null);
+const div = (a: number | null, b: number | null): number | null =>
+  a != null && b != null && b !== 0 ? a / b : null;
 const zz = (v: number | null, digits = 2) => (v == null ? null : Number(v.toFixed(digits)));
 
-export function computeFinancialHealth(input: { income: Row[]; balance: Row[]; cashflow: Row[] }): FinancialHealthResult {
+export function computeFinancialHealth(
+  input: { income: Row[]; balance: Row[]; cashflow: Row[] },
+  opts?: { symbol?: string },
+): FinancialHealthResult {
   const { income, balance, cashflow } = input;
   const warnings: string[] = [];
+  const riskFlags: string[] = [];
   const anyData = income.length + balance.length + cashflow.length > 0;
   if (!anyData) {
     return {
@@ -110,7 +135,19 @@ export function computeFinancialHealth(input: { income: Row[]; balance: Row[]; c
       scores: { profitability: null, liquidity: null, leverage: null, cashflow: null, efficiency: null, overall: null },
       coverage: 0,
       warnings: ["Không có dữ liệu báo cáo tài chính từ provider"],
-      anchors: { revenue: null, netProfit: null, equity: null, totalDebt: null, ocfTtm: null, fcfTtm: null, shares: null, epsTtm: null, ebitdaTtm: null },
+      riskFlags: [],
+      industry: null,
+      anchors: {
+        revenue: null,
+        netProfit: null,
+        equity: null,
+        totalDebt: null,
+        ocfTtm: null,
+        fcfTtm: null,
+        shares: null,
+        epsTtm: null,
+        ebitdaTtm: null,
+      },
     };
   }
 
@@ -129,7 +166,10 @@ export function computeFinancialHealth(input: { income: Row[]; balance: Row[]; c
   const cash = latest(balance, AL.cash);
   const shortDebt = latest(balance, AL.shortDebt) ?? 0;
   const longDebt = latest(balance, AL.longDebt) ?? 0;
-  let totalDebt = latest(balance, AL.shortDebt) != null || latest(balance, AL.longDebt) != null ? (shortDebt ?? 0) + (longDebt ?? 0) : totalLiabilities;
+  const totalDebt =
+    latest(balance, AL.shortDebt) != null || latest(balance, AL.longDebt) != null
+      ? (shortDebt ?? 0) + (longDebt ?? 0)
+      : totalLiabilities;
   const inventory = latest(balance, AL.inventory);
   const receivables = latest(balance, AL.receivables);
 
@@ -141,16 +181,27 @@ export function computeFinancialHealth(input: { income: Row[]; balance: Row[]; c
 
   const groups: FinancialHealthResult["groups"] = {
     profitability: {
-      grossMargin: zz(div(grossProfit, revenue)?.valueOf() ?? null, 4),
+      grossMargin: zz(div(grossProfit, revenue), 4),
       operatingMargin: zz(div(ebit, revenue), 4),
       netMargin: zz(div(netProfit, revenue), 4),
       roa: zz(div(netProfit, totalAssets), 4),
       roe: zz(div(netProfit, equity), 4),
-      roic: zz(div(ebit != null ? ebit * 0.8 : null, totalDebt != null && equity != null ? totalDebt + equity - (cash ?? 0) : null), 4),
+      roic: zz(
+        div(
+          ebit != null ? ebit * 0.8 : null,
+          totalDebt != null && equity != null ? totalDebt + equity - (cash ?? 0) : null,
+        ),
+        4,
+      ),
     },
     liquidity: {
       currentRatio: zz(div(currentAssets, currentLiabilities), 2),
-      quickRatio: zz(currentAssets != null && currentLiabilities != null ? (currentAssets - (inventory ?? 0)) / currentLiabilities : null, 2),
+      quickRatio: zz(
+        currentAssets != null && currentLiabilities != null
+          ? (currentAssets - (inventory ?? 0)) / currentLiabilities
+          : null,
+        2,
+      ),
       cashRatio: zz(div(cash, currentLiabilities), 2),
     },
     leverage: {
@@ -172,47 +223,148 @@ export function computeFinancialHealth(input: { income: Row[]; balance: Row[]; c
     },
   };
 
-  /* scores — threshold tables, deterministic */
   const band = (v: number | null, bands: [number, number][]): number | null => {
     if (v == null) return null;
     for (const [min, score] of bands) if (v >= min) return score;
     return 25;
   };
   const scoreProfit = avgDefined([
-    band(groups.profitability.roe, [[0.22, 95], [0.15, 85], [0.1, 70], [0.05, 50], [0, 35]]),
-    band(groups.profitability.netMargin, [[0.2, 95], [0.12, 85], [0.07, 70], [0.03, 55], [0, 40]]),
-    band(groups.profitability.roa, [[0.12, 95], [0.07, 85], [0.04, 70], [0.02, 55], [0, 40]]),
+    band(groups.profitability.roe, [
+      [0.22, 95],
+      [0.15, 85],
+      [0.1, 70],
+      [0.05, 50],
+      [0, 35],
+    ]),
+    band(groups.profitability.netMargin, [
+      [0.2, 95],
+      [0.12, 85],
+      [0.07, 70],
+      [0.03, 55],
+      [0, 40],
+    ]),
+    band(groups.profitability.roa, [
+      [0.12, 95],
+      [0.07, 85],
+      [0.04, 70],
+      [0.02, 55],
+      [0, 40],
+    ]),
   ]);
   const scoreLiq = avgDefined([
-    band(groups.liquidity.currentRatio, [[2, 90], [1.5, 75], [1.1, 60], [0.8, 40]]),
-    band(groups.liquidity.cashRatio, [[0.5, 90], [0.2, 70], [0.08, 50], [0.03, 35]]),
+    band(groups.liquidity.currentRatio, [
+      [2, 90],
+      [1.5, 75],
+      [1.1, 60],
+      [0.8, 40],
+    ]),
+    band(groups.liquidity.cashRatio, [
+      [0.5, 90],
+      [0.2, 70],
+      [0.08, 50],
+      [0.03, 35],
+    ]),
   ]);
   const scoreLev = avgDefined([
-    band(groups.leverage.debtToEquity != null ? -groups.leverage.debtToEquity : null, [[-0.3, 95], [-0.7, 80], [-1.2, 60], [-2, 40]]),
-    band(groups.leverage.interestCoverage, [[8, 95], [4, 80], [2, 60], [1, 35]]),
-    band(groups.leverage.netDebtToEbitda != null ? -groups.leverage.netDebtToEbitda : null, [[0.1, 90], [-1, 75], [-2.5, 55], [-4, 35]]),
+    band(groups.leverage.debtToEquity != null ? -groups.leverage.debtToEquity : null, [
+      [-0.3, 95],
+      [-0.7, 80],
+      [-1.2, 60],
+      [-2, 40],
+    ]),
+    band(groups.leverage.interestCoverage, [
+      [8, 95],
+      [4, 80],
+      [2, 60],
+      [1, 35],
+    ]),
+    band(groups.leverage.netDebtToEbitda != null ? -groups.leverage.netDebtToEbitda : null, [
+      [0.1, 90],
+      [-1, 75],
+      [-2.5, 55],
+      [-4, 35],
+    ]),
   ]);
   const scoreCf = avgDefined([
-    band(groups.cashflow.fcfConversion, [[1.2, 95], [0.8, 80], [0.4, 60], [0, 40]]),
-    ocfTtm != null && netProfit != null ? band(div(ocfTtm, netProfit), [[1.2, 95], [0.8, 75], [0.4, 55], [0, 35]]) : null,
+    band(groups.cashflow.fcfConversion, [
+      [1.2, 95],
+      [0.8, 80],
+      [0.4, 60],
+      [0, 40],
+    ]),
+    ocfTtm != null && netProfit != null
+      ? band(div(ocfTtm, netProfit), [
+          [1.2, 95],
+          [0.8, 75],
+          [0.4, 55],
+          [0, 35],
+        ])
+      : null,
   ]);
-  const scoreEff = avgDefined([band(groups.efficiency.assetTurnover, [[1.5, 90], [1, 75], [0.6, 60], [0.3, 40]])]);
+  const scoreEff = avgDefined([
+    band(groups.efficiency.assetTurnover, [
+      [1.5, 90],
+      [1, 75],
+      [0.6, 60],
+      [0.3, 40],
+    ]),
+  ]);
 
-  const sc = { profitability: scoreProfit, liquidity: scoreLiq, leverage: scoreLev, cashflow: scoreCf, efficiency: scoreEff };
-  const overall = avgDefined([sc.profitability != null ? sc.profitability * 0.3 : null, sc.leverage != null ? sc.leverage * 0.22 : null, sc.cashflow != null ? sc.cashflow * 0.22 : null, sc.liquidity != null ? sc.liquidity * 0.14 : null, sc.efficiency != null ? sc.efficiency * 0.12 : null]);
+  const sc = {
+    profitability: scoreProfit,
+    liquidity: scoreLiq,
+    leverage: scoreLev,
+    cashflow: scoreCf,
+    efficiency: scoreEff,
+  };
+
+  let industryMeta: FinancialHealthResult["industry"] = null;
+  let w = { profitability: 0.3, liquidity: 0.14, leverage: 0.22, cashflow: 0.22, efficiency: 0.12 };
+  if (opts?.symbol) {
+    const profile = getIndustryProfile(opts.symbol);
+    w = profile.weights;
+    industryMeta = { id: profile.id, labelVi: profile.labelVi, note: profile.flags.note };
+    const de = groups.leverage.debtToEquity;
+    const cr = groups.liquidity.currentRatio;
+    const ic = groups.leverage.interestCoverage;
+    if (profile.flags.maxDebtEquity != null && de != null && de > profile.flags.maxDebtEquity) {
+      riskFlags.push(`Nợ/VCSH ${de.toFixed(2)} vượt ngưỡng ngành ${profile.flags.maxDebtEquity}`);
+    }
+    if (profile.flags.minCurrentRatio != null && cr != null && cr < profile.flags.minCurrentRatio) {
+      riskFlags.push(`Current ratio ${cr.toFixed(2)} dưới ngưỡng ngành ${profile.flags.minCurrentRatio}`);
+    }
+    if (profile.flags.minInterestCoverage != null && ic != null && ic < profile.flags.minInterestCoverage) {
+      riskFlags.push(`Interest coverage ${ic.toFixed(2)} dưới ngưỡng ngành ${profile.flags.minInterestCoverage}`);
+    }
+  }
+
+  const overall = avgDefined([
+    sc.profitability != null ? sc.profitability * w.profitability : null,
+    sc.leverage != null ? sc.leverage * w.leverage : null,
+    sc.cashflow != null ? sc.cashflow * w.cashflow : null,
+    sc.liquidity != null ? sc.liquidity * w.liquidity : null,
+    sc.efficiency != null ? sc.efficiency * w.efficiency : null,
+  ]);
 
   const totalSlots = Object.values(groups).reduce((a, g) => a + Object.keys(g).length, 0);
-  const filled = Object.values(groups).reduce((a, g) => a + Object.values(g).filter((v) => v != null).length, 0);
+  const filled = Object.values(groups).reduce(
+    (a, g) => a + Object.values(g).filter((v) => v != null).length,
+    0,
+  );
   const coverage = totalSlots ? filled / totalSlots : 0;
-  if (coverage < 0.4) warnings.push("Dữ liệu báo cáo tài chính chưa đầy đủ — kết quả chỉ mang tính tham khảo phần có dữ liệu");
+  if (coverage < 0.4)
+    warnings.push("Dữ liệu báo cáo tài chính chưa đầy đủ — kết quả chỉ mang tính tham khảo phần có dữ liệu");
   if (equity != null && equity < 0) warnings.push("Vốn chủ sở hữu âm — rủi ro cơ cấu nghiêm trọng");
-  if (groups.profitability.roe != null && groups.profitability.roe > 0.18 && fcfTtm != null && fcfTtm < 0) warnings.push("ROE cao nhưng FCF âm — chất lượng lợi nhuận cần kiểm tra");
+  if (groups.profitability.roe != null && groups.profitability.roe > 0.18 && fcfTtm != null && fcfTtm < 0)
+    warnings.push("ROE cao nhưng FCF âm — chất lượng lợi nhuận cần kiểm tra");
 
   return {
     groups,
     scores: { ...sc, overall: overall != null ? Math.round(overall) : null },
     coverage: Number(coverage.toFixed(2)),
     warnings,
+    riskFlags,
+    industry: industryMeta,
     anchors: { revenue, netProfit, equity, totalDebt, ocfTtm, fcfTtm, shares, epsTtm, ebitdaTtm },
   };
 }
