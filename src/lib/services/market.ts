@@ -49,18 +49,27 @@ function fmtPct(x: number | null | undefined, digits = 2): string {
   return `${x > 0 ? "+" : ""}${x.toFixed(digits)}%`;
 }
 
+/** Race provider với timeout — snapshot không đợi nguồn chậm, trả partial ngay */
+function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>;
+  const timeout = new Promise<T>((resolve) => {
+    timer = setTimeout(() => resolve(fallback), ms);
+  });
+  return Promise.race([promise.then((v) => { clearTimeout(timer); return v; }, () => { clearTimeout(timer); return fallback; }), timeout]);
+}
+
 export async function buildMarketSnapshot(): Promise<{ snapshot: MarketSnapshot; meta: Meta }> {
   const res = await cached("market:snapshot", {
     ttlMs: 20_000,
-    staleMs: 5 * 60_000,
+    staleMs: 10 * 60_000,
     producer: async (): Promise<SnapshotPayload> => {
-      const [vnRes, cryptoRes, forexRes, commRes, newsRes] = await Promise.allSettled([
-        getVnIndices(),
-        getCryptoMarkets(),
-        getForexMarkets(),
-        getCommodityMarket(),
-        getNews({ limit: 10 }),
-      ]);
+      // Mỗi provider chỉ được 3.5s — nếu chậm hơn, coi như UNAVAILABLE và trả partial để ticker không treo
+      const vnP = withTimeout(getVnIndices().catch(() => null), 3_500, null);
+      const cryptoP = withTimeout(getCryptoMarkets().catch(() => null), 3_500, null);
+      const forexP = withTimeout(getForexMarkets().catch(() => null), 3_500, null);
+      const commP = withTimeout(getCommodityMarket().catch(() => null), 3_500, null);
+      const newsP = withTimeout(getNews({ limit: 10 }).catch(() => null), 3_500, null);
+      const [vnRes, cryptoRes, forexRes, commRes, newsRes] = await Promise.allSettled([vnP, cryptoP, forexP, commP, newsP]);
       const sections: Record<string, FreshnessStatus> = {
         vn_stocks: vnRes.status === "fulfilled" && vnRes.value ? vnRes.value.meta.freshness : "UNAVAILABLE",
         crypto: cryptoRes.status === "fulfilled" && cryptoRes.value ? cryptoRes.value.meta.freshness : "UNAVAILABLE",

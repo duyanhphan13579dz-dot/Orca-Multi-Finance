@@ -66,16 +66,22 @@ export interface MarketIntel {
 
 const VN30_BOARD = ["VCB", "BID", "CTG", "TCB", "MBB", "VPB", "ACB", "STB", "HDB", "VIC", "VHM", "VRE", "HPG", "FPT", "VNM", "MSN", "MWG", "GAS", "PLX", "SSI", "POW", "SAB", "BCM", "GVR", "SHB", "TPB", "BVH", "PDR", "KDH", "VJC"];
 
+function withTimeoutIntel<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>;
+  const timeout = new Promise<T>((resolve) => { timer = setTimeout(() => resolve(fallback), ms); });
+  return Promise.race([promise.then((v) => { clearTimeout(timer); return v; }, () => { clearTimeout(timer); return fallback; }), timeout]);
+}
+
 export async function buildMarketIntel(): Promise<{ intel: MarketIntel; meta: Meta }> {
   const res = await cached("market:intel:v3", {
     ttlMs: 20_000,
     staleMs: 10 * 60_000,
     producer: async () => {
       const [snapRes, crossRes, boardRes, foreignRes] = await Promise.allSettled([
-        buildMarketSnapshot(),
-        getCrossAsset(),
-        getVnQuotes(VN30_BOARD),
-        vndirect.getVndForeignFlow(),
+        withTimeoutIntel(buildMarketSnapshot().catch(() => null), 4_000, null),
+        withTimeoutIntel(getCrossAsset().catch(() => null), 4_000, null),
+        withTimeoutIntel(getVnQuotes(VN30_BOARD).catch(() => null), 4_000, null),
+        withTimeoutIntel(vndirect.getVndForeignFlow().catch(() => null), 4_000, null),
       ]);
 
       const snap = snapRes.status === "fulfilled" ? snapRes.value : null;

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { memo, useMemo } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
 import { useApi } from "@/lib/hooks";
 import type { MarketSnapshot } from "@/lib/services/market";
 
@@ -26,9 +26,15 @@ const TickerItem = memo(function TickerItem({ it }: { it: { key: string; label: 
   );
 });
 
-/** Realtime ticker — VN indices + crypto + FX majors, CSS marquee. */
+/** Realtime ticker — VN indices + crypto + FX majors, CSS marquee. Tăng tốc kết nối: timeout ngắn, fallback ngay */
 export function TickerTape() {
   const { data } = useApi<MarketSnapshot>("/api/v1/market/snapshot", { refreshInterval: 60_000 });
+  const [showFallback, setShowFallback] = useState(false);
+  useEffect(() => {
+    if (data) { setShowFallback(false); return; }
+    const t = setTimeout(() => setShowFallback(true), 2_500);
+    return () => clearTimeout(t);
+  }, [data]);
   const items = useMemo(() => {
     const out: { key: string; label: string; href: string; price: number; chg: number | null; digits: number }[] = [];
     if (data?.indices?.length) {
@@ -88,6 +94,22 @@ export function TickerTape() {
   }, [data]);
 
   if (!items.length) {
+    if (showFallback) {
+      return (
+        <div className="flex h-8 items-center gap-2 border-t border-line bg-canvas-2 px-4 text-[11px] text-ink-3">
+          <span className="size-1.5 animate-pulse rounded-full bg-amber-500" />
+          <span>Đang đồng bộ…</span>
+          <span className="hidden md:inline-flex items-center gap-3 ml-3 text-[11px]">
+            <Link href="/stocks" className="opacity-60 hover:opacity-100 hover:text-ink">VN-Index <span className="num">—</span></Link>
+            <Link href="/crypto/BTCUSDT" className="opacity-60 hover:opacity-100 hover:text-ink">BTC <span className="num">—</span></Link>
+            <Link href="/crypto/ETHUSDT" className="opacity-60 hover:opacity-100 hover:text-ink">ETH <span className="num">—</span></Link>
+            <Link href="/forex/USD" className="opacity-60 hover:opacity-100 hover:text-ink">USD/VND <span className="num">—</span></Link>
+            <Link href="/commodities" className="opacity-60 hover:opacity-100 hover:text-ink">GOLD <span className="num">—</span></Link>
+          </span>
+          <span className="ml-auto hidden sm:inline text-[10px] opacity-60">Tự làm mới sau 8s</span>
+        </div>
+      );
+    }
     return (
       <div className="flex h-8 items-center border-t border-line bg-canvas-2 px-4 text-[11px] text-ink-3">
         <span className="size-1.5 animate-pulse rounded-full bg-accent/60" />

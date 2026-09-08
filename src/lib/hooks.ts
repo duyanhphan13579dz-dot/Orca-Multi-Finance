@@ -13,11 +13,11 @@ import { getSettingsSnapshot, resolveRefresh } from "./settings";
  * Tab hidden → polling paused (saves battery + backend load).
  */
 
-const FETCH_TIMEOUT_MS = 12_000;
+const FETCH_TIMEOUT_MS = 8_000;
 
-// Global fetch dedup: concurrent requests to same URL share a single promise
+// Global fetch dedup: concurrent requests to same URL share a single promise — tăng TTL để giảm ghép yêu cầu
 const fetchDedup = new Map<string, Promise<unknown>>();
-const FETCH_DEDUP_TTL = 1_200;
+const FETCH_DEDUP_TTL = 2_000;
 
 const fetcher = async <T>(url: string): Promise<ApiResponse<T>> => {
   const dedupKey = url;
@@ -78,18 +78,20 @@ export function useApi<T>(url: string | null, opts?: { refreshInterval?: number 
     refreshInterval,
     revalidateOnFocus: rt.backgroundRefresh ? true : false,
     revalidateOnReconnect: rt.autoReconnect,
-    revalidateIfStale: visible,
-    focusThrottleInterval: rt.lowDataMode ? 120_000 : 60_000,
+    revalidateIfStale: true,
+    focusThrottleInterval: rt.lowDataMode ? 90_000 : 45_000,
     shouldRetryOnError: rt.autoReconnect,
-    errorRetryInterval: rt.lowDataMode ? 90_000 : 20_000,
-    errorRetryCount: rt.autoReconnect ? 2 : 0,
+    errorRetryInterval: rt.lowDataMode ? 45_000 : 8_000,
+    errorRetryCount: rt.autoReconnect ? 3 : 0,
     keepPreviousData: true,
-    dedupingInterval: rt.lowDataMode ? 30_000 : 12_000,
-    // Reduce loading flash: deliver stale data while revalidating
+    dedupingInterval: rt.lowDataMode ? 20_000 : 6_000,
+    // Reduce loading flash: deliver stale data while revalidating — tăng tốc first paint
     suspense: false,
     // Avoid fetching same key multiple times within short window across components
     revalidateOnMount: !visible ? false : undefined,
-  });
+    // Nhanh hơn: loadingTimeout 3s để SWR tự retry nếu fetch treo
+    loadingTimeout: 3_000,
+  } as unknown as Record<string, unknown>);
 
   return {
     res: data ?? null,
