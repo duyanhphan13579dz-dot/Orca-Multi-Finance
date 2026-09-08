@@ -15,13 +15,23 @@ import type { CandlePattern, IndexQuote, Meta, OhlcvBar, Quote, TechnicalSnapsho
  * Never fabricates Vietnam market numbers.
  */
 
+const INDEX_PRIORITY = ["VNINDEX", "VN30", "HNX", "UPCOM", "HNX30", "VN100"];
+
+function sortIndices(items: IndexQuote[]): IndexQuote[] {
+  return [...items].sort((a, b) => {
+    const ia = INDEX_PRIORITY.indexOf(a.code);
+    const ib = INDEX_PRIORITY.indexOf(b.code);
+    return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
+  });
+}
+
 export function vnstockConfigured(): boolean {
   return Boolean(env.vnstockApiKey);
 }
 
 export async function getVnIndices(): Promise<{ items: IndexQuote[]; meta: Meta } | null> {
   try {
-    const res = await cached("vn:indices:v2", {
+    const res = await cached("vn:indices:v3", {
       ttlMs: 45_000,
       staleMs: 24 * 3_600_000,
       producer: async () => {
@@ -43,7 +53,7 @@ export async function getVnIndices(): Promise<{ items: IndexQuote[]; meta: Meta 
       note: "Chỉ số VN (VNINDEX/VN30/HNX/UPCOM)",
       slas: { liveSlaMs: 30_000, freshSlaMs: 300_000, delayedSlaMs: 3_600_000 },
     });
-    return { items: res.value.items, meta };
+    return { items: sortIndices(res.value.items), meta };
   } catch {
     return null;
   }
@@ -58,7 +68,7 @@ export async function getVnMarketBoard(): Promise<{
   meta: Meta;
 } | null> {
   try {
-    const res = await cached("vn:market-board:v1", {
+    const res = await cached("vn:market-board:v2", {
       ttlMs: 60_000,
       staleMs: 24 * 3_600_000,
       producer: async () => {
@@ -76,7 +86,7 @@ export async function getVnMarketBoard(): Promise<{
         });
         return {
           quotes,
-          indices: indices.items,
+          indices: sortIndices(indices.items),
           universe,
           sessionDate: board.sessionDate,
           sourceTs: board.sourceTs ?? indices.sourceTs,
