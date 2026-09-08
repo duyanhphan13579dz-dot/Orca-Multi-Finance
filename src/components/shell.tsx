@@ -108,7 +108,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [mobileOpen, setMobileOpen] = useState(false);
 
   useEffect(() => {
-    setCollapsed(localStorage.getItem(SB_KEY) === "1");
+    try {
+      const v = localStorage.getItem(SB_KEY);
+      setCollapsed(v === "1");
+    } catch {}
     const onKey = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "b") {
         e.preventDefault();
@@ -122,7 +125,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   const toggle = () => {
     setCollapsed((c) => {
-      localStorage.setItem(SB_KEY, c ? "0" : "1");
+      try {
+        localStorage.setItem(SB_KEY, c ? "0" : "1");
+      } catch {}
       return !c;
     });
   };

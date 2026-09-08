@@ -53,13 +53,23 @@ export default function JournalPage() {
   useEffect(() => setTrades(load()), []);
   const persist = (t: Trade[]) => {
     setTrades(t);
-    localStorage.setItem(KEY, JSON.stringify(t));
+    try {
+      localStorage.setItem(KEY, JSON.stringify(t));
+    } catch {
+      // storage blocked/quota — keep memory only
+    }
   };
 
   const add = () => {
     if (!form.symbol || !form.entry) return;
+    let uid: string;
+    try {
+      uid = (globalThis.crypto as Crypto | undefined)?.randomUUID?.() ?? `j-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    } catch {
+      uid = `j-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    }
     const t: Trade = {
-      id: crypto.randomUUID(),
+      id: uid,
       assetType: form.assetType,
       symbol: form.symbol.toUpperCase(),
       side: form.side,

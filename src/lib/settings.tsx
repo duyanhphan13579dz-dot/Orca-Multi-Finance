@@ -1,6 +1,7 @@
 "use client";
 
 import { createContext, useContext, useEffect, useRef, useState } from "react";
+import { safeGet, safeParse, safeSet } from "./safe-storage";
 
 /**
  * ORCA Settings System — client store + server persistence.
@@ -113,26 +114,80 @@ let loggedIn = false;
 const listeners = new Set<() => void>();
 let syncTimer: ReturnType<typeof setTimeout> | null = null;
 
-function mergeDeep(base: UserSettings, patch: Partial<UserSettings>): UserSettings {
+function mergeDeep(base: UserSettings, patch: Partial<UserSettings> | unknown): UserSettings {
+  if (!patch || typeof patch !== "object" || Array.isArray(patch)) return base;
+  const p = patch as Partial<UserSettings>;
   const out = { ...base } as UserSettings;
-  for (const k of Object.keys(patch) as (keyof UserSettings)[]) {
-    const pv = patch[k];
+  for (const k of Object.keys(p) as (keyof UserSettings)[]) {
+    const pv = p[k];
+    if (pv === undefined) continue;
+    // only merge plain objects, not arrays/null
     if (pv && typeof pv === "object" && !Array.isArray(pv) && k !== "updatedAt") {
-      // @ts-expect-error structural merge
-      out[k] = { ...(base[k] as object), ...(pv as object) };
-    } else if (pv !== undefined) {
+      const baseVal = base[k];
+      if (baseVal && typeof baseVal === "object" && !Array.isArray(baseVal)) {
+        // @ts-expect-error structural merge
+        out[k] = { ...(baseVal as object), ...(pv as object) };
+      } else if (pv !== null) {
+        // ignore malformed nested (e.g., appearance: null)
+      }
+    } else if (pv !== null) {
       // @ts-expect-error structural merge
       out[k] = pv;
     }
   }
-  return out;
+  // validate critical enums — fallback if corrupted
+  return sanitize(out);
+}
+
+function sanitize(s: UserSettings): UserSettings {
+  const d = DEFAULT_SETTINGS;
+  try {
+    const o = { ...s } as UserSettings;
+    // appearance
+    if (!o.appearance || typeof o.appearance !== "object") o.appearance = { ...d.appearance };
+    else {
+      if (!["navy", "light", "system"].includes(o.appearance.mode)) o.appearance.mode = d.appearance.mode;
+      if (!["compact", "normal", "comfortable"].includes(o.appearance.density)) o.appearance.density = d.appearance.density;
+      if (!["sm", "md", "lg"].includes(o.appearance.fontSize)) o.appearance.fontSize = d.appearance.fontSize;
+      if (!o.appearance.numberFormat) o.appearance.numberFormat = d.appearance.numberFormat;
+      if (!o.appearance.currency) o.appearance.currency = d.appearance.currency;
+    }
+    // profile
+    if (!o.profile || typeof o.profile !== "object") o.profile = { ...d.profile };
+    else {
+      if (typeof o.profile.timezone !== "string" || !o.profile.timezone) o.profile.timezone = d.profile.timezone;
+      if (!["vi", "en"].includes(o.profile.language)) o.profile.language = d.profile.language;
+      if (typeof o.profile.displayName !== "string") o.profile.displayName = "";
+    }
+    // realtime
+    if (!o.realtime || typeof o.realtime !== "object") o.realtime = { ...d.realtime };
+    else {
+      if (typeof o.realtime.liveUpdates !== "boolean") o.realtime.liveUpdates = d.realtime.liveUpdates;
+      if (typeof o.realtime.lowDataMode !== "boolean") o.realtime.lowDataMode = d.realtime.lowDataMode;
+      if (![5, 10, 15, 30, 60].includes(o.realtime.refreshSeconds)) o.realtime.refreshSeconds = d.realtime.refreshSeconds;
+      if (typeof o.realtime.autoReconnect !== "boolean") o.realtime.autoReconnect = d.realtime.autoReconnect;
+      if (typeof o.realtime.backgroundRefresh !== "boolean") o.realtime.backgroundRefresh = d.realtime.backgroundRefresh;
+    }
+    // other sections — ensure objects exist to avoid `Cannot read properties of undefined`
+    if (!o.dashboard || typeof o.dashboard !== "object") o.dashboard = { ...d.dashboard };
+    if (!o.chart || typeof o.chart !== "object") o.chart = { ...d.chart } as UserSettings["chart"];
+    if (!o.chart.indicators || typeof o.chart.indicators !== "object") o.chart.indicators = { ...d.chart.indicators };
+    if (!o.reports || typeof o.reports !== "object") o.reports = { ...d.reports };
+    if (!o.notifications || typeof o.notifications !== "object") o.notifications = { ...d.notifications };
+    if (!o.ai || typeof o.ai !== "object") o.ai = { ...d.ai };
+    if (typeof o.updatedAt !== "number") o.updatedAt = 0;
+    return o;
+  } catch {
+    return d;
+  }
 }
 
 function persistLocal() {
   try {
-    localStorage.setItem(KEY, JSON.stringify(snapshot));
+    const json = JSON.stringify(snapshot);
+    safeSet(KEY, json);
   } catch {
-    /* private mode */
+    /* private mode — ignore */
   }
 }
 
@@ -151,20 +206,29 @@ function scheduleServerSync() {
 }
 
 function applyToDom() {
-  if (typeof document === "undefined") return;
-  const el = document.documentElement;
-  const mode = snapshot.appearance.mode;
-  const resolved =
-    mode === "system"
-      ? window.matchMedia("(prefers-color-scheme: light)").matches
-        ? "light"
-        : "navy"
-      : mode;
-  el.dataset.theme = resolved;
-  el.dataset.density = snapshot.appearance.density;
-  el.dataset.lowdata = String(snapshot.realtime.lowDataMode);
-  el.style.setProperty("--app-font", FONT_MAP[snapshot.appearance.fontSize]);
-  el.lang = snapshot.profile.language;
+  try {
+    if (typeof document === "undefined") return;
+    const el = document.documentElement;
+    const mode = snapshot?.appearance?.mode ?? "navy";
+    let resolved = mode;
+    if (mode === "system") {
+      try {
+        const mm = typeof window !== "undefined" && window.matchMedia ? window.matchMedia("(prefers-color-scheme: light)") : null;
+        resolved = mm?.matches ? "light" : "navy";
+      } catch {
+        resolved = "navy";
+      }
+    }
+    el.dataset.theme = resolved as string;
+    el.dataset.density = (snapshot?.appearance?.density ?? "normal") as string;
+    el.dataset.lowdata = String(!!snapshot?.realtime?.lowDataMode);
+    const fs = FONT_MAP[(snapshot?.appearance?.fontSize as keyof typeof FONT_MAP) ?? "md"] ?? FONT_MAP.md;
+    el.style.setProperty("--app-font", fs);
+    const lang = snapshot?.profile?.language;
+    if (lang === "vi" || lang === "en") el.lang = lang;
+  } catch {
+    // never let dom apply crash the app
+  }
 }
 
 function notify() {
@@ -172,15 +236,32 @@ function notify() {
 }
 
 export function getSettingsSnapshot(): UserSettings {
-  return snapshot;
+  // always return sanitized copy — never let corrupted snapshot leak to render
+  try {
+    if (!snapshot || typeof snapshot !== "object") snapshot = { ...DEFAULT_SETTINGS };
+    return sanitize(snapshot);
+  } catch {
+    return DEFAULT_SETTINGS;
+  }
 }
 
 export function updateSettings(patch: Partial<UserSettings>) {
-  snapshot = { ...mergeDeep(snapshot, patch), updatedAt: Date.now() };
+  try {
+    snapshot = { ...mergeDeep(snapshot, patch), updatedAt: Date.now() };
+    snapshot = sanitize(snapshot);
+  } catch {
+    snapshot = { ...DEFAULT_SETTINGS, updatedAt: Date.now() };
+  }
   persistLocal();
-  applyToDom();
-  notify();
-  scheduleServerSync();
+  try {
+    applyToDom();
+  } catch {}
+  try {
+    notify();
+  } catch {}
+  try {
+    scheduleServerSync();
+  } catch {}
 }
 
 /* ------------------------------- provider --------------------------------- */
@@ -201,19 +282,40 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
   const [hydrated, setHydrated] = useState(false);
   const [, force] = useState(0);
   const media = useRef<MediaQueryList | null>(null);
+  const mediaHandler = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     // hydrate: localStorage first, then server (newer wins)
+    // Defensive: corrupted JSON must not crash — reset to defaults and clear bad key
+    let hadCorruption = false;
     try {
-      const raw = localStorage.getItem(KEY);
+      const raw = safeGet(KEY);
       if (raw) {
-        const parsed = JSON.parse(raw) as UserSettings;
-        snapshot = mergeDeep(DEFAULT_SETTINGS, parsed);
+        const parsed = safeParse<Partial<UserSettings>>(raw, null as unknown as Partial<UserSettings>);
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+          const merged = mergeDeep(DEFAULT_SETTINGS, parsed);
+          snapshot = sanitize(merged);
+        } else if (raw.trim().length > 0) {
+          // raw exists but not parsable as object (e.g., "undefined", "null", half-written)
+          hadCorruption = true;
+        }
+      } else {
+        snapshot = sanitize(snapshot);
       }
     } catch {
-      /* corrupted storage */
+      hadCorruption = true;
+      snapshot = { ...DEFAULT_SETTINGS };
     }
-    applyToDom();
+    if (hadCorruption) {
+      try {
+        const cur = safeGet(KEY);
+        // only clear if it is truly invalid JSON, not empty
+        if (cur) safeSet(KEY, JSON.stringify(sanitize(snapshot)));
+      } catch {}
+    }
+    try {
+      applyToDom();
+    } catch {}
     setHydrated(true);
 
     void (async () => {
@@ -240,17 +342,33 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
       }
     })();
 
-    const listener = () => force((x) => x + 1);
+    const listener = () => {
+      try {
+        force((x) => x + 1);
+      } catch {}
+    };
     listeners.add(listener);
-    media.current = window.matchMedia("(prefers-color-scheme: light)");
-    const onMedia = () => applyToDom();
-    media.current.addEventListener("change", onMedia);
+    try {
+      if (typeof window !== "undefined" && window.matchMedia) {
+        media.current = window.matchMedia("(prefers-color-scheme: light)");
+        const onMedia = () => {
+          try {
+            applyToDom();
+          } catch {}
+        };
+        mediaHandler.current = onMedia;
+        media.current.addEventListener("change", onMedia);
+      }
+    } catch {}
     const onStorage = (e: StorageEvent) => {
       if (e.key === KEY && e.newValue) {
         try {
-          snapshot = mergeDeep(DEFAULT_SETTINGS, JSON.parse(e.newValue) as UserSettings);
-          applyToDom();
-          force((x) => x + 1);
+          const parsed = safeParse<Partial<UserSettings>>(e.newValue, null as unknown as Partial<UserSettings>);
+          if (parsed && typeof parsed === "object") {
+            snapshot = sanitize(mergeDeep(DEFAULT_SETTINGS, parsed));
+            applyToDom();
+            force((x) => x + 1);
+          }
         } catch {
           /* ignore */
         }
@@ -259,7 +377,11 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
     window.addEventListener("storage", onStorage);
     return () => {
       listeners.delete(listener);
-      media.current?.removeEventListener("change", onMedia);
+      try {
+        const m = media.current;
+        const h = mediaHandler.current;
+        if (m && h) m.removeEventListener("change", h);
+      } catch {}
       window.removeEventListener("storage", onStorage);
     };
   }, []);
@@ -276,13 +398,18 @@ export function useSettings(): SettingsCtxValue {
 let refreshMul = 1;
 let refreshLowMul = 4;
 export function resolveRefresh(baseMs: number | undefined): number {
-  const r = snapshot.realtime;
-  if (!r.liveUpdates) return 0;
-  if (baseMs === undefined || baseMs <= 0) return 0;
-  // Update cache when settings change (called via notify)
-  refreshMul = r.refreshSeconds / 15;
-  refreshLowMul = 4;
-  const scaled = baseMs * refreshMul;
-  // Clamp: lowDataMode forces at least 60s to cut server load dramatically
-  return r.lowDataMode ? Math.max(scaled * refreshLowMul, 60_000) : Math.max(Math.min(scaled, 90_000), 5_000);
+  try {
+    const r = snapshot?.realtime ?? DEFAULT_SETTINGS.realtime;
+    if (!r?.liveUpdates) return 0;
+    if (baseMs === undefined || baseMs <= 0) return 0;
+    // Update cache when settings change (called via notify)
+    const rs = typeof r.refreshSeconds === "number" && [5, 10, 15, 30, 60].includes(r.refreshSeconds) ? r.refreshSeconds : 15;
+    refreshMul = rs / 15;
+    refreshLowMul = 4;
+    const scaled = baseMs * refreshMul;
+    // Clamp: lowDataMode forces at least 60s to cut server load dramatically
+    return r.lowDataMode ? Math.max(scaled * refreshLowMul, 60_000) : Math.max(Math.min(scaled, 90_000), 5_000);
+  } catch {
+    return baseMs && baseMs > 0 ? Math.max(Math.min(baseMs, 90_000), 5_000) : 0;
+  }
 }

@@ -66,13 +66,23 @@ function usePageVisible(): boolean {
 }
 
 export function useApi<T>(url: string | null, opts?: { refreshInterval?: number }) {
-  const rt = getSettingsSnapshot().realtime;
+  let rt: ReturnType<typeof getSettingsSnapshot>["realtime"];
+  try {
+    rt = getSettingsSnapshot().realtime;
+  } catch {
+    rt = { liveUpdates: true, lowDataMode: false, refreshSeconds: 15, autoReconnect: true, backgroundRefresh: true };
+  }
   const visible = usePageVisible();
 
-  const baseRefresh = resolveRefresh(opts?.refreshInterval);
+  let baseRefresh = 0;
+  try {
+    baseRefresh = resolveRefresh(opts?.refreshInterval);
+  } catch {
+    baseRefresh = opts?.refreshInterval ?? 0;
+  }
   // Pause polling in background tabs — big win on mobile battery & server load
   // Also throttle when lowDataMode to cut 75% requests
-  const refreshInterval = visible && rt.liveUpdates ? baseRefresh : 0;
+  const refreshInterval = visible && rt?.liveUpdates ? baseRefresh : 0;
 
   const { data, error, isLoading, isValidating, mutate } = useSWR<ApiResponse<T>>(url, fetcher<T>, {
     refreshInterval,

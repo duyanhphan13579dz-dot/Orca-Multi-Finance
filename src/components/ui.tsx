@@ -148,7 +148,12 @@ export function ErrorNote({ message }: { message: string }) {
 import { getSettingsSnapshot } from "@/lib/settings";
 
 function fmtLocale(): string {
-  return getSettingsSnapshot().appearance.numberFormat ?? "en-US";
+  try {
+    const s = getSettingsSnapshot();
+    return s?.appearance?.numberFormat ?? "en-US";
+  } catch {
+    return "en-US";
+  }
 }
 
 export function fmtNum(v: number | null | undefined, digits = 2): string {

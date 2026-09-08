@@ -20,10 +20,38 @@ export default function HeatmapPage() {
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
-    const ro = new ResizeObserver(() => setWidth(el.clientWidth));
-    ro.observe(el);
-    setWidth(el.clientWidth);
-    return () => ro.disconnect();
+    const update = () => {
+      try {
+        setWidth(el.clientWidth);
+      } catch {}
+    };
+    update();
+    let ro: ResizeObserver | null = null;
+    let onWin: (() => void) | null = null;
+    try {
+      if (typeof ResizeObserver !== "undefined") {
+        ro = new ResizeObserver(update);
+        ro.observe(el);
+      } else if (typeof window !== "undefined") {
+        onWin = update;
+        window.addEventListener("resize", onWin);
+      }
+    } catch {
+      try {
+        if (typeof window !== "undefined" && !ro) {
+          onWin = update;
+          window.addEventListener("resize", onWin);
+        }
+      } catch {}
+    }
+    return () => {
+      try {
+        ro?.disconnect();
+      } catch {}
+      try {
+        if (onWin) window.removeEventListener("resize", onWin);
+      } catch {}
+    };
   }, []);
 
   if (isLoading && !data) return <Loading rows={8} />;

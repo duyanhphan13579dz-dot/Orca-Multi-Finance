@@ -81,15 +81,41 @@ export function CommodityLineChart({ options, height = 320 }: Props) {
     chartRef.current = chart;
     seriesRef.current = series;
 
-    const ro = new ResizeObserver(() => {
-      if (hostRef.current) chart.applyOptions({ width: hostRef.current.clientWidth });
-    });
-    ro.observe(hostRef.current);
-    chart.applyOptions({ width: hostRef.current.clientWidth });
+    const applyWidth = () => {
+      try {
+        if (hostRef.current) chart.applyOptions({ width: hostRef.current.clientWidth });
+      } catch {}
+    };
+    let ro: ResizeObserver | null = null;
+    let onWinResize: (() => void) | null = null;
+    try {
+      if (typeof ResizeObserver !== "undefined") {
+        ro = new ResizeObserver(applyWidth);
+        ro.observe(hostRef.current);
+      } else if (typeof window !== "undefined") {
+        onWinResize = applyWidth;
+        window.addEventListener("resize", onWinResize);
+      }
+    } catch {
+      try {
+        if (typeof window !== "undefined" && !ro) {
+          onWinResize = applyWidth;
+          window.addEventListener("resize", onWinResize);
+        }
+      } catch {}
+    }
+    applyWidth();
 
     return () => {
-      ro.disconnect();
-      chart.remove();
+      try {
+        ro?.disconnect();
+      } catch {}
+      try {
+        if (onWinResize) window.removeEventListener("resize", onWinResize);
+      } catch {}
+      try {
+        chart.remove();
+      } catch {}
       chartRef.current = null;
       seriesRef.current = null;
     };

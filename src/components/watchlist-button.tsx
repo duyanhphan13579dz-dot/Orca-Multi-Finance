@@ -20,8 +20,14 @@ export function loadWatchlist(): WatchItem[] {
 }
 
 export function saveWatchlist(items: WatchItem[]) {
-  localStorage.setItem(KEY, JSON.stringify(items));
-  window.dispatchEvent(new Event("orca:watchlist"));
+  try {
+    localStorage.setItem(KEY, JSON.stringify(items));
+  } catch {
+    // quota/blocked — still notify UI memory-only
+  }
+  try {
+    window.dispatchEvent(new Event("orca:watchlist"));
+  } catch {}
 }
 
 export function AddToWatchlist({ assetType, symbol }: { assetType: WatchItem["assetType"]; symbol: string }) {
