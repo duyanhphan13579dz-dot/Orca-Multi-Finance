@@ -1,10 +1,13 @@
-import { ok, unavailable } from "@/lib/envelope";
+import { ok, fail, unavailable } from "@/lib/envelope";
 import { getCryptoMarkets } from "@/lib/services/crypto";
+import { getSessionUser } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 export async function GET(req: Request) {
+  const session = await getSessionUser();
+  if (!session) return fail("UNAUTHENTICATED", "Đăng nhập để sử dụng Crypto", 401);
   const url = new URL(req.url);
   const limit = Math.min(Number(url.searchParams.get("limit") ?? 60) || 60, 300);
   const sort = url.searchParams.get("sort"); // gainers | losers | volume

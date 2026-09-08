@@ -1,4 +1,5 @@
 import { ok, badRequest, fail } from "@/lib/envelope";
+import { getSessionUser } from "@/lib/auth";
 import { answerQuestion, type AgentHistoryTurn } from "@/lib/services/agent";
 
 export const dynamic = "force-dynamic";
@@ -10,6 +11,8 @@ export const maxDuration = 60;
  * POST { question: string, history?: { role, content }[], preferences? }
  */
 export async function POST(req: Request) {
+  const session = await getSessionUser();
+  if (!session) return fail("UNAUTHENTICATED", "Đăng nhập để sử dụng AI Agent", 401);
   const body = (await req.json().catch(() => null)) as {
     question?: string;
     history?: AgentHistoryTurn[];

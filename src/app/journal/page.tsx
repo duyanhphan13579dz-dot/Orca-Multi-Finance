@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Badge, fmtNum, Panel } from "@/components/ui";
 import { NotebookPen, Plus, Trash2 } from "lucide-react";
+import { AuthGate } from "@/components/auth-gate";
 
 interface Trade {
   id: string;
@@ -104,7 +105,8 @@ export default function JournalPage() {
   }, [trades]);
 
   return (
-    <div className="mx-auto max-w-4xl space-y-3">
+    <AuthGate feature="Nhật ký giao dịch" description="Nhật ký lưu PnL, R-multiple, chiến lược & tâm lý — cần đăng nhập để lưu vĩnh viễn và xem thống kê hiệu suất cá nhân.">
+      <div className="mx-auto max-w-4xl space-y-3">
       <Panel pad={false}>
         <div className="flex items-center justify-between p-4">
           <div>
@@ -235,7 +237,8 @@ export default function JournalPage() {
       <style jsx global>{`
         .input { width: 100%; border-radius: 8px; border: 1px solid var(--color-line); background: var(--color-panel-2); padding: 7px 10px; font-size: 12px; color: var(--color-ink); }
       `}</style>
-    </div>
+      </div>
+    </AuthGate>
   );
 }
 

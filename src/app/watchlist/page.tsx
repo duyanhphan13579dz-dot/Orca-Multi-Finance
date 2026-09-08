@@ -10,6 +10,7 @@ import type { CryptoMarketRow, ForexRow } from "@/lib/types";
 import type { ForexMarket } from "@/lib/services/forex";
 import { Badge, Chg, fmtNum, Panel, priceDigits } from "@/components/ui";
 import { ArrowDown, ArrowUp, Eye, Plus, Trash2 } from "lucide-react";
+import { AuthGate } from "@/components/auth-gate";
 
 type CryptoData = { rows: CryptoMarketRow[]; summary: CryptoSummary };
 
@@ -56,7 +57,8 @@ export default function WatchlistPage() {
   };
 
   return (
-    <div className="mx-auto max-w-3xl space-y-3">
+    <AuthGate feature="Watchlist" description="Danh mục theo dõi đồng bộ đa thiết bị — cần đăng nhập để lưu vĩnh viễn, sắp xếp và nhận cảnh báo giá.">
+      <div className="mx-auto max-w-3xl space-y-3">
       <Panel pad={false}>
         <div className="p-4">
           <h1 className="flex items-center gap-2 text-lg font-semibold"><Eye className="size-5 text-accent" /> Watchlist của tôi</h1>
@@ -124,6 +126,7 @@ export default function WatchlistPage() {
           </ul>
         )}
       </Panel>
-    </div>
+      </div>
+    </AuthGate>
   );
 }

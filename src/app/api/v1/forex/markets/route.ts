@@ -1,10 +1,13 @@
-import { ok, unavailable } from "@/lib/envelope";
+import { ok, fail, unavailable } from "@/lib/envelope";
 import { getForexMarkets } from "@/lib/services/forex";
+import { getSessionUser } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 export async function GET() {
+  const session = await getSessionUser();
+  if (!session) return fail("UNAUTHENTICATED", "Đăng nhập để sử dụng Forex", 401);
   const r = await getForexMarkets();
   if (!r) {
     return unavailable(

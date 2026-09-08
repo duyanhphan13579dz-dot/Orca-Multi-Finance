@@ -2,6 +2,7 @@ import { candleAggregator } from "@/lib/realtime/candles";
 import { ensureBinanceWsStarted, binanceWs } from "@/lib/realtime/binance-ws";
 import { eventBus } from "@/lib/events";
 import { buildScalpSignal } from "@/lib/services/intelligence";
+import { getSessionUser } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -17,6 +18,13 @@ export const runtime = "nodejs";
 const TF = new Set(["1m", "5m", "15m"]);
 
 export async function GET(req: Request, ctx: { params: Promise<{ symbol: string }> }) {
+  const session = await getSessionUser();
+  if (!session) {
+    return new Response(JSON.stringify({ success: false, error: { code: "UNAUTHENTICATED", message: "Đăng nhập để sử dụng Crypto" } }), {
+      status: 401,
+      headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
+    });
+  }
   const { symbol: raw } = await ctx.params;
   if (!/^[A-Za-z0-9]{2,20}$/.test(raw)) {
     return new Response(JSON.stringify({ success: false, error: { code: "BAD_REQUEST", message: "Symbol khong hop le" } }), {

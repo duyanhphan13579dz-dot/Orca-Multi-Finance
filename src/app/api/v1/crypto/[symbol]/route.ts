@@ -1,5 +1,6 @@
-import { ok, unavailable, badRequest } from "@/lib/envelope";
+import { ok, fail, unavailable, badRequest } from "@/lib/envelope";
 import { getCryptoDetail } from "@/lib/services/crypto";
+import { getSessionUser } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -7,6 +8,8 @@ export const runtime = "nodejs";
 const VALID_INTERVALS = new Set(["5m", "15m", "1h", "4h", "1d", "1w"]);
 
 export async function GET(req: Request, ctx: { params: Promise<{ symbol: string }> }) {
+  const session = await getSessionUser();
+  if (!session) return fail("UNAUTHENTICATED", "Đăng nhập để sử dụng Crypto", 401);
   const { symbol } = await ctx.params;
   const url = new URL(req.url);
   const interval = url.searchParams.get("interval") ?? "1h";

@@ -1,4 +1,5 @@
-import { ok, badRequest } from "@/lib/envelope";
+import { ok, badRequest, fail } from "@/lib/envelope";
+import { getSessionUser } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -9,6 +10,8 @@ export const runtime = "nodejs";
  * Thu thập tín hiệu DPO cho huấn luyện
  */
 export async function POST(req: Request) {
+  const session = await getSessionUser();
+  if (!session) return fail("UNAUTHENTICATED", "Đăng nhập để gửi feedback", 401);
   const body = (await req.json().catch(() => null)) as {
     conversationId?: string;
     rating?: number;

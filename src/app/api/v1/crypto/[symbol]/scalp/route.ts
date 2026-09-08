@@ -1,5 +1,6 @@
-import { ok, unavailable, badRequest } from "@/lib/envelope";
+import { ok, fail, unavailable, badRequest } from "@/lib/envelope";
 import { buildScalpSignal } from "@/lib/services/intelligence";
+import { getSessionUser } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -8,6 +9,8 @@ const TF = new Set(["1m", "5m", "15m"]);
 
 /** CRYPTO SCALPING INTELLIGENCE — realtime quant signal over live klines. */
 export async function GET(req: Request, ctx: { params: Promise<{ symbol: string }> }) {
+  const session = await getSessionUser();
+  if (!session) return fail("UNAUTHENTICATED", "Đăng nhập để sử dụng Crypto", 401);
   const { symbol } = await ctx.params;
   if (!/^[A-Za-z0-9]{2,20}$/.test(symbol)) return badRequest("Symbol không hợp lệ");
   const tf = new URL(req.url).searchParams.get("tf") ?? "5m";

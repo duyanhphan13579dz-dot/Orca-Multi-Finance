@@ -5,6 +5,7 @@ import { Bot, CornerDownLeft, ShieldCheck } from "lucide-react";
 import type { ApiResponse, Meta } from "@/lib/types";
 import { Badge, Panel } from "@/components/ui";
 import { useSettings } from "@/lib/settings";
+import { AuthGate } from "@/components/auth-gate";
 
 interface AgentResult {
   answer: string;
@@ -109,7 +110,8 @@ export default function AgentPage() {
   }
 
   return (
-    <div className="mx-auto flex max-w-3xl flex-col gap-3 pb-2">
+    <AuthGate feature="AI Agent" description="Trợ lý ORCA nhớ ngữ cảnh, phân tích thị trường & tài chính cá nhân — cần đăng nhập để lưu lịch sử và tránh lạm dụng AI.">
+      <div className="mx-auto flex max-w-3xl flex-col gap-3 pb-2">
       <Panel pad={false}>
         <div className="flex items-center justify-between gap-3 p-4">
           <div>
@@ -170,6 +172,7 @@ export default function AgentPage() {
           <span className="hidden md:inline md:ml-1">Gửi</span>
         </button>
       </form>
-    </div>
+      </div>
+    </AuthGate>
   );
 }
