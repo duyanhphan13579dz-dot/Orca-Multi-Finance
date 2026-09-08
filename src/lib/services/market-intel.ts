@@ -147,7 +147,7 @@ export async function buildMarketIntel(): Promise<{ intel: MarketIntel; meta: Me
         index: indices?.[0] ? { changePercent: indices[0].changePercent, value: indices[0].value, code: indices[0].code } : null,
         breadth: breadth.available ? { advancers: breadth.advancers, decliners: breadth.decliners, unchanged: breadth.unchanged } : null,
         liquidity: liquidity.available ? { valueTraded: liquidity.valueTraded, baseline: liquidity.baseline } : null,
-        flow: foreign ? { foreignNet: foreign.netVal, propNet: null, etfNet: null } : null,
+        flow: foreign ? { foreignNet: foreign.netVal, propNet: null } : null,
         crossAsset: cross ? crossAssetChanges(cross.items) : null,
         cryptoBreadth: cryptoSum
           ? { advancers: cryptoSum.advancers, decliners: cryptoSum.decliners, total: cryptoSum.marketCount, avgChange: cryptoSum.avgChangePercent }
