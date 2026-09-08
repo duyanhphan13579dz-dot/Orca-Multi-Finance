@@ -91,7 +91,7 @@ function VnScreener({ defaultSector }: { defaultSector: string | null }) {
         }
         pad={false}
       >
-        <div className="overflow-x-auto" style={{ contentVisibility: "auto", containIntrinsicSize: "400px" }}>
+        <div className="hidden overflow-x-auto md:block" style={{ contentVisibility: "auto", containIntrinsicSize: "400px" }}>
           <table className="w-full min-w-[560px] text-[12px]">
             <thead>
               <tr className="border-b border-line text-left text-[10px] uppercase tracking-wider text-ink-3">
@@ -114,6 +114,24 @@ function VnScreener({ defaultSector }: { defaultSector: string | null }) {
               ))}
             </tbody>
           </table>
+        </div>
+        <div className="grid gap-2 p-2 md:hidden">
+          {rows.slice(0, 30).map((q) => (
+            <Link key={q.symbol} href={`/stocks/${q.symbol}`} className="flex items-center gap-3 rounded-xl border border-line bg-panel-2 p-3 active:scale-[0.99]">
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[14px] font-semibold text-accent-primary">{q.symbol}</span>
+                  <span className="truncate text-[11px] text-text-muted">{sectorOf(q.symbol)}</span>
+                </div>
+                <div className="num mt-0.5 text-[11px] text-ink-3">GT {fmtCompact(q.quoteVolume ?? q.volume)}</div>
+              </div>
+              <div className="text-right">
+                <div className="num text-[14px] font-semibold">{fmtNum(q.price, 2)}</div>
+                <Chg value={q.changePercent} className="justify-end text-[12px]" arrow={false} />
+              </div>
+            </Link>
+          ))}
+          {!rows.length && <div className="py-6 text-center text-[13px] text-text-muted">Không có kết quả phù hợp bộ lọc</div>}
         </div>
         <div className="border-t border-line px-3.5 py-2"><MetaLine meta={meta} /></div>
       </Panel>

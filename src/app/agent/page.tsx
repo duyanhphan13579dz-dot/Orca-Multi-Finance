@@ -108,14 +108,14 @@ export default function AgentPage() {
   }
 
   return (
-    <div className="mx-auto flex max-w-3xl flex-col gap-3">
+    <div className="mx-auto flex max-w-3xl flex-col gap-3 pb-2">
       <Panel pad={false}>
         <div className="flex items-center justify-between gap-3 p-4">
           <div>
-            <h1 className="flex items-center gap-2 text-lg font-semibold">
+            <h1 className="flex items-center gap-2 text-[17px] font-semibold md:text-lg">
               <Bot className="size-5 text-accent" /> ORCA Financial Agent
             </h1>
-            <p className="mt-0.5 flex items-center gap-1.5 text-[12px] text-ink-3">
+            <p className="mt-0.5 flex items-center gap-1.5 text-[11px] md:text-[12px] text-ink-3">
               <ShieldCheck className="size-3.5 text-up" /> Nhớ ngữ cảnh phiên · Thị trường · Tài chính cá nhân · Gia sản
             </p>
           </div>
@@ -123,15 +123,15 @@ export default function AgentPage() {
         </div>
       </Panel>
 
-      <div ref={listRef} className="panel max-h-[56dvh] space-y-3 overflow-y-auto p-3.5">
+      <div ref={listRef} className="panel max-h-[62dvh] space-y-3 overflow-y-auto overscroll-contain p-3 md:max-h-[56dvh] md:p-3.5" style={{ WebkitOverflowScrolling: "touch" }}>
         {messages.map((m, i) => (
           <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
             <div
-              className={`max-w-[88%] rounded-lg border px-3.5 py-2.5 text-[13px] leading-relaxed ${
-                m.role === "user" ? "border-accent/30 bg-accent/10 text-ink" : "border-line bg-panel-2 text-ink"
+              className={`max-w-[86%] rounded-2xl border px-3.5 py-2.5 text-[13px] leading-relaxed shadow-sm md:max-w-[88%] ${
+                m.role === "user" ? "border-accent/30 bg-accent/10 text-ink rounded-br-sm" : "border-line bg-panel-2 text-ink rounded-bl-sm"
               }`}
             >
-              <div className="whitespace-pre-wrap">{m.text}</div>
+              <div className="whitespace-pre-wrap break-words">{m.text}</div>
             </div>
           </div>
         ))}
@@ -142,9 +142,9 @@ export default function AgentPage() {
         )}
       </div>
 
-      <div className="flex flex-wrap gap-1.5">
+      <div className="scrollbar-hide chip-scroll -mx-1 flex gap-1.5 overflow-x-auto px-1 pb-1 md:flex-wrap md:overflow-visible">
         {SUGGESTED.map((s) => (
-          <button key={s} onClick={() => ask(s)} disabled={busy} className="rounded-full border border-line bg-panel px-2.5 py-1 text-[11px] text-ink-2 hover:border-accent/40 hover:text-accent disabled:opacity-50">
+          <button key={s} onClick={() => ask(s)} disabled={busy} className="scroll-snap-item shrink-0 whitespace-nowrap rounded-full border border-line bg-panel px-3 py-1.5 text-[11px] font-medium text-ink-2 active:bg-accent/10 active:text-accent hover:border-accent/40 hover:text-accent disabled:opacity-50 md:py-1">
             {s}
           </button>
         ))}
@@ -155,16 +155,18 @@ export default function AgentPage() {
           e.preventDefault();
           void ask(input);
         }}
-        className="flex items-center gap-2"
+        className="agent-composer -mx-3 flex items-end gap-2 border-t border-line/50 bg-background-primary/90 px-3 pt-3 backdrop-blur md:mx-0 md:border-0 md:bg-transparent md:px-0 md:pt-0 md:backdrop-blur-none"
       >
         <input
           value={input}
           onChange={(e) => setInput(e.target.value)}
           placeholder="Hỏi tiếp trong cùng ngữ cảnh, hoặc đổi chủ đề bất kỳ lúc nào…"
-          className="flex-1 rounded-lg border border-line bg-panel px-3.5 py-2.5 text-[13px] text-ink placeholder:text-ink-3 focus:border-accent/40"
+          enterKeyHint="send"
+          className="min-h-[46px] flex-1 rounded-2xl border border-line bg-panel px-4 py-3 text-[15px] text-ink placeholder:text-ink-3 focus:border-accent/40 focus:outline-none md:rounded-lg md:px-3.5 md:py-2.5 md:text-[13px]"
         />
-        <button type="submit" disabled={busy || !input.trim()} className="flex items-center gap-1.5 rounded-lg bg-accent/90 px-3.5 py-2.5 text-[13px] font-semibold text-canvas hover:bg-accent disabled:opacity-50">
-          <CornerDownLeft className="size-4" /> Gửi
+        <button type="submit" disabled={busy || !input.trim()} className="grid size-[46px] shrink-0 place-items-center rounded-2xl bg-accent px-0 text-white shadow-sm active:scale-95 disabled:opacity-50 md:h-auto md:w-auto md:rounded-lg md:px-3.5 md:py-2.5 md:text-[13px] md:font-semibold">
+          <CornerDownLeft className="size-5 md:size-4" />
+          <span className="hidden md:inline md:ml-1">Gửi</span>
         </button>
       </form>
     </div>

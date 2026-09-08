@@ -45,7 +45,7 @@ export default function HeatmapPage() {
         <Unavailable title="Binance không khả dụng" meta={meta} />
       ) : (
         <div ref={containerRef} className="panel overflow-hidden p-1.5">
-          <Treemap rows={data.rows} width={width} height={620} onSelect={(s) => router.push(`/crypto/${s}`)} />
+          <Treemap rows={data.rows} width={width} height={width < 640 ? 420 : 620} onSelect={(s) => router.push(`/crypto/${s}`)} />
         </div>
       )}
 

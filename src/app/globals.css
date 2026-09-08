@@ -98,7 +98,31 @@ html, body {
   -moz-osx-font-smoothing: grayscale;
 }
 
-body { min-height: 100dvh; }
+html {
+  -webkit-text-size-adjust: 100%;
+  scroll-behavior: smooth;
+  scrollbar-gutter: stable;
+}
+body { min-height: 100dvh; min-height: 100dvh; overscroll-behavior-y: contain; -webkit-font-smoothing: antialiased; }
+a, button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
+button, [role="button"] { user-select: none; }
+* { -webkit-overflow-scrolling: touch; }
+
+/* prevent iOS zoom on focus — keep 16px on touch devices */
+@media (max-width: 768px) {
+  input, select, textarea { font-size: 16px !important; }
+  input.input, select.input { font-size: 16px !important; }
+}
+
+/* safe-area + bottom nav */
+:root { --bottom-nav-h: calc(56px + env(safe-area-inset-bottom, 0px)); }
+.pb-safe { padding-bottom: env(safe-area-inset-bottom, 0px); }
+.pt-safe { padding-top: env(safe-area-inset-top, 0px); }
+.scrollbar-hide { scrollbar-width: none; -ms-overflow-style: none; }
+.scrollbar-hide::-webkit-scrollbar { display: none; }
+.scroll-snap-x { scroll-snap-type: x mandatory; }
+.scroll-snap-item { scroll-snap-align: start; }
+.tap-target { min-height: 44px; min-width: 44px; }
 
 /* numeric tabular */
 .num {
@@ -252,4 +276,45 @@ html[data-lowdata="true"] .ticker-track {
 .seg > button[data-active="true"] {
   background: color-mix(in srgb, var(--color-accent-primary) 18%, transparent);
   color: var(--color-accent-primary);
+}
+
+/* ========================= mobile experience ============= */
+@media (max-width: 1024px) {
+  /* larger panels padding fix */
+  .panel { border-radius: 14px; }
+  /* touch feedback */
+  button:active, a:active { opacity: 0.92; transform: scale(0.99); }
+}
+@media (max-width: 640px) {
+  main { padding-left: 12px !important; padding-right: 12px !important; }
+  header.sticky { backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); }
+}
+/* bottom nav safe */
+.bottom-nav {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  padding-top: 6px;
+  border-top: 1px solid var(--color-border-subtle);
+  background: color-mix(in srgb, var(--color-surface-primary) 92%, transparent);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+.bottom-nav button, .bottom-nav a {
+  -webkit-tap-highlight-color: transparent;
+  transition: color 140ms ease, background 140ms ease, transform 140ms ease;
+}
+.bottom-nav [aria-current="page"] { color: var(--color-accent-primary); }
+
+/* chip scroller affordance */
+.chip-scroll {
+  -webkit-overflow-scrolling: touch;
+  scroll-padding-inline: 12px;
+}
+/* agent composer fixed helper */
+.agent-composer {
+  position: sticky;
+  bottom: 0;
+  z-index: 20;
+  padding-bottom: calc(8px + env(safe-area-inset-bottom, 0px));
+  background: linear-gradient(to top, var(--color-background-primary) 72%, transparent);
+  backdrop-filter: blur(8px);
 }

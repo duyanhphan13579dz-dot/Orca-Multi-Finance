@@ -155,8 +155,9 @@ export default function JournalPage() {
         {trades.length === 0 ? (
           <div className="p-4 text-[13px] text-ink-3">Chưa có lệnh nào được ghi.</div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[720px] text-[12px]">
+          <>
+            <div className="hidden overflow-x-auto md:block">
+              <table className="w-full min-w-[720px] text-[12px]">
               <thead>
                 <tr className="border-b border-line text-left text-[10px] uppercase tracking-wider text-ink-3">
                   <th className="px-3.5 py-2 font-medium">Mã</th>
@@ -191,8 +192,33 @@ export default function JournalPage() {
                   );
                 })}
               </tbody>
-            </table>
-          </div>
+              </table>
+            </div>
+            <div className="grid gap-2 p-2 md:hidden">
+              {trades.map((t) => {
+                const pnl = pnlOf(t);
+                const r = rOf(t);
+                return (
+                  <div key={t.id} className="rounded-xl border border-line bg-panel-2 p-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[14px] font-semibold">{t.symbol} <span className="text-[11px] font-normal text-ink-3">{t.assetType}</span></span>
+                      <Badge tone={t.side === "long" ? "up" : "down"}>{t.side}</Badge>
+                    </div>
+                    <div className="mt-1.5 grid grid-cols-2 gap-2 text-[12px]">
+                      <span>Entry <b className="num">{fmtNum(t.entry, 4)}</b></span>
+                      <span>Exit <b className="num">{t.exit != null ? fmtNum(t.exit, 4) : "mở"}</b></span>
+                      <span className={pnl == null ? "text-ink-3" : pnl >= 0 ? "text-up" : "text-down"}>PnL <b>{pnl != null ? fmtNum(pnl, 2) : "—"}</b></span>
+                      <span>R <b>{r != null ? r.toFixed(2) : "—"}</b></span>
+                    </div>
+                    {(t.strategy || t.notes) && <div className="mt-1 truncate text-[11px] text-ink-3">{t.strategy} {t.emotion ? "· " + t.emotion : ""}</div>}
+                    <div className="mt-2 flex justify-end">
+                      <button onClick={() => persist(trades.filter((x) => x.id !== t.id))} className="rounded-full bg-panel px-3 py-1 text-[11px] text-down active:bg-down/10">Xóa</button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </>
         )}
       </Panel>
 

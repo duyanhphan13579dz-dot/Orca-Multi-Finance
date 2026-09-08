@@ -128,19 +128,19 @@ export default function CommoditiesPage() {
             )}
           </div>
         </div>
-        <div className="mt-3 flex flex-wrap items-center gap-1.5">
+        <div className="chip-scroll scrollbar-hide mt-3 flex items-center gap-1.5 overflow-x-auto pb-1 scroll-snap-x md:flex-wrap md:overflow-visible md:pb-0">
           {groups.map((g) => (
             <button
               key={g.key}
               onClick={() => setGroup(g.key)}
-              className={`group rounded-full border px-3 py-1 text-[11.5px] transition-all ${
+              className={`scroll-snap-item group shrink-0 whitespace-nowrap rounded-full border px-3 py-1.5 text-[11.5px] transition-all md:py-1 ${
                 group === g.key
                   ? "border-accent-primary/50 bg-accent-primary/12 text-accent-primary shadow-[0_0_0_3px_rgba(76,141,255,0.10)]"
                   : "border-border-subtle text-text-secondary hover:border-border-default hover:text-text-primary"
               }`}
             >
               {g.title}
-              {g.desc && <span className="ml-1 text-[10px] text-text-muted group-hover:text-text-secondary">{g.desc}</span>}
+              {g.desc && <span className="ml-1 hidden text-[10px] text-text-muted group-hover:text-text-secondary sm:inline">{g.desc}</span>}
             </button>
           ))}
           <span className="ml-auto hidden md:block">

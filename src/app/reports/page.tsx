@@ -29,9 +29,9 @@ export default function ReportCenterPage() {
             <h1 className="text-lg font-semibold">ORCA Report Center</h1>
             <p className="text-[12px] text-text-muted">Vietnam-first market & financial intelligence — dựng từ dữ liệu đã xác minh, có traceability đầy đủ.</p>
           </div>
-          <div className="ml-auto flex gap-1">
+          <div className="scrollbar-hide chip-scroll ml-auto flex w-full gap-1 overflow-x-auto pb-1 scroll-snap-x md:w-auto md:pb-0">
             {TABS.map((t) => (
-              <button key={t.id} onClick={() => setTab(t.id)} className={`rounded-md px-3 py-1.5 text-[12px] transition-colors ${tab === t.id ? "bg-accent-primary/15 text-accent-primary" : "text-text-muted hover:text-text-primary"}`}>
+              <button key={t.id} onClick={() => setTab(t.id)} className={`scroll-snap-item shrink-0 whitespace-nowrap rounded-full px-3 py-1.5 text-[12px] font-medium transition-colors md:rounded-md ${tab === t.id ? "bg-accent-primary text-white md:bg-accent-primary/15 md:text-accent-primary" : "bg-surface-elevated text-text-muted hover:text-text-primary"}`}>
                 {t.label}
               </button>
             ))}

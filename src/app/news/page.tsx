@@ -31,12 +31,12 @@ export default function NewsPage() {
           <p className="text-[12px] text-ink-3">
             Tổng hợp RSS đa nguồn thật — CafeF, VnExpress, VietnamBiz, CoinTelegraph — có kiểm chứng thờ gian, loại trùng và gắn nhãn mã/ngành tự động.
           </p>
-          <div className="mt-1 flex gap-1">
+          <div className="scrollbar-hide chip-scroll mt-1 flex gap-1 overflow-x-auto pb-1 scroll-snap-x -mx-1 px-1">
             {TABS.map((t) => (
               <button
                 key={t.key}
                 onClick={() => setTab(t.key)}
-                className={`rounded-md px-2.5 py-1 text-[12px] ${tab === t.key ? "bg-accent/15 text-accent" : "text-ink-3 hover:text-ink"}`}
+                className={`scroll-snap-item shrink-0 whitespace-nowrap rounded-full px-3 py-1.5 text-[12px] font-medium sm:rounded-md sm:py-1 ${tab === t.key ? "bg-accent text-white sm:bg-accent/15 sm:text-accent" : "bg-panel-2 text-ink-3 hover:text-ink"}`}
               >
                 {t.label}
               </button>

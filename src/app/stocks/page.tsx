@@ -124,20 +124,20 @@ export default function VnMarketCenterPage() {
               </span>
             }
           >
-            <div className="mb-3 flex flex-wrap items-center gap-2">
-              <div className="relative min-w-[200px] flex-1">
+            <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+              <div className="relative flex-1">
                 <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-text-muted" />
                 <input
                   value={q}
                   onChange={(e) => setQ(e.target.value)}
                   placeholder="Tìm mã / tên…"
-                  className="w-full rounded-lg border border-border-subtle bg-surface-elevated py-1.5 pl-8 pr-3 text-[12px] outline-none focus:border-accent-primary/50"
+                  className="w-full rounded-xl border border-border-subtle bg-surface-elevated py-2.5 pl-8 pr-3 text-[14px] outline-none focus:border-accent-primary/50 sm:rounded-lg sm:py-1.5 sm:text-[12px]"
                 />
               </div>
               <select
                 value={sector}
                 onChange={(e) => setSector(e.target.value)}
-                className="rounded-lg border border-border-subtle bg-surface-elevated px-2 py-1.5 text-[12px]"
+                className="w-full rounded-xl border border-border-subtle bg-surface-elevated px-3 py-2.5 text-[13px] sm:w-auto sm:rounded-lg sm:px-2 sm:py-1.5 sm:text-[12px]"
               >
                 <option value="">Tất cả ngành</option>
                 {VN_SECTOR_MAP.map((s) => (
@@ -147,7 +147,8 @@ export default function VnMarketCenterPage() {
                 ))}
               </select>
             </div>
-            <div className="max-h-[520px] overflow-auto" style={{ contentVisibility: "auto", containIntrinsicSize: "520px" }}>
+            {/* desktop table */}
+            <div className="hidden max-h-[520px] overflow-auto md:block" style={{ contentVisibility: "auto", containIntrinsicSize: "520px" }}>
               <table className="w-full text-left text-[12px]">
                 <thead className="sticky top-0 z-[1] bg-background-secondary text-[10px] uppercase tracking-wider text-text-muted">
                   <tr>
@@ -166,6 +167,29 @@ export default function VnMarketCenterPage() {
                   ))}
                 </tbody>
               </table>
+            </div>
+            {/* mobile cards */}
+            <div className="grid gap-2 md:hidden">
+              {visible.map((qu) => (
+                <Link key={qu.symbol} href={`/stocks/${qu.symbol}`} className="flex items-center gap-3 rounded-xl border border-border-subtle bg-surface-elevated p-3 active:scale-[0.99]">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[14px] font-semibold text-accent-primary">{qu.symbol}</span>
+                      {qu.name && <span className="truncate text-[11px] text-text-muted">{qu.name}</span>}
+                    </div>
+                    <div className="mt-0.5 flex items-center gap-2 text-[11px] text-text-muted">
+                      <span>KL {fmtCompact(qu.volume)}</span>
+                      <span>·</span>
+                      <span>TC {qu.referencePrice != null ? fmtNum(qu.referencePrice, 2) : "—"}</span>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <div className="num text-[15px] font-semibold">{fmtNum(qu.price, 2)}</div>
+                    <Chg value={qu.changePercent} className="justify-end text-[12px]" arrow={false} />
+                  </div>
+                </Link>
+              ))}
+              {visible.length === 0 && <div className="py-6 text-center text-[13px] text-text-muted">Không tìm thấy mã phù hợp</div>}
             </div>
             {visible.length < quotes.length && (
               <div className="flex items-center justify-between border-t border-border-subtle px-3 py-2">

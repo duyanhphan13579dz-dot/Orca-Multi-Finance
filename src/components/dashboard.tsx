@@ -65,14 +65,14 @@ function IntelView({ intel, meta }: { intel: MarketIntel; meta: Meta | null }) {
         }
       >
         {intel.indicesAvailable ? (
-          <div className="grid grid-cols-2 gap-2 p-3 md:grid-cols-4">
+          <div className="grid grid-cols-2 gap-2 p-2.5 sm:p-3 md:grid-cols-4">
             {intel.indices!.slice(0, 4).map((i, n) => (
-              <Link key={i.code} href={`/market/index/${i.code}`} className={`hover-lift rounded-lg border p-3 ${n === 0 ? "border-accent-primary/40 bg-accent-primary/5" : "border-border-subtle bg-surface-elevated"}`}>
+              <Link key={i.code} href={`/market/index/${i.code}`} className={`hover-lift flex min-h-[88px] flex-col justify-between rounded-xl border p-3 active:scale-[0.99] ${n === 0 ? "border-accent-primary/40 bg-accent-primary/5" : "border-border-subtle bg-surface-elevated"}`}>
                 <div className="flex items-center justify-between">
                   <span className={`text-[11px] font-semibold ${n === 0 ? "text-accent-primary" : "text-text-secondary"}`}>{i.code}</span>
                   <ArrowUpRight className="size-3 text-text-muted" />
                 </div>
-                <div className="num mt-1 text-[20px] font-semibold">{fmtNum(i.value, 2)}</div>
+                <div className="num mt-1 text-[19px] font-semibold leading-none sm:text-[20px]">{fmtNum(i.value, 2)}</div>
                 <div className="flex items-center justify-between">
                   <Chg value={i.changePercent} className="text-[11.5px]" arrow={false} />
                   {i.volume != null && <span className="num text-[10px] text-text-muted">KL {fmtCompact(i.volume)}</span>}
@@ -169,7 +169,7 @@ function IntelView({ intel, meta }: { intel: MarketIntel; meta: Meta | null }) {
           </Badge>
         }
       >
-        <div className="grid grid-cols-2 gap-2 p-3 md:grid-cols-3 xl:grid-cols-6">
+        <div className="grid grid-cols-2 gap-2 p-2.5 sm:p-3 md:grid-cols-3 xl:grid-cols-6">
           {intel.crossAsset.map((x) => (
             <div key={x.key} className="rounded-lg border border-border-subtle bg-surface-elevated p-2.5">
               <div className="flex items-center justify-between">

@@ -50,6 +50,58 @@ const NAV_SECTIONS: { title: string; items: { href: string; label: string; icon:
 
 const SB_KEY = "orca.sidebar.collapsed";
 
+const BOTTOM_TABS: { href: string; label: string; icon: React.ComponentType<{ className?: string }>; match: (p: string) => boolean }[] = [
+  { href: "/", label: "Tổng quan", icon: Home, match: (p) => p === "/" },
+  { href: "/stocks", label: "Cổ phiếu", icon: CandlestickChart, match: (p) => p.startsWith("/stocks") || p.startsWith("/market/index") },
+  { href: "/crypto", label: "Crypto", icon: Coins, match: (p) => p.startsWith("/crypto") },
+  { href: "/agent", label: "AI Agent", icon: Bot, match: (p) => p.startsWith("/agent") },
+  { href: "/news", label: "Tin tức", icon: Newspaper, match: (p) => p.startsWith("/news") },
+];
+
+function MobileBottomNav({ pathname, onMenu }: { pathname: string; onMenu: () => void }) {
+  return (
+    <nav
+      aria-label="Điều hướng di động"
+      className="bottom-nav fixed inset-x-0 bottom-0 z-40 flex items-stretch justify-around gap-1 px-1 lg:hidden"
+      style={{ height: "var(--bottom-nav-h)" }}
+    >
+      {BOTTOM_TABS.map((t) => {
+        const active = t.match(pathname);
+        const Icon = t.icon;
+        const isAgent = t.href === "/agent";
+        return (
+          <Link
+            key={t.href}
+            href={t.href}
+            aria-current={active ? "page" : undefined}
+            className={`relative flex flex-1 flex-col items-center justify-center gap-0.5 rounded-xl py-1 text-[10px] leading-none transition-colors ${
+              active ? "text-accent-primary" : "text-text-muted"
+            } ${isAgent && active ? "bg-accent-primary/10" : ""} active:scale-[0.98]`}
+          >
+            {isAgent ? (
+              <span className={`grid size-7 place-items-center rounded-full border shadow-sm ${active ? "bg-accent-primary text-white border-accent-primary" : "bg-surface-elevated border-border-subtle text-text-secondary"}`}>
+                <Icon className="size-4" />
+              </span>
+            ) : (
+              <Icon className={`size-[18px] ${active ? "text-accent-primary" : "text-text-muted"}`} />
+            )}
+            <span className={`mt-0.5 text-[10px] font-medium tracking-wide ${active ? "text-accent-primary" : "text-text-muted"}`}>{t.label}</span>
+            {active && !isAgent && <span className="absolute bottom-1 h-1 w-6 rounded-full bg-accent-primary/90" />}
+          </Link>
+        );
+      })}
+      <button
+        onClick={onMenu}
+        aria-label="Mở menu đầy đủ"
+        className="flex flex-1 flex-col items-center justify-center gap-0.5 rounded-xl py-1 text-[10px] text-text-muted active:scale-[0.98]"
+      >
+        <Menu className="size-[18px]" />
+        <span className="mt-0.5 text-[10px] font-medium tracking-wide">Thêm</span>
+      </button>
+    </nav>
+  );
+}
+
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const [collapsed, setCollapsed] = useState(false);
@@ -143,49 +195,83 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </div>
       </aside>
 
-      {/* mobile drawer */}
+      {/* mobile drawer — full-featured */}
       {mobileOpen && (
         <div className="fixed inset-0 z-50 lg:hidden" role="dialog" aria-modal="true">
           <div className="absolute inset-0 bg-black/60 backdrop-blur-[2px]" onClick={() => setMobileOpen(false)} />
-          <div className="absolute inset-y-0 left-0 w-[240px] border-r border-border-subtle bg-background-secondary p-3">
-            <div className="mb-3 flex items-center justify-between">
+          <div className="absolute inset-y-0 left-0 flex w-[86vw] max-w-[300px] flex-col border-r border-border-subtle bg-background-secondary shadow-2xl">
+            <div className="flex h-[56px] shrink-0 items-center justify-between border-b border-border-subtle px-3">
               <OrcaWordmark size={28} />
-              <button onClick={() => setMobileOpen(false)} aria-label="Đóng menu" className="rounded-md p-1 text-text-muted hover:text-text-primary">
+              <button
+                onClick={() => setMobileOpen(false)}
+                aria-label="Đóng menu"
+                className="grid size-8 place-items-center rounded-full bg-surface-elevated text-text-muted hover:text-text-primary"
+              >
                 <X className="size-5" />
               </button>
             </div>
-            <nav>
-              {NAV_SECTIONS.flatMap((s) => s.items).map((item) => {
-                const active = item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
-                const Icon = item.icon;
-                return (
-                  <Link
-                    key={item.href}
-                    href={item.href}
-                    className={`mb-0.5 flex items-center gap-3 rounded-md px-2.5 py-2.5 text-[13px] ${
-                      active ? "bg-accent-primary/12 text-accent-primary" : "text-text-secondary"
-                    }`}
-                  >
-                    <Icon className="size-4" /> {item.label}
-                  </Link>
-                );
-              })}
-              <Link href="/system" className="mb-0.5 flex items-center gap-3 rounded-md px-2.5 py-2.5 text-[13px] text-text-secondary">
-                <GaugeCircle className="size-4" /> Hệ thống
+            <div className="flex-1 overflow-y-auto overscroll-contain px-2 py-3" style={{ WebkitOverflowScrolling: "touch" }}>
+              {NAV_SECTIONS.map((section) => (
+                <div key={section.title} className="mb-3">
+                  <div className="px-2 pb-1 pt-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-text-muted">{section.title}</div>
+                  {section.items.map((item) => {
+                    const active = item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
+                    const Icon = item.icon;
+                    return (
+                      <Link
+                        key={item.href}
+                        href={item.href}
+                        aria-current={active ? "page" : undefined}
+                        className={`mb-1 flex items-center gap-3 rounded-xl px-3 py-3 text-[14px] font-medium transition-colors ${
+                          active ? "bg-accent-primary text-white shadow-sm" : "text-text-secondary active:bg-surface-elevated"
+                        }`}
+                      >
+                        <Icon className={`size-[18px] ${active ? "text-white" : "text-text-muted"}`} />
+                        <span className="flex-1">{item.label}</span>
+                        {item.core && !active && (
+                          <span className="rounded-full border border-accent-primary/30 bg-accent-primary/10 px-1.5 py-0.5 text-[9px] font-bold tracking-wider text-accent-primary">
+                            CORE
+                          </span>
+                        )}
+                      </Link>
+                    );
+                  })}
+                </div>
+              ))}
+              <Link
+                href="/system"
+                className={`mb-1 flex items-center gap-3 rounded-xl px-3 py-3 text-[14px] font-medium ${
+                  pathname.startsWith("/system") ? "bg-accent-primary text-white" : "text-text-secondary active:bg-surface-elevated"
+                }`}
+              >
+                <GaugeCircle className="size-[18px]" /> Hệ thống
               </Link>
-            </nav>
+            </div>
+            <div className="border-t border-border-subtle p-3 pb-[calc(12px+env(safe-area-inset-bottom))]">
+              <div className="rounded-xl bg-surface-elevated p-3">
+                <div className="text-[11px] font-semibold text-text-primary">ORCA Financial</div>
+                <p className="mt-1 text-[11px] leading-relaxed text-text-muted">Dữ liệu realtime · Không dùng dữ liệu giả · Gắn nhãn trạng thái rõ ràng</p>
+                <Link
+                  href="/settings"
+                  onClick={() => setMobileOpen(false)}
+                  className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-lg bg-accent-primary px-3 py-2 text-[12px] font-semibold text-white"
+                >
+                  <Settings className="size-3.5" /> Cài đặt
+                </Link>
+              </div>
+            </div>
           </div>
         </div>
       )}
 
       {/* main column */}
       <div className={`flex min-w-0 flex-1 flex-col transition-[margin] duration-200 ${mainML}`}>
-        <header className="sticky top-0 z-30 border-b border-border-subtle bg-background-primary/85 backdrop-blur">
-          <div className="flex h-[52px] items-center gap-3 px-3 md:px-4">
-            <button onClick={() => setMobileOpen(true)} className="rounded-md p-1.5 text-text-secondary hover:bg-surface-elevated lg:hidden" aria-label="Mở menu">
+        <header className="sticky top-0 z-30 border-b border-border-subtle bg-background-primary/90 backdrop-blur supports-[backdrop-filter]:bg-background-primary/80">
+          <div className="flex h-[52px] items-center gap-2 px-3 md:gap-3 md:px-4">
+            <button onClick={() => setMobileOpen(true)} className="grid size-9 place-items-center rounded-xl bg-surface-elevated text-text-secondary active:scale-95 lg:hidden" aria-label="Mở menu">
               <Menu className="size-5" />
             </button>
-            <Link href="/" className="lg:hidden" aria-label="ORCA"><OrcaMark size={26} /></Link>
+            <Link href="/" className="grid size-8 place-items-center lg:hidden" aria-label="ORCA"><OrcaMark size={26} /></Link>
             <div className="hidden min-w-0 flex-1 md:block">
               <GlobalSearch />
             </div>
@@ -197,14 +283,16 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </div>
           <TickerTape />
         </header>
-        <main className="min-w-0 flex-1 px-3 py-4 md:px-4">
+        <main className="min-w-0 flex-1 px-3 py-3 md:px-4 md:py-4">
           <div className="md:hidden mb-3"><GlobalSearch /></div>
           {children}
         </main>
-        <footer className="border-t border-border-subtle px-4 py-2.5 text-[10.5px] leading-relaxed text-text-muted">
+        <footer className="hidden border-t border-border-subtle px-4 py-2.5 text-[10.5px] leading-relaxed text-text-muted lg:block">
           ORCA Financial · dữ liệu phục vụ nghiên cứu — không phải khuyến nghị đầu tư · nguồn: VNStock · Binance · Biquote · Vietnambiz · Simplize · RSS · mọi dữ liệu gắn nhãn LIVE/FRESH/DELAYED/STALE/DEGRADED/UNAVAILABLE
         </footer>
+        <div className="h-[var(--bottom-nav-h)] shrink-0 lg:hidden" aria-hidden />
       </div>
+      <MobileBottomNav pathname={pathname} onMenu={() => setMobileOpen(true)} />
     </div>
   );
 }

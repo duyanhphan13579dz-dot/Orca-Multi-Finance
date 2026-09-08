@@ -67,9 +67,10 @@ export default function WatchlistPage() {
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && add()}
               placeholder="BTC, ETHUSDT, EURUSD, HPG…"
-              className="num flex-1 rounded-md border border-line bg-panel-2 px-3 py-2 text-[13px] uppercase text-ink placeholder:normal-case placeholder:text-ink-3 focus:border-accent/40"
+              enterKeyHint="done"
+              className="num flex-1 rounded-xl border border-line bg-panel-2 px-3 py-3 text-[15px] uppercase text-ink placeholder:normal-case placeholder:text-ink-3 focus:border-accent/40 md:rounded-md md:py-2 md:text-[13px]"
             />
-            <button onClick={add} className="flex items-center gap-1.5 rounded-md bg-accent/90 px-3 py-2 text-[13px] font-semibold text-canvas hover:bg-accent">
+            <button onClick={add} className="flex items-center gap-1.5 rounded-xl bg-accent px-4 py-3 text-[14px] font-semibold text-white active:scale-95 md:rounded-md md:px-3 md:py-2 md:text-[13px]">
               <Plus className="size-4" /> Thêm
             </button>
           </div>
