@@ -41,7 +41,7 @@ const FX_PAIRS = ["EURUSD","GBPUSD","USDJPY","USDCHF","AUDUSD","USDCAD","NZDUSD"
 const COMMODITY_WORDS: [RegExp, string][] = [[/vàng|gold/i, "gold"], [/bạc|silver/i, "silver"], [/dầu|oil|wti|brent/i, "oil"], [/cà phê|coffee/i, "coffee"], [/thép|steel/i, "steel"], [/đường|sugar/i, "sugar"], [/khí|gas|natgas/i, "natgas"], [/đồng\b|copper/i, "copper"]];
 
 const PF_RE = /(?:còn|coa|còn lại)\s*[\d.,]+\s*k?|sống\s*\d+\s*tuần|sống\s*\d+\s*ngày|ngân sách|chi tiêu|tiết kiệm|quỹ dự phòng|mất việc|nợ thẻ|nợ xấu|trả nợ|vay tiêu dùng|DTI|lãi suất thẻ|tiền nhà trọ|lương|thu nhập cá nhân|bảo hiểm nhân thọ|thuế TNCN|thuế chứng khoán|nghỉ hưu|kết hôn.*tài chính|ly hôn.*tài chính|500k|triệu.*tháng|chi phí sinh hoạt|phân bổ.*tiền|còn lại.*đồng|tiêu trong\s*\d+\s*tháng|tiêu như thế nào/i;
-const WEALTH_RE = /gia sản|danh mục.*tỷ|phân bổ tài sản|private wealth|family office|truyền thừa|thừa kế|tái cân bằng|rủi ro tập trung|định cư.*tài sản|đa tiền tệ|quỹ gia đình|exit.*công ty|80%\s*tài sản|tài sản ròng|net worth|asset allocation/i;
+const WEALTH_RE = /gia sản|danh mục.*tỷ|phân bổ tài sản|private wealth|family office|truyền thừa|thừa kế|tái cân bằng|rủi ro tập trung|định cư.*tài sản|đa tiền tệ|quỹ gia đình|exit.*công ty|80%\s*tài sản|tài sản ròng|net worth|asset allocation|phân bổ.*tài sản/i;
 
 export interface AgentPrefs {
   depth?: "concise" | "standard" | "deep";
@@ -109,7 +109,7 @@ function lastStickyIntent(history: AgentHistoryTurn[]): Intent | null {
   }
   for (const turn of [...history].reverse().filter((h) => h.role === "assistant" || h.role === "agent").slice(0, 3)) {
     if (/phong bì tuần|đ\/ngày|đ\/tuần|quỹ đệm|chi tiêu tuần/i.test(turn.content)) return { kind: "personal_finance" };
-    if (/khẩu vị rủi ro|gia sản|tỷ trọng|tái cân bằng/i.test(turn.content)) return { kind: "wealth" };
+    if (/khẩu vị rủi ro|gia sản|tỷ trọng|tái cân bằng|lớp tài sản|thanh khoản cao/i.test(turn.content)) return { kind: "wealth" };
     const m = turn.content.toUpperCase().match(/\b(BTC|ETH|SOL|BNB)(?:USDT)?\b/);
     if (m) return { kind: "crypto", symbol: `${m[1]}USDT` };
   }
@@ -122,9 +122,7 @@ function resolveIntent(question: string, history: AgentHistoryTurn[]): Intent {
   const sticky = lastStickyIntent(history);
   if (!sticky) return direct;
   const stickyTopic = intentTopic(sticky);
-  if (direct.kind !== "general" && !sameTopicFamily(stickyTopic, intentTopic(direct)) && !isFollowUpCue(question)) {
-    return direct;
-  }
+  if (direct.kind !== "general" && !sameTopicFamily(stickyTopic, intentTopic(direct)) && !isFollowUpCue(question)) return direct;
   if (isFollowUpCue(question) || direct.kind === "general") return sticky;
   return direct;
 }
@@ -179,11 +177,36 @@ const SYS_BASE = `Bạn là chuyên viên của ORCA Financial.
 - Phân biệt FACT / INTERPRETATION / SCENARIO. Thiếu dữ liệu thì nói rõ.
 - Văn phong tự nhiên, đủ ý; không nhãn máy móc.
 - Tài chính cá nhân/gia sản: không dòng nguồn hay disclaimer dài.
-- Đa chủ đề trong một phiên: giữ đúng slot chủ đề đang hỏi; đổi chủ đề thì trả lời sạch; không trộn ràng buộc chủ đề A sang B trừ khi user liên kết rõ.`;
+- Đa chủ đề: giữ đúng slot chủ đề đang hỏi; không trộn ràng buộc chủ đề khác trừ khi user liên kết rõ.`;
 
-const SYS_STOCK = `${SYS_BASE}\n\nVai trò: Chuyên gia phân tích cổ phiếu VN. Luận điểm → bằng chứng → rủi ro → theo dõi. Không khuyến nghị mua/bán tuyệt đối.`;
-const SYS_PF = `${SYS_BASE}\n\nVai trò: Chuyên gia tài chính cá nhân tại Việt Nam. Dùng đúng số user_inputs/plan. Khi có số dư + thời hạn: trần chi /ngày và /tuần; chia nhóm ăn uống/đi lại/nhà-tiện ích/quỹ đệm/linh hoạt; phong bì tuần; cảnh báo tiêu sớm/vay nóng. Không disclaimer.`;
-const SYS_WEALTH = `${SYS_BASE}\n\nVai trò: Quản lý gia sản. Hỏi khẩu vị rủi ro / thời gian / thanh khoản / truyền thừa trước khi chốt %. Không one-size-fits-all.`;
+const SYS_STOCK = `${SYS_BASE}
+
+Vai trò: Chuyên gia phân tích cổ phiếu VN. Luận điểm → bằng chứng → rủi ro → theo dõi. Không khuyến nghị mua/bán tuyệt đối.`;
+
+const SYS_PF = `${SYS_BASE}
+
+Vai trò: Chuyên gia tài chính cá nhân tại Việt Nam. Dùng đúng số user_inputs/plan. Khi có số dư + thời hạn: trần chi /ngày và /tuần; chia nhóm; phong bì tuần; cảnh báo tiêu sớm/vay nóng. Không disclaimer.`;
+
+const SYS_WEALTH = `${SYS_BASE}
+
+Vai trò: Chuyên gia quản lý gia sản (private wealth) tại Việt Nam.
+Quy tắc:
+1) Không danh mục one-size-fits-all cứng. Nêu giả định khẩu vị nếu user chưa nói.
+2) Đưa dải % theo lớp: thanh khoản / thu nhập cố định / tăng trưởng / vệ tinh — kèm lý do.
+3) Đánh đổi lợi nhuận–rủi ro–thanh khoản; cảnh báo tập trung >30%.
+4) Pháp lý/thuế/thừa kế: nguyên tắc + nhắc luật sư/chuyên gia thuế.
+5) Trả lời đủ ý (nhiều đoạn), không 3 câu sáo rỗng.
+
+Few-shot:
+Hỏi: "Nếu tôi có 100 triệu thì nên phân bổ tài sản như thế nào?"
+Trả: "Với ~100 triệu đồng, cần biết: (1) có phải toàn bộ tài sản ròng không, (2) bao nhiêu cần rút trong 12 tháng, (3) khẩu vị bảo thủ/cân bằng/tăng trưởng.
+Giả định tạm: trung hạn, chưa rút lớn trong 1 năm, khẩu vị cân bằng:
+• 25–35% thanh khoản cao (tiền gửi, quỹ thị trường tiền tệ).
+• 25–35% thu nhập tương đối ổn (trái phiếu/quỹ trái phiếu).
+• 25–35% tăng trưởng (cổ phiếu/quỹ cổ phiếu đa dạng — tránh 1 mã).
+• 0–10% vệ tinh (vàng; crypto ≤5% nếu chấp nhận biến động mạnh).
+Giữ 3–6 tháng chi phí ngoài danh mục; giải ngân chia 3–4 đợt. Cho khẩu vị và thời điểm dùng tiền để siết dải %."
+`;
 
 function systemFor(persona: Persona): string {
   if (persona === "personal_finance") return SYS_PF;
@@ -215,7 +238,7 @@ async function buildPersonalFinance(question: string): Promise<Built> {
   };
   let narrative: string;
   if (isEmergency && amount != null && horizonDays != null && perDay != null) {
-    narrative = [`Tình huống eo hẹp: ${amount.toLocaleString("vi-VN")}đ / ${horizonDays} ngày → ~${perDay.toLocaleString("vi-VN")}đ/ngày (~${weekly?.toLocaleString("vi-VN") ?? "—"}đ/tuần).`, `Ưu tiên: ăn ~${foodDay?.toLocaleString("vi-VN")}đ/ngày; đi lại ~${transitDay?.toLocaleString("vi-VN")}đ/ngày; quỹ đệm ~${bufferDay?.toLocaleString("vi-VN")}đ/ngày. Tạm dừng giải trí/mua sắm.`, `Hóa đơn đến hạn: xin gia hạn. Tránh vay app. Còn khoản thu trong kỳ không?`].join("\n\n");
+    narrative = [`Tình huống eo hẹp: ${amount.toLocaleString("vi-VN")}đ / ${horizonDays} ngày → ~${perDay.toLocaleString("vi-VN")}đ/ngày (~${weekly?.toLocaleString("vi-VN") ?? "—"}đ/tuần).`, `Ưu tiên: ăn ~${foodDay?.toLocaleString("vi-VN")}đ/ngày; đi lại ~${transitDay?.toLocaleString("vi-VN")}đ/ngày; quỹ đệm ~${bufferDay?.toLocaleString("vi-VN")}đ/ngày.`, `Hóa đơn đến hạn: xin gia hạn. Tránh vay app. Còn khoản thu trong kỳ không?`].join("\n\n");
   } else if (amount != null && horizonDays != null && perDay != null && weekly != null) {
     const nWeeks = Math.max(1, Math.round(horizonDays / 7));
     const monthsLabel = hints.months ?? Math.round(horizonDays / 30);
@@ -223,7 +246,7 @@ async function buildPersonalFinance(question: string): Promise<Built> {
       `Bạn có ${amount.toLocaleString("vi-VN")}đ trong ~${horizonDays} ngày (${monthsLabel} tháng) → ~${perDay.toLocaleString("vi-VN")}đ/ngày hoặc ${weekly.toLocaleString("vi-VN")}đ/tuần. Nên dùng phong bì tuần.`,
       `Chia tuần (×${nWeeks}): ăn ~${((foodDay ?? 0) * 7).toLocaleString("vi-VN")}đ; đi lại ~${((transitDay ?? 0) * 7).toLocaleString("vi-VN")}đ; nhà/tiện ích ~${((utilDay ?? 0) * 7).toLocaleString("vi-VN")}đ; đệm ~${((bufferDay ?? 0) * 7).toLocaleString("vi-VN")}đ; linh hoạt ~${((flexDay ?? 0) * 7).toLocaleString("vi-VN")}đ.`,
       `Làm ngay: (1) chuyển ${weekly.toLocaleString("vi-VN")}đ sang ví tuần; (2) trừ trước khoản cố định; (3) tắt order/trả sau; (4) thu phụ cộng vào tuần hiện tại.`,
-      `Tránh tiêu 40–50% trong 2 tuần đầu. Cho biết tiền nhà đã trả chưa, nợ thẻ/trả góp, và thu nhập trong kỳ để siết lịch.`,
+      `Tránh tiêu 40–50% trong 2 tuần đầu. Cho biết tiền nhà đã trả chưa, nợ thẻ/trả góp, thu nhập trong kỳ để siết lịch.`,
     ].join("\n\n");
   } else if (amount != null) {
     narrative = `Khoảng ${amount.toLocaleString("vi-VN")}đ — cần thêm khung thời gian và khoản cố định để dựng lịch tuần.`;
@@ -236,17 +259,64 @@ async function buildPersonalFinance(question: string): Promise<Built> {
 async function buildWealth(question: string): Promise<Built> {
   const hints = parseMoneyHints(question);
   const amount = hints.amount_vnd;
+  const riskHint = /bảo thủ|an toàn|thấp rủi ro/i.test(question)
+    ? "conservative"
+    : /tăng trưởng|mạo hiểm|cao rủi ro|aggressive/i.test(question)
+      ? "growth"
+      : /cân bằng|trung bình/i.test(question)
+        ? "balanced"
+        : null;
+
+  const bands =
+    riskHint === "conservative"
+      ? { cash: [40, 50], fixed: [30, 40], growth: [10, 20], satellite: [0, 5] }
+      : riskHint === "growth"
+        ? { cash: [10, 20], fixed: [10, 20], growth: [50, 65], satellite: [5, 15] }
+        : { cash: [25, 35], fixed: [25, 35], growth: [25, 35], satellite: [0, 10] };
+
+  const tier =
+    amount == null ? "unknown" : amount >= 10_000_000_000 ? "hnw" : amount >= 1_000_000_000 ? "affluent" : amount >= 100_000_000 ? "mass_affluent" : "starter";
+
   const contract: Record<string, unknown> = {
-    scope: "wealth", persona: "wealth",
-    user_inputs: { raw_question: question, amount_vnd: amount },
-    framework: { requires_before_allocation: ["khẩu vị rủi ro", "khung thời gian", "nhu cầu thanh khoản", "mục tiêu truyền thừa"], concentration_risk_flag_pct: 30, rebalance_band_pct: 5 },
-    data_meta: { source: "user_question + orca-wealth-framework", freshness: "LIVE", fetched_at: new Date().toISOString() },
+    scope: "wealth",
+    persona: "wealth",
+    user_inputs: { raw_question: question, amount_vnd: amount, risk_hint: riskHint, tier },
+    framework: {
+      requires_before_allocation: ["khẩu vị rủi ro", "khung thời gian", "nhu cầu thanh khoản", "mục tiêu truyền thừa"],
+      concentration_risk_flag_pct: 30,
+      rebalance_band_pct: 5,
+      reference_bands_pct: bands,
+      layers: ["thanh khoản cao", "thu nhập cố định", "tăng trưởng", "vệ tinh"],
+    },
+    data_meta: {
+      source: "user_question + orca-wealth-framework",
+      freshness: "LIVE",
+      fetched_at: new Date().toISOString(),
+      note: "Dải % là khung tham chiếu có điều kiện — không phải danh mục chuẩn.",
+    },
   };
-  const narrative = [
-    amount != null ? `Quy mô khoảng ${amount.toLocaleString("vi-VN")}đ — không có danh mục chuẩn.` : "Chưa có quy mô tài sản cụ thể.",
-    "Trước khi đề xuất tỷ trọng: khẩu vị rủi ro, khung thời gian, thanh khoản, truyền thừa.",
-    "Giảm tập trung; tái cân bằng ~±5 điểm %; thuế/thừa kế — xác nhận với luật sư/chuyên gia thuế.",
-  ].join("\n\n");
+
+  const riskLabel =
+    riskHint === "conservative" ? "bảo thủ" : riskHint === "growth" ? "tăng trưởng" : riskHint === "balanced" ? "cân bằng" : "cân bằng (giả định tạm)";
+
+  let narrative: string;
+  if (amount != null) {
+    const amt = amount.toLocaleString("vi-VN");
+    narrative = [
+      `Với quy mô khoảng ${amt}đ, không có danh mục “chuẩn” áp cho mọi người. Phân bổ phụ thuộc khẩu vị rủi ro, thời điểm cần dùng tiền, và mức tập trung tài sản hiện tại (nhà, một mã cổ phiếu, kinh doanh…).`,
+      `Giả định làm việc (bạn có thể chỉnh): khẩu vị ${riskLabel}; chưa cần rút phần lớn trong 12 tháng; đây là phần có thể đưa vào kế hoạch đầu tư (đã tách quỹ sinh hoạt 3–6 tháng nếu có).`,
+      `Khung tham chiếu theo lớp tài sản (dải %, không phải lệnh mua):\n• Thanh khoản cao (tiền gửi, quỹ thị trường tiền tệ): ${bands.cash[0]}–${bands.cash[1]}% — đệm chi tiêu và cơ hội giải ngân dần.\n• Thu nhập tương đối ổn (trái phiếu / quỹ trái phiếu / kỳ hạn): ${bands.fixed[0]}–${bands.fixed[1]}%.\n• Tăng trưởng (cổ phiếu / quỹ cổ phiếu đa dạng — tránh dồn một mã): ${bands.growth[0]}–${bands.growth[1]}%.\n• Vệ tinh (vàng; crypto chỉ khi chấp nhận biến động mạnh và thường ≤5%): ${bands.satellite[0]}–${bands.satellite[1]}%.`,
+      `Cách triển khai thực tế:\n1) Không giải ngân một lần — chia 3–4 đợt trong vài tháng.\n2) Nếu đang >30% tài sản ở một mã / một BĐS, ưu tiên giảm tập trung trước khi thêm rủi ro mới.\n3) Tái cân bằng khi lệch mục tiêu khoảng ±5 điểm % hoặc định kỳ 6–12 tháng.\n4) Thuế / thừa kế / chuyển tài sản: nguyên tắc chung — cần luật sư hoặc chuyên gia thuế xác nhận trước khi thực hiện.`,
+      `Để siết dải % sát hơn, cho mình biết: (1) bảo thủ / cân bằng / tăng trưởng, (2) bao nhiêu % cần dùng trong 1–2 năm, (3) tài sản hiện tại có đang dồn một chỗ không.`,
+    ].join("\n\n");
+  } else {
+    narrative = [
+      "Câu hỏi quản lý gia sản — chưa có quy mô tài sản cụ thể.",
+      "Trước khi đề xuất tỷ trọng: khẩu vị rủi ro, khung thời gian, nhu cầu thanh khoản, mục tiêu truyền thừa (nếu có).",
+      "Nguyên tắc: đa dạng hoá; tái cân bằng ~±5 điểm %; pháp lý/thuế/thừa kế cần chuyên gia xác nhận.",
+    ].join("\n\n");
+  }
+
   return { narrative, contract, sectionsUsed: ["wealth", "user-inputs"], symbols: [], freshnesses: ["LIVE"], persona: "wealth" };
 }
 
@@ -269,8 +339,8 @@ async function buildCrypto(sym: string): Promise<Built> {
     news_context: (news?.articles ?? []).map((a) => ({ title: a.title, source: a.source })),
     data_meta: { source: r.meta.source, freshness: r.meta.freshness, fetched_at: new Date().toISOString() },
   };
-  const t = technical;
-  const narrative = [`${sym} — giá ${ticker.price.toLocaleString("en-US")} USDT, 24h ${ticker.changePercent != null ? ticker.changePercent.toFixed(2) + "%" : "?"}.`, t ? `Kỹ thuật: xu hướng ${trendVi[t.trend.label]}, RSI14 ${t.rsi14?.toFixed(1) ?? "?"}.` : "Chưa đủ chuỗi chỉ báo.", funding ? `Futures: funding ${(funding.fundingRate * 100).toFixed(4)}%.` : "Futures: không khả dụng."];
+  const tech = technical;
+  const narrative = [`${sym} — giá ${ticker.price.toLocaleString("en-US")} USDT, 24h ${ticker.changePercent != null ? ticker.changePercent.toFixed(2) + "%" : "?"}.`, tech ? `Kỹ thuật: xu hướng ${trendVi[tech.trend.label]}, RSI14 ${tech.rsi14?.toFixed(1) ?? "?"}.` : "Chưa đủ chuỗi chỉ báo.", funding ? `Futures: funding ${(funding.fundingRate * 100).toFixed(4)}%.` : "Futures: không khả dụng."];
   return { narrative: narrative.filter(Boolean).join("\n\n"), contract, sectionsUsed, symbols, freshnesses, persona: "stock_analyst" };
 }
 
@@ -365,8 +435,8 @@ export async function answerQuestion(question: string, prefs: AgentPrefs = {}, h
     const styleVi = prefs.style === "technical" ? "súc tích, nhấn chỉ báo" : prefs.style === "brief" ? "rất ngắn (3-5 câu)" : "chuyên sâu, mạch lạc";
     const memLine = memoryBlock ? `\n\nBỘ NHỚ ĐA CHỦ ĐỀ:\n${memoryBlock}` : "";
     const user = built.persona === "personal_finance" || built.persona === "wealth"
-      ? `CÂU HỎI HIỆN TẠI: ${question}${memLine}\n\nSTRUCTURED CONTEXT:\n${JSON.stringify(built.contract, null, 1).slice(0, 11_000)}\n\nActive topic: ${intent.kind}. Giữ đúng chủ đề; không kéo ràng buộc chủ đề khác. Không disclaimer.`
-      : `CÂU HỎI: ${question}${memLine}\n\nSTRUCTURED CONTEXT:\n${JSON.stringify(built.contract, null, 1).slice(0, 11_000)}\n\nPhong cách: ${styleVi}. Active: ${intent.kind}. Đa chủ đề: chỉ dùng slot liên quan.`;
+      ? `CÂU HỎI HIỆN TẠI: ${question}${memLine}\n\nSTRUCTURED CONTEXT:\n${JSON.stringify(built.contract, null, 1).slice(0, 11_000)}\n\nActive topic: ${intent.kind}. Trả lời ĐỦ Ý theo khung (dải % lớp tài sản hoặc lịch chi cụ thể, giả định, bước triển khai). Không 3 câu sáo. Không disclaimer.`
+      : `CÂU HỎI: ${question}${memLine}\n\nSTRUCTURED CONTEXT:\n${JSON.stringify(built.contract, null, 1).slice(0, 11_000)}\n\nPhong cách: ${styleVi}. Active: ${intent.kind}.`;
     const tagged = history.filter((h) => h.content?.trim());
     const sameTopic = tagged.filter((h) => h.role !== "user" || detectIntent(h.content).kind === intent.kind || detectIntent(h.content).kind === "general");
     const chatHistory = (sameTopic.length >= 2 ? sameTopic : tagged).slice(-8).map((h) => ({ role: (h.role === "user" ? "user" : "assistant") as "user" | "assistant", content: h.content.trim().slice(0, 2_500) }));
