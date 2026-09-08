@@ -1,13 +1,26 @@
 import { ok, unavailable } from "@/lib/envelope";
-import { getVnStockDetail, vnstockConfigured } from "@/lib/services/stocks";
+import { getFinancialsForSymbol } from "@/lib/financial/service";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 export async function GET(_req: Request, ctx: { params: Promise<{ symbol: string }> }) {
   const { symbol } = await ctx.params;
-  if (!vnstockConfigured()) return unavailable("vnstock", "VNSTOCK_API_KEY chưa được cấu hình.");
-  const r = await getVnStockDetail(symbol);
-  if (!r) return unavailable("vnstock", `Không lấy được báo cáo tài chính ${symbol.toUpperCase()} từ VNStock.`);
-  return ok({ symbol: r.detail.symbol, financials: r.detail.financials, notes: r.detail.notes }, r.meta);
+  const r = await getFinancialsForSymbol(symbol);
+  if (!r || (!r.financials.income && !r.financials.balance && !r.financials.cashflow)) {
+    return unavailable(
+      "financial-engine",
+      `Không lấy được báo cáo tài chính ${symbol.toUpperCase()} từ mọi nguồn (VNStock/VNDirect).`,
+    );
+  }
+  return ok(
+    {
+      symbol: symbol.toUpperCase(),
+      financials: r.financials,
+      health: r.health,
+      packageMeta: r.packageMeta,
+      notes: r.notes,
+    },
+    r.meta,
+  );
 }
