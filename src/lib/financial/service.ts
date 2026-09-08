@@ -2,25 +2,29 @@ import "server-only";
 import { cached } from "../cache";
 import { buildMeta } from "../freshness";
 import { computeFinancialHealth, type FinancialHealthResult } from "../engines/fundamental";
-import { fetchVndirectFinancials, periodsToLegacyRows } from "./vndirect-fs";
+import { periodsToLegacyRows } from "./vndirect-fs";
+import { runSourceRouter } from "./provider";
+import { listFinancialProviders } from "./providers-registry";
+import { buildTtmPeriod, computeGrowth, sortPeriodsNewestFirst } from "./normalize";
 import type {
   FinancialPackage,
   FinancialPackageMeta,
   FinancialSourceMeta,
   FreshnessStatus,
+  GrowthSnapshot,
   NormalizedPeriod,
 } from "./types";
 import type { Meta } from "../types";
 
 /**
- * FINANCIAL DATA RELIABILITY LAYER
- * Temporary primary: VNDirect structured financial_statements.
- * Next: SSI Flashconnect primary → VNDirect fallback.
+ * FINANCIAL DATA RELIABILITY LAYER — Phase 1 + Phase 3
+ * Router → normalize → TTM/Growth → health → metadata
  * Never fabricates numbers. Always returns best available + metadata.
  */
 
 function labelPeriod(periods: NormalizedPeriod[]): string | null {
-  return periods[0]?.period ?? null;
+  const nonTtm = periods.find((p) => p.periodType !== "ttm");
+  return nonTtm?.period ?? periods[0]?.period ?? null;
 }
 
 function buildMetaPackage(
@@ -30,9 +34,11 @@ function buildMetaPackage(
   fallbackLevel: FinancialPackageMeta["fallbackLevel"],
   freshness: FreshnessStatus,
   note: string | null,
+  ttm: NormalizedPeriod | null,
+  growth: GrowthSnapshot | null,
 ): FinancialPackageMeta {
   const primary = sources.find((s) => s.success)?.id ?? "none";
-  const head = periods[0];
+  const head = periods.find((p) => p.periodType !== "ttm") ?? periods[0];
   return {
     ticker: symbol,
     latestPeriod: labelPeriod(periods),
@@ -46,6 +52,8 @@ function buildMetaPackage(
     fetchedAt: new Date().toISOString(),
     lastVerifiedAt: head ? new Date().toISOString() : null,
     note,
+    ttmPeriod: ttm?.period ?? null,
+    hasGrowth: Boolean(growth && (growth.yoy.length || growth.qoq.length)),
   };
 }
 
@@ -55,38 +63,30 @@ export async function getFinancialPackage(symbol: string): Promise<{
   meta: Meta;
 } | null> {
   const sym = symbol.toUpperCase();
-  const sources: FinancialSourceMeta[] = [];
 
-  const cachedRes = await cached(`fin:pkg:${sym}:vnd:v1`, {
+  const cachedRes = await cached(`fin:pkg:${sym}:router:v2`, {
     ttlMs: 6 * 3_600_000,
     staleMs: 90 * 24 * 3_600_000,
     producer: async () => {
-      const vd = await fetchVndirectFinancials(sym, { limitPeriods: 8 });
-      if (vd) {
-        sources.push({
-          id: "vndirect-fs",
-          role: "FAST_STRUCTURED_DATA_SOURCE",
-          priority: 1,
-          success: true,
-          latencyMs: vd.latencyMs,
-        });
-        const legacy = periodsToLegacyRows(vd.periods);
-        return {
-          ...legacy,
-          periods: vd.periods,
-          sourceId: "vndirect-fs",
-          fallbackLevel: 0 as const,
-          note: "Báo cáo tài chính từ VNDirect (nguồn tạm thời — sẽ ưu tiên SSI khi sẵn sàng).",
-        };
-      }
-      sources.push({
-        id: "vndirect-fs",
-        role: "FAST_STRUCTURED_DATA_SOURCE",
-        priority: 1,
-        success: false,
-        note: "unavailable",
-      });
-      return null;
+      const routed = await runSourceRouter(sym, listFinancialProviders(), { limitPeriods: 12 });
+      if (!routed) return null;
+
+      const basePeriods = sortPeriodsNewestFirst(routed.periods.filter((p) => p.periodType !== "ttm"));
+      const ttm = buildTtmPeriod(basePeriods);
+      const growth = computeGrowth(basePeriods);
+      const periods = ttm ? [ttm, ...basePeriods] : basePeriods;
+      const legacy = periodsToLegacyRows(basePeriods);
+
+      return {
+        ...legacy,
+        periods,
+        ttm,
+        growth,
+        sourceId: routed.sourceId,
+        fallbackLevel: routed.fallbackLevel,
+        note: routed.note,
+        sourcesAttempted: routed.sourcesAttempted,
+      };
     },
   }).catch(() => null);
 
@@ -99,7 +99,18 @@ export async function getFinancialPackage(symbol: string): Promise<{
       cashflow: [],
       ratios: [],
       periods: [],
-      meta: buildMetaPackage(sym, [], sources, 4, "SOURCE_UNAVAILABLE", "Không có dữ liệu báo cáo từ VNDirect."),
+      ttm: null,
+      growth: null,
+      meta: buildMetaPackage(
+        sym,
+        [],
+        [],
+        4,
+        "SOURCE_UNAVAILABLE",
+        "Không có dữ liệu báo cáo từ mọi nguồn đã đăng ký.",
+        null,
+        null,
+      ),
     };
     return {
       pkg,
@@ -118,15 +129,20 @@ export async function getFinancialPackage(symbol: string): Promise<{
   const cashflow = v.cashflow ?? [];
   const ratios = v.ratios ?? [];
   const periods = v.periods ?? [];
+  const ttm = (v.ttm as NormalizedPeriod | null) ?? null;
+  const growth = (v.growth as GrowthSnapshot | null) ?? null;
 
+  let sources: FinancialSourceMeta[] = v.sourcesAttempted ?? [];
   if (!sources.length) {
-    sources.push({
-      id: v.sourceId,
-      role: "CACHE",
-      priority: 0,
-      success: true,
-      note: cachedRes.cached ? "cache_hit" : "fresh",
-    });
+    sources = [
+      {
+        id: v.sourceId,
+        role: "CACHE",
+        priority: 0,
+        success: true,
+        note: cachedRes.cached ? "cache_hit" : "fresh",
+      },
+    ];
   }
 
   const health = computeFinancialHealth({ income, balance, cashflow });
@@ -139,7 +155,18 @@ export async function getFinancialPackage(symbol: string): Promise<{
     cashflow,
     ratios,
     periods,
-    meta: buildMetaPackage(sym, periods, sources, v.fallbackLevel, freshness, v.note ?? null),
+    ttm,
+    growth,
+    meta: buildMetaPackage(
+      sym,
+      periods,
+      sources,
+      v.fallbackLevel,
+      freshness,
+      v.note ?? null,
+      ttm,
+      growth,
+    ),
   };
 
   const meta = buildMeta({
@@ -164,6 +191,8 @@ export async function getFinancialsForSymbol(symbol: string): Promise<{
   };
   health: FinancialHealthResult;
   packageMeta: FinancialPackageMeta;
+  growth: GrowthSnapshot | null;
+  ttm: NormalizedPeriod | null;
   meta: Meta;
   notes: string[];
 } | null> {
@@ -173,7 +202,9 @@ export async function getFinancialsForSymbol(symbol: string): Promise<{
   const notes: string[] = [];
   if (r.pkg.meta.note) notes.push(r.pkg.meta.note);
   if (r.pkg.meta.freshnessStatus === "STALE") notes.push("Dữ liệu đang dùng bản lưu gần nhất (stale cache).");
-  if (!has) notes.push("Chưa có báo cáo tài chính khả dụng từ VNDirect.");
+  if (r.pkg.ttm) notes.push(`TTM sẵn sàng: ${r.pkg.ttm.period}`);
+  else notes.push("TTM chưa tính được (cần ≥4 quý).");
+  if (!has) notes.push("Chưa có báo cáo tài chính khả dụng.");
 
   return {
     financials: {
@@ -184,6 +215,8 @@ export async function getFinancialsForSymbol(symbol: string): Promise<{
     },
     health: r.health,
     packageMeta: r.pkg.meta,
+    growth: r.pkg.growth,
+    ttm: r.pkg.ttm,
     meta: r.meta,
     notes,
   };
