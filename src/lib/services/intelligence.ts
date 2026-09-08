@@ -283,16 +283,16 @@ export async function generateStockReport(symbol: string): Promise<{ report: Sto
     const facts = collectFactNumbers(c);
     const promptUser = `Cau truc phan tich:\n${JSON.stringify(c, null, 1).slice(0, 12_000)}\n\nViet phan DIEN GIAI (interpretation) 2 doan, trich so lieu, KHONG them so moi. Sau do 1 doan KICH BAN trong <scenario>...</scenario>.`;
     const sys = `Ban la buy-side analyst cua ORCA Financial. Chi dung so lieu trong context. Khong khuyen nghi mua/ban.`;
-    const first = await llmChat("reasoning", { system: sys, user: promptUser, temperature: 0.28, maxTokens: 900 });
+    const first = await llmChat("report", { system: sys, user: promptUser, temperature: 0.28, maxTokens: 1400 });
     if (first) {
       let val = validateOutput(first.text, facts);
       let text = first.text;
       if (!val.ok) {
-        const regen = await llmChat("reasoning", {
+        const regen = await llmChat("report", {
           system: `${sys}\nSTRICT: chi trich so trong context.`,
           user: promptUser,
           temperature: 0.2,
-          maxTokens: 900,
+          maxTokens: 1400,
         });
         if (regen) {
           const v2 = validateOutput(regen.text, facts);

@@ -60,9 +60,11 @@ export const env = {
   redisNote,
   jwtSecret: opt(process.env.JWT_SECRET) ?? "orca-dev-insecure-secret-change-in-production",
 
-  /* Optional LLM for the AI Agent (OpenAI-compatible) - Qwen3 32B 128K long-context */
+  /* LLM 2-model, cùng nguồn SiliconFlow (OpenAI-compatible) */
+  // Model1 Agent: Qwen/Qwen3-32B 128K — long-context, linh hoạt (AI_MODEL / AI_MODEL_REASONING)
+  // Model2 Reports: Qwen/Qwen3-235B-A22B 128K — deep analytical (AI_MODEL_REPORT, xem gateway.ts modelFor)
   aiProviderKey: opt(process.env.AI_PROVIDER_KEY),
-  /* Base URL - mặc định SiliconFlow (miễn phí, ưu tiên Qwen3 32B, 128K). Groq không ưu tiên 32B nên đã bỏ. */
+  /* Base URL - mặc định SiliconFlow (miễn phí, ưu tiên Qwen, 128K). Groq không ưu tiên 32B nên đã bỏ. */
   aiBaseUrl: opt(process.env.AI_BASE_URL) ?? "https://api.siliconflow.cn/v1",
   aiModel: opt(process.env.AI_MODEL) ?? "Qwen/Qwen3-32B",
 };
