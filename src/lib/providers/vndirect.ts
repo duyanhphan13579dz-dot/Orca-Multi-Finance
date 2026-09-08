@@ -38,6 +38,11 @@ type VndPriceRow = {
   ceilingPrice?: number;
   floorPrice?: number;
   average?: number;
+  advances?: number;
+  declines?: number;
+  noChange?: number;
+  noTrade?: number;
+  accumulatedVal?: number;
 };
 
 type VndStockMeta = {
@@ -139,7 +144,6 @@ export async function getVndIndices(): Promise<{ items: IndexQuote[]; sourceTs: 
     })
     .filter((x): x is IndexQuote => x != null);
 
-  // Prefer core benchmarks first (API returns alphabetical: HNX… before VNINDEX)
   const PRIORITY = ["VNINDEX", "VN30", "HNX", "UPCOM", "HNX30", "VN100"];
   items.sort((a, b) => {
     const ia = PRIORITY.indexOf(a.code);
@@ -274,4 +278,81 @@ export async function getVndOhlcv(symbol: string, size = 250): Promise<OhlcvBar[
     .sort((a, b) => a.time - b.time);
   if (!bars.length) throw new ProviderError("vndirect: empty ohlcv", VNDIRECT);
   return bars;
+}
+
+/** Map internal index codes → VNDirect vnmarket_prices codes. */
+export function vndIndexCode(code: string): string {
+  const c = code.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  const map: Record<string, string> = {
+    VNINDEX: "VNINDEX",
+    VNI: "VNINDEX",
+    VN30: "VN30",
+    VN100: "VN100",
+    HNXINDEX: "HNX",
+    HNX: "HNX",
+    HNX30: "HNX30",
+    UPCOM: "UPCOM",
+  };
+  return map[c] ?? c;
+}
+
+const INDEX_CODES = new Set(["VNINDEX", "VN30", "VN100", "HNX", "HNXINDEX", "HNX30", "UPCOM", "VNI"]);
+
+export function isVnIndexSymbol(symbol: string): boolean {
+  return INDEX_CODES.has(symbol.toUpperCase().replace(/[^A-Z0-9]/g, ""));
+}
+
+/** Historical daily OHLCV for a VN market index (VNINDEX, VN30, HNX, …). */
+export async function getVndIndexOhlcv(code: string, size = 250): Promise<OhlcvBar[]> {
+  const c = encodeURIComponent(vndIndexCode(code));
+  const payload = await vndGet<Page<VndPriceRow>>(
+    `/v4/vnmarket_prices?q=code:${c}&size=${Math.min(size, 500)}&sort=date:desc`,
+    15_000,
+  );
+  const bars = (payload.data ?? [])
+    .map((r): OhlcvBar | null => {
+      const t = r.date ? Date.parse(r.date) : NaN;
+      const o = num(r.open);
+      const h = num(r.high);
+      const l = num(r.low);
+      const cl = num(r.close);
+      if (!Number.isFinite(t) || o == null || h == null || l == null || cl == null) return null;
+      return { time: t, open: o, high: h, low: l, close: cl, volume: num(r.nmVolume) ?? 0 };
+    })
+    .filter((x): x is OhlcvBar => x != null)
+    .sort((a, b) => a.time - b.time);
+  if (!bars.length) throw new ProviderError("vndirect: empty index ohlcv", VNDIRECT);
+  return bars;
+}
+
+export type VndIndexSessionStats = {
+  code: string;
+  advances: number;
+  declines: number;
+  unchanged: number;
+  noTrade: number;
+  volume: number | null;
+  value: number | null;
+  date: string | null;
+  sourceTs: number | null;
+};
+
+/** Latest session breadth / volume stats for an index. */
+export async function getVndIndexSessionStats(code: string): Promise<VndIndexSessionStats> {
+  const c = encodeURIComponent(vndIndexCode(code));
+  const payload = await vndGet<Page<VndPriceRow>>(`/v4/vnmarket_prices?q=code:${c}&size=1&sort=date:desc`);
+  const r = payload.data?.[0];
+  if (!r) throw new ProviderError("vndirect: empty index stats", VNDIRECT);
+  const ts = r.date ? Date.parse(`${r.date}T${r.time ?? "15:00:00"}+07:00`) : null;
+  return {
+    code: String(r.code ?? code).toUpperCase(),
+    advances: num(r.advances) ?? 0,
+    declines: num(r.declines) ?? 0,
+    unchanged: num(r.noChange) ?? 0,
+    noTrade: num(r.noTrade) ?? 0,
+    volume: num(r.nmVolume),
+    value: num(r.nmValue) ?? num(r.accumulatedVal),
+    date: r.date ?? null,
+    sourceTs: ts != null && Number.isFinite(ts) ? ts : null,
+  };
 }
