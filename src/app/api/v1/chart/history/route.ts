@@ -31,7 +31,7 @@ export async function GET(req: Request) {
     return unavailable(
       "chart-engine",
       assetType === "stock"
-        ? "Dữ liệu chart cổ phiếu VN cần VNSTOCK_API_KEY — UNAVAILABLE (không dùng dữ liệu giả)."
+        ? "Không lấy được chuỗi nến chỉ số/cổ phiếu VN từ VNDirect — thử lại hoặc xem /system."
         : `Không lấy được candles ${symbol}/${timeframe} từ provider — xem /system.`,
     );
   }
