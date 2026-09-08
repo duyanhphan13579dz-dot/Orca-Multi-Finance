@@ -73,78 +73,72 @@
   --color-canvas-2: #e5ebf6;
   --color-panel: #ffffff;
   --color-panel-2: #f5f8fd;
-  --color-panel-3: #eaf0fa;
+  --color-panel-3: #ffffff;
   --color-line: #d8e0ef;
   --color-line-2: #bfcde4;
   --color-ink: #10203c;
   --color-ink-2: #41546f;
   --color-ink-3: #7488a4;
   --color-up: #0c8f5c;
+  --color-up-dim: #d1fae5;
   --color-down: #d6334f;
+  --color-down-dim: #fde2e7;
   --color-warn: #c07f08;
   --color-accent: #2f6fe0;
   --color-accent-2: #1e56b8;
 }
 
-/* --------------------------------- base ----------------------------------- */
+/* -------------------------------- base ------------------------------------ */
 
-html {
-  font-size: var(--app-font, 15px);
-  color-scheme: dark;
-}
-html[data-theme="light"] { color-scheme: light; }
-
-html,
-body {
+html, body {
   background: var(--color-background-primary);
   color: var(--color-text-primary);
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
-  text-rendering: optimizeLegibility;
+  -moz-osx-font-smoothing: grayscale;
 }
 
-body {
-  background-image:
-    radial-gradient(1100px 480px at 85% -10%, rgba(76, 141, 255, 0.055), transparent 60%),
-    radial-gradient(900px 420px at -10% 110%, rgba(110, 168, 254, 0.045), transparent 55%);
-  background-attachment: fixed;
-}
-html[data-theme="light"] body { background-image: none; }
+body { min-height: 100dvh; }
 
-.num,
-.tabular {
-  font-family: var(--font-mono);
-  font-variant-numeric: tabular-nums lining-nums;
-  letter-spacing: -0.01em;
+/* numeric tabular */
+.num {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
 }
 
-/* ------------------------------- components ------------------------------- */
-
+/* panels */
 .panel {
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.022), rgba(255, 255, 255, 0)), var(--color-surface-primary);
   border: 1px solid var(--color-border-subtle);
-  border-radius: 10px;
-  box-shadow: 0 1px 2px rgba(2, 6, 18, 0.25);
+  background: var(--color-surface-primary);
+  border-radius: 12px;
 }
-html[data-theme="light"] .panel { box-shadow: 0 1px 2px rgba(16, 32, 60, 0.07); }
-
 .panel-inset {
-  background: var(--color-surface-elevated);
   border: 1px solid var(--color-border-subtle);
-  border-radius: 8px;
+  background: var(--color-surface-elevated);
+  border-radius: 10px;
 }
 
+/* scrollbar */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border-default) transparent;
+}
+*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar-thumb {
+  background: var(--color-border-default);
+  border-radius: 999px;
+}
+
+/* hover lift */
 .hover-lift {
-  transition: transform 160ms ease, border-color 160ms ease, background 160ms ease, box-shadow 160ms ease;
+  transition: transform 160ms ease, border-color 160ms ease, background 160ms ease;
 }
 .hover-lift:hover {
   transform: translateY(-1px);
-  border-color: var(--color-border-default);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0)), var(--color-surface-elevated);
-  box-shadow: 0 6px 18px rgba(2, 6, 18, 0.3);
+  border-color: color-mix(in srgb, var(--color-accent-primary) 35%, var(--color-border-subtle));
 }
 
-/* ticker tape */
+/* ticker tape — seamless horizontal marquee */
 @keyframes ticker-scroll {
   0% { transform: translateX(0); }
   100% { transform: translateX(-50%); }
@@ -152,10 +146,14 @@ html[data-theme="light"] .panel { box-shadow: 0 1px 2px rgba(16, 32, 60, 0.07); 
 .ticker-track {
   display: flex;
   width: max-content;
-  animation: ticker-scroll 64s linear infinite;
+  will-change: transform;
+  animation: ticker-scroll 48s linear infinite;
+  animation-play-state: running;
 }
 .ticker-track:hover { animation-play-state: paused; }
-html[data-lowdata="true"] .ticker-track { animation: none; flex-wrap: nowrap; }
+html[data-lowdata="true"] .ticker-track {
+  animation: ticker-scroll 72s linear infinite;
+}
 
 @keyframes pulse-dot {
   0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(46, 194, 126, 0.4); }
@@ -167,35 +165,14 @@ html[data-lowdata="true"] .ticker-track { animation: none; flex-wrap: nowrap; }
   0% { opacity: 0.35; }
   100% { opacity: 1; }
 }
-.flash-up { animation: flicker 240ms ease-out; color: var(--color-positive); }
-.flash-down { animation: flicker 240ms ease-out; color: var(--color-negative); }
 
-/* scrollbars */
-* { scrollbar-width: thin; scrollbar-color: var(--color-border-default) transparent; }
-*::-webkit-scrollbar { width: 8px; height: 8px; }
-*::-webkit-scrollbar-thumb { background: var(--color-border-default); border-radius: 4px; }
-*::-webkit-scrollbar-track { background: transparent; }
-
-/* heatmap tiles */
-.heat-tile { transition: filter 150ms ease, transform 150ms ease; cursor: pointer; }
-.heat-tile:hover { filter: brightness(1.18); transform: scale(1.012); z-index: 2; }
-
-/* skeleton shimmer */
-@keyframes shimmer {
-  0% { background-position: -400px 0; }
-  100% { background-position: 400px 0; }
-}
-.skeleton {
-  background: linear-gradient(90deg, var(--color-surface-elevated) 25%, var(--color-surface-modal) 50%, var(--color-surface-elevated) 75%);
-  background-size: 800px 100%;
-  animation: shimmer 1.4s linear infinite;
-  border-radius: 6px;
-}
-
-/* focus / a11y */
-:focus-visible { outline: 2px solid color-mix(in srgb, var(--color-accent-primary) 65%, transparent); outline-offset: 2px; border-radius: 4px; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+  /* Keep market ticker readable motion */
+  .ticker-track {
+    animation: ticker-scroll 90s linear infinite !important;
+    animation-duration: 90s !important;
+  }
 }
 
 /* table row hover */
