@@ -104,37 +104,27 @@ export function CryptoDetailPage({ symbol }: { symbol: string }) {
       </Panel>
 
       <div className="grid grid-cols-12 gap-3">
-        <div className="col-span-12">
+        <div className="col-span-12 space-y-3 xl:col-span-8">
           <OrcaChart
             symbol={data.symbol}
             assetType="crypto"
             defaultTimeframe={interval}
-            height={440}
+            height={420}
             title={`${data.baseAsset}/USDT`}
           />
-        </div>
-
-        <div className="col-span-12 flex flex-col gap-3 xl:col-span-4">
-          <div className="min-h-0 flex-1">
-            <SentimentPanel symbol={data.symbol} ticker={t} tech={tech} />
-          </div>
-          <div className="min-h-0 flex-1">
-            <CandlePatternsPanel patterns={data.patterns} />
-          </div>
-          <div className="min-h-0 flex-1">
-            <CryptoNewsPanel symbol={data.symbol} baseAsset={data.baseAsset} />
-          </div>
-        </div>
-
-        <div className="col-span-12 xl:col-span-8">
           <CryptoTradeDesk symbol={data.symbol} />
         </div>
 
-        <div className="col-span-12">
-          <ScalpPanel symbol={data.symbol} />
+        <div className="col-span-12 flex flex-col gap-3 xl:col-span-4">
+          <SentimentPanel symbol={data.symbol} ticker={t} tech={tech} />
+          <CandlePatternsPanel patterns={data.patterns} />
+          <CryptoNewsPanel symbol={data.symbol} baseAsset={data.baseAsset} />
         </div>
 
-        <div className="col-span-12">
+        <div className="col-span-12 lg:col-span-6">
+          <ScalpPanel symbol={data.symbol} />
+        </div>
+        <div className="col-span-12 lg:col-span-6">
           <TechnicalPanel tech={tech} patterns={data.patterns} />
         </div>
       </div>
