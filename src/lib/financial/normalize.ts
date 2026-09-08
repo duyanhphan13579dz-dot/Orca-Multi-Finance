@@ -155,14 +155,18 @@ function metricOf(p: NormalizedPeriod | undefined, k: GrowthMetricKey): number |
 }
 
 function findPriorYear(quarters: NormalizedPeriod[], head: NormalizedPeriod): NormalizedPeriod | undefined {
-  if (head.year == null || head.quarter == null) return undefined;
-  return quarters.find((p) => p.year === head.year - 1 && p.quarter === head.quarter);
+  const year = head.year;
+  const quarter = head.quarter;
+  if (year == null || quarter == null) return undefined;
+  return quarters.find((p) => p.year === year - 1 && p.quarter === quarter);
 }
 
 function findPriorQuarter(quarters: NormalizedPeriod[], head: NormalizedPeriod): NormalizedPeriod | undefined {
-  if (head.year == null || head.quarter == null) return undefined;
-  const pq = head.quarter === 1 ? 4 : head.quarter - 1;
-  const py = head.quarter === 1 ? head.year - 1 : head.year;
+  const year = head.year;
+  const quarter = head.quarter;
+  if (year == null || quarter == null) return undefined;
+  const pq = quarter === 1 ? 4 : quarter - 1;
+  const py = quarter === 1 ? year - 1 : year;
   return quarters.find((p) => p.year === py && p.quarter === pq);
 }
 
