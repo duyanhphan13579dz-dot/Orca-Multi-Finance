@@ -168,7 +168,8 @@ export async function getVnQuotes(symbols: string[]): Promise<{ quotes: Quote[];
             buildQuoteSet("vndirect", 2, secQuotes.quotes),
           ]);
           quotes = r.quotes;
-          source = r.sources.join("|") || source;
+          const winners = [...new Set(r.winnerProviders.values())];
+          source = winners.length ? winners.join("|") : source;
           void logDiscrepancies(r);
         }
         return { quotes, source, sourceTs };
