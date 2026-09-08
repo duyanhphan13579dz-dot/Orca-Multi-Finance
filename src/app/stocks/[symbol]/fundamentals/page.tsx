@@ -52,6 +52,24 @@ const RATIO_LABEL: Record<string, string> = {
   receivableTurnover: "Vòng quay phải thu",
 };
 
+const GROWTH_LABEL: Record<string, string> = {
+  revenue: "Doanh thu",
+  netRevenue: "DT thuần",
+  grossProfit: "LN gộp",
+  operatingProfit: "LN HĐKD",
+  netIncome: "LN ròng",
+  operatingCashFlow: "OCF",
+  totalAssets: "Tổng TS",
+  equity: "VCSH",
+};
+
+function pctCls(v: number | null): string {
+  if (v == null) return "text-ink-3";
+  if (v > 0) return "text-up";
+  if (v < 0) return "text-down";
+  return "text-ink-2";
+}
+
 function RatioGrid({ title, ratios }: { title: string; ratios: Record<string, number | null> | undefined }) {
   const entries = Object.entries(ratios ?? {}).filter(([, v]) => v != null);
   return (
@@ -101,16 +119,22 @@ export default function StockFundamentalsPage({ params }: { params: Promise<{ sy
 
   const h = data.financialHealth;
   const fm = data.financialMeta;
+  const growth = data.financialGrowth;
+  const ttm = data.financialTtm;
   const overall = h?.scores?.overall ?? null;
   const anchors = h?.anchors;
 
   return (
     <div className="space-y-3">
       <Panel title="Trạng thái dữ liệu cơ bản">
-        <div className="grid gap-2 text-[12px] sm:grid-cols-2 lg:grid-cols-4">
+        <div className="grid gap-2 text-[12px] sm:grid-cols-2 lg:grid-cols-5">
           <div>
             <div className="text-[10px] uppercase text-ink-3">Kỳ gần nhất</div>
             <div className="font-medium text-ink-2">{fm?.latestPeriod ?? "—"}</div>
+          </div>
+          <div>
+            <div className="text-[10px] uppercase text-ink-3">TTM</div>
+            <div className="font-medium text-ink-2">{fm?.ttmPeriod ?? ttm?.period ?? "Chưa đủ 4 quý"}</div>
           </div>
           <div>
             <div className="text-[10px] uppercase text-ink-3">Loại / phạm vi</div>
@@ -129,6 +153,53 @@ export default function StockFundamentalsPage({ params }: { params: Promise<{ sy
           </div>
         </div>
         {fm?.note && <p className="mt-2 text-[11px] text-ink-3">{fm.note}</p>}
+      </Panel>
+
+      <Panel title="Tăng trưởng YoY / QoQ">
+        {!growth ? (
+          <p className="text-[12px] text-ink-3">Chưa tính được tăng trưởng (thiếu kỳ so sánh).</p>
+        ) : (
+          <div className="grid gap-3 md:grid-cols-2">
+            <div>
+              <div className="mb-1 text-[11px] font-medium text-ink-2">
+                YoY {growth.latestPeriod && growth.priorYearPeriod ? `(${growth.latestPeriod} vs ${growth.priorYearPeriod})` : ""}
+              </div>
+              {!growth.yoy.length ? (
+                <p className="text-[11px] text-ink-3">Không có kỳ cùng quý năm trước.</p>
+              ) : (
+                <div className="space-y-1 text-[11px]">
+                  {growth.yoy.map((c) => (
+                    <div key={c.metric} className="flex justify-between gap-2 border-b border-line/30 py-0.5">
+                      <span className="text-ink-3">{GROWTH_LABEL[c.metric] ?? c.metric}</span>
+                      <span className={`num ${pctCls(c.changePct)}`}>
+                        {c.changePct == null ? "—" : `${c.changePct >= 0 ? "+" : ""}${(c.changePct * 100).toFixed(1)}%`}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div>
+              <div className="mb-1 text-[11px] font-medium text-ink-2">
+                QoQ {growth.latestPeriod && growth.priorQuarterPeriod ? `(${growth.latestPeriod} vs ${growth.priorQuarterPeriod})` : ""}
+              </div>
+              {!growth.qoq.length ? (
+                <p className="text-[11px] text-ink-3">Không có quý liền trước để so sánh.</p>
+              ) : (
+                <div className="space-y-1 text-[11px]">
+                  {growth.qoq.map((c) => (
+                    <div key={c.metric} className="flex justify-between gap-2 border-b border-line/30 py-0.5">
+                      <span className="text-ink-3">{GROWTH_LABEL[c.metric] ?? c.metric}</span>
+                      <span className={`num ${pctCls(c.changePct)}`}>
+                        {c.changePct == null ? "—" : `${c.changePct >= 0 ? "+" : ""}${(c.changePct * 100).toFixed(1)}%`}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
       </Panel>
 
       <Panel title="Sức khỏe tài chính doanh nghiệp">
@@ -202,8 +273,7 @@ export default function StockFundamentalsPage({ params }: { params: Promise<{ sy
 
       <Panel title="Định giá doanh nghiệp">
         <p className="text-[12px] text-ink-3">
-          P/E, P/B, EV/EBITDA sẽ hiển thị khi engine định giá có đủ giá thị trường + EPS/book. Module industry scoring
-          (ngân hàng, BĐS…) thuộc Phase 4 còn lại của Financial Data Engine.
+          P/E, P/B, EV/EBITDA sẽ hiển thị khi engine định giá có đủ giá + EPS/book. Industry scoring thuộc Phase 4.
         </p>
       </Panel>
     </div>
