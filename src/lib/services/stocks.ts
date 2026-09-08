@@ -76,42 +76,38 @@ export async function getVnMarketBoard(): Promise<{
       ttlMs: 60_000,
       staleMs: 24 * 3_600_000,
       producer: async () => {
-        const sessionDate = await vndirect.getVndLatestSessionDate();
-        const [board, indices] = await Promise.all([
-          vndirect.getVndMarketQuotes(sessionDate),
-          getVnIndices(),
+        const [board, indices, universe] = await Promise.all([
+          vndirect.getVndMarketQuotes(),
+          vndirect.getVndIndices().catch(() => ({ items: [] as IndexQuote[], sourceTs: null as number | null })),
+          vndirect.getVndUniverse().catch(
+            () => [] as { symbol: string; name: string | null; exchange: string | null; industry: string | null }[],
+          ),
         ]);
-        let universe: { symbol: string; name: string | null; exchange: string | null; industry: string | null }[] = [];
-        try {
-          universe = await vndirect.getVndUniverse();
-        } catch {
-          universe = board.quotes.map((q) => ({
-            symbol: q.symbol,
-            name: q.name ?? null,
-            exchange: q.exchange ?? null,
-            industry: null,
-          }));
-        }
+        const bySym = new Map(universe.map((u) => [u.symbol, u]));
+        const quotes = board.quotes.map((q) => {
+          const u = bySym.get(q.symbol);
+          return u ? { ...q, name: q.name ?? u.name } : q;
+        });
         return {
-          quotes: board.quotes,
-          indices: indices?.items ?? [],
+          quotes,
+          indices: sortIndices(indices.items),
           universe,
-          sessionDate,
-          sourceTs: board.sourceTs,
+          sessionDate: board.sessionDate,
+          sourceTs: board.sourceTs ?? indices.sourceTs,
         };
       },
     });
     const meta = buildMeta({
-      source: "vndirect",
+      source: "vndirect (api-finfo) full market",
       sourceTimestampMs: res.value.sourceTs,
       cached: res.cached,
       stale: res.stale,
-      note: `Bảng giá phiên ${res.value.sessionDate}`,
-      slas: { liveSlaMs: 60_000, freshSlaMs: 300_000, delayedSlaMs: 3_600_000 },
+      note: `Phiên ${res.value.sessionDate} · ${res.value.quotes.length} mã · ${res.value.universe.length} listed`,
+      slas: { liveSlaMs: 60_000, freshSlaMs: 600_000, delayedSlaMs: 6 * 3_600_000 },
     });
     return {
       quotes: res.value.quotes,
-      indices: sortIndices(res.value.indices),
+      indices: res.value.indices,
       universe: res.value.universe,
       sessionDate: res.value.sessionDate,
       meta,
@@ -126,7 +122,7 @@ export async function getVnUniverseList(): Promise<
   | null
 > {
   try {
-    const res = await cached("vn:universe:v2", {
+    const res = await cached("vn:universe:v1", {
       ttlMs: 6 * 3_600_000,
       staleMs: 7 * 24 * 3_600_000,
       producer: async () => {
@@ -150,39 +146,38 @@ export async function getVnUniverseList(): Promise<
 }
 
 export async function getVnQuotes(symbols: string[]): Promise<{ quotes: Quote[]; meta: Meta } | null> {
-  const syms = [...new Set(symbols.map((s) => s.toUpperCase()))].slice(0, 50);
-  if (!syms.length) return { quotes: [], meta: buildMeta({ source: "none", sourceTimestampMs: Date.now() }) };
+  if (!symbols.length) return null;
   try {
-    const key = `vn:quotes:${syms.slice().sort().join(",")}`;
-    const res = await cached(key, {
-      ttlMs: 30_000,
-      staleMs: 3_600_000,
+    const res = await cached(`vn:quotes:${symbols.slice(0, 30).join(",")}`, {
+      ttlMs: 15_000,
+      staleMs: 24 * 3_600_000,
       producer: async () => {
-        const sets = [];
-        if (vnstockConfigured()) {
-          try {
-            const q = await vnstock.getVnQuotes(syms);
-            sets.push(buildQuoteSet("vnstock", q));
-          } catch {
-            /* */
-          }
+        const [pri, sec] = await Promise.allSettled([
+          vnstockConfigured() ? vnstock.getVnQuotes(symbols) : Promise.reject(new Error("vnstock off")),
+          vndirect.getVndQuotes(symbols),
+        ]);
+        const priQuotes = pri.status === "fulfilled" ? pri.value : null;
+        const secQuotes = sec.status === "fulfilled" ? sec.value : null;
+        if (!priQuotes && !secQuotes) throw new Error("both providers failed");
+        let quotes: Quote[] = priQuotes ?? secQuotes?.quotes ?? [];
+        let source = priQuotes ? "vnstock" : "vndirect";
+        let sourceTs: number | null = secQuotes?.sourceTs ?? null;
+        if (priQuotes && secQuotes) {
+          const r = reconcileQuotes([
+            buildQuoteSet("vnstock", 1, priQuotes),
+            buildQuoteSet("vndirect", 2, secQuotes.quotes),
+          ]);
+          quotes = r.quotes;
+          source = r.sources.join("|") || source;
+          void logDiscrepancies(r);
         }
-        try {
-          const v = await vndirect.getVndQuotes(syms);
-          sets.push(buildQuoteSet("vndirect", v.quotes, v.sourceTs));
-        } catch {
-          /* */
-        }
-        if (!sets.length) throw new Error("no quote source");
-        const reconciled = reconcileQuotes(sets);
-        logDiscrepancies(reconciled.discrepancies);
-        return reconciled;
+        return { quotes, source, sourceTs };
       },
     });
     return {
       quotes: res.value.quotes,
       meta: buildMeta({
-        source: res.value.sources.join("|") || "vndirect",
+        source: res.value.source,
         sourceTimestampMs: res.value.sourceTs,
         cached: res.cached,
         stale: res.stale,
