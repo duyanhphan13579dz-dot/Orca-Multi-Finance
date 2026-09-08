@@ -60,11 +60,11 @@ export const env = {
   redisNote,
   jwtSecret: opt(process.env.JWT_SECRET) ?? "orca-dev-insecure-secret-change-in-production",
 
-  /* Optional LLM for the AI Agent (OpenAI-compatible) */
+  /* Optional LLM for the AI Agent (OpenAI-compatible) - cố định qwen3.8-27b */
   aiProviderKey: opt(process.env.AI_PROVIDER_KEY),
   /* Base URL chỉ cần khi provider không dùng default gateway; để trống nếu host đã inject. */
   aiBaseUrl: opt(process.env.AI_BASE_URL) ?? "",
-  aiModel: opt(process.env.AI_MODEL) ?? "qwen/qwen3-8b",
+  aiModel: opt(process.env.AI_MODEL) ?? "qwen/qwen3.8-27b",
 };
 
 export const isProd = env.nodeEnv === "production";
