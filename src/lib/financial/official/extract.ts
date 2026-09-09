@@ -1,11 +1,68 @@
 import "server-only";
 import type { ExtractedReportPayload, OfficialFiling } from "./types";
+import { downloadFilingDocument } from "./download";
 
 /**
- * FinancialReportExtractor — Phase 2.
- * When documentUrl is absent, returns method=none (honest).
- * PDF binary parse can be plugged here later without changing callers.
+ * FinancialReportExtractor — Phase 2 complete path.
+ * 1) Download document
+ * 2) PDF: extract readable Latin/VN text from content streams (best-effort)
+ * 3) HTML: strip tags
+ * Never fabricates financial metrics from partial parse.
  */
+
+function extractPdfText(buffer: Buffer): string {
+  const raw = buffer.toString("latin1");
+  if (!raw.startsWith("%PDF")) return "";
+
+  const chunks: string[] = [];
+  // Match parentheses strings inside content streams (simple PDF text operators)
+  const streamRe = /stream\r?\n([\s\S]*?)\r?\nendstream/g;
+  let m: RegExpExecArray | null;
+  while ((m = streamRe.exec(raw))) {
+    const body = m[1];
+    const parenRe = /\((?:\\.|[^\\)]){2,200}\)/g;
+    let p: RegExpExecArray | null;
+    while ((p = parenRe.exec(body))) {
+      const inner = p[0].slice(1, -1)
+        .replace(/\\n/g, "\n")
+        .replace(/\\r/g, "")
+        .replace(/\\t/g, " ")
+        .replace(/\\\(/g, "(")
+        .replace(/\\\)/g, ")")
+        .replace(/\\\\/g, "\\");
+      if (/[A-Za-zÀ-ỹ0-9]{3,}/.test(inner)) chunks.push(inner);
+    }
+    // Tj / TJ operators with hex strings
+    const hexRe = /<([0-9A-Fa-f]{4,})>/g;
+    let h: RegExpExecArray | null;
+    while ((h = hexRe.exec(body))) {
+      try {
+        const hex = h[1];
+        if (hex.length % 2 !== 0) continue;
+        const bytes = Buffer.from(hex, "hex");
+        const s = bytes.toString("utf8").replace(/\u0000/g, "");
+        if (/[A-Za-zÀ-ỹ0-9]{3,}/.test(s)) chunks.push(s);
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+
+  const text = chunks.join(" ").replace(/\s+/g, " ").trim();
+  return text.slice(0, 8000);
+}
+
+function extractHtmlText(buffer: Buffer): string {
+  return buffer
+    .toString("utf8")
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 8000);
+}
+
 export async function extractReport(filing: OfficialFiling): Promise<ExtractedReportPayload> {
   const base = {
     filingId: filing.id,
@@ -20,64 +77,51 @@ export async function extractReport(filing: OfficialFiling): Promise<ExtractedRe
       method: "none",
       success: false,
       textPreview: null,
-      error: "Không có documentUrl — chờ cổng SSC/HOSE/IR hoặc SSI.",
+      error: "Không có documentUrl — metadata-only filing.",
     };
   }
 
-  try {
-    const res = await fetch(filing.documentUrl, {
-      headers: { "User-Agent": "OrcaFinancial/1.0" },
-      signal: AbortSignal.timeout(12_000),
-    });
-    if (!res.ok) {
-      return {
-        ...base,
-        method: "none",
-        success: false,
-        textPreview: null,
-        error: `HTTP ${res.status}`,
-      };
-    }
-    const ct = res.headers.get("content-type") ?? filing.mimeType ?? "";
-    const buf = Buffer.from(await res.arrayBuffer());
-
-    if (/pdf/i.test(ct) || filing.documentUrl.toLowerCase().endsWith(".pdf")) {
-      // Lightweight: store size + magic header only (no fabricated text).
-      const magic = buf.subarray(0, 5).toString("utf8");
-      const isPdf = magic.startsWith("%PDF");
-      return {
-        ...base,
-        method: "pdf_text",
-        success: isPdf,
-        textPreview: isPdf ? `[PDF ${buf.length} bytes — parser chi tiết sẽ gắn Phase 2.1]` : null,
-        error: isPdf ? undefined : "File không phải PDF hợp lệ",
-      };
-    }
-
-    if (/html|text/i.test(ct)) {
-      const text = buf.toString("utf8").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
-      return {
-        ...base,
-        method: "html",
-        success: text.length > 40,
-        textPreview: text.slice(0, 400),
-      };
-    }
-
+  const dl = await downloadFilingDocument(filing);
+  if (!dl.ok || !dl.buffer) {
     return {
       ...base,
       method: "none",
       success: false,
       textPreview: null,
-      error: `MIME không hỗ trợ: ${ct || "unknown"}`,
-    };
-  } catch (e) {
-    return {
-      ...base,
-      method: "none",
-      success: false,
-      textPreview: null,
-      error: e instanceof Error ? e.message.slice(0, 160) : "extract_error",
+      error: dl.error ?? "download_failed",
     };
   }
+
+  const ct = (dl.mimeType ?? "").toLowerCase();
+  const isPdf =
+    /pdf/.test(ct) || filing.documentUrl.toLowerCase().endsWith(".pdf") || dl.buffer.subarray(0, 4).toString() === "%PDF";
+
+  if (isPdf) {
+    const text = extractPdfText(dl.buffer);
+    return {
+      ...base,
+      method: "pdf_text",
+      success: text.length > 40,
+      textPreview: text.length ? text.slice(0, 500) : `[PDF ${dl.byteLength} bytes hash=${dl.contentHash?.slice(0, 12)}]`,
+      error: text.length > 40 ? undefined : "PDF text layer sparse — cần OCR Phase 2.1 nếu là scan",
+    };
+  }
+
+  if (/html|text|xml/.test(ct) || filing.documentUrl.match(/\.html?$/i)) {
+    const text = extractHtmlText(dl.buffer);
+    return {
+      ...base,
+      method: "html",
+      success: text.length > 40,
+      textPreview: text.slice(0, 500),
+    };
+  }
+
+  return {
+    ...base,
+    method: "none",
+    success: false,
+    textPreview: null,
+    error: `MIME không hỗ trợ: ${ct || "unknown"}`,
+  };
 }
