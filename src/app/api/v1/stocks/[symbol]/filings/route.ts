@@ -23,6 +23,7 @@ export async function GET(_req: Request, ctx: { params: Promise<{ symbol: string
         storeCount: r.store.length,
         extractedCount: r.extractedCount,
         channelsAttempted: r.discovery.channelsAttempted,
+        sscCalendar: r.sscCalendar,
         notes: r.notes,
       },
       meta,
