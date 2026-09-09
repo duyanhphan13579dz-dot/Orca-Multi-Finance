@@ -57,9 +57,10 @@ export function CommodityLineChart({ options, height = 320 }: Props) {
   }, [options, chartSymbol]);
 
   const active = options.find((o) => o.chartSymbol === chartSymbol) ?? options[0] ?? null;
+  const histLimit = tf === "1d" || tf === "1w" || tf === "1M" ? 1000 : 800;
   const { data, meta, isLoading } = useApi<ChartMarketData>(
     visible && active
-      ? `/api/v1/chart/history?symbol=${encodeURIComponent(active.chartSymbol)}&assetType=commodity&timeframe=${tf}&limit=400`
+      ? `/api/v1/chart/history?symbol=${encodeURIComponent(active.chartSymbol)}&assetType=commodity&timeframe=${tf}&limit=${histLimit}`
       : null,
   );
 
@@ -214,7 +215,7 @@ export function resolveCommodityChartSymbol(symbol: string, nameVi: string): str
   if (/PLATINUM|BACH KIM|BACHKIM/.test(s)) return "PLATINUM";
   if (/PALLADIUM/.test(s)) return "PALLADIUM";
   if (/CORN|\bNGO\b|\bBAP\b/.test(s)) return "CORN";
-  if (/WHEAT|LUA MI|LUAMI/.test(s)) return "WHEAT";
   if (/SOY|DAU TUONG|DAUTUONG/.test(s)) return "SOYBEAN";
+  if (/WHEAT|LUA MI|LUAMI/.test(s)) return "WHEAT";
   return null;
 }
