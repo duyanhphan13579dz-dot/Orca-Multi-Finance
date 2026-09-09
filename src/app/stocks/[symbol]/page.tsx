@@ -6,6 +6,7 @@ import type { VnStockDetail } from "@/lib/services/stocks";
 import { Loading, Panel, Unavailable } from "@/components/ui";
 import { OrcaChart } from "@/components/orca-chart";
 import { TechnicalPanel } from "@/components/technical-panel";
+import { TechRecoPanel } from "@/components/stocks/tech-reco-panel";
 
 export default function StockOverviewPage({ params }: { params: Promise<{ symbol: string }> }) {
   const [symbol, setSymbol] = useState("");
@@ -56,6 +57,8 @@ export default function StockOverviewPage({ params }: { params: Promise<{ symbol
         </Panel>
       )}
 
+      <TechRecoPanel symbol={data.symbol} />
+
       {data.technical ? <TechnicalPanel tech={data.technical} patterns={data.patterns} /> : null}
 
       <div className="grid gap-3 md:grid-cols-2">
@@ -63,7 +66,10 @@ export default function StockOverviewPage({ params }: { params: Promise<{ symbol
           {data.technical ? (
             <ul className="space-y-1 text-[12px] text-ink-2">
               <li>
-                Xu hướng: <strong>{String((data.technical.trend as { label?: string } | null)?.label ?? data.technical.trend ?? "—")}</strong>
+                Xu hướng:{" "}
+                <strong>
+                  {String((data.technical.trend as { label?: string } | null)?.label ?? data.technical.trend ?? "—")}
+                </strong>
               </li>
               <li>RSI(14): {data.technical.rsi14 != null ? data.technical.rsi14.toFixed(1) : "—"}</li>
               <li>
@@ -86,9 +92,7 @@ export default function StockOverviewPage({ params }: { params: Promise<{ symbol
         </Panel>
       </div>
 
-      {data.notes.length > 0 && (
-        <p className="text-[11px] text-warn/90">{data.notes.join(" • ")}</p>
-      )}
+      {data.notes.length > 0 && <p className="text-[11px] text-warn/90">{data.notes.join(" • ")}</p>}
     </div>
   );
 }
