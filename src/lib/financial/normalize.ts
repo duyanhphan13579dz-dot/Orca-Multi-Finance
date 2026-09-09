@@ -1,5 +1,6 @@
 import "server-only";
 import type { NormalizedMetrics, NormalizedPeriod, PeriodType } from "./types";
+import { normalizePeriodMetrics } from "./statements";
 
 /** Metrics summed across quarters for TTM (flow metrics). */
 const FLOW_KEYS: (keyof NormalizedMetrics)[] = [
@@ -61,7 +62,6 @@ export function buildTtmPeriod(periods: NormalizedPeriod[]): NormalizedPeriod | 
     return (b.quarter ?? 0) - (a.quarter ?? 0);
   });
 
-  // unique by period label, newest first
   const seen = new Set<string>();
   const unique: NormalizedPeriod[] = [];
   for (const q of quarters) {
@@ -84,11 +84,7 @@ export function buildTtmPeriod(periods: NormalizedPeriod[]): NormalizedPeriod | 
     if (v != null) metrics[k] = v;
   }
 
-  // derived FCF if missing
-  if (metrics.freeCashFlow == null && metrics.operatingCashFlow != null) {
-    const cap = metrics.capex ?? 0;
-    metrics.freeCashFlow = metrics.operatingCashFlow - Math.abs(cap);
-  }
+  const normalized = normalizePeriodMetrics(metrics);
 
   return {
     period: `TTM-${head.period}`,
@@ -101,7 +97,7 @@ export function buildTtmPeriod(periods: NormalizedPeriod[]): NormalizedPeriod | 
     currency: "VND",
     source: head.source,
     confidence: Math.min(...window.map((w) => w.confidence)),
-    metrics,
+    metrics: normalized,
   };
 }
 
@@ -112,8 +108,10 @@ export type GrowthMetricKey =
   | "operatingProfit"
   | "netIncome"
   | "operatingCashFlow"
+  | "freeCashFlow"
   | "totalAssets"
-  | "equity";
+  | "equity"
+  | "totalLiabilities";
 
 export interface GrowthCell {
   metric: GrowthMetricKey;
@@ -139,8 +137,10 @@ const GROWTH_METRICS: GrowthMetricKey[] = [
   "operatingProfit",
   "netIncome",
   "operatingCashFlow",
+  "freeCashFlow",
   "totalAssets",
   "equity",
+  "totalLiabilities",
 ];
 
 function pctChange(cur: number | null, prior: number | null): number | null {
@@ -199,7 +199,6 @@ export function computeGrowth(periods: NormalizedPeriod[]): GrowthSnapshot {
       return (b.quarter ?? 0) - (a.quarter ?? 0);
     });
 
-  // dedupe
   const seen = new Set<string>();
   const uniqueQ: NormalizedPeriod[] = [];
   for (const q of quarters) {
@@ -221,7 +220,6 @@ export function computeGrowth(periods: NormalizedPeriod[]): GrowthSnapshot {
     };
   }
 
-  // annual fallback
   const annuals = periods
     .filter((p) => p.periodType === "year")
     .sort((a, b) => (b.year ?? 0) - (a.year ?? 0));
