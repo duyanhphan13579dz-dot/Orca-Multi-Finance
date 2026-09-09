@@ -97,7 +97,7 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
     return tfs.includes(pref) ? pref : tfs.includes("1h") ? "1h" : tfs[0];
   });
   const [engineReady, setEngineReady] = useState(false);
-  /** Local kind for instant UI; settings persist runs after paint. */
+  /** Local kind for instant UI feedback while settings persist. */
   const [activeKind, setActiveKind] = useState<ChartKind>(() => normalizeKind(prefs.chartType));
 
   const hostRef = useRef<HTMLDivElement>(null);
@@ -232,16 +232,13 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
     if (kind === kindRef.current) return;
     kindRef.current = kind;
     setActiveKind(kind);
-    // Instant: visibility toggle only
+    // Instant: visibility toggle only (no setData / indicator rebuild)
     mgrRef.current?.setKind(kind);
-    // Persist preference without blocking paint
-    queue Promise.resolve().then(() => {
-      update({
-        chart: {
-          ...settings.chart,
-          chartType: kind,
-        },
-      });
+    update({
+      chart: {
+        ...settings.chart,
+        chartType: kind,
+      },
     });
   };
 
