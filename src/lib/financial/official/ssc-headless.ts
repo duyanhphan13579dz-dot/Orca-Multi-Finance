@@ -4,13 +4,8 @@ import { rowsToFilings, type SscScrapedRow } from "./ssc-scrape";
 import type { OfficialFiling } from "./types";
 
 /**
- * Optional Playwright worker for full SSC coverage:
- * - Search by MCK (fill + click Tìm kiếm)
- * - Parse result table
- * - Download PDF via row action (when browser can capture download)
- *
+ * Optional Playwright worker for full SSC coverage.
  * Enable: SSC_HEADLESS=1 and `npm i playwright && npx playwright install chromium`
- * Safe when missing: returns { available: false } — HTTP path still works.
  */
 
 export interface HeadlessScrapeResult {
@@ -23,28 +18,6 @@ export interface HeadlessScrapeResult {
   latencyMs: number;
 }
 
-function headlessEnabled(): boolean {
-  return process.env.SSC_HEADLESS === "1" || process.env.SSC_HEADLESS === "true";
-}
-
-async function loadPlaywright(): Promise<{
-  chromium: {
-    launch: (opts?: object) => Promise<{
-      newPage: () => Promise<PlaywrightPage>;
-      close: () => Promise<void>;
-    }>;
-  };
-} | null> {
-  try {
-    // Optional dependency — must not break build when absent
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const pw = await import(/* webpackIgnore: true */ "playwright" as string);
-    return pw as never;
-  } catch {
-    return null;
-  }
-}
-
 interface PlaywrightPage {
   goto: (url: string, opts?: object) => Promise<unknown>;
   waitForSelector: (sel: string, opts?: object) => Promise<unknown>;
@@ -52,30 +25,46 @@ interface PlaywrightPage {
   click: (sel: string, opts?: object) => Promise<void>;
   waitForTimeout: (ms: number) => Promise<void>;
   content: () => Promise<string>;
-  locator: (sel: string) => {
-    count: () => Promise<number>;
-    nth: (n: number) => {
-      click: (opts?: object) => Promise<void>;
-      textContent: () => Promise<string | null>;
-    };
-  };
   on: (event: string, handler: (payload: unknown) => void) => void;
   close: () => Promise<void>;
 }
 
-/** Parse rows from page content using same strategies as HTTP scraper (inline to avoid circular weight). */
+interface PlaywrightBrowser {
+  newPage: () => Promise<PlaywrightPage>;
+  close: () => Promise<void>;
+}
+
+interface PlaywrightModule {
+  chromium: {
+    launch: (opts?: object) => Promise<PlaywrightBrowser>;
+  };
+}
+
+function headlessEnabled(): boolean {
+  return process.env.SSC_HEADLESS === "1" || process.env.SSC_HEADLESS === "true";
+}
+
+async function loadPlaywright(): Promise<PlaywrightModule | null> {
+  try {
+    const pw = await import(/* webpackIgnore: true */ "playwright" as string);
+    return pw as unknown as PlaywrightModule;
+  } catch {
+    return null;
+  }
+}
+
 function parseRowsFromHtml(html: string): SscScrapedRow[] {
   const idxs = new Set<number>();
   for (const m of html.matchAll(/id="pt9:t1:(\d+):c/g)) idxs.add(Number(m[1]));
   const rows: SscScrapedRow[] = [];
-  const read = (html: string, row: number, col: string): string => {
+  const read = (source: string, row: number, col: string): string => {
     const marker = `id="pt9:t1:${row}:c${col}"`;
-    const start = html.indexOf(marker);
+    const start = source.indexOf(marker);
     if (start < 0) return "";
-    const gt = html.indexOf(">", start);
-    const end = html.indexOf("</td>", gt);
+    const gt = source.indexOf(">", start);
+    const end = source.indexOf("</td>", gt);
     if (gt < 0 || end < 0) return "";
-    return html
+    return source
       .slice(gt + 1, end)
       .replace(/<[^>]+>/g, " ")
       .replace(/&/g, "&")
@@ -101,10 +90,10 @@ function parseRowsFromHtml(html: string): SscScrapedRow[] {
   return rows;
 }
 
-export async function headlessScrapeSsc(symbol: string, opts?: {
-  downloadPdf?: boolean;
-  maxPdfs?: number;
-}): Promise<HeadlessScrapeResult> {
+export async function headlessScrapeSsc(
+  symbol: string,
+  opts?: { downloadPdf?: boolean; maxPdfs?: number },
+): Promise<HeadlessScrapeResult> {
   const t0 = performance.now();
   const notes: string[] = [];
   const sym = symbol.toUpperCase();
@@ -129,24 +118,23 @@ export async function headlessScrapeSsc(symbol: string, opts?: {
       rows: [],
       filings: [],
       pdfs: [],
-      notes: ["playwright package not installed — run: npm i -D playwright && npx playwright install chromium"],
+      notes: ["playwright package not installed — run: npm i playwright && npx playwright install chromium"],
       latencyMs: 0,
     };
   }
 
-  let browser: { close: () => Promise<void> } | null = null;
+  let browser: PlaywrightBrowser | null = null;
   try {
     browser = await pw.chromium.launch({
       headless: true,
       args: ["--no-sandbox", "--disable-dev-shm-usage"],
     });
-    const page = await (browser as { newPage: () => Promise<PlaywrightPage> }).newPage();
+    const page = await browser.newPage();
 
     const url = `${SSC_BASE}${SSC_NEWS_PATH}`;
     await page.goto(url, { waitUntil: "networkidle", timeout: 60_000 });
     notes.push("navigated NewsSearch");
 
-    // Wait for table or search field
     try {
       await page.waitForSelector('#pt9\\:it8112\\:\\:content, input[id*="it8112"]', { timeout: 20_000 });
     } catch {
@@ -154,8 +142,11 @@ export async function headlessScrapeSsc(symbol: string, opts?: {
       await page.waitForTimeout(3000);
     }
 
-    // Fill MCK
-    const inputSelectors = ['#pt9\\:it8112\\:\\:content', 'input[id*="it8112"]', 'input[name="pt9:it8112"]'];
+    const inputSelectors = [
+      '#pt9\\:it8112\\:\\:content',
+      'input[id*="it8112"]',
+      'input[name="pt9:it8112"]',
+    ];
     let filled = false;
     for (const sel of inputSelectors) {
       try {
@@ -169,8 +160,7 @@ export async function headlessScrapeSsc(symbol: string, opts?: {
     }
     if (!filled) notes.push("could not fill MCK input");
 
-    // Click Tìm kiếm — button id pt9:b1
-    const btnSelectors = ['#pt9\\:b1', 'a[id="pt9:b1"]', 'button:has-text("Tìm kiếm")', 'text=Tìm kiếm'];
+    const btnSelectors = ['#pt9\\:b1', 'a[id="pt9:b1"]', "text=Tìm kiếm"];
     for (const sel of btnSelectors) {
       try {
         await page.click(sel, { timeout: 5_000 });
@@ -184,7 +174,6 @@ export async function headlessScrapeSsc(symbol: string, opts?: {
     await page.waitForTimeout(2500);
     const html = await page.content();
     let rows = parseRowsFromHtml(html).filter((r) => !r.ticker || r.ticker === sym);
-    // If filter empty, keep all and client-filter
     if (!rows.length) {
       rows = parseRowsFromHtml(html).filter((r) => r.ticker === sym);
     }
@@ -196,26 +185,28 @@ export async function headlessScrapeSsc(symbol: string, opts?: {
       for (let i = 0; i < Math.min(max, rows.length); i++) {
         const row = rows[i];
         try {
-          const [download] = await Promise.all([
-            // page.waitForEvent('download') — typed loosely
-            new Promise<{ suggestedFilename: () => string; path: () => Promise<string | null> }>((resolve, reject) => {
-              const timer = setTimeout(() => reject(new Error("download_timeout")), 15_000);
-              page.on("download", (d) => {
-                clearTimeout(timer);
-                resolve(d as { suggestedFilename: () => string; path: () => Promise<string | null> });
-              });
-            }),
-            page.click(`#pt9\\:t1\\:${row.rowIndex}\\:cil4z`, { timeout: 8_000 }).catch(() =>
-              page.click(`a[id="pt9:t1:${row.rowIndex}:cil4z"]`, { timeout: 5_000 }),
-            ),
-          ]);
+          const downloadPromise = new Promise<{
+            suggestedFilename: () => string;
+          }>((resolve, reject) => {
+            const timer = setTimeout(() => reject(new Error("download_timeout")), 15_000);
+            page.on("download", (d) => {
+              clearTimeout(timer);
+              resolve(d as { suggestedFilename: () => string });
+            });
+          });
+          await page
+            .click(`#pt9\\:t1\\:${row.rowIndex}\\:cil4z`, { timeout: 8_000 })
+            .catch(() => page.click(`a[id="pt9:t1:${row.rowIndex}:cil4z"]`, { timeout: 5_000 }));
+          const download = await downloadPromise;
           const fileName = download.suggestedFilename();
           notes.push(`download started: ${fileName}`);
           pdfs.push({
             rowIndex: row.rowIndex,
             fileName,
             size: 0,
-            contentType: fileName.toLowerCase().endsWith(".pdf") ? "application/pdf" : "application/octet-stream",
+            contentType: fileName.toLowerCase().endsWith(".pdf")
+              ? "application/pdf"
+              : "application/octet-stream",
           });
         } catch (e) {
           notes.push(`pdf row ${row.rowIndex}: ${e instanceof Error ? e.message.slice(0, 80) : "fail"}`);
