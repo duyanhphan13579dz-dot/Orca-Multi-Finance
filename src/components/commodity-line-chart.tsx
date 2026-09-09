@@ -2,17 +2,9 @@
 
 /**
  * Biểu đồ đường đơn giản cho trang Hàng hóa — không nến, không indicator.
+ * Lazy: chỉ dynamic-import lightweight-charts và fetch history khi vào viewport.
  */
 import { useEffect, useRef, useState } from "react";
-import {
-  createChart,
-  ColorType,
-  CrosshairMode,
-  LineSeries,
-  type IChartApi,
-  type ISeriesApi,
-  type UTCTimestamp,
-} from "lightweight-charts";
 import { useApi } from "@/lib/hooks";
 import { TF_LABEL, type ChartMarketData } from "@/lib/chart-const";
 import { Loading } from "@/components/ui";
@@ -30,8 +22,29 @@ interface Props {
 }
 
 export function CommodityLineChart({ options, height = 320 }: Props) {
+  const shellRef = useRef<HTMLElement>(null);
+  const [visible, setVisible] = useState(false);
   const [chartSymbol, setChartSymbol] = useState(options[0]?.chartSymbol ?? "");
   const [tf, setTf] = useState<string>("1d");
+
+  useEffect(() => {
+    const el = shellRef.current;
+    if (!el || typeof IntersectionObserver === "undefined") {
+      setVisible(true);
+      return;
+    }
+    const io = new IntersectionObserver(
+      ([entry]) => {
+        if (entry?.isIntersecting) {
+          setVisible(true);
+          io.disconnect();
+        }
+      },
+      { rootMargin: "200px 0px", threshold: 0.01 },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, []);
 
   useEffect(() => {
     if (!options.length) {
@@ -45,55 +58,68 @@ export function CommodityLineChart({ options, height = 320 }: Props) {
 
   const active = options.find((o) => o.chartSymbol === chartSymbol) ?? options[0] ?? null;
   const { data, meta, isLoading } = useApi<ChartMarketData>(
-    active
+    visible && active
       ? `/api/v1/chart/history?symbol=${encodeURIComponent(active.chartSymbol)}&assetType=commodity&timeframe=${tf}&limit=400`
       : null,
   );
 
   const hostRef = useRef<HTMLDivElement>(null);
-  const chartRef = useRef<IChartApi | null>(null);
-  const seriesRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const chartRef = useRef<{ remove: () => void; applyOptions: (o: object) => void; timeScale: () => { fitContent: () => void } } | null>(null);
+  const seriesRef = useRef<{ setData: (d: object[]) => void } | null>(null);
 
   useEffect(() => {
-    if (!hostRef.current) return;
-    const chart = createChart(hostRef.current, {
-      height,
-      layout: {
-        background: { type: ColorType.Solid, color: "transparent" },
-        textColor: "#64769a",
-        fontSize: 11,
-        fontFamily: "ui-monospace, Menlo, Consolas, monospace",
-      },
-      grid: {
-        vertLines: { color: "rgba(33,56,99,0.35)" },
-        horzLines: { color: "rgba(33,56,99,0.35)" },
-      },
-      crosshair: { mode: CrosshairMode.Normal },
-      rightPriceScale: { borderVisible: false },
-      timeScale: { borderVisible: false, timeVisible: true, secondsVisible: false },
-    });
-    const series = chart.addSeries(LineSeries, {
-      color: "#4c8dff",
-      lineWidth: 2,
-      priceLineVisible: true,
-      lastValueVisible: true,
-    });
-    chartRef.current = chart;
-    seriesRef.current = series;
+    if (!visible || !hostRef.current) return;
+    let cancelled = false;
+    let ro: ResizeObserver | null = null;
 
-    const ro = new ResizeObserver(() => {
-      if (hostRef.current) chart.applyOptions({ width: hostRef.current.clientWidth });
-    });
-    ro.observe(hostRef.current);
-    chart.applyOptions({ width: hostRef.current.clientWidth });
+    (async () => {
+      const lw = await import("lightweight-charts");
+      if (cancelled || !hostRef.current) return;
+
+      const chart = lw.createChart(hostRef.current, {
+        height,
+        layout: {
+          background: { type: lw.ColorType.Solid, color: "transparent" },
+          textColor: "#64769a",
+          fontSize: 11,
+          fontFamily: "ui-monospace, Menlo, Consolas, monospace",
+        },
+        grid: {
+          vertLines: { color: "rgba(33,56,99,0.35)" },
+          horzLines: { color: "rgba(33,56,99,0.35)" },
+        },
+        crosshair: { mode: lw.CrosshairMode.Normal },
+        rightPriceScale: { borderVisible: false },
+        timeScale: { borderVisible: false, timeVisible: true, secondsVisible: false },
+      });
+      const series = chart.addSeries(lw.LineSeries, {
+        color: "#4c8dff",
+        lineWidth: 2,
+        priceLineVisible: true,
+        lastValueVisible: true,
+      });
+      chartRef.current = chart;
+      seriesRef.current = series;
+
+      ro = new ResizeObserver(() => {
+        if (hostRef.current) chart.applyOptions({ width: hostRef.current.clientWidth });
+      });
+      ro.observe(hostRef.current);
+      chart.applyOptions({ width: hostRef.current.clientWidth });
+    })();
 
     return () => {
-      ro.disconnect();
-      chart.remove();
+      cancelled = true;
+      ro?.disconnect();
+      try {
+        chartRef.current?.remove();
+      } catch {
+        /* noop */
+      }
       chartRef.current = null;
       seriesRef.current = null;
     };
-  }, [height]);
+  }, [visible, height]);
 
   useEffect(() => {
     const series = seriesRef.current;
@@ -106,7 +132,7 @@ export function CommodityLineChart({ options, height = 320 }: Props) {
     }
     series.setData(
       candles.map((c) => ({
-        time: Math.floor(c.time / 1000) as UTCTimestamp,
+        time: Math.floor(c.time / 1000),
         value: c.close,
       })),
     );
@@ -125,7 +151,7 @@ export function CommodityLineChart({ options, height = 320 }: Props) {
   }
 
   return (
-    <section className="panel overflow-hidden">
+    <section ref={shellRef} className="panel overflow-hidden">
       <header className="flex flex-wrap items-center gap-2 border-b border-border-subtle px-3.5 py-2.5">
         <h2 className="text-[13px] font-semibold text-text-primary">Biểu đồ biến động</h2>
         <select
@@ -156,12 +182,12 @@ export function CommodityLineChart({ options, height = 320 }: Props) {
           </div>
         )}
         <div ref={hostRef} className="w-full" style={{ height }} />
-        {isLoading && !data && (
+        {(!visible || (isLoading && !data)) && (
           <div className="absolute inset-0 flex items-center justify-center bg-background-secondary/50">
             <Loading rows={2} />
           </div>
         )}
-        {!isLoading && data && !data.candles?.length && (
+        {visible && !isLoading && data && !data.candles?.length && (
           <div className="absolute inset-0 flex items-center justify-center text-[12px] text-text-muted">
             Không lấy được chuỗi giá cho mặt hàng này
           </div>
