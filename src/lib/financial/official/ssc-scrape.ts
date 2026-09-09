@@ -10,7 +10,7 @@ export interface SscScrapedRow {
   reportName: string;
   company: string;
   summary: string;
-  submittedAt: string; // DD/MM/YYYY
+  submittedAt: string;
   rowIndex: number;
 }
 
@@ -40,7 +40,6 @@ function stripTags(s: string): string {
 /** Parse pt9:t1:{i}:c* grid cells from ADF rendered HTML. */
 export function parseSscTableHtml(html: string): SscScrapedRow[] {
   const rows: SscScrapedRow[] = [];
-  // Detect max row index present
   const idxs = new Set<number>();
   for (const m of html.matchAll(/id="pt9:t1:(\d+):c/g)) {
     idxs.add(Number(m[1]));
@@ -50,22 +49,38 @@ export function parseSscTableHtml(html: string): SscScrapedRow[] {
   for (const i of sorted) {
     const cell = (col: string): string => {
       const re = new RegExp(`id="pt9:t1:${i}:c${col}"[^>]*>([\\s\\S]*?)</td>`, "i");
-      const m = html.match(re);
+      // Fix: use real whitespace class, not double-escaped
+      const re2 = new RegExp("id=\"pt9:t1:" + i + ":c" + col + "\"[^>]*>([\\s\\S]*?)</td>", "i");
+      void re;
+      const m = html.match(re2);
       return m ? stripTags(m[1]) : "";
     };
-    const ticker = cell("5");
-    const reportName = cell("3");
+    // Build regex properly without double escape issues
+    const read = (col: string): string => {
+      const marker = `id="pt9:t1:${i}:c${col}"`;
+      const start = html.indexOf(marker);
+      if (start < 0) return "";
+      const gt = html.indexOf(">", start);
+      if (gt < 0) return "";
+      const end = html.indexOf("</td>", gt);
+      if (end < 0) return "";
+      return stripTags(html.slice(gt + 1, end));
+    };
+
+    const ticker = read("5");
+    const reportName = read("3");
     if (!reportName && !ticker) continue;
     rows.push({
-      stt: cell("12"),
-      floor: cell("2"),
+      stt: read("12"),
+      floor: read("2"),
       ticker: ticker.toUpperCase(),
       reportName,
-      company: cell("8"),
-      summary: cell("111"),
-      submittedAt: cell("7"),
+      company: read("8"),
+      summary: read("111"),
+      submittedAt: read("7"),
       rowIndex: i,
     });
+    void cell;
   }
   return rows;
 }
@@ -81,7 +96,6 @@ export function rowsToFilings(rows: SscScrapedRow[], filterTicker?: string): Off
   const out: OfficialFiling[] = [];
   for (const r of rows) {
     if (sym && r.ticker && r.ticker !== sym) continue;
-    // Keep rows without ticker only if no filter
     if (sym && !r.ticker) continue;
 
     const title = r.reportName || r.summary || "BCTC SSC";
@@ -104,14 +118,14 @@ export function rowsToFilings(rows: SscScrapedRow[], filterTicker?: string): Off
         : /mẹ|riêng|me |rieng/i.test(title + r.summary)
           ? "standalone"
           : cls.statementScope,
-      auditStatus: /kiểm toán|kiem toan|soát xét|soat xet/i.test(title + r.summary)
-        ? /soát xét|soat xet/i.test(title + r.summary)
+      auditStatus: /kiểm toán|kiem toan/i.test(title + r.summary)
+        ? "audited"
+        : /soát xét|soat xet/i.test(title + r.summary)
           ? "reviewed"
-          : "audited"
-        : cls.auditStatus,
+          : cls.auditStatus,
       sourceChannel: "ssc_ids",
       sourceUrl: `${SSC_BASE}/faces/NewsSearch`,
-      documentUrl: null, // download needs ADF commandLink postback
+      documentUrl: null,
       mimeType: null,
       confidence: 0.94,
       rawNote: [r.floor && `Sàn ${r.floor}`, r.company, r.summary].filter(Boolean).join(" · "),
@@ -120,10 +134,6 @@ export function rowsToFilings(rows: SscScrapedRow[], filterTicker?: string): Off
   return out;
 }
 
-/**
- * Scrape SSC NewsSearch listing via ADF HTML (optimized — no headless browser).
- * When symbol provided: try PPR search, then filter rows by MCK.
- */
 export async function scrapeSscFilings(symbol?: string): Promise<SscScrapeResult> {
   const notes: string[] = [];
   try {
