@@ -1,4 +1,5 @@
 import "server-only";
+import { logSourceAttempt, logSourceResult } from "./monitor";
 import type { FinancialSourceMeta, NormalizedPeriod, SourceRole } from "./types";
 
 /**
@@ -58,9 +59,11 @@ export async function runSourceRouter(
       continue;
     }
     attemptIndex += 1;
+    logSourceAttempt(p.id, symbol);
     try {
       const r = await p.fetch(symbol, opts);
       if (r && r.periods.length) {
+        logSourceResult(p.id, true, { ticker: symbol, latencyMs: r.latencyMs, message: r.note });
         sourcesAttempted.push({
           id: p.id,
           role: p.role,
@@ -89,6 +92,7 @@ export async function runSourceRouter(
               : `Fallback level ${fallbackLevel} → ${r.sourceId}`),
         };
       }
+      logSourceResult(p.id, false, { ticker: symbol, message: "empty" });
       sourcesAttempted.push({
         id: p.id,
         role: p.role,
@@ -97,12 +101,14 @@ export async function runSourceRouter(
         note: "empty",
       });
     } catch (e) {
+      const msg = e instanceof Error ? e.message.slice(0, 120) : "error";
+      logSourceResult(p.id, false, { ticker: symbol, message: msg });
       sourcesAttempted.push({
         id: p.id,
         role: p.role,
         priority: p.priority,
         success: false,
-        note: e instanceof Error ? e.message.slice(0, 120) : "error",
+        note: msg,
       });
     }
   }
