@@ -90,6 +90,13 @@
 
 /* -------------------------------- base ------------------------------------ */
 
+html {
+  /* Prevent rubber-band horizontal scroll on iOS */
+  overflow-x: clip;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
 html, body {
   background: var(--color-background-primary);
   color: var(--color-text-primary);
@@ -98,7 +105,12 @@ html, body {
   -moz-osx-font-smoothing: grayscale;
 }
 
-body { min-height: 100dvh; }
+body {
+  min-height: 100dvh;
+  overflow-x: clip;
+  /* Improve touch scrolling */
+  -webkit-overflow-scrolling: touch;
+}
 
 /* numeric tabular */
 .num {
@@ -111,11 +123,25 @@ body { min-height: 100dvh; }
   border: 1px solid var(--color-border-subtle);
   background: var(--color-surface-primary);
   border-radius: 12px;
+  /* Contain layout/paint for long mobile pages */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 120px;
 }
 .panel-inset {
   border: 1px solid var(--color-border-subtle);
   background: var(--color-surface-elevated);
   border-radius: 10px;
+}
+
+/* Horizontal scroll tables on narrow screens */
+.table-scroll {
+  width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
+}
+.table-scroll table {
+  min-width: 520px;
 }
 
 /* scrollbar */
@@ -129,13 +155,16 @@ body { min-height: 100dvh; }
   border-radius: 999px;
 }
 
-/* hover lift */
+/* hover lift — disable transform on coarse pointers (mobile) */
 .hover-lift {
   transition: transform 160ms ease, border-color 160ms ease, background 160ms ease;
 }
 .hover-lift:hover {
   transform: translateY(-1px);
   border-color: color-mix(in srgb, var(--color-accent-primary) 35%, var(--color-border-subtle));
+}
+@media (hover: none) {
+  .hover-lift:hover { transform: none; }
 }
 
 /* ticker tape — seamless horizontal marquee */
@@ -149,8 +178,11 @@ body { min-height: 100dvh; }
   will-change: transform;
   animation: ticker-scroll 48s linear infinite;
   animation-play-state: running;
+  /* GPU layer for smoother mobile scroll */
+  transform: translateZ(0);
 }
 .ticker-track:hover { animation-play-state: paused; }
+.ticker-track.is-paused { animation-play-state: paused; }
 html[data-lowdata="true"] .ticker-track {
   animation: ticker-scroll 72s linear infinite;
 }
@@ -168,7 +200,6 @@ html[data-lowdata="true"] .ticker-track {
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
-  /* Keep market ticker readable motion */
   .ticker-track {
     animation: ticker-scroll 90s linear infinite !important;
     animation-duration: 90s !important;
@@ -252,4 +283,46 @@ html[data-lowdata="true"] .ticker-track {
 .seg > button[data-active="true"] {
   background: color-mix(in srgb, var(--color-accent-primary) 18%, transparent);
   color: var(--color-accent-primary);
+}
+
+/* --------------------------- mobile performance --------------------------- */
+
+@media (max-width: 767px) {
+  /* Cheaper scrollbar chrome */
+  *::-webkit-scrollbar { width: 4px; height: 4px; }
+
+  /* Slow ticker = less GPU on mid-range phones */
+  .ticker-track {
+    animation-duration: 64s;
+  }
+  html[data-lowdata="true"] .ticker-track {
+    animation-duration: 96s;
+  }
+
+  /* Disable live-dot pulse on mobile (battery) */
+  .live-dot {
+    animation: none;
+  }
+
+  /* Tighter panel headers on small screens */
+  .panel > header {
+    padding-left: 12px;
+    padding-right: 12px;
+    padding-top: 8px;
+    padding-bottom: 8px;
+  }
+
+  /* Avoid accidental text selection lag on long lists */
+  .row-hover {
+    -webkit-tap-highlight-color: transparent;
+  }
+}
+
+/* Touch targets helper */
+@media (pointer: coarse) {
+  button,
+  a,
+  [role="button"] {
+    touch-action: manipulation;
+  }
 }
