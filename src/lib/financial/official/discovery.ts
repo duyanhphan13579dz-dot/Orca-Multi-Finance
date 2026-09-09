@@ -1,6 +1,7 @@
 import "server-only";
 import { httpJson } from "../../http";
 import { classifyFiling, periodLabelFromFiscal } from "./classify";
+import { discoverFromSscPortal } from "./ssc-portal";
 import type { FilingDiscoveryResult, FilingSourceChannel, OfficialFiling } from "./types";
 
 const BASE = (process.env.VNDIRECT_BASE_URL ?? "https://api-finfo.vndirect.com.vn").replace(/\/$/, "");
@@ -112,7 +113,6 @@ async function discoverFromEvents(symbol: string): Promise<{ filings: OfficialFi
   return { filings, ok: filings.length > 0 };
 }
 
-/** Public IR / data-portal catalog (reference URLs — not claimed as parsed PDFs). */
 function discoverPublicCatalog(symbol: string): OfficialFiling[] {
   const sym = symbol.toUpperCase();
   const catalogs: { title: string; url: string; kind: OfficialFiling["kind"] }[] = [
@@ -154,6 +154,7 @@ function discoverPublicCatalog(symbol: string): OfficialFiling[] {
   }));
 }
 
+/** Optional JSON adapters via env (HOSE/HNX/custom IR API). SSC built-in via ssc-portal. */
 async function discoverOfficialPortals(symbol: string): Promise<{
   filings: OfficialFiling[];
   channels: FilingSourceChannel[];
@@ -219,15 +220,18 @@ export async function discoverOfficialFilings(symbol: string): Promise<FilingDis
   const notes: string[] = [];
   const all: OfficialFiling[] = [];
 
-  const portals = await discoverOfficialPortals(sym);
-  channelsAttempted.push(...portals.channels);
-  all.push(...portals.filings);
-  if (portals.channels.length && !portals.filings.length) {
-    notes.push("Cổng chính thức đã cấu hình nhưng chưa trả filing.");
-  } else if (!portals.channels.length) {
-    notes.push("SSC/HOSE/HNX env chưa cấu hình — dùng FS meta + catalog IR công khai.");
-  }
+  // 1) SSC CongBoThongTin — always on (official SoT)
+  channelsAttempted.push("ssc_ids");
+  const ssc = await discoverFromSscPortal(sym);
+  all.push(...ssc.filings);
+  notes.push(...ssc.notes);
 
+  // 2) Optional env JSON adapters (HOSE/HNX/custom)
+  const portals = await discoverOfficialPortals(sym);
+  channelsAttempted.push(...portals.channels.filter((c) => c !== "ssc_ids"));
+  all.push(...portals.filings);
+
+  // 3) Structured metadata
   channelsAttempted.push("vndirect_fs_meta");
   const fs = await discoverFromFsMeta(sym);
   all.push(...fs.filings);
@@ -237,6 +241,7 @@ export async function discoverOfficialFilings(symbol: string): Promise<FilingDis
   const ev = await discoverFromEvents(sym);
   all.push(...ev.filings);
 
+  // 4) Public IR catalog
   channelsAttempted.push("company_ir");
   all.push(...discoverPublicCatalog(sym));
 
