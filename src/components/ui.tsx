@@ -5,7 +5,14 @@ import { AlertTriangle, ArrowDownRight, ArrowUpRight, Database, Minus, Unplug } 
 
 /* ------------------------------- primitives ------------------------------- */
 
-export function Panel({ title, right, children, className = "", pad = true, style }: {
+export function Panel({
+  title,
+  right,
+  children,
+  className = "",
+  pad = true,
+  style,
+}: {
   title?: React.ReactNode;
   right?: React.ReactNode;
   children: React.ReactNode;
@@ -16,12 +23,12 @@ export function Panel({ title, right, children, className = "", pad = true, styl
   return (
     <section className={`panel ${className}`} style={style}>
       {(title || right) && (
-        <header className="flex items-center justify-between gap-2 border-b border-line px-3.5 py-2.5">
-          <h2 className="text-[13px] font-medium tracking-wide text-ink">{title}</h2>
-          <div className="flex items-center gap-2">{right}</div>
+        <header className="flex items-center justify-between gap-2 border-b border-line px-3 py-2 sm:px-3.5 sm:py-2.5">
+          <h2 className="min-w-0 truncate text-[12.5px] font-medium tracking-wide text-ink sm:text-[13px]">{title}</h2>
+          <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">{right}</div>
         </header>
       )}
-      <div className={pad ? "p-3.5" : ""}>{children}</div>
+      <div className={pad ? "p-3 sm:p-3.5" : ""}>{children}</div>
     </section>
   );
 }
@@ -33,7 +40,7 @@ export function Badge({ children, tone = "neutral" }: { children: React.ReactNod
     : tone === "warn" ? "bg-warn/10 text-warn border-warn/30"
     : tone === "accent" ? "bg-accent/10 text-accent border-accent/30"
     : "bg-panel-3 text-ink-2 border-line";
-  return <span className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[11px] ${cls}`}>{children}</span>;
+  return <span className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10.5px] sm:text-[11px] ${cls}`}>{children}</span>;
 }
 
 export function Chg({ value, suffix = "%", arrow = true, className = "" }: { value: number | null | undefined; suffix?: string; arrow?: boolean; className?: string }) {
@@ -87,11 +94,15 @@ export function MetaLine({ meta }: { meta: Meta | null | undefined }) {
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-ink-3">
       <span className="inline-flex items-center gap-1">
         <Database className="size-3" />
-        {meta.source}
+        <span className="max-w-[12rem] truncate sm:max-w-none">{meta.source}</span>
       </span>
-      {meta.sourceTimestamp && <span>nguồn: {new Date(meta.sourceTimestamp).toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })}</span>}
+      {meta.sourceTimestamp && (
+        <span className="hidden sm:inline">
+          nguồn: {new Date(meta.sourceTimestamp).toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })}
+        </span>
+      )}
       {meta.cached && <span>cache</span>}
-      {meta.note && <span className="text-warn/90">{meta.note}</span>}
+      {meta.note && <span className="line-clamp-1 text-warn/90 sm:line-clamp-none">{meta.note}</span>}
     </div>
   );
 }
@@ -120,7 +131,7 @@ export function Loading({ rows = 6 }: { rows?: number }) {
 
 export function Unavailable({ title = "Nguồn dữ liệu chưa khả dụng", note, meta }: { title?: string; note?: string | null; meta?: Meta | null }) {
   return (
-    <div className="flex flex-col items-start gap-2.5 rounded-lg border border-dashed border-line-2 bg-panel-2/50 p-4">
+    <div className="flex flex-col items-start gap-2.5 rounded-lg border border-dashed border-line-2 bg-panel-2/50 p-3 sm:p-4">
       <div className="flex items-center gap-2 text-[13px] text-ink-2">
         <Unplug className="size-4 text-warn" />
         <span className="font-medium">{title}</span>
