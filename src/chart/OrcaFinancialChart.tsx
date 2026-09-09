@@ -32,14 +32,27 @@ const CHART_KINDS: { id: ChartKind; label: string }[] = [
 
 type IndKey = "ema" | "bollinger" | "vwap" | "rsi" | "macd" | "srLevels";
 
-const IND_TOGGLES: { key: IndKey | "volume"; label: string }[] = [
-  { key: "ema", label: "EMA" },
-  { key: "bollinger", label: "BB" },
-  { key: "vwap", label: "VWAP" },
-  { key: "rsi", label: "RSI" },
-  { key: "macd", label: "MACD" },
-  { key: "srLevels", label: "S/R" },
-  { key: "volume", label: "Vol" },
+const OVERLAY_INDS: {
+  key: IndKey | "volume";
+  label: string;
+  short: string;
+  color: string;
+}[] = [
+  { key: "ema", label: "EMA 20/50", short: "EMA", color: T.accent },
+  { key: "bollinger", label: "Bollinger", short: "BB", color: "#6ea8fe" },
+  { key: "vwap", label: "VWAP", short: "VWAP", color: T.info },
+  { key: "srLevels", label: "Support / Resistance", short: "S/R", color: T.warn },
+  { key: "volume", label: "Volume", short: "Vol", color: "#94a3b8" },
+];
+
+const OSC_INDS: {
+  key: IndKey;
+  label: string;
+  short: string;
+  color: string;
+}[] = [
+  { key: "rsi", label: "RSI (14)", short: "RSI", color: T.purple },
+  { key: "macd", label: "MACD", short: "MACD", color: T.accent2 },
 ];
 
 function normalizeKind(raw: string | undefined): ChartKind {
@@ -59,10 +72,18 @@ function historyLimit(assetType: ChartAssetType, tf: string): number {
   }
   if (assetType === "stock") return isDailyPlus ? 1200 : 800;
   if (assetType === "commodity") return isDailyPlus ? 1000 : 800;
-  // forex
   if (isDailyPlus) return 1500;
   if (tf === "4h" || tf === "1h") return 1000;
   return 800;
+}
+
+function lastPointValue(pts: { value?: number }[] | undefined | null): number | null {
+  if (!pts?.length) return null;
+  for (let i = pts.length - 1; i >= 0; i--) {
+    const v = pts[i]?.value;
+    if (v != null && Number.isFinite(v)) return v;
+  }
+  return null;
 }
 
 export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height = 430, title, extraLevels }: Props) {
@@ -85,6 +106,19 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
   const { data, meta, isLoading } = useApi<ChartMarketData>(
     `/api/v1/chart/history?symbol=${encodeURIComponent(symbol)}&assetType=${assetType}&timeframe=${tf}&limit=${limit}`,
   );
+
+  const readout = useMemo(() => {
+    const ind = data?.indicators;
+    if (!ind) return null;
+    return {
+      ema20: lastPointValue(ind.ema20),
+      ema50: lastPointValue(ind.ema50),
+      rsi: lastPointValue(ind.rsi),
+      macd: lastPointValue(ind.macd?.macd),
+      signal: lastPointValue(ind.macd?.signal),
+      hist: lastPointValue(ind.macd?.histogram),
+    };
+  }, [data]);
 
   useEffect(() => {
     if (!hostRef.current) return;
@@ -156,10 +190,9 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
     if (seq !== loadSeqRef.current) return;
 
     const payload = data;
-    const candles = payload.candles;
 
     try {
-      mgr.setHistory(candles, kindRef.current);
+      mgr.setHistory(payload.candles, kindRef.current);
       mgr.setVolumeVisible(prefs.volume !== false);
 
       const vis = {
@@ -211,6 +244,36 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
 
   const activeKind = normalizeKind(prefs.chartType);
 
+  const renderChip = (t: { key: IndKey | "volume"; short: string; label: string; color: string }) => {
+    const on = isIndOn(t.key);
+    return (
+      <button
+        key={t.key}
+        type="button"
+        title={t.label}
+        onClick={() => toggleInd(t.key)}
+        aria-pressed={on}
+        className={`inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-[10.5px] font-medium transition-colors ${
+          on
+            ? "border-transparent text-text-primary"
+            : "border-border-subtle text-text-muted hover:border-border-default hover:text-text-secondary"
+        }`}
+        style={
+          on
+            ? {
+                background: `color-mix(in srgb, ${t.color} 16%, transparent)`,
+                borderColor: `color-mix(in srgb, ${t.color} 45%, transparent)`,
+                color: t.color,
+              }
+            : undefined
+        }
+      >
+        <span className="size-1.5 rounded-full" style={{ background: on ? t.color : "var(--color-text-muted)" }} />
+        {t.short}
+      </button>
+    );
+  };
+
   return (
     <div className="relative rounded-xl border border-border-subtle bg-background-secondary">
       <div className="flex flex-wrap items-center gap-2 border-b border-border-subtle px-3 py-2">
@@ -230,36 +293,61 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
         </div>
       </div>
 
-      <div className="flex flex-wrap items-center gap-1.5 border-b border-border-subtle px-3 py-1.5">
-        <div className="seg">
+      <div className="flex flex-col gap-1.5 border-b border-border-subtle px-3 py-1.5 sm:flex-row sm:flex-wrap sm:items-center">
+        <div className="seg shrink-0">
           {CHART_KINDS.map((k) => (
             <button key={k.id} type="button" data-active={activeKind === k.id} onClick={() => setKind(k.id)}>
               {k.label}
             </button>
           ))}
         </div>
-        <div className="mx-1 hidden h-4 w-px bg-border-subtle sm:block" />
-        <div className="flex flex-wrap gap-1">
-          {IND_TOGGLES.map((t) => {
-            const on = isIndOn(t.key);
-            return (
-              <button
-                key={t.key}
-                type="button"
-                onClick={() => toggleInd(t.key)}
-                className={`rounded-md border px-2 py-0.5 text-[10.5px] font-medium transition-colors ${
-                  on
-                    ? "border-accent-primary/45 bg-accent-primary/12 text-accent-primary"
-                    : "border-border-subtle text-text-muted hover:border-border-default hover:text-text-secondary"
-                }`}
-                aria-pressed={on}
-              >
-                {t.label}
-              </button>
-            );
-          })}
+
+        <div className="hidden h-4 w-px bg-border-subtle sm:block" />
+
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
+          <span className="mr-0.5 text-[9.5px] font-semibold uppercase tracking-wider text-text-muted">Overlay</span>
+          {OVERLAY_INDS.map(renderChip)}
+          <span className="mx-1 hidden h-3.5 w-px bg-border-subtle sm:inline-block" />
+          <span className="mr-0.5 text-[9.5px] font-semibold uppercase tracking-wider text-text-muted">Osc</span>
+          {OSC_INDS.map(renderChip)}
         </div>
       </div>
+
+      {/* Live indicator readout — only active series */}
+      {readout && (
+        <div className="flex flex-wrap gap-x-3 gap-y-1 border-b border-border-subtle/80 px-3 py-1 text-[10px] text-text-muted">
+          {isIndOn("ema") && readout.ema20 != null && (
+            <span>
+              <span style={{ color: T.accent }}>EMA20</span>{" "}
+              <span className="num text-text-secondary">{readout.ema20.toLocaleString(undefined, { maximumFractionDigits: 4 })}</span>
+            </span>
+          )}
+          {isIndOn("ema") && readout.ema50 != null && (
+            <span>
+              <span style={{ color: T.warn }}>EMA50</span>{" "}
+              <span className="num text-text-secondary">{readout.ema50.toLocaleString(undefined, { maximumFractionDigits: 4 })}</span>
+            </span>
+          )}
+          {isIndOn("rsi") && readout.rsi != null && (
+            <span>
+              <span style={{ color: T.purple }}>RSI</span>{" "}
+              <span className="num text-text-secondary">{readout.rsi.toFixed(1)}</span>
+            </span>
+          )}
+          {isIndOn("macd") && readout.macd != null && (
+            <span>
+              <span style={{ color: T.accent2 }}>MACD</span>{" "}
+              <span className="num text-text-secondary">{readout.macd.toPrecision(3)}</span>
+              {readout.hist != null && (
+                <span className={readout.hist >= 0 ? " text-positive" : " text-negative"}>
+                  {" "}
+                  hist {readout.hist.toPrecision(3)}
+                </span>
+              )}
+            </span>
+          )}
+        </div>
+      )}
 
       <div ref={hostRef} className="w-full" style={{ height }} />
       {(isLoading && !data) || !engineReady ? (
