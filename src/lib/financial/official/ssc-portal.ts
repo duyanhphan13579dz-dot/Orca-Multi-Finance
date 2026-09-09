@@ -1,13 +1,14 @@
 import "server-only";
 import type { OfficialFiling } from "./types";
 import { getSscCalendar, type SscCalendarSnapshot, type SscReportKind } from "./ssc-calendar";
+import { scrapeSscFilings } from "./ssc-scrape";
 
 /**
  * SSC — Cổng công bố thông tin Ủy ban Chứng khoán Nhà nước
  * https://congbothongtin.ssc.gov.vn/
  *
- * Tự động theo lịch cửa sổ công bố (ssc-calendar):
- * Q1 01–30/4 · Q2 01–31/7 · Q3 01–31/10 · Q4+Năm 01–31/1 năm sau
+ * Optimized path: Oracle ADF session → _afrLoop full HTML → parse table
+ * (no headless browser for listing metadata).
  */
 
 export const SSC_PORTAL_BASE =
@@ -45,7 +46,7 @@ export async function probeSscPortal(): Promise<SscPortalProbe> {
       portalUrl: SSC_PORTAL_BASE,
       searchUrl: SSC_NEWS_SEARCH_URL,
       note: res.ok
-        ? "SSC portal reachable (ADF UI — listing PDF cần session browser)."
+        ? "SSC portal reachable — ADF scrape enabled."
         : `SSC portal HTTP ${res.status}`,
     };
   } catch (e) {
@@ -70,7 +71,6 @@ function kindToPeriodType(kind: SscReportKind): OfficialFiling["periodType"] {
   return "quarter";
 }
 
-/** Expected filings for current SSC disclosure window (auto calendar). */
 export function buildExpectedWindowFilings(
   symbol: string,
   calendar: SscCalendarSnapshot,
@@ -100,7 +100,6 @@ export function buildExpectedWindowFilings(
   }));
 }
 
-/** Baseline catalog (always available). */
 export function buildSscCatalogFilings(symbol: string, portalOk: boolean): OfficialFiling[] {
   const sym = symbol.toUpperCase();
   const searchWithHint = `${SSC_NEWS_SEARCH_URL}?searchString=${encodeURIComponent(sym)}`;
@@ -137,8 +136,8 @@ export function buildSscCatalogFilings(symbol: string, portalOk: boolean): Offic
     mimeType: null,
     confidence: portalOk ? k.conf : Math.max(0.5, k.conf - 0.25),
     rawNote: portalOk
-      ? "Nguồn chính thức UBCKNN (congbothongtin.ssc.gov.vn). Mở link để tra cứu & tải PDF gốc."
-      : "SSC portal không phản hồi lúc probe — vẫn giữ catalog chính thức để truy xuất thủ công.",
+      ? "Nguồn chính thức UBCKNN. Catalog + ADF scrape listing."
+      : "SSC portal offline — catalog thủ công.",
   }));
 }
 
@@ -150,21 +149,41 @@ export async function discoverFromSscPortal(symbol: string): Promise<{
 }> {
   const calendar = getSscCalendar();
   const probe = await probeSscPortal();
-
   const filings: OfficialFiling[] = [];
-  if (calendar.inDisclosureWindow || calendar.shouldAggressiveFetch) {
-    filings.push(...buildExpectedWindowFilings(symbol, calendar, probe.ok));
-  }
-  filings.push(...buildSscCatalogFilings(symbol, probe.ok));
-
   const notes: string[] = [
     `SSC portal: ${probe.ok ? "online" : "offline"} (${probe.latencyMs}ms)`,
     calendar.note,
-    calendar.shouldAggressiveFetch
-      ? "Chế độ lấy SSC: tích cực (trong/ vừa hết cửa sổ công bố — TTL ngắn)."
-      : "Chế độ lấy SSC: tiết kiệm (ngoài cửa sổ — TTL dài, catalog chính thức).",
   ];
-  if (!probe.ok) notes.push(`SSC probe: ${probe.note}`);
+
+  // 1) Live ADF scrape (optimized)
+  if (probe.ok) {
+    try {
+      const scraped = await scrapeSscFilings(symbol);
+      notes.push(...scraped.notes);
+      if (scraped.filings.length) {
+        filings.push(...scraped.filings);
+        notes.push(`ADF scrape: ${scraped.filings.length} filing(s) · method=${scraped.method}`);
+      } else {
+        notes.push("ADF scrape: không có dòng khớp mã trên trang hiện tại (thử PPR / trang mới nhất).");
+      }
+    } catch (e) {
+      notes.push(`ADF scrape error: ${e instanceof Error ? e.message.slice(0, 100) : "error"}`);
+    }
+  }
+
+  // 2) Expected window markers
+  if (calendar.inDisclosureWindow || calendar.shouldAggressiveFetch) {
+    filings.push(...buildExpectedWindowFilings(symbol, calendar, probe.ok));
+  }
+
+  // 3) Catalog fallback links
+  filings.push(...buildSscCatalogFilings(symbol, probe.ok));
+
+  notes.push(
+    calendar.shouldAggressiveFetch
+      ? "Chế độ lấy SSC: tích cực (cửa sổ công bố / gia hạn)."
+      : "Chế độ lấy SSC: tiết kiệm (ngoài cửa sổ).",
+  );
 
   return { filings, probe, calendar, notes };
 }
