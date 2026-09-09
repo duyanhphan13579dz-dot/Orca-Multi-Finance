@@ -3,6 +3,7 @@ import { cached } from "../../cache";
 import { discoverOfficialFilings } from "./discovery";
 import { extractReport } from "./extract";
 import { loadDocumentStore, markExtraction, upsertFilings } from "./storage";
+import { getSscCalendar } from "./ssc-calendar";
 import type { DocumentStoreRecord, FilingDiscoveryResult, OfficialFiling } from "./types";
 
 export interface OfficialPipelineResult {
@@ -10,18 +11,22 @@ export interface OfficialPipelineResult {
   store: DocumentStoreRecord[];
   latestFsFiling: OfficialFiling | null;
   extractedCount: number;
+  sscCalendar: ReturnType<typeof getSscCalendar>;
   notes: string[];
 }
 
 /**
- * Official Document Pipeline — Phase 2 (complete)
- * Discover → Classify → Store → Download+Extract (when URL exists)
+ * Official Document Pipeline
+ * TTL ngắn trong cửa sổ công bố SSC → tự động "lấy lại" BCTC khi đến kỳ.
  */
 export async function runOfficialDocumentPipeline(symbol: string): Promise<OfficialPipelineResult> {
   const sym = symbol.toUpperCase();
+  const sscCalendar = getSscCalendar();
+  const ttlMs = sscCalendar.suggestedCacheTtlMs;
+  const cacheKey = `fin:official-pipeline:${sym}:v3:${sscCalendar.asOf}:${sscCalendar.shouldAggressiveFetch ? "hot" : "cold"}`;
 
-  const res = await cached(`fin:official-pipeline:${sym}:v2`, {
-    ttlMs: 6 * 3_600_000,
+  const res = await cached(cacheKey, {
+    ttlMs,
     staleMs: 30 * 24 * 3_600_000,
     producer: async () => {
       const discovery = await discoverOfficialFilings(sym);
@@ -61,16 +66,22 @@ export async function runOfficialDocumentPipeline(symbol: string): Promise<Offic
       ) ?? null;
 
   const notes = [...discovery.notes];
+  notes.push(sscCalendar.note);
+  if (sscCalendar.expectedReports.length) {
+    notes.push(
+      `Kỳ vọng BCTC trên SSC: ${sscCalendar.expectedReports.map((e) => e.periodLabel).join(", ")}`,
+    );
+  }
   if (latestFsFiling) {
     notes.push(
       `Filing BCTC gần nhất: ${latestFsFiling.period ?? latestFsFiling.title} · ${latestFsFiling.sourceChannel}`,
     );
   } else {
-    notes.push("Chưa có filing BCTC phân loại rõ — catalog IR vẫn có để truy xuất.");
+    notes.push("Chưa có filing BCTC phân loại rõ — catalog IR / SSC search vẫn có để truy xuất.");
   }
-  notes.push(`Extraction thành công: ${extractedCount} tài liệu có URL.`);
+  notes.push(`Extraction thành công: ${extractedCount} · cacheTTL=${Math.round(ttlMs / 3_600_000)}h`);
 
-  return { discovery, store, latestFsFiling, extractedCount, notes };
+  return { discovery, store, latestFsFiling, extractedCount, sscCalendar, notes };
 }
 
 export async function getOfficialFilingsForSymbol(symbol: string): Promise<OfficialPipelineResult> {
