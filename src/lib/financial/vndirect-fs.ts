@@ -2,20 +2,28 @@ import "server-only";
 import { httpJson } from "../http";
 import type { NormalizedMetrics, NormalizedPeriod } from "./types";
 import { normalizePeriodMetrics, periodsToStatementTables } from "./statements";
+import { metricKeyFromItemCode } from "./metric-dictionary";
 
 const VND = "vndirect-fs";
 const BASE = (process.env.VNDIRECT_BASE_URL ?? "https://api-finfo.vndirect.com.vn").replace(/\/$/, "");
 
-/** VAS / VNDirect itemCode map (modelType 1 BS, 2 IS, 3 CF). Expanded for Phase 3 completeness. */
+/**
+ * VAS / VNDirect itemCode → NormalizedMetrics key.
+ * Đồng bộ với metric-dictionary (labelVi/labelEn chuẩn).
+ */
 const BS: Record<number, keyof NormalizedMetrics> = {
   11100: "cash",
   11110: "cash",
   11200: "shortTermInvestments",
+  11210: "shortTermInvestments",
   11300: "receivables",
+  11310: "receivables",
   11400: "inventory",
+  11410: "inventory",
   11000: "currentAssets",
   12000: "longTermAssets",
   12100: "fixedAssets",
+  12110: "fixedAssets",
   13000: "totalLiabilities",
   13100: "currentLiabilities",
   13110: "shortTermDebt",
@@ -58,6 +66,7 @@ interface RawRow {
   fiscalDate: string;
   createdDate?: string;
   modifiedDate?: string;
+  itemName?: string;
 }
 
 function periodFromFiscal(
@@ -82,6 +91,11 @@ function periodFromFiscal(
   return { period: `${y}-Q${q}`, year: y, quarter: q, periodType: "quarter" };
 }
 
+function resolveMetricKey(itemCode: number, modelType: number): keyof NormalizedMetrics | null {
+  const map = modelType === 1 ? BS : modelType === 2 ? IS : modelType === 3 ? CF : null;
+  return (map && map[itemCode]) || metricKeyFromItemCode(itemCode);
+}
+
 function pivot(rows: RawRow[]): NormalizedPeriod[] {
   const byDate = new Map<string, RawRow[]>();
   for (const r of rows) {
@@ -97,13 +111,12 @@ function pivot(rows: RawRow[]): NormalizedPeriod[] {
     const metrics: NormalizedMetrics = {};
 
     for (const r of group) {
-      const map = r.modelType === 1 ? BS : r.modelType === 2 ? IS : r.modelType === 3 ? CF : null;
-      if (!map) continue;
-      const key = map[r.itemCode];
+      const code = Number(r.itemCode);
+      if (!Number.isFinite(code)) continue;
+      const key = resolveMetricKey(code, Number(r.modelType));
       if (!key) continue;
       const v = r.numericValue;
       if (!Number.isFinite(v)) continue;
-      // Prefer non-zero / first fill
       if (metrics[key] == null) metrics[key] = v;
     }
 
@@ -131,7 +144,6 @@ function pivot(rows: RawRow[]): NormalizedPeriod[] {
   return periods;
 }
 
-/** Convert normalized periods → legacy row arrays for fundamental engine / UI. */
 export function periodsToLegacyRows(periods: NormalizedPeriod[]): {
   income: Record<string, unknown>[];
   balance: Record<string, unknown>[];
