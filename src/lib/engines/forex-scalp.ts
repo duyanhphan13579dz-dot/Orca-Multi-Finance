@@ -42,14 +42,14 @@ function regimeFallbackSetup(
   const stopDist = Math.max(atrV * 1.0, pipSize(pair) * 6);
   const rr = 1.5;
 
-  let direction: ForexScalpSetup["direction"] = "NONE";
-  if (regime.market === "TRENDING_UP") direction = "BUY";
-  else if (regime.market === "TRENDING_DOWN") direction = "SELL";
-  else {
-    // Ranging / unknown: use last candle bias
-    direction = last.close >= last.open ? "BUY" : "SELL";
-  }
-  if (direction === "NONE") return null;
+  const direction: "BUY" | "SELL" =
+    regime.market === "TRENDING_UP"
+      ? "BUY"
+      : regime.market === "TRENDING_DOWN"
+        ? "SELL"
+        : last.close >= last.open
+          ? "BUY"
+          : "SELL";
 
   const stopLoss = direction === "BUY" ? entry - stopDist : entry + stopDist;
   const takeProfit = direction === "BUY" ? entry + stopDist * rr : entry - stopDist * rr;
