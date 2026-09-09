@@ -3,7 +3,6 @@ import "server-only";
 /**
  * Phase 5 — Financial engine monitoring (process-local ring buffer).
  * Tracks source success, latency, validation failures, fallback usage.
- * Swap to Redis/DB later without changing call sites.
  */
 
 export type MonitorEventKind =
@@ -169,32 +168,39 @@ export function getFinancialMonitorSnapshot(limit = 40): FinancialMonitorSnapsho
   const valTotal = counters.validationOk + counters.validationFail;
   const packages = counters.packagesServed;
 
-  const bySource: FinancialMonitorSnapshot["bySource"] = {};
+  type Agg = {
+    attempts: number;
+    success: number;
+    failure: number;
+    latSum: number;
+    latN: number;
+  };
+  const agg: Record<string, Agg> = {};
+
   for (const e of events) {
     if (!e.source) continue;
-    const row = bySource[e.source] ?? { attempts: 0, success: 0, failure: 0, avgLatencyMs: null, _latSum: 0, _latN: 0 };
+    const row = agg[e.source] ?? { attempts: 0, success: 0, failure: 0, latSum: 0, latN: 0 };
     if (e.kind === "source_attempt") row.attempts += 1;
     if (e.kind === "source_success") {
       row.success += 1;
       if (e.latencyMs != null) {
-        (row as { _latSum: number; _latN: number })._latSum += e.latencyMs;
-        (row as { _latSum: number; _latN: number })._latN += 1;
+        row.latSum += e.latencyMs;
+        row.latN += 1;
       }
     }
     if (e.kind === "source_failure") row.failure += 1;
-    bySource[e.source] = row as (typeof bySource)[string] & { _latSum?: number; _latN?: number };
-  }
-  for (const k of Object.keys(bySource)) {
-    const row = bySource[k] as (typeof bySource)[string] & { _latSum?: number; _latN?: number };
-    const n = row._latN ?? 0;
-    const sum = row._latSum ?? 0;
-    row.avgLatencyMs = n ? Math.round(sum / n) : null;
-    delete row._latSum;
-    delete row._latN;
+    agg[e.source] = row;
   }
 
-  const recent = events.slice(-limit);
-  const recentErrors = events.filter((e) => e.kind === "error").slice(-20);
+  const bySource: FinancialMonitorSnapshot["bySource"] = {};
+  for (const [k, row] of Object.entries(agg)) {
+    bySource[k] = {
+      attempts: row.attempts,
+      success: row.success,
+      failure: row.failure,
+      avgLatencyMs: row.latN ? Math.round(row.latSum / row.latN) : null,
+    };
+  }
 
   return {
     windowSize: events.length,
@@ -217,7 +223,7 @@ export function getFinancialMonitorSnapshot(limit = 40): FinancialMonitorSnapsho
       sourceFailure: failure,
     },
     bySource,
-    recentErrors,
-    recentEvents: recent,
+    recentErrors: events.filter((e) => e.kind === "error").slice(-20),
+    recentEvents: events.slice(-limit),
   };
 }
