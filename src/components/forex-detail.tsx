@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useMemo } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
 import { useApi } from "@/lib/hooks";
 import type { CandlePattern, ForexRow, NewsArticle, OhlcvBar, TechnicalSnapshot } from "@/lib/types";
 
@@ -35,8 +35,21 @@ import { ForexScalpPanel } from "@/components/forex-scalp-panel";
 import { AddToWatchlist } from "@/components/watchlist-button";
 import { Brain, Layers, Newspaper, ExternalLink } from "lucide-react";
 
+function useChartHeight(desktop = 420, mobile = 280) {
+  const [h, setH] = useState(desktop);
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 767px)");
+    const apply = () => setH(mq.matches ? mobile : desktop);
+    apply();
+    mq.addEventListener("change", apply);
+    return () => mq.removeEventListener("change", apply);
+  }, [desktop, mobile]);
+  return h;
+}
+
 export function ForexDetailPage({ pair }: { pair: string }) {
   const { data, meta, isLoading } = useApi<ForexDetail>(`/api/v1/forex/${pair}`, { refreshInterval: 180_000 });
+  const chartH = useChartHeight(420, 280);
   if (isLoading && !data) return <Loading rows={10} />;
   if (!data) return <Unavailable title={`Không lấy được ${pair}`} meta={meta} />;
 
@@ -46,12 +59,12 @@ export function ForexDetailPage({ pair }: { pair: string }) {
   const patterns = data.patterns ?? [];
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-2.5 sm:space-y-3">
       <Panel pad={false}>
-        <div className="flex flex-col gap-2 p-4 md:flex-row md:items-end md:justify-between">
-          <div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-xl font-semibold">
+        <div className="flex flex-col gap-2 p-3 sm:p-4 md:flex-row md:items-end md:justify-between">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
+              <h1 className="text-lg font-semibold sm:text-xl">
                 {data.base}/{data.quote}
               </h1>
               <Badge tone="accent">{pair}</Badge>
@@ -60,15 +73,15 @@ export function ForexDetailPage({ pair }: { pair: string }) {
               <AddToWatchlist assetType="forex" symbol={pair} />
             </div>
             {price != null && (
-              <div className="num mt-1 flex items-baseline gap-3">
-                <span className="text-[28px] font-semibold">
+              <div className="num mt-1 flex flex-wrap items-baseline gap-2 sm:gap-3">
+                <span className="text-[24px] font-semibold sm:text-[28px]">
                   {price >= 1000
                     ? price.toLocaleString("vi-VN", { maximumFractionDigits: 0 })
                     : price >= 100
                       ? price.toFixed(2)
                       : price.toFixed(4)}
                 </span>
-                {cur && <Chg value={cur.changePercent} className="text-[14px]" />}
+                {cur && <Chg value={cur.changePercent} className="text-[13px] sm:text-[14px]" />}
               </div>
             )}
           </div>
@@ -76,22 +89,22 @@ export function ForexDetailPage({ pair }: { pair: string }) {
         </div>
       </Panel>
 
-      <div className="grid grid-cols-12 gap-3">
-        <div className="col-span-12 space-y-3 xl:col-span-8">
+      <div className="grid grid-cols-12 gap-2.5 sm:gap-3">
+        <div className="col-span-12 space-y-2.5 sm:space-y-3 xl:col-span-8">
           <OrcaChart
             symbol={pair}
             assetType="forex"
             defaultTimeframe="15m"
-            height={420}
+            height={chartH}
             title={`${data.base}/${data.quote}`}
           />
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 sm:gap-3">
             <CandlePatternsPanel patterns={patterns} />
             <ForexNewsPanel pair={pair} base={data.base} quote={data.quote} />
           </div>
         </div>
 
-        <div className="col-span-12 flex flex-col gap-3 xl:col-span-4">
+        <div className="col-span-12 flex flex-col gap-2.5 sm:gap-3 xl:col-span-4">
           <ForexScalpPanel pair={pair} />
           <SentimentPanel pair={pair} current={cur} tech={tech} />
         </div>
@@ -281,7 +294,7 @@ const CandlePatternsPanel = memo(function CandlePatternsPanel({ patterns }: { pa
           Không có mô hình đáng chú ý trên nến intraday gần nhất — thị trường đang vận động theo cấu trúc thông thường.
         </p>
       ) : (
-        <div className="max-h-[200px] space-y-2 overflow-y-auto">
+        <div className="max-h-[180px] space-y-2 overflow-y-auto overscroll-contain sm:max-h-[200px]">
           {patterns.map((p) => (
             <div key={p.name} className="panel-inset space-y-1 p-2.5">
               <div className="flex flex-wrap items-center gap-1.5">
@@ -339,7 +352,7 @@ const ForexNewsPanel = memo(function ForexNewsPanel({
       ) : !articles.length ? (
         <p className="text-[12px] text-text-muted">Chưa có tin forex liên quan — nguồn RSS tạm trống.</p>
       ) : (
-        <ul className="max-h-[200px] space-y-2 overflow-y-auto">
+        <ul className="max-h-[180px] space-y-2 overflow-y-auto overscroll-contain sm:max-h-[200px]">
           {articles.map((a) => (
             <li key={a.id || a.url} className="border-b border-border-subtle/60 pb-2 last:border-0 last:pb-0">
               <a
