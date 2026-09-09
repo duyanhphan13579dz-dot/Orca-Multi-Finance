@@ -8,6 +8,7 @@ import { OrcaChart } from "@/components/orca-chart";
 import { TechnicalPanel } from "@/components/technical-panel";
 import { TechRecoPanel } from "@/components/stocks/tech-reco-panel";
 import { StockNewsSentiment } from "@/components/stocks/news-sentiment-chip";
+import { StockStructurePanel } from "@/components/stocks/structure-panel";
 
 export default function StockOverviewPage({ params }: { params: Promise<{ symbol: string }> }) {
   const [symbol, setSymbol] = useState("");
@@ -59,6 +60,8 @@ export default function StockOverviewPage({ params }: { params: Promise<{ symbol
       )}
 
       <TechRecoPanel symbol={data.symbol} />
+
+      <StockStructurePanel symbol={data.symbol} />
 
       {data.technical ? <TechnicalPanel tech={data.technical} patterns={data.patterns} /> : null}
 
