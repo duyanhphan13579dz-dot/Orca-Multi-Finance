@@ -2,15 +2,11 @@ import "server-only";
 import { httpJson } from "../http";
 import type { NormalizedMetrics, NormalizedPeriod } from "./types";
 import { normalizePeriodMetrics, periodsToStatementTables } from "./statements";
-import { metricKeyFromItemCode } from "./metric-dictionary";
+import { metricKeyFromItemCode, metricProfileForSymbol, type MetricProfile } from "./metric-dictionary";
 
 const VND = "vndirect-fs";
 const BASE = (process.env.VNDIRECT_BASE_URL ?? "https://api-finfo.vndirect.com.vn").replace(/\/$/, "");
 
-/**
- * VAS / VNDirect itemCode → NormalizedMetrics key.
- * Đồng bộ với metric-dictionary (labelVi/labelEn chuẩn).
- */
 const BS: Record<number, keyof NormalizedMetrics> = {
   11100: "cash",
   11110: "cash",
@@ -91,12 +87,16 @@ function periodFromFiscal(
   return { period: `${y}-Q${q}`, year: y, quarter: q, periodType: "quarter" };
 }
 
-function resolveMetricKey(itemCode: number, modelType: number): keyof NormalizedMetrics | null {
+function resolveMetricKey(
+  itemCode: number,
+  modelType: number,
+  profile: MetricProfile,
+): keyof NormalizedMetrics | null {
   const map = modelType === 1 ? BS : modelType === 2 ? IS : modelType === 3 ? CF : null;
-  return (map && map[itemCode]) || metricKeyFromItemCode(itemCode);
+  return (map && map[itemCode]) || metricKeyFromItemCode(itemCode, profile);
 }
 
-function pivot(rows: RawRow[]): NormalizedPeriod[] {
+function pivot(rows: RawRow[], profile: MetricProfile): NormalizedPeriod[] {
   const byDate = new Map<string, RawRow[]>();
   for (const r of rows) {
     const k = `${r.fiscalDate}|${r.reportType}`;
@@ -113,7 +113,7 @@ function pivot(rows: RawRow[]): NormalizedPeriod[] {
     for (const r of group) {
       const code = Number(r.itemCode);
       if (!Number.isFinite(code)) continue;
-      const key = resolveMetricKey(code, Number(r.modelType));
+      const key = resolveMetricKey(code, Number(r.modelType), profile);
       if (!key) continue;
       const v = r.numericValue;
       if (!Number.isFinite(v)) continue;
@@ -144,20 +144,28 @@ function pivot(rows: RawRow[]): NormalizedPeriod[] {
   return periods;
 }
 
-export function periodsToLegacyRows(periods: NormalizedPeriod[]): {
+export function periodsToLegacyRows(
+  periods: NormalizedPeriod[],
+  symbolOrProfile?: string | MetricProfile,
+): {
   income: Record<string, unknown>[];
   balance: Record<string, unknown>[];
   cashflow: Record<string, unknown>[];
   ratios: Record<string, unknown>[];
 } {
-  return periodsToStatementTables(periods);
+  const profile: MetricProfile =
+    symbolOrProfile === "bank" || symbolOrProfile === "nonbank"
+      ? symbolOrProfile
+      : metricProfileForSymbol(symbolOrProfile);
+  return periodsToStatementTables(periods, profile);
 }
 
 export async function fetchVndirectFinancials(
   symbol: string,
   opts?: { limitPeriods?: number },
-): Promise<{ periods: NormalizedPeriod[]; latencyMs: number } | null> {
+): Promise<{ periods: NormalizedPeriod[]; latencyMs: number; profile: MetricProfile } | null> {
   const sym = symbol.toUpperCase();
+  const profile = metricProfileForSymbol(sym);
   const t0 = performance.now();
   const limit = opts?.limitPeriods ?? 12;
 
@@ -180,7 +188,7 @@ export async function fetchVndirectFinancials(
   const dates = [...new Set(all.map((r) => r.fiscalDate))].sort().reverse().slice(0, limit);
   const dateSet = new Set(dates);
   const filtered = all.filter((r) => dateSet.has(r.fiscalDate));
-  const periods = pivot(filtered).slice(0, limit);
+  const periods = pivot(filtered, profile).slice(0, limit);
   if (!periods.length) return null;
-  return { periods, latencyMs: Math.round(performance.now() - t0) };
+  return { periods, latencyMs: Math.round(performance.now() - t0), profile };
 }
