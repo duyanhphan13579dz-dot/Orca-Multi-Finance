@@ -14,6 +14,7 @@ import {
   logPackageServed,
   logValidation,
 } from "./monitor";
+import { decideFallback } from "./fallback";
 import type {
   FinancialPackage,
   FinancialPackageMeta,
@@ -26,7 +27,7 @@ import type { Meta } from "../types";
 
 /**
  * FINANCIAL DATA RELIABILITY LAYER — Phase 1–5
- * Official ∥ Router → normalize → TTM/Growth → validate → industry health → monitor
+ * Official ∥ Router → normalize → TTM/Growth → validate → fallback → industry health → monitor
  */
 
 function labelPeriod(periods: NormalizedPeriod[]): string | null {
@@ -82,7 +83,6 @@ function runQualityGate(
   cashflowLen: number,
 ): FinancialQualityResult {
   const head = periods.find((p) => p.periodType !== "ttm") ?? null;
-  // Secondary snapshots: other period rows tagged with different source (when multi-source lands)
   const secondaries = periods
     .filter((p) => p.periodType !== "ttm" && p.source && p.source !== primarySource)
     .slice(0, 4)
@@ -262,8 +262,24 @@ export async function getFinancialPackage(symbol: string): Promise<{
     note = [note, quality.cross.note].filter(Boolean).join(" · ");
   }
 
-  logFallback(sym, v.fallbackLevel, v.note ?? undefined);
-  logPackageServed(sym, { qualityScore: quality.score, fallbackLevel: v.fallbackLevel });
+  const fb = decideFallback({
+    periods,
+    primaryHit: v.fallbackLevel === 0 && !cachedRes.cached,
+    usedSecondary: v.fallbackLevel >= 1,
+    fromCache: Boolean(cachedRes.cached),
+    cacheStale: Boolean(cachedRes.stale),
+    officialOk: Boolean(official?.latestFsFiling),
+  });
+  const resolvedFallback = fb.level;
+  if (fb.freshness === "STALE" || fb.freshness === "SOURCE_UNAVAILABLE") {
+    freshness = fb.freshness;
+  } else if (freshness !== "DISCREPANCY_DETECTED" && freshness !== "VERIFIED") {
+    freshness = fb.freshness;
+  }
+  note = [note, fb.note].filter(Boolean).join(" · ");
+
+  logFallback(sym, resolvedFallback, fb.label);
+  logPackageServed(sym, { qualityScore: quality.score, fallbackLevel: resolvedFallback });
 
   const filing = official?.latestFsFiling;
   const pkg: FinancialPackage = {
@@ -279,7 +295,7 @@ export async function getFinancialPackage(symbol: string): Promise<{
       sym,
       periods,
       sources,
-      v.fallbackLevel,
+      resolvedFallback,
       freshness,
       note,
       ttm,
