@@ -1,9 +1,17 @@
 import "server-only";
 import type { NormalizedMetrics, NormalizedPeriod } from "./types";
+import {
+  BALANCE_METRIC_ORDER,
+  CASHFLOW_METRIC_ORDER,
+  INCOME_METRIC_ORDER,
+  labelForMetric,
+  type MetricKey,
+} from "./metric-dictionary";
 
 /**
  * Phase 3 — Statement normalizers.
  * Pure functions: fill derived fields, never invent missing source numbers.
+ * Labels chuẩn hóa qua metric-dictionary (VAS / VNDirect / alias SSC).
  */
 
 export function normalizeIncomeMetrics(m: NormalizedMetrics): NormalizedMetrics {
@@ -17,10 +25,6 @@ export function normalizeIncomeMetrics(m: NormalizedMetrics): NormalizedMetrics 
   if (out.operatingProfit == null && out.ebit != null) out.operatingProfit = out.ebit;
   if (out.netIncome == null && out.netIncomeParent != null) out.netIncome = out.netIncomeParent;
   if (out.netIncomeParent == null && out.netIncome != null) out.netIncomeParent = out.netIncome;
-  // Rough EBITDA only when ebit exists and no ebitda from source — mark as derived soft
-  if (out.ebitda == null && out.ebit != null) {
-    // Do not fabricate depreciation; leave ebitda null unless source provides
-  }
   return out;
 }
 
@@ -29,14 +33,7 @@ export function normalizeBalanceMetrics(m: NormalizedMetrics): NormalizedMetrics
   if (out.totalAssets == null && out.currentAssets != null && out.longTermAssets != null) {
     out.totalAssets = out.currentAssets + out.longTermAssets;
   }
-  if (out.totalLiabilities == null && out.currentLiabilities != null && out.longTermDebt != null) {
-    // incomplete — only if both pieces present as proxy
-  }
-  if (
-    out.equity == null &&
-    out.totalAssets != null &&
-    out.totalLiabilities != null
-  ) {
+  if (out.equity == null && out.totalAssets != null && out.totalLiabilities != null) {
     out.equity = out.totalAssets - out.totalLiabilities;
   }
   return out;
@@ -47,10 +44,6 @@ export function normalizeCashflowMetrics(m: NormalizedMetrics): NormalizedMetric
   if (out.freeCashFlow == null && out.operatingCashFlow != null) {
     const cap = out.capex != null ? Math.abs(out.capex) : 0;
     out.freeCashFlow = out.operatingCashFlow - cap;
-  }
-  // Invert sign convention: some sources report capex positive outflow
-  if (out.capex != null && out.capex > 0 && out.investingCashFlow != null && out.investingCashFlow < 0) {
-    // keep as-is; abs used in FCF
   }
   return out;
 }
@@ -67,6 +60,16 @@ export function normalizePeriods(periods: NormalizedPeriod[]): NormalizedPeriod[
     ...p,
     metrics: normalizePeriodMetrics(p.metrics),
   }));
+}
+
+function labeledMap(metrics: NormalizedMetrics, keys: MetricKey[]): Record<string, unknown> {
+  const labels: Record<string, string> = {};
+  const labelsEn: Record<string, string> = {};
+  for (const k of keys) {
+    labels[k] = labelForMetric(k, "vi");
+    labelsEn[k] = labelForMetric(k, "en");
+  }
+  return { metricLabelsVi: labels, metricLabelsEn: labelsEn };
 }
 
 /** Split normalized periods into classic statement row arrays (legacy UI/API). */
@@ -100,6 +103,7 @@ export function periodsToStatementTables(periods: NormalizedPeriod[]): {
 
     income.push({
       ...base,
+      ...labeledMap(m, INCOME_METRIC_ORDER),
       revenue: m.revenue ?? rev,
       netRevenue: m.netRevenue ?? rev,
       cogs: m.cogs ?? null,
@@ -117,6 +121,7 @@ export function periodsToStatementTables(periods: NormalizedPeriod[]): {
 
     balance.push({
       ...base,
+      ...labeledMap(m, BALANCE_METRIC_ORDER),
       cash: m.cash ?? null,
       shortTermInvestments: m.shortTermInvestments ?? null,
       receivables: m.receivables ?? null,
@@ -135,6 +140,7 @@ export function periodsToStatementTables(periods: NormalizedPeriod[]): {
 
     cashflow.push({
       ...base,
+      ...labeledMap(m, CASHFLOW_METRIC_ORDER),
       operatingCashFlow: m.operatingCashFlow ?? null,
       investingCashFlow: m.investingCashFlow ?? null,
       financingCashFlow: m.financingCashFlow ?? null,
@@ -159,8 +165,7 @@ export function periodsToStatementTables(periods: NormalizedPeriod[]): {
         m.currentLiabilities && m.currentAssets != null && m.currentLiabilities !== 0
           ? m.currentAssets / m.currentLiabilities
           : null,
-      ocfToNi:
-        ni && m.operatingCashFlow != null && ni !== 0 ? m.operatingCashFlow / ni : null,
+      ocfToNi: ni && m.operatingCashFlow != null && ni !== 0 ? m.operatingCashFlow / ni : null,
     });
   }
 
