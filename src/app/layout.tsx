@@ -11,12 +11,21 @@ export const metadata: Metadata = {
   description:
     "Real-time, event-driven, multi-asset financial intelligence platform — VN stocks (VNStock), crypto (Binance), forex (Biquote), commodities (Vietnambiz/Simplize), news, reports and an AI research agent.",
   icons: { icon: "/icon.png" },
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "black-translucent",
+    title: "ORCA Financial",
+  },
 };
 
 export const viewport: Viewport = {
-  themeColor: "#060d1d",
+  themeColor: [
+    { media: "(prefers-color-scheme: dark)", color: "#060d1d" },
+    { media: "(prefers-color-scheme: light)", color: "#eef2f9" },
+  ],
   width: "device-width",
   initialScale: 1,
+  viewportFit: "cover",
 };
 
 /** Apply persisted theme before first paint (no flash). */
