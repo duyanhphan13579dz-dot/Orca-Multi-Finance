@@ -90,7 +90,11 @@ function RatioGrid({ title, ratios }: { title: string; ratios: Record<string, nu
               <span className="num text-ink-2">
                 {v == null
                   ? "—"
-                  : Math.abs(v) < 2 && !k.toLowerCase().includes("turnover") && !k.toLowerCase().includes("ratio") && !k.toLowerCase().includes("coverage") && !k.toLowerCase().includes("debt")
+                  : Math.abs(v) < 2 &&
+                      !k.toLowerCase().includes("turnover") &&
+                      !k.toLowerCase().includes("ratio") &&
+                      !k.toLowerCase().includes("coverage") &&
+                      !k.toLowerCase().includes("debt")
                     ? `${(v * 100).toFixed(1)}%`
                     : v.toFixed(2)}
               </span>
@@ -132,7 +136,7 @@ export default function StockFundamentalsPage({ params }: { params: Promise<{ sy
   return (
     <div className="space-y-3">
       <Panel title="Trạng thái dữ liệu cơ bản">
-        <div className="grid gap-2 text-[12px] sm:grid-cols-2 lg:grid-cols-5">
+        <div className="grid gap-2 text-[12px] sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
           <div>
             <div className="text-[10px] uppercase text-ink-3">Kỳ gần nhất</div>
             <div className="font-medium text-ink-2">{fm?.latestPeriod ?? "—"}</div>
@@ -155,6 +159,20 @@ export default function StockFundamentalsPage({ params }: { params: Promise<{ sy
           <div>
             <div className="text-[10px] uppercase text-ink-3">Xác thực</div>
             <div className="font-medium text-ink-2">{statusVi(fm?.freshnessStatus)}</div>
+          </div>
+          <div>
+            <div className="text-[10px] uppercase text-ink-3">Data quality</div>
+            <div className="font-medium text-ink-2">
+              {fm?.qualityScore != null ? `${fm.qualityScore}/100` : "—"}
+              {fm?.qualityStatus ? ` · ${fm.qualityStatus}` : ""}
+            </div>
+          </div>
+          <div>
+            <div className="text-[10px] uppercase text-ink-3">Cross-source</div>
+            <div className="font-medium text-ink-2">
+              {fm?.crossConfidence ?? "UNVERIFIED"}
+              {fm?.discrepancyCount ? ` · ${fm.discrepancyCount} lệch` : ""}
+            </div>
           </div>
         </div>
         {fm?.note && <p className="mt-2 text-[11px] text-ink-3">{fm.note}</p>}
