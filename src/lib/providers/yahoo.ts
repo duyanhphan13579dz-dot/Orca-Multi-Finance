@@ -157,15 +157,30 @@ export async function getYahooQuotes(symbols: string[]): Promise<Map<string, Yah
   }
   return out;
 }
-
+/**
+ * Yahoo public chart range ceilings (approx):
+ * - 1m: ~7d, 2m–90m: ~60d, 60m/1h: ~730d
+ * - 1d / 1wk: multi-year, 1mo: max
+ * We request the longest stable window the endpoint accepts.
+ */
 const INTRADAY_LIMITS: Record<string, string> = {
-  "1m": "7d", "2m": "60d", "5m": "60d", "15m": "60d", "30m": "60d", "60m": "730d", "90m": "60d", "1h": "730d",
-  "1d": "10y", "1wk": "10y", "1mo": "max", "1w": "10y",
+  "1m": "7d",
+  "2m": "60d",
+  "5m": "60d",
+  "15m": "60d",
+  "30m": "60d",
+  "60m": "730d",
+  "90m": "60d",
+  "1h": "730d",
+  "1d": "max",
+  "1wk": "max",
+  "1mo": "max",
+  "1w": "max",
 };
 
 export function yahooIntervalFor(tf: string): { interval: string; range: string; aggregate4h?: boolean } | null {
   if (tf === "4h") return { interval: "1h", range: "730d", aggregate4h: true };
-  if (tf === "1w") return { interval: "1wk", range: "10y" };
+  if (tf === "1w") return { interval: "1wk", range: "max" };
   if (tf === "1M") return { interval: "1mo", range: "max" };
   if (INTRADAY_LIMITS[tf]) return { interval: tf === "1h" ? "1h" : tf, range: INTRADAY_LIMITS[tf] };
   return null;
