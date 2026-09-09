@@ -1,5 +1,5 @@
 import type { OhlcvBar } from "../types";
-import { atr, ema, supportResistance } from "../technical";
+import { atr, ema, macd, rsi, supportResistance } from "../technical";
 import type {
   ForexFilterResult,
   ForexMarketRegime,
@@ -84,7 +84,8 @@ export function sessionInfo(pair: string, nowMs = Date.now()): { ok: boolean; la
   const inAsia = utcH >= asiaOpen && utcH < asiaClose;
   const overlap = inLondon && inNy;
 
-  if (utcH >= 20.9 && utcH <= 21.6) return { ok: false, label: "ROLLOVER" };
+  // Soften rollover: still ok for analysis, flagged as elevated risk
+  if (utcH >= 20.9 && utcH <= 21.6) return { ok: true, label: "ROLLOVER" };
 
   const p = pair.toUpperCase().replace("/", "");
   if (overlap) return { ok: true, label: "LONDON_NY_OVERLAP" };
@@ -92,7 +93,8 @@ export function sessionInfo(pair: string, nowMs = Date.now()): { ok: boolean; la
     if (inAsia || inLondon) return { ok: true, label: inAsia ? "ASIA" : "LONDON" };
   }
   if (inLondon || inNy) return { ok: true, label: inLondon ? "LONDON" : "NEW_YORK" };
-  return { ok: false, label: "OFF_SESSION" };
+  // Allow analysis off-session (soft gate) — strength will be discounted upstream
+  return { ok: true, label: "OFF_SESSION" };
 }
 
 export function newsFilterOk(_pair: string, _nowMs = Date.now()): { ok: boolean; reason?: string } {
@@ -116,24 +118,33 @@ export function runForexFilter(input: ForexScalpInput): ForexFilterResult {
   }
 
   const session = sessionInfo(pair, input.nowMs ?? Date.now());
-  if (!session.ok) reasons.push(`Session filter: ${session.label}`);
+  if (session.label === "OFF_SESSION" || session.label === "ROLLOVER" || session.label === "WEEKEND") {
+    reasons.push(`Session filter: ${session.label} — strength giảm, mức giá minh họa`);
+  }
 
   const news = newsFilterOk(pair, input.nowMs ?? Date.now());
   if (!news.ok) reasons.push(news.reason ?? "News lock window");
 
-  const dataOk = input.barsM15.length >= 30 && input.barsM5.length >= 40;
-  if (!dataOk) reasons.push("Thieu du lieu M15/M5");
+  const dataOk = input.barsM5.length >= 40;
+  if (!dataOk) reasons.push("Thieu du lieu M5");
 
   if (tier === "EXCLUDED") reasons.push("Pair excluded from universe");
 
-  const eligible = tier !== "EXCLUDED" && dataOk && spreadOk && session.ok && news.ok;
-  if (eligible) reasons.push(`Pass filter | tier ${tier} | ${session.label}`);
+  // Hard blocks: excluded pair, missing data, extreme spread only
+  // Session is soft — strategies still run
+  const hardBlock = tier === "EXCLUDED" || !dataOk || !spreadOk || !news.ok;
+  const eligible = !hardBlock;
+  if (eligible && session.label !== "OFF_SESSION" && session.label !== "ROLLOVER" && session.label !== "WEEKEND") {
+    reasons.push(`Pass filter | tier ${tier} | ${session.label}`);
+  } else if (eligible) {
+    reasons.push(`Soft pass | tier ${tier} | ${session.label}`);
+  }
 
   return {
     eligible,
     tier,
     spreadOk,
-    sessionOk: session.ok,
+    sessionOk: session.ok && session.label !== "OFF_SESSION" && session.label !== "ROLLOVER" && session.label !== "WEEKEND",
     newsOk: news.ok,
     spreadPips,
     maxSpreadPips,
@@ -161,7 +172,9 @@ export function detectForexRegime(barsM15: OhlcvBar[], pair: string): ForexRegim
     else if (atrRatio >= 1.45) volatility = "HIGH_VOLATILITY";
     else if (atrRatio <= 0.65) volatility = "LOW_VOLATILITY";
   }
-  evidence.push(`ATR M15 ${atrPips != null ? atrPips.toFixed(1) + " pip" : "?"} | ratio ${atrRatio?.toFixed(2) ?? "?"} -> ${volatility}`);
+  evidence.push(
+    `ATR M15 ${atrPips != null ? atrPips.toFixed(1) + " pip" : "?"} | ratio ${atrRatio?.toFixed(2) ?? "?"} -> ${volatility}`,
+  );
 
   const closes = barsM15.map((b) => b.close);
   const highs = barsM15.map((b) => b.high);
@@ -189,6 +202,193 @@ export function detectForexRegime(barsM15: OhlcvBar[], pair: string): ForexRegim
   return { volatility, market, atrPips, atrRatio, evidence };
 }
 
+/** Build ATR-based entry / SL / TP for a directional bias. */
+function levelsFromBias(
+  pair: string,
+  direction: "BUY" | "SELL",
+  entry: number,
+  bars: OhlcvBar[],
+  rr = 1.5,
+): { stopLoss: number; takeProfit: number; stopPips: number; riskReward: number } {
+  const atrV = atr(bars, 14) ?? rangeOf(bars[bars.length - 1]);
+  const stopDist = Math.max(atrV * 0.9, pipSize(pair) * 5);
+  const stopLoss = direction === "BUY" ? entry - stopDist : entry + stopDist;
+  const takeProfit = direction === "BUY" ? entry + stopDist * rr : entry - stopDist * rr;
+  return {
+    stopLoss,
+    takeProfit,
+    stopPips: toPips(pair, stopDist),
+    riskReward: rr,
+  };
+}
+
+/**
+ * Strategy T — technical confluence: candle patterns + EMA/RSI/MACD.
+ * Always produces concrete entry/SL/TP when a direction is found.
+ */
+export function strategyTech(
+  pair: string,
+  barsM5: OhlcvBar[],
+  barsM15: OhlcvBar[],
+  regime: ForexRegimeSnapshot,
+  sessionSoftPenalty: number,
+): ForexScalpSetup | null {
+  if (barsM5.length < 40) return null;
+  if (regime.volatility === "EXTREME_VOLATILITY") return null;
+
+  const bars = barsM5;
+  const closes = bars.map((b) => b.close);
+  const last = bars[bars.length - 1];
+  const prev = bars[bars.length - 2];
+  const prev2 = bars[bars.length - 3];
+  const body = bodyOf(last);
+  const avgB = avgBody(bars, 12);
+  const uW = upperWickOf(last);
+  const lW = lowerWickOf(last);
+
+  const rsiArr = rsi(closes, 14);
+  const rsiLast = rsiArr[closes.length - 1];
+  const macdRes = macd(closes).last;
+  const e9 = ema(closes, 9)[closes.length - 1];
+  const e21 = ema(closes, 21)[closes.length - 1];
+
+  let score = 0;
+  const evidence: string[] = [];
+  const riskNotes: string[] = [];
+
+  // --- Candle patterns (recent 1–3 bars) ---
+  let patternBias: ForexScalpDirection = "NONE";
+  if (prev.close < prev.open && last.close > last.open && body > avgB * 0.9 && body > bodyOf(prev) * 1.05 && last.close >= prev.open && last.open <= prev.close) {
+    patternBias = "BUY";
+    score += 22;
+    evidence.push("Bullish Engulfing M5");
+  } else if (prev.close > prev.open && last.close < last.open && body > avgB * 0.9 && body > bodyOf(prev) * 1.05 && last.close <= prev.open && last.open >= prev.close) {
+    patternBias = "SELL";
+    score += 22;
+    evidence.push("Bearish Engulfing M5");
+  } else if (lW > body * 1.8 && uW < body * 0.6 && isBull(last)) {
+    patternBias = "BUY";
+    score += 16;
+    evidence.push("Hammer / rejection nến dưới M5");
+  } else if (uW > body * 1.8 && lW < body * 0.6 && isBear(last)) {
+    patternBias = "SELL";
+    score += 16;
+    evidence.push("Shooting Star / rejection nến trên M5");
+  } else if (
+    bodyOf(prev2) > avgB * 1.1 &&
+    isBear(prev2) &&
+    bodyOf(prev) < avgB * 0.55 &&
+    isBull(last) &&
+    body > avgB * 1.0 &&
+    last.close > (prev2.open + prev2.close) / 2
+  ) {
+    patternBias = "BUY";
+    score += 20;
+    evidence.push("Morning Star-like M5");
+  } else if (
+    bodyOf(prev2) > avgB * 1.1 &&
+    isBull(prev2) &&
+    bodyOf(prev) < avgB * 0.55 &&
+    isBear(last) &&
+    body > avgB * 1.0 &&
+    last.close < (prev2.open + prev2.close) / 2
+  ) {
+    patternBias = "SELL";
+    score += 20;
+    evidence.push("Evening Star-like M5");
+  }
+
+  // --- EMA trend ---
+  if (e9 != null && e21 != null) {
+    if (e9 > e21 && last.close > e9) {
+      score += patternBias === "SELL" ? 4 : 14;
+      evidence.push("EMA9 > EMA21 + giá trên EMA9");
+      if (patternBias === "NONE") patternBias = "BUY";
+    } else if (e9 < e21 && last.close < e9) {
+      score += patternBias === "BUY" ? 4 : 14;
+      evidence.push("EMA9 < EMA21 + giá dưới EMA9");
+      if (patternBias === "NONE") patternBias = "SELL";
+    }
+  }
+
+  // --- RSI ---
+  if (rsiLast != null) {
+    if (rsiLast <= 32) {
+      score += patternBias === "SELL" ? 2 : 12;
+      evidence.push(`RSI ${rsiLast.toFixed(0)} quá bán`);
+      if (patternBias === "NONE") patternBias = "BUY";
+    } else if (rsiLast >= 68) {
+      score += patternBias === "BUY" ? 2 : 12;
+      evidence.push(`RSI ${rsiLast.toFixed(0)} quá mua`);
+      if (patternBias === "NONE") patternBias = "SELL";
+    } else if (rsiLast >= 55 && (patternBias === "BUY" || regime.market === "TRENDING_UP")) {
+      score += 6;
+      evidence.push(`RSI ${rsiLast.toFixed(0)} ủng hộ long`);
+    } else if (rsiLast <= 45 && (patternBias === "SELL" || regime.market === "TRENDING_DOWN")) {
+      score += 6;
+      evidence.push(`RSI ${rsiLast.toFixed(0)} ủng hộ short`);
+    }
+  }
+
+  // --- MACD ---
+  if (macdRes) {
+    if (macdRes.histogram > 0) {
+      score += patternBias === "SELL" ? 3 : 10;
+      evidence.push("MACD histogram +");
+      if (patternBias === "NONE") patternBias = "BUY";
+    } else {
+      score += patternBias === "BUY" ? 3 : 10;
+      evidence.push("MACD histogram −");
+      if (patternBias === "NONE") patternBias = "SELL";
+    }
+  }
+
+  // --- Regime alignment ---
+  if (patternBias === "BUY" && regime.market === "TRENDING_UP") {
+    score += 12;
+    evidence.push("Khớp TRENDING_UP");
+  } else if (patternBias === "SELL" && regime.market === "TRENDING_DOWN") {
+    score += 12;
+    evidence.push("Khớp TRENDING_DOWN");
+  } else if (patternBias === "BUY" && regime.market === "TRENDING_DOWN") {
+    score -= 10;
+    riskNotes.push("Counter-trend vs TRENDING_DOWN");
+  } else if (patternBias === "SELL" && regime.market === "TRENDING_UP") {
+    score -= 10;
+    riskNotes.push("Counter-trend vs TRENDING_UP");
+  }
+
+  // Soft session penalty
+  score = Math.round(score * sessionSoftPenalty);
+
+  if (patternBias === "NONE" || score < 18) return null;
+
+  const direction = patternBias;
+  const entry = last.close;
+  const lv = levelsFromBias(pair, direction, entry, barsM15.length >= 30 ? barsM15 : bars, 1.5);
+  const strength = clamp(score, 0, 92);
+  const status: ForexSetupStatus = strength >= 55 ? "TRIGGERED" : "ACTIVE";
+
+  if (sessionSoftPenalty < 1) riskNotes.push("Ngoài phiên chính — mức giá minh họa, giảm size");
+  if (regime.volatility === "HIGH_VOLATILITY") riskNotes.push("HIGH_VOLATILITY — siết risk");
+
+  return {
+    strategy: "A", // surface as A-family in UI; evidence tags technical
+    direction,
+    status,
+    strength,
+    entry,
+    stopLoss: lv.stopLoss,
+    takeProfit: lv.takeProfit,
+    riskReward: lv.riskReward,
+    invalidation: lv.stopLoss,
+    entryZone: direction === "BUY" ? [lv.stopLoss, entry] : [entry, lv.stopLoss],
+    stopPips: lv.stopPips,
+    evidence: [`Tech+Pattern confluence`, ...evidence].slice(0, 6),
+    riskNotes,
+  };
+}
+
 export function strategyA(
   pair: string,
   barsM15: OhlcvBar[],
@@ -203,18 +403,19 @@ export function strategyA(
   const avgB = avgBody(barsM15, 10);
   if (avgB <= 0) return null;
   const bodySize = bodyOf(m15);
-  if (bodySize <= 1.5 * avgB) return null;
+  // Slightly looser impulse threshold so more setups surface
+  if (bodySize <= 1.2 * avgB) return null;
 
   const uW = upperWickOf(m15);
   const lW = lowerWickOf(m15);
-  if (uW > bodySize * 1.2 || lW > bodySize * 1.2) return null;
+  if (uW > bodySize * 1.4 || lW > bodySize * 1.4) return null;
 
   const direction: ForexScalpDirection = isBull(m15) ? "BUY" : isBear(m15) ? "SELL" : "NONE";
   if (direction === "NONE") return null;
   if (direction === "BUY" && regime.market === "TRENDING_DOWN") return null;
   if (direction === "SELL" && regime.market === "TRENDING_UP") return null;
 
-  const evidence = [`M15 impulse body ${toPips(pair, bodySize).toFixed(1)} pip > 1.5x avg | ${direction}`];
+  const evidence = [`M15 impulse body ${toPips(pair, bodySize).toFixed(1)} pip > 1.2x avg | ${direction}`];
   const riskNotes: string[] = [];
 
   const m5 = barsM5[barsM5.length - 1];
@@ -243,19 +444,22 @@ export function strategyA(
   }
 
   if (!m5Broke) {
+    // Still provide provisional levels at M15 extreme
+    const provisionalEntry = direction === "BUY" ? m15.high : m15.low;
+    const lv = levelsFromBias(pair, direction, provisionalEntry, barsM5, 1.25);
     return {
       strategy: "A",
       direction,
       status: "AWAITING_M5_BREAKOUT",
-      strength: 35,
-      entry: null,
-      stopLoss: direction === "BUY" ? m15.low : m15.high,
-      takeProfit: null,
-      riskReward: null,
+      strength: 42,
+      entry: provisionalEntry,
+      stopLoss: lv.stopLoss,
+      takeProfit: lv.takeProfit,
+      riskReward: lv.riskReward,
       invalidation: direction === "BUY" ? m15.low : m15.high,
       entryZone: direction === "BUY" ? [m15.high, m15.high] : [m15.low, m15.low],
-      stopPips: toPips(pair, Math.abs(m15.high - m15.low)),
-      evidence: [...evidence, `Cho M5 close ${direction === "BUY" ? ">" : "<"} M15 extreme`],
+      stopPips: lv.stopPips,
+      evidence: [...evidence, `Cho M5 close ${direction === "BUY" ? ">" : "<"} M15 extreme — mức tạm tính`],
       riskNotes,
     };
   }
@@ -283,7 +487,7 @@ export function strategyA(
       evidence.push("M1 retest + confirm");
     } else {
       status = "AWAITING_M1_RETEST";
-      strength = 52;
+      strength = 55;
       evidence.push(retested ? "Cho nen xac nhan M1" : "Cho M1 pullback");
     }
   }
@@ -397,20 +601,22 @@ export function strategyC(
   }
 
   if (!confirmed) {
+    const provisionalEntry = (rectangle.top + rectangle.bottom) / 2;
+    const lv = levelsFromBias(pair, direction, provisionalEntry, barsM5, 1.4);
     return {
       strategy: "C",
       direction,
       status: "AWAITING_M5_BREAKOUT",
-      strength: 40,
-      entry: null,
+      strength: 44,
+      entry: provisionalEntry,
       stopLoss: trend === "UPTREND" ? sweep.low : sweep.high,
-      takeProfit: null,
-      riskReward: null,
+      takeProfit: lv.takeProfit,
+      riskReward: lv.riskReward,
       invalidation: trend === "UPTREND" ? rectangle.bottom : rectangle.top,
       entryZone: [rectangle.bottom, rectangle.top],
-      stopPips: toPips(pair, Math.abs(rectangle.top - rectangle.bottom)),
+      stopPips: toPips(pair, Math.abs((trend === "UPTREND" ? sweep.low : sweep.high) - provisionalEntry)),
       rectangle,
-      evidence: [...evidence, "Cho M5 confirm rectangle"],
+      evidence: [...evidence, "Cho M5 confirm rectangle — mức tạm tính"],
       riskNotes,
     };
   }
@@ -480,7 +686,7 @@ export function strategyB(
         "Forex OTC: khong co consolidated tape — Module B yeu cau futures/tick proxy",
         "ORDER_FLOW_UNAVAILABLE",
       ],
-      riskNotes: ["Dung Module A/C cho den khi co order-flow feed"],
+      riskNotes: ["Dung Module A/C/Tech cho den khi co order-flow feed"],
     },
   };
 }
