@@ -4,6 +4,8 @@
  * ORCA FINANCIAL CHART — history + toggleable indicators (EMA/BB/VWAP/RSI/MACD/S-R).
  * Types from chart-const only — never import server-only services.
  * lightweight-charts is dynamic-imported so the main bundle stays light until mount.
+ *
+ * Chart-kind switch (Nến/Đường/Vùng/Bar) is visibility-only — no setData/rebuild.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { IChartApi } from "lightweight-charts";
@@ -95,17 +97,23 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
     return tfs.includes(pref) ? pref : tfs.includes("1h") ? "1h" : tfs[0];
   });
   const [engineReady, setEngineReady] = useState(false);
+  /** Local kind for instant UI; settings persist runs after paint. */
+  const [activeKind, setActiveKind] = useState<ChartKind>(() => normalizeKind(prefs.chartType));
 
   const hostRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const mgrRef = useRef<SeriesManager | null>(null);
   const kindRef = useRef<ChartKind>(normalizeKind(prefs.chartType));
   const loadSeqRef = useRef(0);
+  const dataRef = useRef<ChartMarketData | null>(null);
+  const extraLevelsRef = useRef(extraLevels);
+  extraLevelsRef.current = extraLevels;
 
   const limit = historyLimit(assetType, tf);
   const { data, meta, isLoading } = useApi<ChartMarketData>(
     `/api/v1/chart/history?symbol=${encodeURIComponent(symbol)}&assetType=${assetType}&timeframe=${tf}&limit=${limit}`,
   );
+  dataRef.current = data ?? null;
 
   const readout = useMemo(() => {
     const ind = data?.indicators;
@@ -178,10 +186,17 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
     };
   }, [height]);
 
+  // Sync external settings → local kind (e.g. loaded from storage)
   useEffect(() => {
-    kindRef.current = normalizeKind(prefs.chartType);
+    const k = normalizeKind(prefs.chartType);
+    if (k !== kindRef.current) {
+      kindRef.current = k;
+      setActiveKind(k);
+      mgrRef.current?.setKind(k);
+    }
   }, [prefs.chartType]);
 
+  // Full data / indicator rebuild — NOT on chart-kind change
   useEffect(() => {
     const seq = ++loadSeqRef.current;
     const mgr = mgrRef.current;
@@ -189,10 +204,8 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
     if (!engineReady || !mgr || !chart || !data?.candles?.length) return;
     if (seq !== loadSeqRef.current) return;
 
-    const payload = data;
-
     try {
-      mgr.setHistory(payload.candles, kindRef.current);
+      mgr.setHistory(data.candles, kindRef.current);
       mgr.setVolumeVisible(prefs.volume !== false);
 
       const vis = {
@@ -203,35 +216,58 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
         macd: prefs.indicators?.macd !== false,
         srLevels: prefs.indicators?.srLevels !== false,
       };
-      mgr.rebuildIndicators(payload.indicators ?? null, vis);
-      mgr.rebuildSrLines(payload.indicators ?? null, vis.srLevels);
-      if (payload.markers?.length) mgr.applyMarkers(payload.markers);
+      mgr.rebuildIndicators(data.indicators ?? null, vis);
+      mgr.rebuildSrLines(data.indicators ?? null, vis.srLevels);
+      if (data.markers?.length) mgr.applyMarkers(data.markers);
       if (extraLevels?.length) mgr.rebuildExtraLevels(extraLevels);
       chart.timeScale().fitContent();
     } catch {
       /* keep page alive if series fails */
     }
-  }, [data, prefs.volume, prefs.indicators, prefs.chartType, extraLevels, engineReady]);
+    // intentionally omit prefs.chartType — kind switches use setKind only
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data, prefs.volume, prefs.indicators, extraLevels, engineReady]);
 
   const setKind = (kind: ChartKind) => {
-    update({
-      chart: {
-        ...settings.chart,
-        chartType: kind,
-      },
+    if (kind === kindRef.current) return;
+    kindRef.current = kind;
+    setActiveKind(kind);
+    // Instant: visibility toggle only
+    mgrRef.current?.setKind(kind);
+    // Persist preference without blocking paint
+    queue Promise.resolve().then(() => {
+      update({
+        chart: {
+          ...settings.chart,
+          chartType: kind,
+        },
+      });
     });
   };
 
   const toggleInd = (key: IndKey | "volume") => {
+    const mgr = mgrRef.current;
     if (key === "volume") {
-      update({ chart: { ...settings.chart, volume: !settings.chart.volume } });
+      const next = !settings.chart.volume;
+      mgr?.setVolumeVisible(next);
+      update({ chart: { ...settings.chart, volume: next } });
       return;
     }
+    if (key !== "srLevels" && mgr) {
+      const ind = settings.chart.indicators;
+      const next = key === "bollinger" ? !ind.bollinger : !ind[key];
+      mgr.setIndicatorVisible(key, next);
+    }
     const ind = settings.chart.indicators;
+    const nextInd = { ...ind, [key]: key === "bollinger" ? !ind.bollinger : !ind[key] };
+    // S/R needs rebuild on price lines
+    if (key === "srLevels") {
+      mgr?.rebuildSrLines(dataRef.current?.indicators ?? null, !!nextInd.srLevels);
+    }
     update({
       chart: {
         ...settings.chart,
-        indicators: { ...ind, [key]: !ind[key] },
+        indicators: nextInd,
       },
     });
   };
@@ -241,8 +277,6 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
     if (key === "bollinger") return !!prefs.indicators?.bollinger;
     return prefs.indicators?.[key] !== false;
   };
-
-  const activeKind = normalizeKind(prefs.chartType);
 
   const renderChip = (t: { key: IndKey | "volume"; short: string; label: string; color: string }) => {
     const on = isIndOn(t.key);
@@ -313,19 +347,22 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
         </div>
       </div>
 
-      {/* Live indicator readout — only active series */}
       {readout && (
         <div className="flex flex-wrap gap-x-3 gap-y-1 border-b border-border-subtle/80 px-3 py-1 text-[10px] text-text-muted">
           {isIndOn("ema") && readout.ema20 != null && (
             <span>
               <span style={{ color: T.accent }}>EMA20</span>{" "}
-              <span className="num text-text-secondary">{readout.ema20.toLocaleString(undefined, { maximumFractionDigits: 4 })}</span>
+              <span className="num text-text-secondary">
+                {readout.ema20.toLocaleString(undefined, { maximumFractionDigits: 4 })}
+              </span>
             </span>
           )}
           {isIndOn("ema") && readout.ema50 != null && (
             <span>
               <span style={{ color: T.warn }}>EMA50</span>{" "}
-              <span className="num text-text-secondary">{readout.ema50.toLocaleString(undefined, { maximumFractionDigits: 4 })}</span>
+              <span className="num text-text-secondary">
+                {readout.ema50.toLocaleString(undefined, { maximumFractionDigits: 4 })}
+              </span>
             </span>
           )}
           {isIndOn("rsi") && readout.rsi != null && (
