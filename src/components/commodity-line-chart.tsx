@@ -21,16 +21,6 @@ interface Props {
   height?: number;
 }
 
-/** Opaque handles — LW charts types stay behind dynamic import boundary. */
-type ChartHandle = {
-  remove: () => void;
-  applyOptions: (o: { width?: number; height?: number }) => void;
-  timeScale: () => { fitContent: () => void };
-};
-type SeriesHandle = {
-  setData: (d: { time: number; value: number }[]) => void;
-};
-
 export function CommodityLineChart({ options, height = 320 }: Props) {
   const shellRef = useRef<HTMLElement>(null);
   const [visible, setVisible] = useState(false);
@@ -75,8 +65,11 @@ export function CommodityLineChart({ options, height = 320 }: Props) {
   );
 
   const hostRef = useRef<HTMLDivElement>(null);
-  const chartRef = useRef<ChartHandle | null>(null);
-  const seriesRef = useRef<SeriesHandle | null>(null);
+  // Opaque handles — avoid LW Charts generic contravariance on setData
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const chartRef = useRef<any>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const seriesRef = useRef<any>(null);
 
   useEffect(() => {
     if (!visible || !hostRef.current) return;
@@ -110,18 +103,8 @@ export function CommodityLineChart({ options, height = 320 }: Props) {
         lastValueVisible: true,
       });
 
-      // Bridge LW generic series API → local handle (avoids contravariant setData error)
-      chartRef.current = chart as unknown as ChartHandle;
-      seriesRef.current = {
-        setData: (d) => {
-          series.setData(
-            d.map((p) => ({
-              time: p.time as import("lightweight-charts").UTCTimestamp,
-              value: p.value,
-            })),
-          );
-        },
-      };
+      chartRef.current = chart;
+      seriesRef.current = series;
 
       ro = new ResizeObserver(() => {
         if (hostRef.current) chart.applyOptions({ width: hostRef.current.clientWidth });
@@ -134,7 +117,7 @@ export function CommodityLineChart({ options, height = 320 }: Props) {
       cancelled = true;
       ro?.disconnect();
       try {
-        chartRef.current?.remove();
+        chartRef.current?.remove?.();
       } catch {
         /* noop */
       }
@@ -153,7 +136,7 @@ export function CommodityLineChart({ options, height = 320 }: Props) {
       return;
     }
     series.setData(
-      candles.map((c) => ({
+      candles.map((c: { time: number; close: number }) => ({
         time: Math.floor(c.time / 1000),
         value: c.close,
       })),
