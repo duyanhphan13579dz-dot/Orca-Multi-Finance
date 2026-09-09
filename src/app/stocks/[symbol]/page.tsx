@@ -7,6 +7,7 @@ import { Loading, Panel, Unavailable } from "@/components/ui";
 import { OrcaChart } from "@/components/orca-chart";
 import { TechnicalPanel } from "@/components/technical-panel";
 import { TechRecoPanel } from "@/components/stocks/tech-reco-panel";
+import { StockNewsSentiment } from "@/components/stocks/news-sentiment-chip";
 
 export default function StockOverviewPage({ params }: { params: Promise<{ symbol: string }> }) {
   const [symbol, setSymbol] = useState("");
@@ -84,12 +85,7 @@ export default function StockOverviewPage({ params }: { params: Promise<{ symbol
           )}
         </Panel>
 
-        <Panel title="Tâm lý · sổ lệnh · dòng tiền · NN">
-          <p className="text-[12px] text-ink-3">
-            Sổ lệnh, dòng tiền theo mã và nước ngoài mua/bán sẽ gắn khi có SSI Flashconnect / depth feed. API VNDirect
-            công khai hiện chưa đủ cho order book theo mã.
-          </p>
-        </Panel>
+        <StockNewsSentiment symbol={data.symbol} />
       </div>
 
       {data.notes.length > 0 && <p className="text-[11px] text-warn/90">{data.notes.join(" • ")}</p>}
