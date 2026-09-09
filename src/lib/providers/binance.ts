@@ -129,7 +129,7 @@ export async function getKlines(
 }
 
 /**
- * Deep kline history: pages backward via endTime until `limit` bars (max ~5000).
+ * Deep kline history: pages backward via endTime until `limit` bars (max 5000).
  * Binance returns at most 1000 per request.
  */
 export async function getKlinesDeep(symbol: string, interval: string, limit = 1000): Promise<OhlcvBar[]> {
@@ -137,7 +137,8 @@ export async function getKlinesDeep(symbol: string, interval: string, limit = 10
   const out: OhlcvBar[] = [];
   let endTime: number | undefined;
   let guard = 0;
-  while (out.length < target && guard < 8) {
+  // 5 pages × 1000 = 5000 bars
+  while (out.length < target && guard < 6) {
     guard += 1;
     const batch = Math.min(1000, target - out.length);
     const page = await getKlines(symbol, interval, batch, endTime != null ? { endTime } : undefined);
