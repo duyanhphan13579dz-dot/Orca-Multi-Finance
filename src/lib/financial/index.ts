@@ -10,4 +10,14 @@ export { getFinancialSourceHealth } from "./source-health";
 export { getFinancialMonitorSnapshot } from "./monitor";
 export { scoreFinancialQuality, crossValidatePeriods } from "./validation";
 export { getOfficialFilingsForSymbol, runOfficialDocumentPipeline } from "./official/pipeline";
+export {
+  normalizeIncomeMetrics,
+  normalizeBalanceMetrics,
+  normalizeCashflowMetrics,
+  normalizePeriodMetrics,
+  normalizePeriods,
+  periodsToStatementTables,
+} from "./statements";
+export { buildTtmPeriod, computeGrowth, sortPeriodsNewestFirst } from "./normalize";
+export { getIndustryProfile, listIndustryProfiles, profileIdFromSector } from "./industry-profiles";
 export type * from "./types";
