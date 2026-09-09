@@ -5,7 +5,7 @@ import { getIndustryProfile } from "../financial/industry-profiles";
  * FINANCIAL HEALTH ENGINE — deterministic ratio computation from financial
  * statement rows (any provider shape; alias-based extraction). Pure code: the
  * LLM layer only ever receives these calculated results.
- * Phase 4: industry-specific weights + risk flags.
+ * Phase 4 complete: industry weights + expanded ratios + risk flags.
  */
 
 type Row = Record<string, unknown>;
@@ -207,6 +207,7 @@ export function computeFinancialHealth(
     leverage: {
       debtToEquity: zz(div(totalDebt ?? null, equity), 2),
       debtToAssets: zz(div(totalLiabilities ?? totalDebt ?? null, totalAssets), 2),
+      equityRatio: zz(div(equity, totalAssets), 4),
       netDebtToEbitda: zz(totalDebt != null && ebitdaTtm ? (totalDebt - (cash ?? 0)) / ebitdaTtm : null, 2),
       interestCoverage: zz(div(ebit, interestExpense), 2),
     },
@@ -214,12 +215,16 @@ export function computeFinancialHealth(
       ocfTtm: ocfTtm != null ? Math.round(ocfTtm) : null,
       fcfTtm: fcfTtm != null ? Math.round(fcfTtm) : null,
       fcfConversion: zz(div(fcfTtm, netProfit), 2),
+      ocfToNi: zz(div(ocfTtm, netProfit), 2),
       ocfMargin: zz(div(ocfTtm, revenue), 4),
+      fcfMargin: zz(div(fcfTtm, revenue), 4),
     },
     efficiency: {
       assetTurnover: zz(div(revenue, totalAssets), 2),
       inventoryTurnover: zz(div(revenue, inventory), 2),
       receivableTurnover: zz(div(revenue, receivables), 2),
+      daysInventory: inventory != null && revenue ? zz(div(inventory * 365, revenue), 0) : null,
+      daysReceivable: receivables != null && revenue ? zz(div(receivables * 365, revenue), 0) : null,
     },
   };
 
@@ -308,6 +313,18 @@ export function computeFinancialHealth(
       [0.6, 60],
       [0.3, 40],
     ]),
+    band(groups.efficiency.inventoryTurnover, [
+      [8, 90],
+      [4, 75],
+      [2, 60],
+      [1, 40],
+    ]),
+    band(groups.efficiency.receivableTurnover, [
+      [8, 90],
+      [4, 75],
+      [2, 60],
+      [1, 40],
+    ]),
   ]);
 
   const sc = {
@@ -327,7 +344,14 @@ export function computeFinancialHealth(
     const de = groups.leverage.debtToEquity;
     const cr = groups.liquidity.currentRatio;
     const ic = groups.leverage.interestCoverage;
-    if (profile.flags.maxDebtEquity != null && de != null && de > profile.flags.maxDebtEquity) {
+    const nde = groups.leverage.netDebtToEbitda;
+    const roe = groups.profitability.roe;
+    if (
+      !profile.flags.preferHighLeverage &&
+      profile.flags.maxDebtEquity != null &&
+      de != null &&
+      de > profile.flags.maxDebtEquity
+    ) {
       riskFlags.push(`Nợ/VCSH ${de.toFixed(2)} vượt ngưỡng ngành ${profile.flags.maxDebtEquity}`);
     }
     if (profile.flags.minCurrentRatio != null && cr != null && cr < profile.flags.minCurrentRatio) {
@@ -335,6 +359,12 @@ export function computeFinancialHealth(
     }
     if (profile.flags.minInterestCoverage != null && ic != null && ic < profile.flags.minInterestCoverage) {
       riskFlags.push(`Interest coverage ${ic.toFixed(2)} dưới ngưỡng ngành ${profile.flags.minInterestCoverage}`);
+    }
+    if (profile.flags.maxNetDebtEbitda != null && nde != null && nde > profile.flags.maxNetDebtEbitda) {
+      riskFlags.push(`Net debt/EBITDA ${nde.toFixed(2)} vượt ngưỡng ngành ${profile.flags.maxNetDebtEbitda}`);
+    }
+    if (profile.flags.minRoe != null && roe != null && roe < profile.flags.minRoe) {
+      riskFlags.push(`ROE ${(roe * 100).toFixed(1)}% dưới kỳ vọng ngành ${(profile.flags.minRoe * 100).toFixed(0)}%`);
     }
   }
 
