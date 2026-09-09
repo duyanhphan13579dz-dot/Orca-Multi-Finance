@@ -16,6 +16,7 @@ import {
   logValidation,
 } from "./monitor";
 import { decideFallback } from "./fallback";
+import { metricProfileForSymbol } from "./metric-dictionary";
 import type {
   FinancialPackage,
   FinancialPackageMeta,
@@ -25,11 +26,6 @@ import type {
   NormalizedPeriod,
 } from "./types";
 import type { Meta } from "../types";
-
-/**
- * FINANCIAL DATA RELIABILITY LAYER — Phase 1–5 (complete)
- * Official ∥ Router → normalize → TTM/Growth → validate → fallback → health → monitor → validation log
- */
 
 function labelPeriod(periods: NormalizedPeriod[]): string | null {
   const nonTtm = periods.find((p) => p.periodType !== "ttm");
@@ -51,6 +47,7 @@ function buildMetaPackage(
 ): FinancialPackageMeta {
   const primary = sources.find((s) => s.success)?.id ?? "none";
   const head = periods.find((p) => p.periodType !== "ttm") ?? periods[0];
+  const profile = metricProfileForSymbol(symbol);
   return {
     ticker: symbol,
     latestPeriod: labelPeriod(periods),
@@ -63,7 +60,7 @@ function buildMetaPackage(
     freshnessStatus: freshness,
     fetchedAt: new Date().toISOString(),
     lastVerifiedAt: head ? new Date().toISOString() : null,
-    note,
+    note: [note, `metricProfile=${profile}`].filter(Boolean).join(" · "),
     ttmPeriod: ttm?.period ?? null,
     hasGrowth: Boolean(growth && (growth.yoy.length || growth.qoq.length)),
     qualityScore: quality?.score ?? null,
@@ -130,13 +127,14 @@ export async function getFinancialPackage(symbol: string): Promise<{
   meta: Meta;
 } | null> {
   const sym = symbol.toUpperCase();
+  const metricProfile = metricProfileForSymbol(sym);
 
   const officialPromise = runOfficialDocumentPipeline(sym).catch((e) => {
     logFinancialError(e instanceof Error ? e.message : "official_pipeline_error", sym, "official-pipeline");
     return null;
   });
 
-  const cachedRes = await cached(`fin:pkg:${sym}:router:v3`, {
+  const cachedRes = await cached(`fin:pkg:${sym}:router:v4:${metricProfile}`, {
     ttlMs: 6 * 3_600_000,
     staleMs: 90 * 24 * 3_600_000,
     producer: async () => {
@@ -147,7 +145,7 @@ export async function getFinancialPackage(symbol: string): Promise<{
       const ttm = buildTtmPeriod(basePeriods);
       const growth = computeGrowth(basePeriods);
       const periods = ttm ? [ttm, ...basePeriods] : basePeriods;
-      const legacy = periodsToLegacyRows(basePeriods);
+      const legacy = periodsToLegacyRows(basePeriods, sym);
 
       return {
         ...legacy,
@@ -158,6 +156,7 @@ export async function getFinancialPackage(symbol: string): Promise<{
         fallbackLevel: routed.fallbackLevel,
         note: routed.note,
         sourcesAttempted: routed.sourcesAttempted,
+        metricProfile,
       };
     },
   }).catch((e) => {
@@ -269,6 +268,9 @@ export async function getFinancialPackage(symbol: string): Promise<{
   if (quality.cross.note && quality.cross.compared) {
     note = [note, quality.cross.note].filter(Boolean).join(" · ");
   }
+  note = [note, `Bộ chỉ tiêu: ${metricProfile === "bank" ? "Ngân hàng" : "Phi ngân hàng"}`]
+    .filter(Boolean)
+    .join(" · ");
 
   const fb = decideFallback({
     periods,
