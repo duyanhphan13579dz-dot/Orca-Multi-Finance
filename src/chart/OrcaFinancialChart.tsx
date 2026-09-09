@@ -3,9 +3,10 @@
 /**
  * ORCA FINANCIAL CHART — history + toggleable indicators (EMA/BB/VWAP/RSI/MACD/S-R).
  * Types from chart-const only — never import server-only services.
+ * lightweight-charts is dynamic-imported so the main bundle stays light until mount.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
-import { createChart, ColorType, CrosshairMode, type IChartApi } from "lightweight-charts";
+import type { IChartApi } from "lightweight-charts";
 import { useApi } from "@/lib/hooks";
 import { useSettings } from "@/lib/settings";
 import { tfsFor, TF_LABEL, type ChartAssetType, type ChartMarketData } from "@/lib/chart-const";
@@ -55,6 +56,7 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
     const pref = defaultTimeframe ?? settings.dashboard.defaultTimeframe;
     return tfs.includes(pref) ? pref : tfs.includes("1h") ? "1h" : tfs[0];
   });
+  const [engineReady, setEngineReady] = useState(false);
 
   const hostRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -69,47 +71,59 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
 
   useEffect(() => {
     if (!hostRef.current) return;
-    let chart: IChartApi;
-    try {
-      chart = createChart(hostRef.current, {
-        height,
-        layout: {
-          background: { type: ColorType.Solid, color: "transparent" },
-          textColor: T.text,
-          fontSize: 11,
-          fontFamily: "ui-monospace, Menlo, Consolas, monospace",
-        },
-        grid: {
-          vertLines: { color: T.grid },
-          horzLines: { color: T.grid },
-        },
-        crosshair: { mode: CrosshairMode.Normal },
-        rightPriceScale: { borderVisible: false, scaleMargins: { top: 0.08, bottom: 0.18 } },
-        timeScale: { borderVisible: false, timeVisible: true, secondsVisible: false },
-      });
-    } catch {
-      return;
-    }
-    chartRef.current = chart;
-    const mgr = new SeriesManager(chart);
-    mgr.createBase(kindRef.current);
-    mgrRef.current = mgr;
+    let cancelled = false;
+    let ro: ResizeObserver | null = null;
+    let chart: IChartApi | null = null;
 
-    const ro = new ResizeObserver(() => {
-      if (hostRef.current) chart.applyOptions({ width: hostRef.current.clientWidth, height });
-    });
-    ro.observe(hostRef.current);
-    chart.applyOptions({ width: hostRef.current.clientWidth });
+    (async () => {
+      try {
+        const { createChart, ColorType, CrosshairMode } = await import("lightweight-charts");
+        if (cancelled || !hostRef.current) return;
+
+        chart = createChart(hostRef.current, {
+          height,
+          layout: {
+            background: { type: ColorType.Solid, color: "transparent" },
+            textColor: T.text,
+            fontSize: 11,
+            fontFamily: "ui-monospace, Menlo, Consolas, monospace",
+          },
+          grid: {
+            vertLines: { color: T.grid },
+            horzLines: { color: T.grid },
+          },
+          crosshair: { mode: CrosshairMode.Normal },
+          rightPriceScale: { borderVisible: false, scaleMargins: { top: 0.08, bottom: 0.18 } },
+          timeScale: { borderVisible: false, timeVisible: true, secondsVisible: false },
+        });
+
+        chartRef.current = chart;
+        const mgr = new SeriesManager(chart);
+        mgr.createBase(kindRef.current);
+        mgrRef.current = mgr;
+
+        ro = new ResizeObserver(() => {
+          if (hostRef.current && chart) chart.applyOptions({ width: hostRef.current.clientWidth, height });
+        });
+        ro.observe(hostRef.current);
+        chart.applyOptions({ width: hostRef.current.clientWidth });
+        if (!cancelled) setEngineReady(true);
+      } catch {
+        /* keep page alive */
+      }
+    })();
 
     return () => {
-      ro.disconnect();
+      cancelled = true;
+      ro?.disconnect();
       try {
-        chart.remove();
+        chart?.remove();
       } catch {
         /* noop */
       }
       chartRef.current = null;
       mgrRef.current = null;
+      setEngineReady(false);
     };
   }, [height]);
 
@@ -121,7 +135,7 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
     const seq = ++loadSeqRef.current;
     const mgr = mgrRef.current;
     const chart = chartRef.current;
-    if (!mgr || !chart || !data?.candles?.length) return;
+    if (!engineReady || !mgr || !chart || !data?.candles?.length) return;
     if (seq !== loadSeqRef.current) return;
 
     const payload = data;
@@ -147,7 +161,7 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
     } catch {
       /* keep page alive if series fails */
     }
-  }, [data, prefs.volume, prefs.indicators, prefs.chartType, extraLevels]);
+  }, [data, prefs.volume, prefs.indicators, prefs.chartType, extraLevels, engineReady]);
 
   const setKind = (kind: ChartKind) => {
     update({
@@ -231,11 +245,11 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
       </div>
 
       <div ref={hostRef} className="w-full" style={{ height }} />
-      {isLoading && !data && (
+      {(isLoading && !data) || !engineReady ? (
         <div className="absolute inset-0 flex items-center justify-center bg-background-secondary/60">
           <Loading rows={3} />
         </div>
-      )}
+      ) : null}
       {!isLoading && data && !data.candles?.length && (
         <div className="absolute inset-0 flex items-center justify-center text-[12px] text-text-muted">
           Không có dữ liệu nến
