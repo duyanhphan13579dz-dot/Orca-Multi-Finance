@@ -48,6 +48,23 @@ function normalizeKind(raw: string | undefined): ChartKind {
   return "candles";
 }
 
+/** Prefer deeper history on higher TFs; keep intraday lighter for performance. */
+function historyLimit(assetType: ChartAssetType, tf: string): number {
+  const isDailyPlus = tf === "1d" || tf === "1w" || tf === "1M";
+  const isHighTf = isDailyPlus || tf === "4h" || tf === "6h" || tf === "12h" || tf === "2h";
+  if (assetType === "crypto") {
+    if (isDailyPlus) return 2500;
+    if (isHighTf) return 2000;
+    return 1500;
+  }
+  if (assetType === "stock") return isDailyPlus ? 1200 : 800;
+  if (assetType === "commodity") return isDailyPlus ? 1000 : 800;
+  // forex
+  if (isDailyPlus) return 1500;
+  if (tf === "4h" || tf === "1h") return 1000;
+  return 800;
+}
+
 export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height = 430, title, extraLevels }: Props) {
   const { settings, update } = useSettings();
   const prefs = settings.chart;
@@ -64,7 +81,7 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
   const kindRef = useRef<ChartKind>(normalizeKind(prefs.chartType));
   const loadSeqRef = useRef(0);
 
-  const limit = assetType === "crypto" ? 1500 : 500;
+  const limit = historyLimit(assetType, tf);
   const { data, meta, isLoading } = useApi<ChartMarketData>(
     `/api/v1/chart/history?symbol=${encodeURIComponent(symbol)}&assetType=${assetType}&timeframe=${tf}&limit=${limit}`,
   );
