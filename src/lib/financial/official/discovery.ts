@@ -9,7 +9,6 @@ function filingId(ticker: string, channel: string, fiscalDate: string | null, ki
   return `${ticker}:${channel}:${fiscalDate ?? "na"}:${kind}:${idx}`;
 }
 
-/** Discover filings from structured FS metadata (fiscal dates = filing presence signals). */
 async function discoverFromFsMeta(symbol: string): Promise<{ filings: OfficialFiling[]; ok: boolean }> {
   const sym = symbol.toUpperCase();
   const paths = [
@@ -113,16 +112,13 @@ async function discoverFromEvents(symbol: string): Promise<{ filings: OfficialFi
   return { filings, ok: filings.length > 0 };
 }
 
-/** Public IR / data-portal catalog entries (reference URLs — not claimed as downloaded PDFs). */
+/** Public IR / data-portal catalog (reference URLs — not claimed as parsed PDFs). */
 function discoverPublicCatalog(symbol: string): OfficialFiling[] {
   const sym = symbol.toUpperCase();
   const catalogs: { title: string; url: string; kind: OfficialFiling["kind"] }[] = [
     {
       title: `CafeF — Báo cáo tài chính ${sym}`,
-      url: `https://s.cafef.vn/hose/${sym.lower() if False else sym}-bao-cao-tai-chinh.chn`.replace(
-        "False",
-        "",
-      ),
+      url: `https://s.cafef.vn/hose/${sym}-bao-cao-tai-chinh.chn`,
       kind: "disclosure_other",
     },
     {
@@ -131,14 +127,11 @@ function discoverPublicCatalog(symbol: string): OfficialFiling[] {
       kind: "disclosure_other",
     },
     {
-      title: `VNDirect — Hồ sơ ${sym}`,
+      title: `VNDirect — Bảng CĐKT ${sym}`,
       url: `https://www.vndirect.com.vn/portal/bang-can-doi-ke-toan/${sym.toLowerCase()}.shtml`,
       kind: "disclosure_other",
     },
   ];
-
-  // Fix cafef URL properly
-  catalogs[0].url = `https://s.cafef.vn/hose/${sym}-bao-cao-tai-chinh.chn`;
 
   return catalogs.map((c, idx) => ({
     id: filingId(sym, "company_ir", null, c.kind, idx),
@@ -157,7 +150,7 @@ function discoverPublicCatalog(symbol: string): OfficialFiling[] {
     documentUrl: null,
     mimeType: null,
     confidence: 0.4,
-    rawNote: "Catalog IR công khai — dùng để truy xuất nguồn; không coi là đã parse BCTC.",
+    rawNote: "Catalog IR công khai — truy xuất nguồn; không coi là đã parse BCTC.",
   }));
 }
 
@@ -252,7 +245,6 @@ export async function discoverOfficialFilings(symbol: string): Promise<FilingDis
     return (b.filingDate ?? b.fiscalDate ?? "").localeCompare(a.filingDate ?? a.fiscalDate ?? "");
   });
 
-  // Dedupe by id
   const seen = new Set<string>();
   const unique: OfficialFiling[] = [];
   for (const f of all) {
