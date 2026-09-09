@@ -8,7 +8,13 @@ export { decideFallback, applyFallbackToMeta } from "./fallback";
 export type { FallbackDecision, FallbackLevel } from "./fallback";
 export { getFinancialSourceHealth } from "./source-health";
 export { getFinancialMonitorSnapshot } from "./monitor";
-export { scoreFinancialQuality, crossValidatePeriods } from "./validation";
+export {
+  scoreFinancialQuality,
+  crossValidatePeriods,
+  internalConsistencyValidate,
+  runFullCrossValidation,
+} from "./validation";
+export { appendValidationLog, getValidationLogs, getValidationAnalytics } from "./validation-log";
 export { getOfficialFilingsForSymbol, runOfficialDocumentPipeline } from "./official/pipeline";
 export {
   normalizeIncomeMetrics,
