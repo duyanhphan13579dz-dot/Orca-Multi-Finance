@@ -154,7 +154,7 @@ const View = memo(function View({ signal: s, meta }: { signal: FxSignal; meta: M
         </div>
         <div className="flex flex-wrap gap-1.5">
           <Badge tone={s.filter.eligible ? "up" : "down"}>tier {s.filter.tier}</Badge>
-          <Badge tone="neutral">{s.filter.sessionLabel}</Badge>
+          <Badge tone={s.filter.sessionLabel === "OFF_SESSION" ? "neutral" : "accent"}>{s.filter.sessionLabel}</Badge>
           <Badge tone="neutral">{s.regime.market}</Badge>
           {setup && (
             <Badge tone={setup.status === "TRIGGERED" ? "up" : "neutral"}>
@@ -274,6 +274,12 @@ const View = memo(function View({ signal: s, meta }: { signal: FxSignal; meta: M
           </div>
         )}
 
+        {!levScenario && (
+          <p className="mt-2 text-[10px] text-text-muted">
+            Chưa có Entry/SL/TP — chờ confluence mẫu nến + EMA/RSI/MACD hoặc setup A/C.
+          </p>
+        )}
+
         {levScenario && leverage >= 20 && (
           <p className="mt-1.5 text-[9px] leading-snug text-warning">
             ~{levScenario.wipePct}% biến động ngược ≈ rủi ro vốn (minh họa, không phải thanh lý thực tế). Vốn giả định ${
@@ -318,8 +324,8 @@ const View = memo(function View({ signal: s, meta }: { signal: FxSignal; meta: M
       )}
 
       <p className="text-[10.5px] text-text-muted">
-        Module A/C M15→M5→M1 · Session/Spread filter bat buoc · Module B ORDER_FLOW_UNAVAILABLE (OTC). Risk mac dinh
-        0.25%/lenh. Khong phai khuyen nghi.
+        Module A/C + Tech/Pattern (EMA·RSI·MACD·nến) · Session soft-gate (OFF_SESSION giảm strength) · Module B OTC
+        chưa có order-flow. Risk mặc định ≤0.25%/lệnh. Không phải khuyến nghị đầu tư.
       </p>
       {meta && <MetaLine meta={meta} />}
     </div>
