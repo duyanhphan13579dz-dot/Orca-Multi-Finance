@@ -1,15 +1,13 @@
 import "server-only";
 import type { OfficialFiling } from "./types";
+import { getSscCalendar, type SscCalendarSnapshot, type SscReportKind } from "./ssc-calendar";
 
 /**
  * SSC — Cổng công bố thông tin Ủy ban Chứng khoán Nhà nước
  * https://congbothongtin.ssc.gov.vn/
- * Search UI: /faces/NewsSearch (Oracle ADF — cần browser session để list/download PDF).
  *
- * Adapter này:
- * 1) Health-check portal
- * 2) Tạo filing catalog chính thức theo ticker (sourceUrl → trang search SSC)
- * 3) Không bịa danh sách PDF khi ADF không trả HTML tĩnh
+ * Tự động theo lịch cửa sổ công bố (ssc-calendar):
+ * Q1 01–30/4 · Q2 01–31/7 · Q3 01–31/10 · Q4+Năm 01–31/1 năm sau
  */
 
 export const SSC_PORTAL_BASE =
@@ -62,33 +60,56 @@ export async function probeSscPortal(): Promise<SscPortalProbe> {
   }
 }
 
-/** Official catalog entries for a ticker — always prefer SSC as source-of-truth link. */
+function kindToFilingKind(kind: SscReportKind): OfficialFiling["kind"] {
+  if (kind === "ANNUAL") return "annual_fs";
+  return "quarterly_fs";
+}
+
+function kindToPeriodType(kind: SscReportKind): OfficialFiling["periodType"] {
+  if (kind === "ANNUAL") return "year";
+  return "quarter";
+}
+
+/** Expected filings for current SSC disclosure window (auto calendar). */
+export function buildExpectedWindowFilings(
+  symbol: string,
+  calendar: SscCalendarSnapshot,
+  portalOk: boolean,
+): OfficialFiling[] {
+  const sym = symbol.toUpperCase();
+  const searchWithHint = `${SSC_NEWS_SEARCH_URL}?searchString=${encodeURIComponent(sym)}`;
+
+  return calendar.expectedReports.map((exp, idx) => ({
+    id: `${sym}:ssc_ids:expected:${exp.kind}:${exp.fiscalYear}:${idx}`,
+    ticker: sym,
+    kind: kindToFilingKind(exp.kind),
+    title: `SSC — Kỳ vọng công bố ${exp.kind === "ANNUAL" ? `năm ${exp.fiscalYear}` : exp.kind + "/" + exp.fiscalYear} · ${sym}`,
+    period: exp.periodLabel,
+    periodType: kindToPeriodType(exp.kind),
+    fiscalDate: null,
+    filingDate: calendar.asOf,
+    disclosureDate: calendar.asOf,
+    statementScope: "unknown" as const,
+    auditStatus: exp.kind === "ANNUAL" ? ("audited" as const) : ("unknown" as const),
+    sourceChannel: "ssc_ids" as const,
+    sourceUrl: searchWithHint,
+    documentUrl: null,
+    mimeType: null,
+    confidence: portalOk ? 0.95 : 0.7,
+    rawNote: `Cửa sổ công bố SSC đang mở (${calendar.asOf}). Ưu tiên kiểm tra/cập nhật BCTC ${exp.periodLabel}.`,
+  }));
+}
+
+/** Baseline catalog (always available). */
 export function buildSscCatalogFilings(symbol: string, portalOk: boolean): OfficialFiling[] {
   const sym = symbol.toUpperCase();
-  // Deep-link style: ADF may ignore query params; still useful as official entry point.
   const searchWithHint = `${SSC_NEWS_SEARCH_URL}?searchString=${encodeURIComponent(sym)}`;
 
   const kinds: { kind: OfficialFiling["kind"]; title: string; conf: number }[] = [
-    {
-      kind: "quarterly_fs",
-      title: `SSC — Tra cứu BCTC quý · ${sym}`,
-      conf: 0.92,
-    },
-    {
-      kind: "semi_annual_fs",
-      title: `SSC — Tra cứu BCTC bán niên · ${sym}`,
-      conf: 0.9,
-    },
-    {
-      kind: "annual_fs",
-      title: `SSC — Tra cứu BCTC năm / kiểm toán · ${sym}`,
-      conf: 0.93,
-    },
-    {
-      kind: "disclosure_other",
-      title: `SSC — Toàn bộ công bố thông tin · ${sym}`,
-      conf: 0.88,
-    },
+    { kind: "quarterly_fs", title: `SSC — Tra cứu BCTC quý · ${sym}`, conf: 0.92 },
+    { kind: "semi_annual_fs", title: `SSC — Tra cứu BCTC bán niên · ${sym}`, conf: 0.9 },
+    { kind: "annual_fs", title: `SSC — Tra cứu BCTC năm / kiểm toán · ${sym}`, conf: 0.93 },
+    { kind: "disclosure_other", title: `SSC — Toàn bộ công bố thông tin · ${sym}`, conf: 0.88 },
   ];
 
   return kinds.map((k, idx) => ({
@@ -112,7 +133,7 @@ export function buildSscCatalogFilings(symbol: string, portalOk: boolean): Offic
     auditStatus: k.kind === "annual_fs" ? ("audited" as const) : ("unknown" as const),
     sourceChannel: "ssc_ids" as const,
     sourceUrl: searchWithHint,
-    documentUrl: null, // PDF nằm sau session ADF — không giả lập URL file
+    documentUrl: null,
     mimeType: null,
     confidence: portalOk ? k.conf : Math.max(0.5, k.conf - 0.25),
     rawNote: portalOk
@@ -124,14 +145,26 @@ export function buildSscCatalogFilings(symbol: string, portalOk: boolean): Offic
 export async function discoverFromSscPortal(symbol: string): Promise<{
   filings: OfficialFiling[];
   probe: SscPortalProbe;
+  calendar: SscCalendarSnapshot;
   notes: string[];
 }> {
+  const calendar = getSscCalendar();
   const probe = await probeSscPortal();
-  const filings = buildSscCatalogFilings(symbol, probe.ok);
+
+  const filings: OfficialFiling[] = [];
+  if (calendar.inDisclosureWindow || calendar.shouldAggressiveFetch) {
+    filings.push(...buildExpectedWindowFilings(symbol, calendar, probe.ok));
+  }
+  filings.push(...buildSscCatalogFilings(symbol, probe.ok));
+
   const notes: string[] = [
-    `SSC portal: ${probe.ok ? "online" : "offline"} (${probe.latencyMs}ms) · ${SSC_NEWS_SEARCH_URL}`,
-    "Cổng SSC dùng Oracle ADF — danh sách/PDF chi tiết cần tương tác UI; Orca gắn catalog + health-check chính thức.",
+    `SSC portal: ${probe.ok ? "online" : "offline"} (${probe.latencyMs}ms)`,
+    calendar.note,
+    calendar.shouldAggressiveFetch
+      ? "Chế độ lấy SSC: tích cực (trong/ vừa hết cửa sổ công bố — TTL ngắn)."
+      : "Chế độ lấy SSC: tiết kiệm (ngoài cửa sổ — TTL dài, catalog chính thức).",
   ];
   if (!probe.ok) notes.push(`SSC probe: ${probe.note}`);
-  return { filings, probe, notes };
+
+  return { filings, probe, calendar, notes };
 }
