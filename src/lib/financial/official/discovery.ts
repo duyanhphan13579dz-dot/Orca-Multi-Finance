@@ -27,7 +27,6 @@ async function discoverFromFsMeta(symbol: string): Promise<{ filings: OfficialFi
     });
     if (!res.ok || !res.data?.data?.length) continue;
 
-    // collapse by fiscalDate + reportType
     const byKey = new Map<string, Record<string, unknown>>();
     for (const row of res.data.data) {
       const fd = String(row.fiscalDate ?? "");
@@ -72,7 +71,6 @@ async function discoverFromFsMeta(symbol: string): Promise<{ filings: OfficialFi
   return { filings, ok: filings.length > 0 };
 }
 
-/** Corporate events channel — may include dividend/disclosure dates. */
 async function discoverFromEvents(symbol: string): Promise<{ filings: OfficialFiling[]; ok: boolean }> {
   const sym = symbol.toUpperCase();
   const res = await httpJson<{ data?: Record<string, unknown>[] }>(
@@ -86,7 +84,6 @@ async function discoverFromEvents(symbol: string): Promise<{ filings: OfficialFi
   for (const row of res.data.data) {
     const typeDesc = typeof row.typeDesc === "string" ? row.typeDesc : typeof row.type === "string" ? row.type : "";
     const cls = classifyFiling({ title: typeDesc, typeDesc });
-    // Only keep finance-related events
     if (cls.kind === "unknown" && !/t[aà]i ch[ií]nh|bctc|b[aá]o c[aá]o|dividend|c[oổ] t[uứ]c/i.test(typeDesc)) {
       continue;
     }
@@ -116,10 +113,54 @@ async function discoverFromEvents(symbol: string): Promise<{ filings: OfficialFi
   return { filings, ok: filings.length > 0 };
 }
 
-/**
- * Placeholder channels for true official portals (SSC / HOSE / HNX / IR).
- * Enabled when env endpoints are provided — never invent filings.
- */
+/** Public IR / data-portal catalog entries (reference URLs — not claimed as downloaded PDFs). */
+function discoverPublicCatalog(symbol: string): OfficialFiling[] {
+  const sym = symbol.toUpperCase();
+  const catalogs: { title: string; url: string; kind: OfficialFiling["kind"] }[] = [
+    {
+      title: `CafeF — Báo cáo tài chính ${sym}`,
+      url: `https://s.cafef.vn/hose/${sym.lower() if False else sym}-bao-cao-tai-chinh.chn`.replace(
+        "False",
+        "",
+      ),
+      kind: "disclosure_other",
+    },
+    {
+      title: `Vietstock — Tài chính ${sym}`,
+      url: `https://finance.vietstock.vn/${sym}/tai-chinh.htm`,
+      kind: "disclosure_other",
+    },
+    {
+      title: `VNDirect — Hồ sơ ${sym}`,
+      url: `https://www.vndirect.com.vn/portal/bang-can-doi-ke-toan/${sym.toLowerCase()}.shtml`,
+      kind: "disclosure_other",
+    },
+  ];
+
+  // Fix cafef URL properly
+  catalogs[0].url = `https://s.cafef.vn/hose/${sym}-bao-cao-tai-chinh.chn`;
+
+  return catalogs.map((c, idx) => ({
+    id: filingId(sym, "company_ir", null, c.kind, idx),
+    ticker: sym,
+    kind: c.kind,
+    title: c.title,
+    period: null,
+    periodType: "unknown" as const,
+    fiscalDate: null,
+    filingDate: null,
+    disclosureDate: null,
+    statementScope: "unknown" as const,
+    auditStatus: "unknown" as const,
+    sourceChannel: "company_ir" as const,
+    sourceUrl: c.url,
+    documentUrl: null,
+    mimeType: null,
+    confidence: 0.4,
+    rawNote: "Catalog IR công khai — dùng để truy xuất nguồn; không coi là đã parse BCTC.",
+  }));
+}
+
 async function discoverOfficialPortals(symbol: string): Promise<{
   filings: OfficialFiling[];
   channels: FilingSourceChannel[];
@@ -136,7 +177,6 @@ async function discoverOfficialPortals(symbol: string): Promise<{
     const base = process.env[p.env]?.trim();
     if (!base) continue;
     channels.push(p.channel);
-    // Adapter hook: GET {base}/{symbol} expected to return JSON list — optional.
     try {
       const res = await httpJson<{ data?: Record<string, unknown>[] } | Record<string, unknown>[]>(
         `${base.replace(/\/$/, "")}/${symbol.toUpperCase()}`,
@@ -163,7 +203,12 @@ async function discoverOfficialPortals(symbol: string): Promise<{
           auditStatus: cls.auditStatus,
           sourceChannel: p.channel,
           sourceUrl: base,
-          documentUrl: typeof row.url === "string" ? row.url : typeof row.documentUrl === "string" ? row.documentUrl : null,
+          documentUrl:
+            typeof row.url === "string"
+              ? row.url
+              : typeof row.documentUrl === "string"
+                ? row.documentUrl
+                : null,
           mimeType: typeof row.mimeType === "string" ? row.mimeType : null,
           confidence: 0.9,
         });
@@ -187,7 +232,7 @@ export async function discoverOfficialFilings(symbol: string): Promise<FilingDis
   if (portals.channels.length && !portals.filings.length) {
     notes.push("Cổng chính thức đã cấu hình nhưng chưa trả filing.");
   } else if (!portals.channels.length) {
-    notes.push("SSC/HOSE/HNX/IR chưa cấu hình env — dùng tín hiệu structured tạm thời.");
+    notes.push("SSC/HOSE/HNX env chưa cấu hình — dùng FS meta + catalog IR công khai.");
   }
 
   channelsAttempted.push("vndirect_fs_meta");
@@ -199,17 +244,28 @@ export async function discoverOfficialFilings(symbol: string): Promise<FilingDis
   const ev = await discoverFromEvents(sym);
   all.push(...ev.filings);
 
-  // Prefer higher confidence + newer filingDate
+  channelsAttempted.push("company_ir");
+  all.push(...discoverPublicCatalog(sym));
+
   all.sort((a, b) => {
     if (b.confidence !== a.confidence) return b.confidence - a.confidence;
     return (b.filingDate ?? b.fiscalDate ?? "").localeCompare(a.filingDate ?? a.fiscalDate ?? "");
   });
 
+  // Dedupe by id
+  const seen = new Set<string>();
+  const unique: OfficialFiling[] = [];
+  for (const f of all) {
+    if (seen.has(f.id)) continue;
+    seen.add(f.id);
+    unique.push(f);
+  }
+
   return {
     ticker: sym,
-    filings: all.slice(0, 40),
+    filings: unique.slice(0, 50),
     discoveredAt: new Date().toISOString(),
-    channelsAttempted,
+    channelsAttempted: [...new Set(channelsAttempted)],
     notes,
   };
 }
