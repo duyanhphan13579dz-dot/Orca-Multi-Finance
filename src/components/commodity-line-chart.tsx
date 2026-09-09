@@ -21,6 +21,16 @@ interface Props {
   height?: number;
 }
 
+/** Opaque handles — LW charts types stay behind dynamic import boundary. */
+type ChartHandle = {
+  remove: () => void;
+  applyOptions: (o: { width?: number; height?: number }) => void;
+  timeScale: () => { fitContent: () => void };
+};
+type SeriesHandle = {
+  setData: (d: { time: number; value: number }[]) => void;
+};
+
 export function CommodityLineChart({ options, height = 320 }: Props) {
   const shellRef = useRef<HTMLElement>(null);
   const [visible, setVisible] = useState(false);
@@ -65,8 +75,8 @@ export function CommodityLineChart({ options, height = 320 }: Props) {
   );
 
   const hostRef = useRef<HTMLDivElement>(null);
-  const chartRef = useRef<{ remove: () => void; applyOptions: (o: object) => void; timeScale: () => { fitContent: () => void } } | null>(null);
-  const seriesRef = useRef<{ setData: (d: object[]) => void } | null>(null);
+  const chartRef = useRef<ChartHandle | null>(null);
+  const seriesRef = useRef<SeriesHandle | null>(null);
 
   useEffect(() => {
     if (!visible || !hostRef.current) return;
@@ -99,8 +109,19 @@ export function CommodityLineChart({ options, height = 320 }: Props) {
         priceLineVisible: true,
         lastValueVisible: true,
       });
-      chartRef.current = chart;
-      seriesRef.current = series;
+
+      // Bridge LW generic series API → local handle (avoids contravariant setData error)
+      chartRef.current = chart as unknown as ChartHandle;
+      seriesRef.current = {
+        setData: (d) => {
+          series.setData(
+            d.map((p) => ({
+              time: p.time as import("lightweight-charts").UTCTimestamp,
+              value: p.value,
+            })),
+          );
+        },
+      };
 
       ro = new ResizeObserver(() => {
         if (hostRef.current) chart.applyOptions({ width: hostRef.current.clientWidth });
