@@ -1,15 +1,14 @@
 import "server-only";
 
 /**
- * Lightweight Oracle ADF session client for SSC CongBoThongTin.
+ * Oracle ADF session client — SSC CongBoThongTin
  *
- * Flow:
- * 1) GET /faces/NewsSearch → Set-Cookie (JSESSIONID) + bootstrap HTML
- * 2) Follow _afrLoop / Adf-Window-Id URL (full page render ~80KB with table)
- * 3) Parse HTML table rows (no headless browser required for listing)
- *
- * Search-by-ticker uses ADF PPR POST best-effort; falls back to parsing
- * default listing + client filter.
+ * Critical discovery (2026-09):
+ * - Bootstrap HTML is ~7KB loopback JS; does NOT contain the data table.
+ * - Full table (~86KB) loads only via:
+ *     /faces/NewsSearch;jsessionid=XXX?_afrLoop=YYY&Adf-Window-Id=w1&...
+ * - _afrLoop is embedded in bootstrap as: _afrLoop',\n '34415...
+ * - PPR POST must hit the ;jsessionid= path or ViewState expires.
  */
 
 export const SSC_BASE = (process.env.SSC_PORTAL_URL ?? "https://congbothongtin.ssc.gov.vn").replace(
@@ -24,10 +23,13 @@ const UA =
 
 export interface AdfSession {
   cookie: string;
+  jsessionId: string | null;
   html: string;
   finalUrl: string;
-  windowId: string | null;
+  postUrl: string;
+  windowId: string;
   afrLoop: string | null;
+  viewState: string | null;
   latencyMs: number;
 }
 
@@ -47,43 +49,70 @@ function mergeCookies(existing: string, setCookieHeaders: string[]): string {
 }
 
 function getSetCookies(res: Response): string[] {
-  // Node fetch may expose getSetCookie()
   const anyHeaders = res.headers as Headers & { getSetCookie?: () => string[] };
-  if (typeof anyHeaders.getSetCookie === "function") {
-    return anyHeaders.getSetCookie();
-  }
+  if (typeof anyHeaders.getSetCookie === "function") return anyHeaders.getSetCookie();
   const single = res.headers.get("set-cookie");
   return single ? [single] : [];
 }
 
-function extractAfrParams(html: string): { afrLoop: string | null; windowId: string | null } {
-  const loop =
-    html.match(/_afrLoop[=:](\d+)/)?.[1] ??
-    html.match(/_afrLoop=(\d+)/)?.[1] ??
-    null;
-  const windowId =
-    html.match(/Adf-Window-Id[=:]([A-Za-z0-9_-]+)/)?.[1] ??
-    html.match(/Adf-Window-Id=([A-Za-z0-9_-]+)/)?.[1] ??
-    null;
-  return { afrLoop: loop, windowId };
+function extractJsession(cookie: string): string | null {
+  const m = cookie.match(/JSESSIONID=([^;\s]+)/i);
+  return m?.[1] ?? null;
 }
 
-function buildAfrUrl(basePath: string, afrLoop: string, windowId: string | null): string {
-  const u = new URL(basePath, SSC_BASE);
+/** Extract _afrLoop from ADF loopback bootstrap JS (not query-string form). */
+export function extractAfrLoop(html: string): string | null {
+  const patterns = [
+    /_afrLoop['"]?\s*[,:]\s*['"]?(\d{10,})/,
+    /_afrLoop=(\d{10,})/,
+    /["']_afrLoop["']\s*,\s*["'](\d{10,})["']/,
+  ];
+  for (const re of patterns) {
+    const m = html.match(re);
+    if (m?.[1]) return m[1];
+  }
+  return null;
+}
+
+function extractViewState(html: string): string | null {
+  return html.match(/name="javax\.faces\.ViewState"[^>]*value="([^"]*)"/)?.[1] ?? null;
+}
+
+function buildFullPageUrl(jsessionId: string | null, afrLoop: string, windowId: string): string {
+  const path = jsessionId
+    ? `${SSC_NEWS_PATH};jsessionid=${jsessionId}`
+    : SSC_NEWS_PATH;
+  const u = new URL(path, SSC_BASE);
   u.searchParams.set("_afrLoop", afrLoop);
   u.searchParams.set("_afrWindowMode", "0");
-  if (windowId) u.searchParams.set("Adf-Window-Id", windowId);
+  u.searchParams.set("Adf-Window-Id", windowId);
   u.searchParams.set("_afrFS", "16");
   u.searchParams.set("_afrMT", "screen");
   u.searchParams.set("_afrMFW", "1280");
   u.searchParams.set("_afrMFH", "800");
+  u.searchParams.set("_afrMFDW", "1280");
+  u.searchParams.set("_afrMFDH", "800");
+  u.searchParams.set("_afrMFC", "8");
+  u.searchParams.set("_afrMFCI", "0");
+  u.searchParams.set("_afrMFM", "0");
+  u.searchParams.set("_afrMFR", "96");
+  u.searchParams.set("_afrMFG", "0");
+  u.searchParams.set("_afrMFS", "0");
+  u.searchParams.set("_afrMFO", "0");
   return u.toString();
 }
 
-/** Bootstrap ADF session and return fully rendered NewsSearch HTML. */
+function postPath(jsessionId: string | null): string {
+  return jsessionId
+    ? `${SSC_BASE}${SSC_NEWS_PATH};jsessionid=${jsessionId}`
+    : `${SSC_BASE}${SSC_NEWS_PATH}`;
+}
+
+/** Bootstrap ADF session and return fully rendered NewsSearch HTML (~86KB with table). */
 export async function openSscNewsSearch(): Promise<AdfSession> {
   const t0 = performance.now();
   let cookie = "";
+  const windowId = "w1";
 
   const boot = await fetch(`${SSC_BASE}${SSC_NEWS_PATH}`, {
     headers: {
@@ -96,38 +125,24 @@ export async function openSscNewsSearch(): Promise<AdfSession> {
   });
   cookie = mergeCookies(cookie, getSetCookies(boot));
   const bootHtml = await boot.text();
-  let { afrLoop, windowId } = extractAfrParams(bootHtml);
-
-  // Fallback: some ADF apps put loop only after cookie session — retry once
-  if (!afrLoop) {
-    const boot2 = await fetch(`${SSC_BASE}${SSC_NEWS_PATH}`, {
-      headers: {
-        "User-Agent": UA,
-        Accept: "text/html",
-        Cookie: cookie,
-      },
-      redirect: "follow",
-      signal: AbortSignal.timeout(12_000),
-    });
-    cookie = mergeCookies(cookie, getSetCookies(boot2));
-    const html2 = await boot2.text();
-    const p = extractAfrParams(html2);
-    afrLoop = p.afrLoop;
-    windowId = p.windowId ?? windowId;
-  }
+  const jsessionId = extractJsession(cookie);
+  const afrLoop = extractAfrLoop(bootHtml);
 
   if (!afrLoop) {
     return {
       cookie,
+      jsessionId,
       html: bootHtml,
       finalUrl: `${SSC_BASE}${SSC_NEWS_PATH}`,
+      postUrl: postPath(jsessionId),
       windowId,
       afrLoop: null,
+      viewState: extractViewState(bootHtml),
       latencyMs: Math.round(performance.now() - t0),
     };
   }
 
-  const fullUrl = buildAfrUrl(SSC_NEWS_PATH, afrLoop, windowId ?? "w1");
+  const fullUrl = buildFullPageUrl(jsessionId, afrLoop, windowId);
   const full = await fetch(fullUrl, {
     headers: {
       "User-Agent": UA,
@@ -136,72 +151,170 @@ export async function openSscNewsSearch(): Promise<AdfSession> {
       Referer: `${SSC_BASE}${SSC_NEWS_PATH}`,
     },
     redirect: "follow",
-    signal: AbortSignal.timeout(20_000),
+    signal: AbortSignal.timeout(25_000),
   });
   cookie = mergeCookies(cookie, getSetCookies(full));
   const html = await full.text();
-  const params = extractAfrParams(html);
 
   return {
     cookie,
+    jsessionId: extractJsession(cookie) ?? jsessionId,
     html,
     finalUrl: fullUrl,
-    windowId: params.windowId ?? windowId,
-    afrLoop: params.afrLoop ?? afrLoop,
+    postUrl: postPath(extractJsession(cookie) ?? jsessionId),
+    windowId,
+    afrLoop,
+    viewState: extractViewState(html),
     latencyMs: Math.round(performance.now() - t0),
   };
 }
 
+function buildPprBody(
+  viewState: string,
+  fields: Record<string, string>,
+  eventSource: string,
+): string {
+  const body = new URLSearchParams();
+  body.set("javax.faces.ViewState", viewState);
+  body.set("org.apache.myfaces.trinidad.faces.FORM", "f1");
+  for (const [k, v] of Object.entries(fields)) body.set(k, v);
+  body.set("event", eventSource);
+  body.set(
+    `event.${eventSource}`,
+    `<m xmlns="http://oracle.com/richClient/comm"><k name="type"><s>action</s></k></m>`,
+  );
+  body.set("oracle.adf.view.rich.PROCESS", Object.keys(fields).concat(eventSource).join(","));
+  body.set("oracle.adf.view.rich.DELTAS", "{}");
+  body.set("Adf-Page-Id", "0");
+  body.set("Adf-Window-Id", "w1");
+  return body.toString();
+}
+
+/** Merge CDATA updates from partial-response XML into a synthetic HTML blob. */
+export function mergePartialResponse(xml: string): {
+  html: string;
+  viewState: string | null;
+  updateIds: string[];
+} {
+  const updates = [...xml.matchAll(/<update id="([^"]+)">\s*<!\[CDATA\[([\s\S]*?)\]\]><\/update>/g)];
+  const parts: string[] = [];
+  const updateIds: string[] = [];
+  let viewState: string | null = null;
+  for (const m of updates) {
+    updateIds.push(m[1]);
+    if (m[1] === "javax.faces.ViewState") viewState = m[2].trim();
+    else parts.push(m[2]);
+  }
+  return { html: parts.join("\n"), viewState, updateIds };
+}
+
 /**
- * Best-effort ADF PPR search by ticker (MCK field pt9:it8112).
- * Returns HTML fragment or full page if server cooperates; otherwise null.
+ * PPR search by ticker (field pt9:it8112, button pt9:b1).
+ * Posts to ;jsessionid= path — required to avoid ViewExpiredException.
  */
 export async function adfSearchByTicker(
   session: AdfSession,
   symbol: string,
-): Promise<{ html: string; ok: boolean; note: string }>
-{
+): Promise<{ html: string; ok: boolean; note: string; viewState: string | null }> {
   const sym = symbol.toUpperCase();
-  if (!session.cookie) {
-    return { html: session.html, ok: false, note: "missing_session_cookie" };
+  if (!session.viewState || !session.cookie) {
+    return { html: session.html, ok: false, note: "missing_viewstate_or_cookie", viewState: session.viewState };
   }
 
-  // ADF Rich partial request — field names observed on NewsSearch form
-  const body = new URLSearchParams();
-  body.set("pt9:it8112", sym);
-  body.set("pt9:it8112::content", sym);
-  body.set("event", "pt9:b1"); // search button — may vary by deploy
-  body.set("event.pt9:b1", "<m xmlns=\"http://oracle.com/richClient/comm\"><k name=\"type\"><s>action</s></k></m>");
-  body.set("oracle.adf.view.rich.PROCESS", "pt9:b1,pt9:it8112");
-
   try {
-    const res = await fetch(session.finalUrl || `${SSC_BASE}${SSC_NEWS_PATH}`, {
+    const body = buildPprBody(session.viewState, { "pt9:it8112": sym }, "pt9:b1");
+    const res = await fetch(session.postUrl, {
       method: "POST",
       headers: {
         "User-Agent": UA,
         "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
         Cookie: session.cookie,
         "Adf-Rich-Message": "true",
-        "Adf-Ads-For-Packet": "1",
         Referer: session.finalUrl,
         Origin: SSC_BASE,
       },
-      body: body.toString(),
+      body,
       redirect: "follow",
       signal: AbortSignal.timeout(15_000),
     });
-    const html = await res.text();
-    const hasTable = /pt9:t1:\d+:c5/.test(html) || /role="gridcell"/.test(html);
+    const xml = await res.text();
+
+    if (xml.includes("ViewExpiredException")) {
+      return { html: session.html, ok: false, note: "view_expired", viewState: null };
+    }
+
+    const merged = mergePartialResponse(xml);
+    const hasGrid =
+      /pt9:t1:\d+:c5/.test(merged.html) ||
+      /role="gridcell"/.test(merged.html) ||
+      new RegExp(sym).test(merged.html);
+
+    // Table fragment may be absent even when search is accepted — keep default HTML
     return {
-      html: hasTable ? html : session.html,
-      ok: res.ok && hasTable,
-      note: hasTable ? "ppr_search_ok" : `ppr_fallback_default_table HTTP ${res.status}`,
+      html: hasGrid ? merged.html : session.html,
+      ok: hasGrid,
+      note: hasGrid
+        ? `ppr_ok updates=${merged.updateIds.join(",")}`
+        : `ppr_no_table updates=${merged.updateIds.join(",") || "none"}`,
+      viewState: merged.viewState ?? session.viewState,
     };
   } catch (e) {
     return {
       html: session.html,
       ok: false,
       note: e instanceof Error ? e.message.slice(0, 120) : "ppr_error",
+      viewState: session.viewState,
+    };
+  }
+}
+
+/**
+ * Attempt PDF download via commandLink event pt9:t1:{row}:cil4z.
+ * Returns bytes + content-type when server streams a file; null otherwise.
+ */
+export async function adfTryDownloadRow(
+  session: AdfSession,
+  rowIndex: number,
+): Promise<{ ok: boolean; bytes: Uint8Array | null; contentType: string | null; note: string }> {
+  if (!session.viewState) {
+    return { ok: false, bytes: null, contentType: null, note: "no_viewstate" };
+  }
+  const source = `pt9:t1:${rowIndex}:cil4z`;
+  try {
+    const body = buildPprBody(session.viewState, {}, source);
+    const res = await fetch(session.postUrl, {
+      method: "POST",
+      headers: {
+        "User-Agent": UA,
+        "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+        Cookie: session.cookie,
+        "Adf-Rich-Message": "true",
+        Referer: session.finalUrl,
+        Origin: SSC_BASE,
+      },
+      body,
+      redirect: "follow",
+      signal: AbortSignal.timeout(20_000),
+    });
+    const ct = res.headers.get("content-type") ?? "";
+    const buf = new Uint8Array(await res.arrayBuffer());
+    const isFile =
+      /pdf|octet-stream|msword|spreadsheet|zip/i.test(ct) ||
+      Boolean(res.headers.get("content-disposition"));
+    if (isFile && buf.byteLength > 100) {
+      return { ok: true, bytes: buf, contentType: ct, note: `file ${buf.byteLength}B` };
+    }
+    const text = new TextDecoder().decode(buf.slice(0, 400));
+    if (text.includes("ViewExpiredException")) {
+      return { ok: false, bytes: null, contentType: ct, note: "view_expired" };
+    }
+    return { ok: false, bytes: null, contentType: ct, note: `not_file ${ct} ${buf.byteLength}B` };
+  } catch (e) {
+    return {
+      ok: false,
+      bytes: null,
+      contentType: null,
+      note: e instanceof Error ? e.message.slice(0, 120) : "download_error",
     };
   }
 }
