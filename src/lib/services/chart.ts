@@ -94,7 +94,8 @@ function toCandle(b: OhlcvBar): ChartCandle {
 }
 
 function points(times: number[], values: (number | null)[]): IndicatorPoint[] {
-  const step = values.length > 600 ? Math.ceil(values.length / 600) : 1;
+  // Keep denser series for longer history (up to ~1200 points for smooth pan/zoom)
+  const step = values.length > 1200 ? Math.ceil(values.length / 1200) : 1;
   const out: IndicatorPoint[] = [];
   for (let i = 0; i < times.length; i++) {
     const v = values[i];
@@ -178,7 +179,7 @@ export function computeIndicators(candles: ChartCandle[]): ChartIndicators | nul
 /* ------------------------------ history core ------------------------------- */
 
 async function cryptoCandles(symbol: string, tf: string, limit: number): Promise<{ candles: ChartCandle[]; source: string; note?: string }> {
-  const bars = await binance.getKlinesDeep(symbol, binanceInterval(tf), Math.min(limit, 3000));
+  const bars = await binance.getKlinesDeep(symbol, binanceInterval(tf), Math.min(limit, 5000));
   return { candles: bars.map(toCandle), source: "binance" };
 }
 
@@ -196,7 +197,9 @@ async function forexCandles(pair: string, tf: string, limit: number): Promise<{ 
 }
 
 async function stockCandles(symbol: string, tf: string, limit: number): Promise<{ candles: ChartCandle[]; source: string; note?: string }> {
-  const dayLimit = tf === "1d" ? Math.min(limit, 400) : Math.min(limit * 7, 500);
+  // Pull enough daily bars so weekly/monthly aggregation still has depth
+  const dayLimit =
+    tf === "1d" ? Math.min(limit, 1500) : tf === "1w" ? Math.min(limit * 8, 2000) : Math.min(limit * 30, 2500);
 
   // VN market indices — daily series from VNDirect vnmarket_prices
   if (vndirect.isVnIndexSymbol(symbol)) {
@@ -266,7 +269,7 @@ export function isChartableCommodity(symbol: string): boolean {
 async function commodityCandles(symbol: string, tf: string, limit: number): Promise<{ candles: ChartCandle[]; source: string; note?: string }> {
   if (symbol === "XAUUSD" || symbol === "GOLD" || symbol === "XAU" || symbol.toUpperCase().includes("VANG")) {
     try {
-      const bars = await binance.getKlines("PAXGUSDT", binanceInterval(tf), Math.min(limit, 1000));
+      const bars = await binance.getKlinesDeep("PAXGUSDT", binanceInterval(tf), Math.min(limit, 3000));
       if (bars.length >= 10) {
         return {
           candles: bars.map(toCandle),
@@ -300,7 +303,7 @@ async function commodityCandles(symbol: string, tf: string, limit: number): Prom
 export async function getChartHistory(args: ChartArgs): Promise<{ data: ChartMarketData; meta: Meta } | null> {
   const symbol = args.symbol.toUpperCase().replace(/[^A-Z0-9]/g, "");
   const tf = args.timeframe;
-  const limit = Math.min(Math.max(args.limit ?? 500, 50), args.assetType === "crypto" ? 3000 : 1000);
+  const limit = Math.min(Math.max(args.limit ?? 500, 50), args.assetType === "crypto" ? 5000 : 2000);
   if (!tfsFor(args.assetType).includes(tf)) return null;
 
   try {
