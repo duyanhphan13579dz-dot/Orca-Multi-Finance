@@ -32,10 +32,12 @@ export {
   labelForMetric,
   metricKeyFromItemCode,
   metricKeyFromAlias,
+  metricProfileForSymbol,
   labeledMetricsForPeriod,
+  orderedKeysForProfile,
   INCOME_METRIC_ORDER,
   BALANCE_METRIC_ORDER,
   CASHFLOW_METRIC_ORDER,
 } from "./metric-dictionary";
-export type { MetricKey, MetricDefinition } from "./metric-dictionary";
+export type { MetricKey, MetricDefinition, MetricProfile } from "./metric-dictionary";
 export type * from "./types";
