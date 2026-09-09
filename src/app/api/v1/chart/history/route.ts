@@ -7,9 +7,10 @@ export const runtime = "nodejs";
 
 /**
  * UNIFIED CHART DATA API — normalized candles + structured indicators.
- * Crypto can request up to 3000 bars (paged Binance klines).
+ * Crypto: up to 5000 bars (paged Binance klines).
+ * Forex / stock / commodity: up to 2000 bars (provider-dependent depth).
  *
- * GET /api/v1/chart/history?symbol=BTCUSDT&assetType=crypto&timeframe=1h&limit=1500
+ * GET /api/v1/chart/history?symbol=BTCUSDT&assetType=crypto&timeframe=1h&limit=2500
  */
 export async function GET(req: Request) {
   const url = new URL(req.url);
@@ -17,7 +18,7 @@ export async function GET(req: Request) {
   const assetType = (url.searchParams.get("assetType") ?? "crypto") as ChartAssetType;
   const timeframe = url.searchParams.get("timeframe") ?? "1h";
   const rawLimit = Number(url.searchParams.get("limit") ?? 500);
-  const maxLimit = assetType === "crypto" ? 3000 : 1000;
+  const maxLimit = assetType === "crypto" ? 5000 : 2000;
 
   if (!/^[A-Za-z0-9]{2,20}$/.test(symbol)) return badRequest("symbol không hợp lệ");
   if (!["crypto", "forex", "stock", "commodity"].includes(assetType)) return badRequest("assetType không hợp lệ");
