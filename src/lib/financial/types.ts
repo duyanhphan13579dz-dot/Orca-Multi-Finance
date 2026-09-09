@@ -96,6 +96,11 @@ export interface FinancialPackageMeta {
   note: string | null;
   ttmPeriod: string | null;
   hasGrowth: boolean;
+  /** Phase 5 */
+  qualityScore: number | null;
+  qualityStatus: "VALID" | "SUSPECT" | "STALE" | "INVALID" | "UNVERIFIED" | null;
+  crossConfidence: "HIGH" | "MEDIUM" | "LOW" | "UNVERIFIED" | null;
+  discrepancyCount: number;
 }
 
 /** Growth payload is produced by normalize.ts — kept structural here for consumers. */
