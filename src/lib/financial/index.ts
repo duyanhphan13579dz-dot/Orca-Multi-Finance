@@ -26,4 +26,16 @@ export {
 } from "./statements";
 export { buildTtmPeriod, computeGrowth, sortPeriodsNewestFirst } from "./normalize";
 export { getIndustryProfile, listIndustryProfiles, profileIdFromSector } from "./industry-profiles";
+export {
+  METRIC_DICTIONARY,
+  getMetricDef,
+  labelForMetric,
+  metricKeyFromItemCode,
+  metricKeyFromAlias,
+  labeledMetricsForPeriod,
+  INCOME_METRIC_ORDER,
+  BALANCE_METRIC_ORDER,
+  CASHFLOW_METRIC_ORDER,
+} from "./metric-dictionary";
+export type { MetricKey, MetricDefinition } from "./metric-dictionary";
 export type * from "./types";
