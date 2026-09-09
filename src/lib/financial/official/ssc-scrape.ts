@@ -1,6 +1,11 @@
 import "server-only";
 import { classifyFiling } from "./classify";
-import { openSscNewsSearch, adfSearchByTicker, SSC_BASE } from "./adf-client";
+import {
+  openSscNewsSearch,
+  adfSearchByTicker,
+  adfTryDownloadRow,
+  SSC_BASE,
+} from "./adf-client";
 import type { OfficialFiling } from "./types";
 
 export interface SscScrapedRow {
@@ -21,6 +26,8 @@ export interface SscScrapeResult {
   latencyMs: number;
   method: "adf_html" | "adf_ppr" | "none";
   notes: string[];
+  /** When PDF bytes were captured for a row (rare — ADF postback). */
+  downloaded?: { rowIndex: number; contentType: string; size: number }[];
 }
 
 function decodeEntities(s: string): string {
@@ -37,52 +44,108 @@ function stripTags(s: string): string {
   return decodeEntities(s.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim());
 }
 
-/** Parse pt9:t1:{i}:c* grid cells from ADF rendered HTML. */
-export function parseSscTableHtml(html: string): SscScrapedRow[] {
-  const rows: SscScrapedRow[] = [];
+function readCellById(html: string, row: number, col: string): string {
+  const marker = `id="pt9:t1:${row}:c${col}"`;
+  const start = html.indexOf(marker);
+  if (start < 0) return "";
+  const gt = html.indexOf(">", start);
+  if (gt < 0) return "";
+  const end = html.indexOf("</td>", gt);
+  if (end < 0) return "";
+  return stripTags(html.slice(gt + 1, end));
+}
+
+/** Strategy A: stable ADF clientIds pt9:t1:{i}:c* */
+function parseByClientIds(html: string): SscScrapedRow[] {
   const idxs = new Set<number>();
-  for (const m of html.matchAll(/id="pt9:t1:(\d+):c/g)) {
-    idxs.add(Number(m[1]));
-  }
-  const sorted = [...idxs].sort((a, b) => a - b);
-
-  for (const i of sorted) {
-    const cell = (col: string): string => {
-      const re = new RegExp(`id="pt9:t1:${i}:c${col}"[^>]*>([\\s\\S]*?)</td>`, "i");
-      // Fix: use real whitespace class, not double-escaped
-      const re2 = new RegExp("id=\"pt9:t1:" + i + ":c" + col + "\"[^>]*>([\\s\\S]*?)</td>", "i");
-      void re;
-      const m = html.match(re2);
-      return m ? stripTags(m[1]) : "";
-    };
-    // Build regex properly without double escape issues
-    const read = (col: string): string => {
-      const marker = `id="pt9:t1:${i}:c${col}"`;
-      const start = html.indexOf(marker);
-      if (start < 0) return "";
-      const gt = html.indexOf(">", start);
-      if (gt < 0) return "";
-      const end = html.indexOf("</td>", gt);
-      if (end < 0) return "";
-      return stripTags(html.slice(gt + 1, end));
-    };
-
-    const ticker = read("5");
-    const reportName = read("3");
+  for (const m of html.matchAll(/id="pt9:t1:(\d+):c/g)) idxs.add(Number(m[1]));
+  const rows: SscScrapedRow[] = [];
+  for (const i of [...idxs].sort((a, b) => a - b)) {
+    const ticker = readCellById(html, i, "5");
+    const reportName = readCellById(html, i, "3");
     if (!reportName && !ticker) continue;
     rows.push({
-      stt: read("12"),
-      floor: read("2"),
+      stt: readCellById(html, i, "12"),
+      floor: readCellById(html, i, "2"),
       ticker: ticker.toUpperCase(),
       reportName,
-      company: read("8"),
-      summary: read("111"),
-      submittedAt: read("7"),
+      company: readCellById(html, i, "8"),
+      summary: readCellById(html, i, "111"),
+      submittedAt: readCellById(html, i, "7"),
       rowIndex: i,
     });
-    void cell;
   }
   return rows;
+}
+
+/** Strategy B: role=row + gridcell order (markup-version resilient). */
+function parseByRoleRows(html: string): SscScrapedRow[] {
+  const rows: SscScrapedRow[] = [];
+  const trRe = /<tr[^>]*role="row"[^>]*>([\s\S]*?)<\/tr>/gi;
+  let m: RegExpExecArray | null;
+  let idx = 0;
+  while ((m = trRe.exec(html))) {
+    const cells = [...m[1].matchAll(/<td[^>]*role="gridcell"[^>]*>([\s\S]*?)<\/td>/gi)].map((c) =>
+      stripTags(c[1]),
+    );
+    // Expected: STT, floor, MCK, reportName, company, summary, date, download
+    if (cells.length < 6) continue;
+    const stt = cells[0];
+    if (!/^\d+$/.test(stt)) continue;
+    const floor = cells[1] ?? "";
+    const ticker = (cells[2] ?? "").toUpperCase();
+    const reportName = cells[3] ?? "";
+    if (!reportName && !ticker) continue;
+    rows.push({
+      stt,
+      floor,
+      ticker,
+      reportName,
+      company: cells[4] ?? "",
+      summary: cells[5] ?? "",
+      submittedAt: cells[6] ?? "",
+      rowIndex: idx++,
+    });
+  }
+  return rows;
+}
+
+/** Strategy C: report title anchors + nearby ticker span. */
+function parseByTitleAnchors(html: string): SscScrapedRow[] {
+  const rows: SscScrapedRow[] = [];
+  const re =
+    /id="pt9:t1:(\d+):cl1"[^>]*>([^<]+)<[\s\S]{0,1200}?id="pt9:t1:\1:c5"[^>]*>[\s\S]*?<span[^>]*>([^<]*)<\/span>/gi;
+  // fallback simpler: find ACC-like near report names
+  const titles = [...html.matchAll(/>(Báo cáo tài chính[^<]{0,80})<\/a>/gi)];
+  let i = 0;
+  for (const t of titles) {
+    const start = Math.max(0, t.index! - 500);
+    const chunk = html.slice(start, t.index! + 800);
+    const tick = chunk.match(/>([A-Z]{2,5})<\/span>/)?.[1] ?? "";
+    const date = chunk.match(/(\d{2}\/\d{2}\/\d{4})/)?.[1] ?? "";
+    rows.push({
+      stt: String(i + 1),
+      floor: chunk.includes("HOSE") ? "HOSE" : chunk.includes("HNX") ? "HNX" : "",
+      ticker: tick,
+      reportName: stripTags(t[1]),
+      company: "",
+      summary: "",
+      submittedAt: date,
+      rowIndex: i++,
+    });
+  }
+  void re;
+  return rows;
+}
+
+/** Multi-strategy parse — survives minor ADF id renames. */
+export function parseSscTableHtml(html: string): SscScrapedRow[] {
+  const a = parseByClientIds(html);
+  if (a.length >= 3) return a;
+  const b = parseByRoleRows(html);
+  if (b.length >= 3) return b;
+  const c = parseByTitleAnchors(html);
+  return c.length ? c : a.length ? a : b;
 }
 
 function parseVnDate(dmy: string): string | null {
@@ -138,7 +201,9 @@ export async function scrapeSscFilings(symbol?: string): Promise<SscScrapeResult
   const notes: string[] = [];
   try {
     const session = await openSscNewsSearch();
-    notes.push(`ADF session ${session.afrLoop ? "ok" : "partial"} · ${session.latencyMs}ms`);
+    notes.push(
+      `ADF session ${session.afrLoop ? "ok" : "partial"} · html=${session.html.length}B · ${session.latencyMs}ms`,
+    );
 
     let html = session.html;
     let method: SscScrapeResult["method"] = "adf_html";
@@ -152,8 +217,13 @@ export async function scrapeSscFilings(symbol?: string): Promise<SscScrapeResult
       }
     }
 
-    const rows = parseSscTableHtml(html);
-    notes.push(`Parsed ${rows.length} rows from ADF table`);
+    let rows = parseSscTableHtml(html);
+    notes.push(`Parsed ${rows.length} rows (multi-strategy)`);
+
+    // Client-side ticker filter when PPR did not replace the grid
+    if (symbol && rows.length && !rows.some((r) => r.ticker === symbol.toUpperCase())) {
+      notes.push(`Ticker ${symbol.toUpperCase()} not on current ADF page — returning empty match (latest listing only).`);
+    }
 
     if (!rows.length) {
       return {
@@ -162,8 +232,25 @@ export async function scrapeSscFilings(symbol?: string): Promise<SscScrapeResult
         filings: [],
         latencyMs: session.latencyMs,
         method: "none",
-        notes: [...notes, "No pt9:t1 grid cells — portal markup may have changed"],
+        notes: [...notes, "No table rows — portal markup may have changed"],
       };
+    }
+
+    // Optional: try first matched row PDF (only when ticker matched or no filter)
+    const downloaded: NonNullable<SscScrapeResult["downloaded"]> = [];
+    const tryRows = symbol
+      ? rows.filter((r) => r.ticker === symbol.toUpperCase()).slice(0, 1)
+      : rows.slice(0, 0); // skip bulk download without filter
+    for (const r of tryRows) {
+      const dl = await adfTryDownloadRow(session, r.rowIndex);
+      notes.push(`PDF row ${r.rowIndex}: ${dl.note}`);
+      if (dl.ok && dl.bytes) {
+        downloaded.push({
+          rowIndex: r.rowIndex,
+          contentType: dl.contentType ?? "application/octet-stream",
+          size: dl.bytes.byteLength,
+        });
+      }
     }
 
     const filings = rowsToFilings(rows, symbol);
@@ -180,6 +267,7 @@ export async function scrapeSscFilings(symbol?: string): Promise<SscScrapeResult
       latencyMs: session.latencyMs,
       method,
       notes,
+      downloaded: downloaded.length ? downloaded : undefined,
     };
   } catch (e) {
     return {
