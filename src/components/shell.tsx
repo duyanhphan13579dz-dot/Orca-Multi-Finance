@@ -62,6 +62,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         e.preventDefault();
         toggle();
       }
+      if (e.key === "Escape") setMobileOpen(false);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -77,11 +78,21 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   useEffect(() => setMobileOpen(false), [pathname]);
 
+  // Lock body scroll when mobile drawer open
+  useEffect(() => {
+    if (!mobileOpen) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, [mobileOpen]);
+
   const sidebarW = collapsed ? "w-[56px]" : "w-[208px]";
   const mainML = collapsed ? "lg:ml-[56px]" : "lg:ml-[208px]";
 
   return (
-    <div className="flex min-h-dvh">
+    <div className="flex min-h-dvh overflow-x-hidden">
       {/* desktop sidebar */}
       <aside
         className={`fixed inset-y-0 left-0 z-40 hidden flex-col border-r border-border-subtle bg-background-secondary transition-[width] duration-200 lg:flex ${sidebarW}`}
@@ -90,7 +101,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <Link href="/" className="flex h-[60px] items-center gap-2 border-b border-border-subtle px-3" aria-label="ORCA Financial — Tổng quan">
           {collapsed ? <OrcaMark size={30} /> : <OrcaWordmark size={30} />}
         </Link>
-        <nav className="flex-1 overflow-y-auto px-2 py-2">
+        <nav className="flex-1 overflow-y-auto overscroll-contain px-2 py-2">
           {NAV_SECTIONS.map((section) => (
             <div key={section.title} className="mb-1.5">
               {!collapsed && (
@@ -145,32 +156,47 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
       {/* mobile drawer */}
       {mobileOpen && (
-        <div className="fixed inset-0 z-50 lg:hidden" role="dialog" aria-modal="true">
+        <div className="fixed inset-0 z-50 lg:hidden" role="dialog" aria-modal="true" aria-label="Menu điều hướng">
           <div className="absolute inset-0 bg-black/60 backdrop-blur-[2px]" onClick={() => setMobileOpen(false)} />
-          <div className="absolute inset-y-0 left-0 w-[240px] border-r border-border-subtle bg-background-secondary p-3">
-            <div className="mb-3 flex items-center justify-between">
+          <div className="absolute inset-y-0 left-0 flex w-[min(280px,86vw)] flex-col border-r border-border-subtle bg-background-secondary pt-[env(safe-area-inset-top)] shadow-2xl">
+            <div className="flex items-center justify-between border-b border-border-subtle px-3 py-2.5">
               <OrcaWordmark size={28} />
-              <button onClick={() => setMobileOpen(false)} aria-label="Đóng menu" className="rounded-md p-1 text-text-muted hover:text-text-primary">
+              <button
+                onClick={() => setMobileOpen(false)}
+                aria-label="Đóng menu"
+                className="grid size-10 place-items-center rounded-md text-text-muted hover:bg-surface-elevated hover:text-text-primary"
+              >
                 <X className="size-5" />
               </button>
             </div>
-            <nav>
-              {NAV_SECTIONS.flatMap((s) => s.items).map((item) => {
-                const active = item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
-                const Icon = item.icon;
-                return (
-                  <Link
-                    key={item.href}
-                    href={item.href}
-                    className={`mb-0.5 flex items-center gap-3 rounded-md px-2.5 py-2.5 text-[13px] ${
-                      active ? "bg-accent-primary/12 text-accent-primary" : "text-text-secondary"
-                    }`}
-                  >
-                    <Icon className="size-4" /> {item.label}
-                  </Link>
-                );
-              })}
-              <Link href="/system" className="mb-0.5 flex items-center gap-3 rounded-md px-2.5 py-2.5 text-[13px] text-text-secondary">
+            <nav className="flex-1 overflow-y-auto overscroll-contain px-2 py-2 pb-[max(12px,env(safe-area-inset-bottom))]">
+              {NAV_SECTIONS.map((section) => (
+                <div key={section.title} className="mb-2">
+                  <div className="px-2.5 pb-1 pt-2 text-[9.5px] font-semibold uppercase tracking-[0.16em] text-text-muted">
+                    {section.title}
+                  </div>
+                  {section.items.map((item) => {
+                    const active = item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
+                    const Icon = item.icon;
+                    return (
+                      <Link
+                        key={item.href}
+                        href={item.href}
+                        className={`mb-0.5 flex min-h-11 items-center gap-3 rounded-md px-2.5 py-2.5 text-[13.5px] ${
+                          active ? "bg-accent-primary/12 text-accent-primary" : "text-text-secondary active:bg-surface-elevated"
+                        }`}
+                      >
+                        <Icon className="size-4 shrink-0" />
+                        <span className="truncate">{item.label}</span>
+                      </Link>
+                    );
+                  })}
+                </div>
+              ))}
+              <Link
+                href="/system"
+                className="mb-0.5 flex min-h-11 items-center gap-3 rounded-md px-2.5 py-2.5 text-[13.5px] text-text-secondary active:bg-surface-elevated"
+              >
                 <GaugeCircle className="size-4" /> Hệ thống
               </Link>
             </nav>
@@ -180,16 +206,22 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
       {/* main column */}
       <div className={`flex min-w-0 flex-1 flex-col transition-[margin] duration-200 ${mainML}`}>
-        <header className="sticky top-0 z-30 border-b border-border-subtle bg-background-primary/85 backdrop-blur">
-          <div className="flex h-[52px] items-center gap-3 px-3 md:px-4">
-            <button onClick={() => setMobileOpen(true)} className="rounded-md p-1.5 text-text-secondary hover:bg-surface-elevated lg:hidden" aria-label="Mở menu">
+        <header className="sticky top-0 z-30 border-b border-border-subtle bg-background-primary/90 backdrop-blur supports-[backdrop-filter]:bg-background-primary/80 pt-[env(safe-area-inset-top)]">
+          <div className="flex h-12 items-center gap-2 px-2.5 sm:h-[52px] sm:gap-3 sm:px-3 md:px-4">
+            <button
+              onClick={() => setMobileOpen(true)}
+              className="grid size-10 shrink-0 place-items-center rounded-md text-text-secondary hover:bg-surface-elevated lg:hidden"
+              aria-label="Mở menu"
+            >
               <Menu className="size-5" />
             </button>
-            <Link href="/" className="lg:hidden" aria-label="ORCA"><OrcaMark size={26} /></Link>
+            <Link href="/" className="shrink-0 lg:hidden" aria-label="ORCA">
+              <OrcaMark size={26} />
+            </Link>
             <div className="hidden min-w-0 flex-1 md:block">
               <GlobalSearch />
             </div>
-            <div className="flex-1 md:hidden" />
+            <div className="min-w-0 flex-1 md:hidden" />
             <MarketChip />
             <Clock />
             <NotificationsBell />
@@ -197,12 +229,17 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </div>
           <TickerTape />
         </header>
-        <main className="min-w-0 flex-1 px-3 py-4 md:px-4">
-          <div className="md:hidden mb-3"><GlobalSearch /></div>
+        <main className="min-w-0 flex-1 px-2.5 py-3 sm:px-3 sm:py-4 md:px-4">
+          <div className="mb-2.5 md:hidden">
+            <GlobalSearch />
+          </div>
           {children}
         </main>
-        <footer className="border-t border-border-subtle px-4 py-2.5 text-[10.5px] leading-relaxed text-text-muted">
-          ORCA Financial · dữ liệu phục vụ nghiên cứu — không phải khuyến nghị đầu tư · nguồn: VNStock · Binance · Biquote · Vietnambiz · Simplize · RSS · mọi dữ liệu gắn nhãn LIVE/FRESH/DELAYED/STALE/DEGRADED/UNAVAILABLE
+        <footer className="border-t border-border-subtle px-3 py-2 text-[10px] leading-relaxed text-text-muted sm:px-4 sm:py-2.5 sm:text-[10.5px] pb-[max(8px,env(safe-area-inset-bottom))]">
+          <span className="sm:hidden">ORCA · nghiên cứu — không phải khuyến nghị · LIVE/FRESH/DELAYED/STALE</span>
+          <span className="hidden sm:inline">
+            ORCA Financial · dữ liệu phục vụ nghiên cứu — không phải khuyến nghị đầu tư · nguồn: VNStock · Binance · Biquote · Vietnambiz · Simplize · RSS · mọi dữ liệu gắn nhãn LIVE/FRESH/DELAYED/STALE/DEGRADED/UNAVAILABLE
+          </span>
         </footer>
       </div>
     </div>
@@ -263,29 +300,37 @@ function NotificationsBell() {
       <button
         onClick={() => setOpen((o) => !o)}
         aria-label="Thông báo tin tức"
-        className="relative rounded-md p-1.5 text-text-secondary transition-colors hover:bg-surface-elevated hover:text-text-primary"
+        className="relative grid size-10 place-items-center rounded-md text-text-secondary transition-colors hover:bg-surface-elevated hover:text-text-primary sm:size-auto sm:p-1.5"
       >
         <Bell className="size-4.5" />
-        {fresh > 0 && <span className="absolute right-1 top-1 size-1.5 rounded-full bg-accent-primary" />}
+        {fresh > 0 && <span className="absolute right-1.5 top-1.5 size-1.5 rounded-full bg-accent-primary sm:right-1 sm:top-1" />}
       </button>
       {open && (
-        <div className="absolute right-0 z-50 mt-1.5 w-80 overflow-hidden rounded-xl border border-border-default bg-surface-modal shadow-2xl">
+        <div className="absolute right-0 z-50 mt-1.5 w-[min(20rem,calc(100vw-1rem))] overflow-hidden rounded-xl border border-border-default bg-surface-modal shadow-2xl">
           <div className="border-b border-border-subtle px-3 py-2 text-[12px] font-semibold text-text-primary">Tin mới nhất</div>
           {!enabled ? (
             <p className="px-3 py-3 text-[12px] text-text-muted">Thông báo tin tức đang tắt — bật lại trong Settings › Notifications.</p>
           ) : !data?.articles.length ? (
             <p className="px-3 py-3 text-[12px] text-text-muted">Chưa có tin mới.</p>
           ) : (
-            <ul className="max-h-72 overflow-y-auto">
+            <ul className="max-h-72 overflow-y-auto overscroll-contain">
               {data.articles.map((a) => (
                 <li key={a.id}>
                   <button
-                    onClick={() => { setOpen(false); router.push("/news"); }}
-                    className="block w-full px-3 py-2 text-left hover:bg-surface-elevated"
+                    onClick={() => {
+                      setOpen(false);
+                      router.push("/news");
+                    }}
+                    className="block w-full px-3 py-2.5 text-left hover:bg-surface-elevated"
                   >
                     <span className="line-clamp-2 text-[12px] leading-snug text-text-primary">{a.title}</span>
                     <span className="mt-0.5 block text-[10px] text-text-muted">
-                      {a.source} · {new Date(a.publishedAt).toLocaleTimeString("vi-VN", { timeZone: settings.profile.timezone, hour: "2-digit", minute: "2-digit" })}
+                      {a.source} ·{" "}
+                      {new Date(a.publishedAt).toLocaleTimeString("vi-VN", {
+                        timeZone: settings.profile.timezone,
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })}
                     </span>
                   </button>
                 </li>
@@ -328,7 +373,7 @@ function UserMenu() {
       <button
         onClick={() => setOpen((o) => !o)}
         aria-label="Tài khoản"
-        className={`grid size-8 place-items-center overflow-hidden rounded-lg border border-border-subtle text-[11px] font-bold transition-colors hover:border-border-default ${AVATAR_STYLES[settings.profile.avatarStyle] ?? AVATAR_STYLES.orca}`}
+        className={`grid size-9 place-items-center overflow-hidden rounded-lg border border-border-subtle text-[11px] font-bold transition-colors hover:border-border-default sm:size-8 ${AVATAR_STYLES[settings.profile.avatarStyle] ?? AVATAR_STYLES.orca}`}
       >
         {settings.profile.avatarStyle === "orca" ? (
           <OrcaMark size={30} className="rounded-lg" />
@@ -355,7 +400,7 @@ function UserMenu() {
                   setOpen(false);
                   router.refresh();
                 }}
-                className="flex w-full items-center gap-2 px-3 py-2 text-left text-[12.5px] text-negative hover:bg-surface-elevated"
+                className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-[12.5px] text-negative hover:bg-surface-elevated"
               >
                 <LogOut className="size-3.5" /> Đăng xuất
               </button>
@@ -375,7 +420,7 @@ function UserMenu() {
 
 function MenuLink({ href, label, onClick }: { href: string; label: string; onClick?: () => void }) {
   return (
-    <Link href={href} onClick={onClick} className="block px-3 py-2 text-[12.5px] text-text-secondary transition-colors hover:bg-surface-elevated hover:text-text-primary">
+    <Link href={href} onClick={onClick} className="block px-3 py-2.5 text-[12.5px] text-text-secondary transition-colors hover:bg-surface-elevated hover:text-text-primary">
       {label}
     </Link>
   );
