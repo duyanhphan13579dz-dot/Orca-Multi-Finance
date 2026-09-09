@@ -7,7 +7,8 @@ import { runSourceRouter } from "./provider";
 import { listFinancialProviders } from "./providers-registry";
 import { buildTtmPeriod, computeGrowth, sortPeriodsNewestFirst } from "./normalize";
 import { runOfficialDocumentPipeline } from "./official/pipeline";
-import { crossValidatePeriods, scoreFinancialQuality, type FinancialQualityResult } from "./validation";
+import { runFullCrossValidation, scoreFinancialQuality, type FinancialQualityResult } from "./validation";
+import { appendValidationLog } from "./validation-log";
 import {
   logFallback,
   logFinancialError,
@@ -26,8 +27,8 @@ import type {
 import type { Meta } from "../types";
 
 /**
- * FINANCIAL DATA RELIABILITY LAYER — Phase 1–5
- * Official ∥ Router → normalize → TTM/Growth → validate → fallback → industry health → monitor
+ * FINANCIAL DATA RELIABILITY LAYER — Phase 1–5 (complete)
+ * Official ∥ Router → normalize → TTM/Growth → validate → fallback → health → monitor → validation log
  */
 
 function labelPeriod(periods: NormalizedPeriod[]): string | null {
@@ -82,13 +83,12 @@ function runQualityGate(
   balanceLen: number,
   cashflowLen: number,
 ): FinancialQualityResult {
-  const head = periods.find((p) => p.periodType !== "ttm") ?? null;
-  const secondaries = periods
+  const externalSecondaries = periods
     .filter((p) => p.periodType !== "ttm" && p.source && p.source !== primarySource)
     .slice(0, 4)
     .map((p) => ({ source: p.source, period: p }));
 
-  const cross = crossValidatePeriods(head, primarySource, secondaries);
+  const cross = runFullCrossValidation(periods, primarySource, externalSecondaries);
   let effectiveFreshness = freshness;
   if (cross.discrepancies.some((d) => d.severity === "fail")) {
     effectiveFreshness = "DISCREPANCY_DETECTED";
@@ -111,6 +111,14 @@ function runQualityGate(
     ok: quality.status === "VALID" || quality.status === "UNVERIFIED",
     message: quality.cross.note ?? undefined,
   });
+
+  void appendValidationLog({
+    ticker: sym,
+    quality,
+    fallbackLevel,
+    freshnessStatus: effectiveFreshness,
+    primarySource,
+  }).catch(() => undefined);
 
   return quality;
 }
@@ -319,7 +327,6 @@ export async function getFinancialPackage(symbol: string): Promise<{
   return { pkg, health, quality, meta };
 }
 
-/** Convenience for stock detail / analysis contracts. */
 export async function getFinancialsForSymbol(symbol: string): Promise<{
   financials: {
     income: Record<string, unknown>[] | null;
