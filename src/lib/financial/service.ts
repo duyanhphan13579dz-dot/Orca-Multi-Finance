@@ -7,6 +7,13 @@ import { runSourceRouter } from "./provider";
 import { listFinancialProviders } from "./providers-registry";
 import { buildTtmPeriod, computeGrowth, sortPeriodsNewestFirst } from "./normalize";
 import { runOfficialDocumentPipeline } from "./official/pipeline";
+import { crossValidatePeriods, scoreFinancialQuality, type FinancialQualityResult } from "./validation";
+import {
+  logFallback,
+  logFinancialError,
+  logPackageServed,
+  logValidation,
+} from "./monitor";
 import type {
   FinancialPackage,
   FinancialPackageMeta,
@@ -18,8 +25,8 @@ import type {
 import type { Meta } from "../types";
 
 /**
- * FINANCIAL DATA RELIABILITY LAYER — Phase 1–4
- * Official pipeline (meta) ∥ Router → normalize → TTM/Growth → industry health
+ * FINANCIAL DATA RELIABILITY LAYER — Phase 1–5
+ * Official ∥ Router → normalize → TTM/Growth → validate → industry health → monitor
  */
 
 function labelPeriod(periods: NormalizedPeriod[]): string | null {
@@ -36,6 +43,7 @@ function buildMetaPackage(
   note: string | null,
   ttm: NormalizedPeriod | null,
   growth: GrowthSnapshot | null,
+  quality: FinancialQualityResult | null,
   auditFromFiling?: FinancialPackageMeta["auditStatus"],
   scopeFromFiling?: FinancialPackageMeta["statementScope"],
 ): FinancialPackageMeta {
@@ -56,18 +64,69 @@ function buildMetaPackage(
     note,
     ttmPeriod: ttm?.period ?? null,
     hasGrowth: Boolean(growth && (growth.yoy.length || growth.qoq.length)),
+    qualityScore: quality?.score ?? null,
+    qualityStatus: quality?.status ?? null,
+    crossConfidence: quality?.cross.confidence ?? null,
+    discrepancyCount: quality?.cross.discrepancies.length ?? 0,
   };
+}
+
+function runQualityGate(
+  sym: string,
+  periods: NormalizedPeriod[],
+  primarySource: string,
+  freshness: FreshnessStatus,
+  fallbackLevel: number,
+  incomeLen: number,
+  balanceLen: number,
+  cashflowLen: number,
+): FinancialQualityResult {
+  const head = periods.find((p) => p.periodType !== "ttm") ?? null;
+  // Secondary snapshots: other period rows tagged with different source (when multi-source lands)
+  const secondaries = periods
+    .filter((p) => p.periodType !== "ttm" && p.source && p.source !== primarySource)
+    .slice(0, 4)
+    .map((p) => ({ source: p.source, period: p }));
+
+  const cross = crossValidatePeriods(head, primarySource, secondaries);
+  let effectiveFreshness = freshness;
+  if (cross.discrepancies.some((d) => d.severity === "fail")) {
+    effectiveFreshness = "DISCREPANCY_DETECTED";
+  }
+
+  const quality = scoreFinancialQuality({
+    periods,
+    freshness: effectiveFreshness,
+    fallbackLevel,
+    cross,
+    hasIncome: incomeLen > 0,
+    hasBalance: balanceLen > 0,
+    hasCashflow: cashflowLen > 0,
+  });
+
+  logValidation({
+    ticker: sym,
+    status: quality.status,
+    qualityScore: quality.score,
+    ok: quality.status === "VALID" || quality.status === "UNVERIFIED",
+    message: quality.cross.note ?? undefined,
+  });
+
+  return quality;
 }
 
 export async function getFinancialPackage(symbol: string): Promise<{
   pkg: FinancialPackage;
   health: FinancialHealthResult;
+  quality: FinancialQualityResult | null;
   meta: Meta;
 } | null> {
   const sym = symbol.toUpperCase();
 
-  // Phase 2: official discovery runs in parallel (does not block structured numbers)
-  const officialPromise = runOfficialDocumentPipeline(sym).catch(() => null);
+  const officialPromise = runOfficialDocumentPipeline(sym).catch((e) => {
+    logFinancialError(e instanceof Error ? e.message : "official_pipeline_error", sym, "official-pipeline");
+    return null;
+  });
 
   const cachedRes = await cached(`fin:pkg:${sym}:router:v3`, {
     ttlMs: 6 * 3_600_000,
@@ -93,12 +152,18 @@ export async function getFinancialPackage(symbol: string): Promise<{
         sourcesAttempted: routed.sourcesAttempted,
       };
     },
-  }).catch(() => null);
+  }).catch((e) => {
+    logFinancialError(e instanceof Error ? e.message : "cache_producer_error", sym);
+    return null;
+  });
 
   const official = await officialPromise;
 
   if (!cachedRes?.value) {
     const emptyHealth = computeFinancialHealth({ income: [], balance: [], cashflow: [] }, { symbol: sym });
+    const quality = runQualityGate(sym, [], "none", "SOURCE_UNAVAILABLE", 4, 0, 0, 0);
+    logFallback(sym, 4, "all_sources_unavailable");
+    logPackageServed(sym, { qualityScore: quality.score, fallbackLevel: 4 });
     const pkg: FinancialPackage = {
       symbol: sym,
       income: [],
@@ -117,11 +182,13 @@ export async function getFinancialPackage(symbol: string): Promise<{
         "Không có dữ liệu báo cáo từ mọi nguồn đã đăng ký.",
         null,
         null,
+        quality,
       ),
     };
     return {
       pkg,
       health: emptyHealth,
+      quality,
       meta: buildMeta({
         source: "financial-engine",
         sourceTimestampMs: Date.now(),
@@ -135,7 +202,7 @@ export async function getFinancialPackage(symbol: string): Promise<{
   const balance = v.balance ?? [];
   const cashflow = v.cashflow ?? [];
   const ratios = v.ratios ?? [];
-  const periods = v.periods ?? [];
+  const periods = (v.periods ?? []) as NormalizedPeriod[];
   const ttm = (v.ttm as NormalizedPeriod | null) ?? null;
   const growth = (v.growth as GrowthSnapshot | null) ?? null;
 
@@ -152,7 +219,6 @@ export async function getFinancialPackage(symbol: string): Promise<{
     ];
   }
 
-  // Record official pipeline attempt in source meta
   sources.push({
     id: "official-pipeline",
     role: "PRIMARY_SOURCE_OF_TRUTH",
@@ -165,17 +231,39 @@ export async function getFinancialPackage(symbol: string): Promise<{
         : "pipeline_error",
   });
 
-  const health = computeFinancialHealth({ income, balance, cashflow }, { symbol: sym });
-  const freshness: FreshnessStatus = cachedRes.stale
+  let freshness: FreshnessStatus = cachedRes.stale
     ? "STALE"
     : official?.latestFsFiling && official.latestFsFiling.confidence >= 0.85
       ? "VERIFIED"
       : "LATEST_AVAILABLE";
 
+  const quality = runQualityGate(
+    sym,
+    periods,
+    v.sourceId,
+    freshness,
+    v.fallbackLevel,
+    income.length,
+    balance.length,
+    cashflow.length,
+  );
+
+  if (quality.cross.discrepancies.some((d) => d.severity === "fail")) {
+    freshness = "DISCREPANCY_DETECTED";
+  }
+
+  const health = computeFinancialHealth({ income, balance, cashflow }, { symbol: sym });
+
   let note = v.note ?? null;
   if (official?.notes?.length) {
     note = [note, ...official.notes.slice(0, 2)].filter(Boolean).join(" · ");
   }
+  if (quality.cross.note && quality.cross.compared) {
+    note = [note, quality.cross.note].filter(Boolean).join(" · ");
+  }
+
+  logFallback(sym, v.fallbackLevel, v.note ?? undefined);
+  logPackageServed(sym, { qualityScore: quality.score, fallbackLevel: v.fallbackLevel });
 
   const filing = official?.latestFsFiling;
   const pkg: FinancialPackage = {
@@ -196,6 +284,7 @@ export async function getFinancialPackage(symbol: string): Promise<{
       note,
       ttm,
       growth,
+      quality,
       filing?.auditStatus,
       filing?.statementScope,
     ),
@@ -207,10 +296,11 @@ export async function getFinancialPackage(symbol: string): Promise<{
     cached: cachedRes.cached,
     stale: cachedRes.stale,
     note: pkg.meta.note ?? undefined,
+    degraded: quality.status === "SUSPECT" || freshness === "DISCREPANCY_DETECTED",
     slas: { liveSlaMs: 86_400_000, freshSlaMs: 7 * 86_400_000, delayedSlaMs: 90 * 86_400_000 },
   });
 
-  return { pkg, health, meta };
+  return { pkg, health, quality, meta };
 }
 
 /** Convenience for stock detail / analysis contracts. */
@@ -225,6 +315,7 @@ export async function getFinancialsForSymbol(symbol: string): Promise<{
   packageMeta: FinancialPackageMeta;
   growth: GrowthSnapshot | null;
   ttm: NormalizedPeriod | null;
+  quality: FinancialQualityResult | null;
   meta: Meta;
   notes: string[];
 } | null> {
@@ -234,6 +325,10 @@ export async function getFinancialsForSymbol(symbol: string): Promise<{
   const notes: string[] = [];
   if (r.pkg.meta.note) notes.push(r.pkg.meta.note);
   if (r.pkg.meta.freshnessStatus === "STALE") notes.push("Dữ liệu đang dùng bản lưu gần nhất (stale cache).");
+  if (r.pkg.meta.freshnessStatus === "DISCREPANCY_DETECTED")
+    notes.push("Phát hiện lệch số liệu giữa các nguồn — ưu tiên nguồn chính.");
+  if (r.pkg.meta.qualityScore != null)
+    notes.push(`Data quality score: ${r.pkg.meta.qualityScore}/100 (${r.pkg.meta.qualityStatus ?? "—"})`);
   if (r.pkg.ttm) notes.push(`TTM sẵn sàng: ${r.pkg.ttm.period}`);
   else notes.push("TTM chưa tính được (cần ≥4 quý).");
   if (r.health.industry) notes.push(`Profile ngành: ${r.health.industry.labelVi} (${r.health.industry.id})`);
@@ -251,6 +346,7 @@ export async function getFinancialsForSymbol(symbol: string): Promise<{
     packageMeta: r.pkg.meta,
     growth: r.pkg.growth,
     ttm: r.pkg.ttm,
+    quality: r.quality,
     meta: r.meta,
     notes,
   };
