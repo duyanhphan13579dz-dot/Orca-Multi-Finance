@@ -21,6 +21,7 @@ export async function GET(_req: Request, ctx: { params: Promise<{ symbol: string
         filings: r.discovery.filings,
         latestFsFiling: r.latestFsFiling,
         storeCount: r.store.length,
+        extractedCount: r.extractedCount,
         channelsAttempted: r.discovery.channelsAttempted,
         notes: r.notes,
       },
