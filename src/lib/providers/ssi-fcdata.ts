@@ -1,22 +1,14 @@
 import "server-only";
 import { httpJson } from "../http";
-import type { IndexQuote, OhlcvBar, Quote } from "../types";
+import type { OhlcvBar, Quote } from "../types";
 import { ProviderError } from "./binance";
 
 /**
  * SSI FastConnect Data (FC Data) — market REST adapter.
  *
- * Docs:
- *   https://developers.ssi.com.vn/
- *   https://guide.ssi.com.vn/ssi-products/fastconnect-data/api-specs
- *
- * Env (set on Vercel when keys arrive):
- *   SSI_FC_CONSUMER_ID      (ConsumerID)
- *   SSI_FC_CONSUMER_SECRET  (ConsumerSecret)
- *   SSI_FC_DATA_BASE_URL    optional, default https://fc-data.ssi.com.vn
- *
- * Strategy: PRIMARY when configured; callers fall back to VNDirect.
- * No trading endpoints here — market data only.
+ * Env:
+ *   SSI_FC_CONSUMER_ID / SSI_FC_CONSUMER_SECRET
+ *   SSI_FC_DATA_BASE_URL (optional)
  */
 
 export const SSI_FCDATA = "ssi-fcdata";
@@ -37,7 +29,6 @@ const num = (v: unknown): number | null => {
   return Number.isFinite(n) ? n : null;
 };
 
-/** Parse dd/mm/yyyy → epoch ms (session close +07). */
 function parseSsiDate(d: string | null | undefined): number | null {
   if (!d) return null;
   const m = String(d).trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
@@ -48,12 +39,13 @@ function parseSsiDate(d: string | null | undefined): number | null {
   const day = Number(m[1]);
   const month = Number(m[2]);
   const year = Number(m[3]);
-  const t = Date.parse(`${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}T15:00:00+07:00`);
+  const t = Date.parse(
+    `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}T15:00:00+07:00`,
+  );
   return Number.isFinite(t) ? t : null;
 }
 
 function formatSsiDate(d = new Date()): string {
-  // VN calendar day
   const parts = new Intl.DateTimeFormat("en-GB", {
     timeZone: "Asia/Ho_Chi_Minh",
     day: "2-digit",
@@ -69,12 +61,9 @@ function daysAgoSsi(n: number): string {
   return formatSsiDate(d);
 }
 
-// ─── Token cache (process memory; fine for serverless warm instances) ─────────
-
 type TokenBundle = {
   accessToken: string;
   refreshToken?: string;
-  /** epoch ms when we should refresh (skew-safe) */
   expiresAt: number;
 };
 
@@ -103,7 +92,6 @@ async function fetchAccessToken(): Promise<TokenBundle> {
     throw new ProviderError("ssi-fcdata: missing SSI_FC_CONSUMER_ID / SSI_FC_CONSUMER_SECRET", SSI_FCDATA);
   }
 
-  // FC Data classic: POST Market/AccessToken with consumer credentials
   const url = `${baseUrl()}/api/v2/Market/AccessToken`;
   const res = await httpJson<AccessTokenResponse>(url, {
     provider: SSI_FCDATA,
@@ -117,7 +105,6 @@ async function fetchAccessToken(): Promise<TokenBundle> {
     body: JSON.stringify({
       consumerID,
       consumerSecret,
-      // alternate casings some client samples use
       ConsumerID: consumerID,
       ConsumerSecret: consumerSecret,
     }),
@@ -153,7 +140,7 @@ async function fetchAccessToken(): Promise<TokenBundle> {
     (typeof data === "object" && data && "expires_in" in data
       ? Number((data as { expires_in?: number }).expires_in)
       : NaN) ||
-    3000; // SSI samples often ~1h; default conservative
+    3000;
 
   const refresh =
     (typeof data === "object" && data && "refreshToken" in data
@@ -166,12 +153,11 @@ async function fetchAccessToken(): Promise<TokenBundle> {
   return {
     accessToken: access,
     refreshToken: refresh,
-    // refresh 60s early
     expiresAt: Date.now() + Math.max(60, expiresIn - 60) * 1000,
   };
 }
 
-async function getAccessToken(): Promise<string> {
+export async function getSsiAccessToken(): Promise<string> {
   if (tokenCache && tokenCache.expiresAt > Date.now()) return tokenCache.accessToken;
   if (tokenInflight) return tokenInflight;
   tokenInflight = (async () => {
@@ -185,13 +171,16 @@ async function getAccessToken(): Promise<string> {
   return tokenInflight;
 }
 
-/** Force drop cached token (e.g. after 401). */
 export function invalidateSsiToken() {
   tokenCache = null;
 }
 
-async function ssiGet<T>(path: string, query: Record<string, string | number | boolean | undefined>, timeoutMs = 14_000): Promise<T> {
-  const token = await getAccessToken();
+async function ssiGet<T>(
+  path: string,
+  query: Record<string, string | number | boolean | undefined>,
+  timeoutMs = 14_000,
+): Promise<T> {
+  const token = await getSsiAccessToken();
   const qs = new URLSearchParams();
   for (const [k, v] of Object.entries(query)) {
     if (v === undefined || v === "") continue;
@@ -209,10 +198,9 @@ async function ssiGet<T>(path: string, query: Record<string, string | number | b
     },
   });
 
-  // One retry on unauthorized — token may have expired mid-flight
   if (!res.ok && (res.status === 401 || String(res.error).includes("401"))) {
     invalidateSsiToken();
-    const token2 = await getAccessToken();
+    const token2 = await getSsiAccessToken();
     const res2 = await httpJson<T>(url, {
       provider: SSI_FCDATA,
       timeoutMs,
@@ -240,8 +228,6 @@ type SsiEnvelope<T> = {
   totalRecord?: number;
   data?: T;
 };
-
-// ─── Public market helpers ────────────────────────────────────────────────────
 
 type DailyOhlcRow = {
   Symbol?: string;
@@ -378,7 +364,6 @@ export async function getSsiQuotes(symbols: string[]): Promise<{ quotes: Quote[]
   let newest: number | null = null;
   for (const r of results) {
     if (r.status !== "fulfilled") continue;
-    // take latest row per symbol
     const sorted = [...r.value.quotes].sort((a, b) => {
       const ta = a.updatedAt ? parseSsiDate(a.updatedAt) ?? 0 : 0;
       const tb = b.updatedAt ? parseSsiDate(b.updatedAt) ?? 0 : 0;
@@ -415,7 +400,6 @@ export async function getSsiIndexList(): Promise<{ code: string; name: string | 
     .filter((x) => x.code);
 }
 
-/** Health check used by readiness — does not throw if unconfigured. */
 export async function probeSsiFcData(): Promise<{
   configured: boolean;
   ok: boolean;
@@ -425,7 +409,7 @@ export async function probeSsiFcData(): Promise<{
     return { configured: false, ok: false, message: "SSI_FC_CONSUMER_ID / SSI_FC_CONSUMER_SECRET chưa set" };
   }
   try {
-    await getAccessToken();
+    await getSsiAccessToken();
     return { configured: true, ok: true, message: "Auth token OK" };
   } catch (e) {
     return {
