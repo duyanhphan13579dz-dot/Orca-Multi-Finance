@@ -38,7 +38,7 @@ export interface VnOrderBook {
   tradeSellVol: number;
   tradeTotalVol: number;
   /** true = snapshot from previous session (outside continuous matching) */
-  fromLastSession: boolean;
+  fromLastSession?: boolean;
 }
 
 /** HOSE continuous approx 09:00–11:30 & 13:00–14:45 VN time (with buffer). */
@@ -59,9 +59,8 @@ function isVnSessionWindow(d = new Date()): boolean {
   return (mins >= 8 * 60 + 45 && mins <= 11 * 60 + 45) || (mins >= 12 * 60 + 45 && mins <= 15 * 60);
 }
 
-/** Live SLA while in session; overnight keep last depth until next open. */
 const LIVE_MAX_AGE_MS = 20_000;
-const LAST_SESSION_MAX_AGE_MS = 20 * 60 * 60_000; // 20h — covers overnight + weekend start Mon morning edge
+const LAST_SESSION_MAX_AGE_MS = 20 * 60 * 60_000; // 20h
 
 function bootSsiLive() {
   if (!ssiFcConfigured()) return;
@@ -138,10 +137,8 @@ export async function getVnOrderBook(
   const inSession = isVnSessionWindow();
   const wsDisabled = process.env.SSI_WS_DISABLED === "true";
 
-  // Even with WS disabled, try in-memory last snapshot (same process that received ticks earlier)
   if (!wsDisabled) bootSsiLive();
 
-  // 1) Fresh live depth
   let ob: SsiOrderBook | null = ssiWs.getOrderBook(sym, LIVE_MAX_AGE_MS);
   if (!ob) {
     const q = ssiWs.getQuote(sym, LIVE_MAX_AGE_MS);
@@ -150,7 +147,6 @@ export async function getVnOrderBook(
 
   let fromLastSession = false;
 
-  // 2) In session: short event wait for first tick
   if (!ob && !wsDisabled) {
     try {
       ob = await ssiWs.waitForOrderBook(sym, inSession ? 250 : 600);
@@ -159,7 +155,6 @@ export async function getVnOrderBook(
     }
   }
 
-  // 3) Outside session / no live tick: use last known depth (up to 20h)
   if (!ob) {
     ob = ssiWs.getOrderBook(sym, LAST_SESSION_MAX_AGE_MS);
     if (!ob) {
@@ -168,14 +163,12 @@ export async function getVnOrderBook(
     }
     if (ob) fromLastSession = true;
   } else if (!inSession) {
-    // Still have a "fresh" cache but market is closed → treat as last session for UI labeling
     const age = Date.now() - ob.eventTime;
     if (age > LIVE_MAX_AGE_MS) fromLastSession = true;
   } else {
     ssiWs.watchSymbol(sym);
   }
 
-  // 4) Outside session: one more subscribe attempt — SSI often pushes last X snapshot on SwitchChannel
   if (!ob && !wsDisabled && !inSession) {
     ssiWs.watchSymbol(sym);
     try {
@@ -190,7 +183,6 @@ export async function getVnOrderBook(
   const book = toBook(sym, ob, trades, fromLastSession);
   if (!book) return null;
 
-  const ageMs = Date.now() - book.eventTime;
   const note = fromLastSession
     ? `Sổ lệnh phiên gần nhất · ${book.levels} mức · ${new Date(book.eventTime).toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })}`
     : `Độ sâu SSI · ${book.levels} mức · ${trades.length} khớp · live`;
