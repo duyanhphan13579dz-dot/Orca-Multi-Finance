@@ -153,13 +153,21 @@ export function computeIndicators(candles: ChartCandle[]): ChartIndicators | nul
   };
 }
 
-async function cryptoCandles(symbol: string, tf: string, limit: number): Promise<{ candles: ChartCandle[]; source: string; note?: string }> {
+async function cryptoCandles(
+  symbol: string,
+  tf: string,
+  limit: number,
+): Promise<{ candles: ChartCandle[]; source: string; note?: string }> {
   const interval = binanceInterval(tf);
   const bars = await binance.getKlines(symbol, interval, limit);
   return { candles: bars.map(toCandle), source: "binance" };
 }
 
-async function forexCandles(pair: string, tf: string, limit: number): Promise<{ candles: ChartCandle[]; source: string; note?: string }> {
+async function forexCandles(
+  pair: string,
+  tf: string,
+  limit: number,
+): Promise<{ candles: ChartCandle[]; source: string; note?: string }> {
   const ySym = yahooSymbolForPair(pair);
   if (!ySym) throw new Error(`unsupported forex pair ${pair}`);
   const interval = yahooIntervalFor(tf);
@@ -167,17 +175,29 @@ async function forexCandles(pair: string, tf: string, limit: number): Promise<{ 
   return { candles: bars.map(toCandle), source: "yahoo" };
 }
 
-async function stockCandles(symbol: string, tf: string, limit: number): Promise<{ candles: ChartCandle[]; source: string; note?: string }> {
-  const r = await getVnOhlcv(symbol, Math.max(limit, 250));
+async function stockCandles(
+  symbol: string,
+  tf: string,
+  limit: number,
+): Promise<{ candles: ChartCandle[]; source: string; note?: string }> {
+  const dayLimit = Math.max(limit, 250);
+  if (vndirect.isVnIndexSymbol(symbol)) {
+    const bars = await vndirect.getVndIndexOhlcv(symbol, dayLimit);
+    const candles = bars.map(toCandle);
+    return {
+      candles: candles.slice(-limit),
+      source: "vndirect-index",
+      note: "Chuỗi chỉ số VN (OHLCV ngày)",
+    };
+  }
+  const r = await getVnOhlcv(symbol, dayLimit);
   if (!r?.bars?.length) throw new Error(`no stock bars for ${symbol}`);
   let candles = r.bars.map(toCandle);
   const ms = TF_MS[tf] ?? TF_MS["1d"];
-  if (ms && ms !== TF_MS["1d"] && ms < TF_MS["1d"]) {
-    // VN daily only — higher TF not available; keep daily
-  } else if (ms && ms > TF_MS["1d"]) {
+  if (ms && ms > TF_MS["1d"]) {
     candles = aggregateCandles(candles, ms);
   }
-  return { candles, source: r.meta?.source ?? "ssi-fcdata" };
+  return { candles: candles.slice(-limit), source: (r as { meta?: { source?: string } }).meta?.source ?? "ssi-fcdata" };
 }
 
 function yahooCommoditySymbol(symbol: string): string | null {
@@ -205,7 +225,11 @@ export function isChartableCommodity(symbol: string): boolean {
   return yahooCommoditySymbol(symbol) != null;
 }
 
-async function commodityCandles(symbol: string, tf: string, limit: number): Promise<{ candles: ChartCandle[]; source: string; note?: string }> {
+async function commodityCandles(
+  symbol: string,
+  tf: string,
+  limit: number,
+): Promise<{ candles: ChartCandle[]; source: string; note?: string }> {
   const ySym = yahooCommoditySymbol(symbol);
   if (!ySym) throw new Error(`unsupported commodity ${symbol}`);
   const interval = yahooIntervalFor(tf);
@@ -213,7 +237,9 @@ async function commodityCandles(symbol: string, tf: string, limit: number): Prom
   return { candles: bars.map(toCandle), source: "yahoo" };
 }
 
-export async function getChartHistory(args: ChartArgs): Promise<{ data: ChartMarketData; meta: Meta } | null> {
+export async function getChartHistory(
+  args: ChartArgs,
+): Promise<{ data: ChartMarketData; meta: Meta } | null> {
   const limit = Math.min(Math.max(args.limit ?? 300, 50), 2000);
   const tf = args.timeframe || "1d";
   let pack: { candles: ChartCandle[]; source: string; note?: string };
