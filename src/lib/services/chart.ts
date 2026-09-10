@@ -3,7 +3,7 @@ import { cached } from "../cache";
 import { buildMeta } from "../freshness";
 import * as binance from "../providers/binance";
 import { getYahooChart, yahooSymbolForPair, yahooIntervalFor } from "../providers/yahoo";
-import { getVnOhlcv, vnstockConfigured } from "./stocks";
+import { getVnOhlcv, getVnIntradayOhlcv, VN_INTRADAY_TFS, vnStockTimeframes, vnstockConfigured } from "./stocks";
 import * as vndirect from "../providers/vndirect";
 import { validateBars, detectGaps, logQualityEvent } from "../quality";
 import { aggregateCandles, binanceInterval, TF_MS, tfsFor, type ChartAssetType, type ChartCandle } from "../chart-const";
@@ -197,6 +197,13 @@ async function forexCandles(pair: string, tf: string, limit: number): Promise<{ 
 }
 
 async function stockCandles(symbol: string, tf: string, limit: number): Promise<{ candles: ChartCandle[]; source: string; note?: string }> {
+  // VN equity intraday — SSI FastConnect v3 data/ohlc (requires SSI_API_KEY)
+  if ((VN_INTRADAY_TFS as readonly string[]).includes(tf) && !vndirect.isVnIndexSymbol(symbol)) {
+    const r = await getVnIntradayOhlcv(symbol, tf as (typeof VN_INTRADAY_TFS)[number], limit);
+    if (!r) throw new Error("vn_intraday_unavailable (cần SSI_API_KEY/SECRET — FastConnect v3)");
+    return { candles: r.bars.map(toCandle).slice(-limit), source: r.meta.source, note: r.meta.note };
+  }
+
   // Pull enough daily bars so weekly/monthly aggregation still has depth
   const dayLimit =
     tf === "1d" ? Math.min(limit, 1500) : tf === "1w" ? Math.min(limit * 8, 2000) : Math.min(limit * 30, 2500);
@@ -304,7 +311,8 @@ export async function getChartHistory(args: ChartArgs): Promise<{ data: ChartMar
   const symbol = args.symbol.toUpperCase().replace(/[^A-Z0-9]/g, "");
   const tf = args.timeframe;
   const limit = Math.min(Math.max(args.limit ?? 500, 50), args.assetType === "crypto" ? 5000 : 2000);
-  if (!tfsFor(args.assetType).includes(tf)) return null;
+  const allowed = args.assetType === "stock" ? vnStockTimeframes() : tfsFor(args.assetType);
+  if (!allowed.includes(tf)) return null;
 
   try {
     const res = await cached(`chart:${args.assetType}:${symbol}:${tf}:${limit}`, {

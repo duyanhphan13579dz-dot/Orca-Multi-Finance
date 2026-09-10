@@ -1,6 +1,7 @@
 import { ok, unavailable, badRequest } from "@/lib/envelope";
 import { getChartHistory } from "@/lib/services/chart";
 import { tfsFor, type ChartAssetType } from "@/lib/chart-const";
+import { vnStockTimeframes } from "@/lib/services/stocks";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -22,8 +23,9 @@ export async function GET(req: Request) {
 
   if (!/^[A-Za-z0-9]{2,20}$/.test(symbol)) return badRequest("symbol không hợp lệ");
   if (!["crypto", "forex", "stock", "commodity"].includes(assetType)) return badRequest("assetType không hợp lệ");
-  if (!tfsFor(assetType).includes(timeframe))
-    return badRequest(`timeframe không hỗ trợ cho ${assetType} (cho phép: ${tfsFor(assetType).join(", ")})`);
+  const allowed = assetType === "stock" ? vnStockTimeframes() : tfsFor(assetType);
+  if (!allowed.includes(timeframe))
+    return badRequest(`timeframe không hỗ trợ cho ${assetType} (cho phép: ${allowed.join(", ")})`);
   if (!Number.isFinite(rawLimit) || rawLimit < 50 || rawLimit > maxLimit)
     return badRequest(`limit 50..${maxLimit}`);
 
@@ -32,7 +34,9 @@ export async function GET(req: Request) {
     return unavailable(
       "chart-engine",
       assetType === "stock"
-        ? "Không lấy được chuỗi nến chỉ số/cổ phiếu VN từ VNDirect — thử lại hoặc xem /system."
+        ? timeframe !== "1d" && timeframe !== "1w" && timeframe !== "1M"
+          ? `Nến intraday VN cần SSI FastConnect v3 (set SSI_API_KEY + SSI_API_SECRET) — xem /system.`
+          : "Không lấy được chuỗi nến chỉ số/cổ phiếu VN từ SSI/VNDirect — thử lại hoặc xem /system."
         : `Không lấy được candles ${symbol}/${timeframe} từ provider — xem /system.`,
     );
   }

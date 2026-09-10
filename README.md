@@ -13,7 +13,7 @@ ORCA Financial kết nối dữ liệu thị trường thật vào một **Centr
 
 | Asset          | Primary Source                    | Fallback (real data)                          |
 | -------------- | --------------------------------- | --------------------------------------------- |
-| Vietnam Stocks | **VNStock** (API key, env)        | — (UNAVAILABLE state until configured)        |
+| Vietnam Stocks | **SSI FastConnect v3** (`SSI_API_KEY/SECRET`, [developers.ssi.com.vn](https://developers.ssi.com.vn/docs/api-reference)) — REST `api.ssi.com.vn` + WS `stream.ssi.com.vn` | SSI FC Data v2 legacy → VNDirect (no key)     |
 | Crypto         | **Binance** REST/WS, host failover| Official Binance public data hosts            |
 | Forex          | **Biquote** (API key, env)        | exchangerate-api latest + ECB/Frankfurter     |
 | Commodities    | **Vietnambiz** + **Simplize.vn**  | MSN Finance (env map) + Binance PAXG (gold)   |
@@ -31,6 +31,7 @@ Không có module nào dùng số liệu giả. Khi provider lỗi: **retry → 
 | VN Screener (universe tab đầu tiên) | Implemented | Filter theo ngành ±% · GT GD; chiến lược nâng cao roadmap |
 | Search VN-first (tên công ty không dấu) | Implemented | Security Master index, VN ticker rank trên mọi asset |
 | VN chart reference/ceiling/floor overlays | Implemented | ExtraLevels từ provider khi có dữ liệu |
+| VN chart intraday (1m–1h) | Implemented (SSI key) | SSI FastConnect v3 `data/ohlc`; daily/weekly/monthly không cần key |
 | Market Dashboard + ORCA Market Pulse | Implemented | Analyst-style narrative từ dữ liệu realtime, gauge risk-appetite |
 | Data Quality Engine | Implemented | VALID/SUSPECT/INVALID/STALE, deviation/timestamp/dup checks, anomaly log |
 | Reconciliation Engine (VNStock⇄VNDirect) | Implemented | Priority rules + tolerance + discrepancy log, không trung bình provider |
@@ -55,7 +56,8 @@ Không có module nào dùng số liệu giả. Khi provider lỗi: **retry → 
 | Watchlist + Trade Journal | Implemented | Local-first; server tables sẵn sàng để sync |
 | Auth (email/password, scrypt, JWT cookie) | Implemented | `/api/v1/auth/*` |
 | Ops/Observability (`/system`) | Implemented | Provider health, latency, circuit, cache stats |
-| VN Stocks: universe/quotes/OHLCV/financials | Implemented (needs key) | Tự kích hoạt khi `VNSTOCK_API_KEY` được cấu hình |
+| VN Stocks: universe/quotes/OHLCV/financials | Implemented | SSI FastConnect v3 PRIMARY → SSI v2 → VNDirect fallback |
+| **SSI FastConnect v3** (REST + WS realtime + Trading/FCO) | Implemented | `api.ssi.com.vn` REST, `stream.ssi.com.vn` WS, order/FCO signed RSA; key qua env |
 | VN Screener / CANSLIM / Minervini / heatmap VN | Planned | Phụ thuộc VNStock reachability |
 | WebSocket gateway + Binance WS relay | Planned | REST hiện tại đã realtime ≤15–20s; WS relay nằm trong roadmap `/docs/architecture.md` |
 | Google OAuth, 2FA/TOTP | Planned | |
@@ -64,7 +66,7 @@ Không có module nào dùng số liệu giả. Khi provider lỗi: **retry → 
 ## Architecture
 
 ```text
-External Providers (VNStock · Binance · Biquote · Vietnambiz · Simplize · RSS)
+External Providers (SSI FastConnect · VNDirect · Binance · Biquote · Vietnambiz · Simplize · RSS)
         │  timeout / retry / backoff / circuit breaker / health registry
         ▼
 Provider Adapter Layer            src/lib/providers/*
@@ -156,6 +158,8 @@ Chỉ cần `DATABASE_URL` + `JWT_SECRET`: crypto (Binance, không cần key), f
 
 `GET /api/v1/market/snapshot` · `GET /api/v1/stocks?symbols=…` · `GET /api/v1/stocks/{sym}` · `/technical` · `/financials` · `GET /api/v1/crypto/markets` · `GET /api/v1/crypto/{sym}?interval=1h` · `GET /api/v1/forex/markets` · `GET /api/v1/forex/{PAIR}` · `GET /api/v1/commodities` · `GET /api/v1/news?category=&symbol=` · `GET /api/v1/screener?universe=crypto&minChange=&minQuoteVolume=` · `GET /api/v1/reports/morning-brief` · `POST /api/v1/agent {question}` · `GET /api/v1/system/providers` · `POST /api/v1/auth/{register,login,logout}` · `GET /api/v1/auth/me`.
 
+SSI FastConnect (chứng khoán VN): `GET /api/v1/ssi/status` · `GET /api/v1/ssi/account` · `GET/POST/PUT/DELETE /api/v1/ssi/orders` · `POST /api/v1/ssi/otp` · `GET/POST/DELETE /api/v1/ssi/fco` · `GET /api/v1/system/ssi-ws`.
+
 Chi tiết: [`/docs/api.md`](docs/api.md) · Kiến trúc: [`/docs/architecture.md`](docs/architecture.md) · Data providers: [`/docs/data-providers.md`](docs/data-providers.md)
 
 ## Repository layout
@@ -165,8 +169,9 @@ src/
   app/                    routes (pages) + api/v1 route handlers
   components/             terminal-grade UI (charts, panels, technical views)
   lib/
-    providers/            vnstock · binance · biquote/forex · commodities · news
+    providers/            ssi-fastconnect · ssi-trading · vnstock · binance · biquote/forex · commodities · news
     services/             domain engines (crypto, forex, stocks, commodities, news, market, agent, reports)
+    realtime/             binance-ws · ssi-ws (legacy) · ssi-fc-stream (FastConnect v3) · candles · scheduler
     cache.ts health.ts http.ts freshness.ts technical.ts auth.ts env.ts
   db/                     drizzle schema (24 tables) + client
 docs/                     architecture · data-providers · api

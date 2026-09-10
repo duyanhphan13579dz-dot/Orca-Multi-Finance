@@ -11,7 +11,7 @@ Domain Services          src/lib/services/*
   ↓  — business logic, cache, freshness, compositional intelligence
 Provider Adapters        src/lib/providers/*
   ↓  — timeout, retry, backoff, circuit breaker, health registry
-External Sources         VNStock · Binance · Biquote · Vietnambiz · Simplize · RSS
+External Sources         SSI FastConnect v3 · VNDirect · Binance · Biquote · Vietnambiz · Simplize · RSS
 ```
 
 - **Không** logic provider nào xuất hiện trong React component.
@@ -47,7 +47,7 @@ SLA per-domain định nghĩa trong service tương ứng (crypto 30s/120s/600s,
 ```text
 crypto.price.updated (Binance 24h ticker, 12s cadence)
   → markets table, movers, heatmap, screener, watchlist, pulse, agent, reports
-stock.quote.updated (VNStock, khi được cấu hình)
+stock.quote.updated (SSI FastConnect v3 WS/REST → SSI v2 → VNDirect)
   → indices header, board, heatmap VN, technical incremental
 forex/commodity/news.updated
   → dashboards, pulse narrative, morning brief freshness gate

@@ -22,10 +22,18 @@ interface RealtimeInfo {
   tickersTracked: number;
   marksTracked: number;
 }
+interface SsiStreamInfo extends StreamState {
+  enabled: boolean;
+  configured: boolean;
+  topics: string[];
+  quotesTracked: number;
+  indicesTracked: number;
+}
 interface OpsData {
   providers: ProviderStatus[];
   cache: { entries: number; hits: number; staleServed: number; inflight: number; redisEnabled: boolean };
   realtime?: RealtimeInfo;
+  ssiStream?: SsiStreamInfo;
   serverTime: string;
   counts: { total: number; healthy: number; degraded: number; down: number; unknown: number };
 }
@@ -84,6 +92,30 @@ export default function SystemPage() {
             )}
             <div className="panel-inset p-2.5 text-[11px] leading-relaxed text-text-muted">
               Một kết nối dùng chung cho toàn platform (không bao giờ per-user). Khi stream bị chặn theo vùng mạng, engine backoff thông minh và REST pipeline vẫn là nguồn sự thật — trạng thái luôn minh bạch tại đây. Dữ liệu WS khi LIVE sẽ override REST trong crypto engine.
+            </div>
+          </div>
+        </Panel>
+      )}
+
+      {d?.ssiStream && (
+        <Panel
+          pad={false}
+          title={<span className="flex items-center gap-2"><Zap className="size-4 text-accent" /> SSI FastConnect v3 — Realtime Stream (stream.ssi.com.vn)</span>}
+        >
+          <div className="grid grid-cols-1 gap-2 p-3.5 md:grid-cols-4">
+            <WsCard
+              label="Market stream (trade · quote · market)"
+              s={d.ssiStream}
+              extra={
+                d.ssiStream.configured
+                  ? d.ssiStream.enabled
+                    ? `${d.ssiStream.quotesTracked} mã · ${d.ssiStream.indicesTracked} chỉ số · ${d.ssiStream.topics.length} topics`
+                    : "disabled by env (SSI_WS_DISABLED=true) — REST-only"
+                  : "chưa cấu hình SSI_API_KEY/SECRET"
+              }
+            />
+            <div className="panel-inset p-2.5 text-[11px] leading-relaxed text-text-muted md:col-span-3">
+              Token từ <span className="num">/api/v3/auth/token</span> (refresh tự động), subscribe lại toàn bộ topic sau reconnect, heartbeat PING/PONG 30s, tự xoay vòng kết nối trước khi token hết hạn. Chi tiết: <span className="num">/api/v1/ssi/status</span>.
             </div>
           </div>
         </Panel>

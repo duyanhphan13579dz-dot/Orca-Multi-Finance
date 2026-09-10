@@ -7,7 +7,7 @@ Mọi provider phía sau **Provider Adapter Interface** và bị metadata health
 
 | Domain | Primary | Fallbacks |
 | --- | --- | --- |
-| stocks (VN) | VNStock (env: `VNSTOCK_BASE_URL`, `VNSTOCK_API_KEY`) | — (UNAVAILABLE nếu chưa cấu hình) |
+| stocks (VN) | **SSI FastConnect v3** (env: `SSI_API_KEY`, `SSI_API_SECRET`) | SSI FC Data v2 legacy (`SSI_FC_CONSUMER_ID/SECRET`) → VNDirect (không cần key) |
 | crypto | Binance spot REST (`api.binance.com` → `api{1,2}.binance.com` → `data-api.binance.vision`) | Binance fapi cho futures (geo-dependent) |
 | forex | Biquote (env) | exchangerate-api open latest; Frankfurter/ECB daily history + previous fix |
 | commodities | Vietnambiz (SJC gold board) · Simplize (env key) | MSN Finance quotes (env instrument map) · Binance PAXGUSDT (vàng) |
@@ -25,6 +25,39 @@ interface MarketDataProvider {
 ```
 
 Adapter **không trả số suy diễn**. Parse schema linh hoạt (VNStock field aliases), sanity-check giá trị (giá phải hữu hạn, volume ≥ 0), ném `ProviderError` khi payload rỗng/không hợp lệ.
+
+### SSI FastConnect v3 (`src/lib/providers/ssi-fastconnect.ts` + `ssi-trading.ts` + `src/lib/realtime/ssi-fc-stream.ts`)
+
+Tích hợp theo tài liệu chính thức <https://developers.ssi.com.vn/docs/api-reference>.
+
+**REST** — base `https://api.ssi.com.vn` (env `SSI_API_BASE_URL`):
+
+- `POST /api/v3/auth/token` `{apiKey, apiSecret}` → `{accessToken, expiresAt, refreshToken, refreshExpiresAt}`. Token cache tới 60s trước `expiresAt`, single-flight; hết hạn → thử `POST /api/v3/auth/refresh` trước, fallback re-auth; 401/403 → invalidate + retry 1 lần. Market data **không cần OTP**.
+- `GET /api/v3/data/securitiesByBoard?board|symbol|index` — security master (tên Vi/En, ICB industry, lotSize, listedShare) → universe + search.
+- `GET /api/v3/data/securitiesSummary?symbol&from&to` — tổng hợp giao dịch ngày (close, priceChange/%, OHLC, totalMatch/Value, foreign buy/sell, room) → quotes.
+- `GET /api/v3/data/masterdata?from&to` (phân trang) — trần/sàn/tham chiếu toàn thị trường → overlay bands, merge vào quote.
+- `GET /api/v3/data/indexList?board` + `GET /api/v3/data/indexSummary?index&tradingDate` — chỉ số (value, change/%, advance/decline). Mã chỉ số chuẩn hóa về canonical của platform (`HNXINDEX→HNX`, `UPCOMINDEX→UPCOM`, …).
+- `GET /api/v3/data/ohlc?symbol&from&to&timeFrame` — OHLCV `1d` (toàn bộ lịch sử niêm yết) và intraday `1m/3m/5m/15m/30m/1h` (12 tháng gần nhất), tự phân trang ≤4 trang. Ngày theo `YYYY/MM/DD` (+07), intraday `YYYY/MM/DD HH:mm:ss`.
+
+**WebSocket realtime** — `wss://stream.ssi.com.vn/ws/v3` (env `SSI_STREAMING_URL`), token Bearer từ auth/token (truyền `?access_token=` khi runtime không set được header):
+
+- Subscribe/unsubscribe `{method, channel: DATA|TRADING, topics[]}`; topic convention `trade.<sym>[@1m|5m] · quote.<sym> · room.<sym> · put.<sym> · oddlot.<sym> · market.<board> · order.<accountNo> · portfolio.<accountNo>`; multi-symbol `trade.ACB-SSI-GVR`; whole-board `trade.hose`.
+- Heartbeat: server PING → client PONG; engine tự ping mỗi 30s; watchdog 90s im lặng → reconnect.
+- Trade tick `{s,t,p,q,a,si,o,h,l,v}` → live quote (change tính theo ref của `market.<board>`/masterdata); quote message → best bid/ask; `market` message → ceiling/floor/ref + cờ phiên (`ATO/LO/ATC…`); chỉ số stream trên cùng topic `trade.VNINDEX…`, change tính theo prevClose seed từ REST indexSummary.
+- Reconnect: full-jitter exponential backoff theo lớp lỗi (network/handshake/rate-limit/auth/silent), retry budget 24 → cooldown 5 phút, auth circuit breaker 5 lần; reconnect xong subscribe lại toàn bộ topics.
+- Serverless: `SSI_WS_DISABLED=true` → REST-only (nhãn freshness trung thực).
+
+**Trading & FCO** (`ssi-trading.ts`, routes `/api/v1/ssi/*`):
+
+- Truy vấn (token data, không cần OTP): `account/info`, `trading/accountBalance`, `trading/ppmmrAccount`, `trading/position`, `trading/orderBook` (from/to ISO-8601), `trading/maxBuySell`, `trading/fco/list|orderbook|statusHistory`.
+- Mutation (đặt/sửa/hủy lệnh + FCO): token cấp **có OTP** (`auth/token` + `otp` hoặc `transactionId` từ `auth/requestOtp` — SmartOTP) + header `X-Signature` = RSA PKCS#1 v1.5 SHA-256 của chính xác JSON body, hex, khóa riêng RSA dạng XML base64 (`SSI_PRIVATE_KEY`). Mở khóa bằng `SSI_TRADING_ENABLED=true`; mọi route trading đều yêu cầu đăng nhập ORCA.
+- Trạng thái lệnh map nhãn Vi theo phụ lục order-status-flow (PD/RS/SD/QU/PF/FF/WC/CL/RJ/…).
+
+**Health & ops**: mọi request qua `http.ts` nên `ssi-fastconnect` xuất hiện trong `/api/v1/system/providers`; trạng thái stream tại `/api/v1/system/ssi-ws`; chẩn đoán tổng tại `/api/v1/ssi/status`.
+
+### SSI FC Data v2 legacy (`src/lib/providers/ssi-fcdata.ts` + `src/lib/realtime/ssi-ws.ts`)
+
+Adapter cũ theo guide.ssi.com.vn (`fc-data.ssi.com.vn/api/v2/Market/*`: AccessToken, DailyStockPrice, DailyOhlc, DailyIndex, Securities, IndexList) + DataHub SignalR (`SwitchChannel` X/B/MI). Giữ nguyên làm fallback khi chưa có key v3.
 
 ### VNStock (`src/lib/providers/vnstock.ts`)
 

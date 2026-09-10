@@ -12,10 +12,21 @@ Envelope chuẩn cho mọi endpoint:
 | Endpoint | Mô tả | Nguồn |
 | --- | --- | --- |
 | `GET /api/v1/market/snapshot` | Snapshot tổng hợp: indices, crypto top+summary, forex, commodities, news, **pulse** + freshness per-section | engine |
-| `GET /api/v1/stocks?symbols=VCB,HPG` | Board VN: indices + quotes (UPSTREAM_UNAVAILABLE khi thiếu key) | VNStock |
-| `GET /api/v1/stocks/{symbol}` | Quote + OHLCV 250 + technical + patterns + financials | VNStock |
-| `GET /api/v1/stocks/{symbol}/technical` | OHLCV + full indicator snapshot | VNStock |
-| `GET /api/v1/stocks/{symbol}/financials` | income/balance/ratios theo quý | VNStock |
+| `GET /api/v1/stocks?symbols=VCB,HPG` | Board VN: indices + quotes | SSI FC v3 → SSI v2 → VNDirect |
+| `GET /api/v1/stocks/{symbol}` | Quote + OHLCV 250 + technical + patterns + financials | SSI FC v3 → VNDirect |
+| `GET /api/v1/stocks/{symbol}/technical` | OHLCV + full indicator snapshot | SSI FC v3 → VNDirect |
+| `GET /api/v1/stocks/{symbol}/financials` | income/balance/ratios theo quý | VNDirect/SSC |
+| `GET /api/v1/chart/history?assetType=stock&timeframe=1m…1h` | Nến intraday VN (1m/3m/5m/15m/30m/1h) — cần SSI FC v3 | SSI FC v3 `data/ohlc` |
+| `GET /api/v1/ssi/status` | Trạng thái kết nối SSI (auth probe, WS stats, trading readiness) | ssi-fastconnect |
+| `GET /api/v1/ssi/account?accountNo=` | Tiểu khoản + số dư + vị thế + PP/MMR (login; không cần OTP) | SSI FC v3 |
+| `GET /api/v1/ssi/orders?accountNo=` | Sổ lệnh trong ngày / theo khoảng from-to ISO (login) | SSI FC v3 |
+| `POST /api/v1/ssi/orders` | Đặt lệnh `{accountNo,symbol,side,orderType,quantity,price?,otp\|transactionId}` (login + SSI_TRADING_ENABLED) | SSI FC v3 signed |
+| `PUT /api/v1/ssi/orders` | Sửa lệnh (price HOẶC quantity) | SSI FC v3 signed |
+| `DELETE /api/v1/ssi/orders` | Hủy lệnh | SSI FC v3 signed |
+| `POST /api/v1/ssi/otp` | Yêu cầu OTP / SmartOTP transactionId (login) | SSI FC v3 |
+| `GET /api/v1/ssi/fco?view=list\|orderbook\|statusHistory` | Truy vấn lệnh điều kiện (login) | SSI FC v3 |
+| `POST /api/v1/ssi/fco` / `DELETE` | Đặt / hủy FCO (login + SSI_TRADING_ENABLED + OTP) | SSI FC v3 signed |
+| `GET /api/v1/system/ssi-ws` | Trạng thái engine stream SSI (v3 + legacy) | ops |
 | `GET /api/v1/crypto/markets?limit=&sort=gainers|losers|volume` | Toàn thị trường USDT spot + summary/breadth | Binance |
 | `GET /api/v1/crypto/{symbol}?interval=15m|1h|4h|1d` | Ticker + klines + technical + patterns + funding/OI | Binance |
 | `GET /api/v1/forex/markets` | 12 cặp major/minor/exotic + note sức mạnh USD | Biquote/fallback |

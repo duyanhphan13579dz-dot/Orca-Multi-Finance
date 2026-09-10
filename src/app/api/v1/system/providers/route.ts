@@ -2,6 +2,7 @@ import { getProviderHealth } from "@/lib/health";
 import { cacheStats } from "@/lib/cache";
 import { ok } from "@/lib/envelope";
 import { binanceWs } from "@/lib/realtime/binance-ws";
+import { ssiFcStream } from "@/lib/realtime/ssi-fc-stream";
 
 /**
  * Ops/observability endpoint — provider status, latency, circuit breakers,
@@ -18,6 +19,7 @@ export async function GET() {
       providers,
       cache: stats,
       realtime: binanceWs.getStats(),
+      ssiStream: ssiFcStream.getStats(),
       serverTime: new Date().toISOString(),
       counts: {
         total: providers.length,
