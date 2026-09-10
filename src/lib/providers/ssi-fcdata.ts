@@ -1,21 +1,18 @@
 import "server-only";
 import { httpJson } from "../http";
-import type { OhlcvBar, Quote } from "../types";
+import type { IndexQuote, OhlcvBar, Quote } from "../types";
 import { ProviderError } from "./binance";
 
 /**
- * SSI FastConnect Data (FC Data) — market REST adapter.
- *
- * Env:
- *   SSI_FC_CONSUMER_ID / SSI_FC_CONSUMER_SECRET
- *   SSI_FC_DATA_BASE_URL (optional)
- *
- * Note: PrivateKey is FC Trading only — not used here.
+ * SSI FastConnect Data (FC Data) — full market REST adapter.
+ * PrivateKey not required (FC Trading only).
  */
 
 export const SSI_FCDATA = "ssi-fcdata";
 
 const DEFAULT_BASE = "https://fc-data.ssi.com.vn";
+const MARKETS = ["HOSE", "HNX", "UPCOM"] as const;
+const CORE_INDICES = ["VNINDEX", "VN30", "HNX", "HNX30", "UPCOM", "VN100"] as const;
 
 function baseUrl(): string {
   return (process.env.SSI_FC_DATA_BASE_URL ?? DEFAULT_BASE).replace(/\/$/, "");
@@ -61,6 +58,10 @@ function formatSsiDate(d = new Date()): string {
 function daysAgoSsi(n: number): string {
   const d = new Date(Date.now() - n * 86_400_000);
   return formatSsiDate(d);
+}
+
+export function ssiToday(): string {
+  return formatSsiDate();
 }
 
 type TokenBundle = {
@@ -130,7 +131,7 @@ async function fetchAccessToken(): Promise<TokenBundle> {
 
   if (!access) {
     throw new ProviderError(
-      `ssi-fcdata auth: no accessToken in response (${body.message ?? body.status ?? "empty"})`,
+      `ssi-fcdata auth: no accessToken (${body.message ?? body.status ?? "empty"})`,
       SSI_FCDATA,
     );
   }
@@ -376,7 +377,6 @@ export async function getSsiDailyStockPrice(
   return { quotes, sourceTs: newest };
 }
 
-/** In-memory day board cache (process-local) — cuts N×HTTP to ≤3 market pulls. */
 const dayBoardCache = new Map<
   string,
   { expiresAt: number; bySym: Map<string, Quote>; sourceTs: number | null }
@@ -385,8 +385,6 @@ const dayBoardInflight = new Map<
   string,
   Promise<{ bySym: Map<string, Quote>; sourceTs: number | null }>
 >();
-
-const MARKETS = ["HOSE", "HNX", "UPCOM"] as const;
 
 async function fetchMarketDayPage(
   market: string,
@@ -431,7 +429,6 @@ async function loadDayBoard(fromDate: string, toDate: string): Promise<{
     await Promise.all(
       MARKETS.map(async (market) => {
         try {
-          // Two pages max per market (≤2000 rows) — enough for liquid board
           const pages = await Promise.all([
             fetchMarketDayPage(market, fromDate, toDate, 1),
             fetchMarketDayPage(market, fromDate, toDate, 2).catch(() => [] as DailyStockPriceRow[]),
@@ -440,7 +437,6 @@ async function loadDayBoard(fromDate: string, toDate: string): Promise<{
             for (const r of rows) {
               const q = rowToQuote(r);
               if (!q) continue;
-              // Prefer latest row per symbol
               const prev = bySym.get(q.symbol);
               const t = parseSsiDate(q.updatedAt) ?? 0;
               const pt = prev?.updatedAt ? parseSsiDate(prev.updatedAt) ?? 0 : 0;
@@ -449,13 +445,13 @@ async function loadDayBoard(fromDate: string, toDate: string): Promise<{
             }
           }
         } catch {
-          /* one market fail — others still usable */
+          /* skip market */
         }
       }),
     );
 
     dayBoardCache.set(key, {
-      expiresAt: Date.now() + 12_000, // 12s process cache
+      expiresAt: Date.now() + 12_000,
       bySym,
       sourceTs: newest,
     });
@@ -470,10 +466,6 @@ async function loadDayBoard(fromDate: string, toDate: string): Promise<{
   }
 }
 
-/**
- * Fast path: pull today's board by market (≤6 HTTP) then filter symbols.
- * Fallback: per-symbol DailyStockPrice for misses.
- */
 export async function getSsiQuotes(symbols: string[]): Promise<{ quotes: Quote[]; sourceTs: number | null }> {
   const uniq = [...new Set(symbols.map((s) => s.toUpperCase()).filter(Boolean))].slice(0, 40);
   if (!uniq.length) return { quotes: [], sourceTs: null };
@@ -489,7 +481,6 @@ export async function getSsiQuotes(symbols: string[]): Promise<{ quotes: Quote[]
     else missing.push(s);
   }
 
-  // Fill gaps (rare / odd symbols) — limited concurrency
   if (missing.length) {
     const chunk = missing.slice(0, 8);
     const results = await Promise.allSettled(chunk.map((s) => getSsiDailyStockPrice(s)));
@@ -506,6 +497,145 @@ export async function getSsiQuotes(symbols: string[]): Promise<{ quotes: Quote[]
 
   if (!quotes.length) throw new ProviderError("ssi-fcdata: empty quotes batch", SSI_FCDATA);
   return { quotes, sourceTs: board.sourceTs };
+}
+
+/** Full market board from SSI DailyStockPrice (all 3 floors). */
+export async function getSsiFullBoard(): Promise<{
+  quotes: Quote[];
+  sessionDate: string;
+  sourceTs: number | null;
+}> {
+  const today = formatSsiDate();
+  const board = await loadDayBoard(today, today);
+  if (!board.bySym.size) throw new ProviderError("ssi-fcdata: empty full board", SSI_FCDATA);
+  return {
+    quotes: [...board.bySym.values()],
+    sessionDate: today,
+    sourceTs: board.sourceTs,
+  };
+}
+
+type DailyIndexRow = {
+  IndexCode?: string;
+  Indexcode?: string;
+  IndexName?: string;
+  IndexValue?: string | number;
+  Change?: string | number;
+  RatioChange?: string | number;
+  Totalmatchvol?: string | number;
+  Totalvol?: string | number;
+  TotalQtty?: string | number;
+  TradingDate?: string;
+  "Trading Date"?: string;
+  Time?: string;
+};
+
+export async function getSsiIndices(
+  codes: string[] = [...CORE_INDICES],
+): Promise<{ items: IndexQuote[]; sourceTs: number | null }> {
+  const today = formatSsiDate();
+  const uniq = [...new Set(codes.map((c) => c.toUpperCase()))];
+
+  const results = await Promise.allSettled(
+    uniq.map(async (code) => {
+      const body = await ssiGet<SsiEnvelope<DailyIndexRow[]>>("/api/v2/Market/DailyIndex", {
+        IndexId: code,
+        indexId: code,
+        FromDate: today,
+        fromDate: today,
+        ToDate: today,
+        toDate: today,
+        PageIndex: 1,
+        pageIndex: 1,
+        PageSize: 5,
+        pageSize: 5,
+        Ascending: false,
+        ascending: false,
+      });
+      const rows = Array.isArray(body.data) ? body.data : [];
+      const r = rows[0];
+      if (!r) return null;
+      const value = num(r.IndexValue);
+      if (value == null) return null;
+      const idxCode = String(r.IndexCode ?? r.Indexcode ?? code).toUpperCase();
+      const updated =
+        r.TradingDate ?? (r as { "Trading Date"?: string })["Trading Date"] ?? today;
+      return {
+        item: {
+          code: idxCode,
+          name: r.IndexName ?? idxCode,
+          value,
+          change: num(r.Change) ?? 0,
+          changePercent: num(r.RatioChange) ?? 0,
+          volume: num(r.Totalmatchvol) ?? num(r.Totalvol) ?? num(r.TotalQtty),
+          updatedAt: updated,
+        } satisfies IndexQuote,
+        ts: parseSsiDate(updated),
+      };
+    }),
+  );
+
+  const items: IndexQuote[] = [];
+  let newest: number | null = null;
+  for (const r of results) {
+    if (r.status !== "fulfilled" || !r.value) continue;
+    items.push(r.value.item);
+    if (r.value.ts != null && (newest == null || r.value.ts > newest)) newest = r.value.ts;
+  }
+
+  if (!items.length) throw new ProviderError("ssi-fcdata: empty DailyIndex", SSI_FCDATA);
+  return { items, sourceTs: newest };
+}
+
+type SecuritiesRow = {
+  market?: string;
+  Market?: string;
+  symbol?: string;
+  Symbol?: string;
+  StockName?: string;
+  StockEnName?: string;
+};
+
+export async function getSsiUniverse(): Promise<
+  { symbol: string; name: string | null; exchange: string | null; industry: string | null }[]
+> {
+  const out: { symbol: string; name: string | null; exchange: string | null; industry: string | null }[] =
+    [];
+
+  await Promise.all(
+    MARKETS.map(async (market) => {
+      try {
+        for (let page = 1; page <= 5; page++) {
+          const body = await ssiGet<SsiEnvelope<SecuritiesRow[]>>("/api/v2/Market/Securities", {
+            Market: market,
+            market,
+            PageIndex: page,
+            pageIndex: page,
+            PageSize: 1000,
+            pageSize: 1000,
+          });
+          const rows = Array.isArray(body.data) ? body.data : [];
+          if (!rows.length) break;
+          for (const r of rows) {
+            const symbol = String(r.symbol ?? r.Symbol ?? "").toUpperCase();
+            if (!symbol) continue;
+            out.push({
+              symbol,
+              name: r.StockName ?? r.StockEnName ?? null,
+              exchange: String(r.market ?? r.Market ?? market).toUpperCase(),
+              industry: null,
+            });
+          }
+          if (rows.length < 1000) break;
+        }
+      } catch {
+        /* skip */
+      }
+    }),
+  );
+
+  if (!out.length) throw new ProviderError("ssi-fcdata: empty Securities universe", SSI_FCDATA);
+  return out;
 }
 
 type IndexListRow = {
