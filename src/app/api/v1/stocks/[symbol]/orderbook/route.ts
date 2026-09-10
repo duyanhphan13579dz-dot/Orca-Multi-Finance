@@ -1,5 +1,5 @@
 import { ok, unavailable, badRequest } from "@/lib/envelope";
-import { getVnOrderBook } from "@/lib/services/stocks";
+import { getVnOrderBook } from "@/lib/services/stock-orderbook";
 import { ssiFcConfigured } from "@/lib/providers/ssi-fcdata";
 
 export const dynamic = "force-dynamic";

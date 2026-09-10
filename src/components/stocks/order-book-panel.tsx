@@ -1,7 +1,7 @@
 "use client";
 
 import { useApi } from "@/lib/hooks";
-import type { VnOrderBook } from "@/lib/services/stocks";
+import type { VnOrderBook } from "@/lib/services/stock-orderbook";
 import { FreshnessDot, Loading, Panel, Unavailable } from "@/components/ui";
 
 function fmtPrice(p: number): string {
