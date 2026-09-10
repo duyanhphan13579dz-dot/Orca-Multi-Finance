@@ -9,6 +9,8 @@ import { ProviderError } from "./binance";
  * Env:
  *   SSI_FC_CONSUMER_ID / SSI_FC_CONSUMER_SECRET
  *   SSI_FC_DATA_BASE_URL (optional)
+ *
+ * Note: PrivateKey is FC Trading only — not used here.
  */
 
 export const SSI_FCDATA = "ssi-fcdata";
@@ -286,22 +288,57 @@ export async function getSsiDailyOhlc(
 
 type DailyStockPriceRow = {
   TradingDate?: string;
+  Tradingdate?: string;
   Symbol?: string;
   Price?: string | number;
   OpenPrice?: string | number;
+  Openprice?: string | number;
   HighestPrice?: string | number;
+  Highestprice?: string | number;
   LowestPrice?: string | number;
+  Lowestprice?: string | number;
   ClosePrice?: string | number;
+  Closeprice?: string | number;
   AveragePrice?: string | number;
   TotalVol?: string | number;
+  Totalmatchvol?: string | number;
   TotalVal?: string | number;
+  Totalmatchval?: string | number;
   Change?: string | number;
+  Pricechange?: string | number;
   PerChange?: string | number;
+  Perpricechange?: string | number;
   CeilingPrice?: string | number;
+  Ceilingprice?: string | number;
   FloorPrice?: string | number;
+  Floorprice?: string | number;
   RefPrice?: string | number;
+  Refprice?: string | number;
   BasicPrice?: string | number;
 };
+
+function rowToQuote(r: DailyStockPriceRow, fallbackSym?: string): Quote | null {
+  const price = num(r.ClosePrice) ?? num(r.Closeprice) ?? num(r.Price);
+  if (price == null || price <= 0) return null;
+  const sym = String(r.Symbol ?? fallbackSym ?? "").toUpperCase();
+  if (!sym) return null;
+  return {
+    symbol: sym,
+    assetClass: "stock",
+    price,
+    change: num(r.Change) ?? num(r.Pricechange),
+    changePercent: num(r.PerChange) ?? num(r.Perpricechange),
+    open: num(r.OpenPrice) ?? num(r.Openprice),
+    high: num(r.HighestPrice) ?? num(r.Highestprice),
+    low: num(r.LowestPrice) ?? num(r.Lowestprice),
+    volume: num(r.TotalVol) ?? num(r.Totalmatchvol),
+    quoteVolume: num(r.TotalVal) ?? num(r.Totalmatchval),
+    referencePrice: num(r.RefPrice) ?? num(r.Refprice) ?? num(r.BasicPrice),
+    ceilingPrice: num(r.CeilingPrice) ?? num(r.Ceilingprice),
+    floorPrice: num(r.FloorPrice) ?? num(r.Floorprice),
+    updatedAt: r.TradingDate ?? r.Tradingdate ?? null,
+  };
+}
 
 export async function getSsiDailyStockPrice(
   symbol: string,
@@ -326,54 +363,149 @@ export async function getSsiDailyStockPrice(
 
   const rows = Array.isArray(body.data) ? body.data : [];
   let newest: number | null = null;
-  const quotes = rows
-    .map((r): Quote | null => {
-      const price = num(r.ClosePrice) ?? num(r.Price);
-      if (price == null || price <= 0) return null;
-      const t = parseSsiDate(r.TradingDate ?? null);
-      if (t != null && (newest == null || t > newest)) newest = t;
-      return {
-        symbol: String(r.Symbol ?? sym).toUpperCase(),
-        assetClass: "stock" as const,
-        price,
-        change: num(r.Change),
-        changePercent: num(r.PerChange),
-        open: num(r.OpenPrice),
-        high: num(r.HighestPrice),
-        low: num(r.LowestPrice),
-        volume: num(r.TotalVol),
-        quoteVolume: num(r.TotalVal),
-        referencePrice: num(r.RefPrice) ?? num(r.BasicPrice),
-        ceilingPrice: num(r.CeilingPrice),
-        floorPrice: num(r.FloorPrice),
-        updatedAt: r.TradingDate ?? null,
-      };
-    })
-    .filter((x): x is Quote => x != null);
+  const quotes: Quote[] = [];
+  for (const r of rows) {
+    const q = rowToQuote(r, sym);
+    if (!q) continue;
+    const t = parseSsiDate(q.updatedAt);
+    if (t != null && (newest == null || t > newest)) newest = t;
+    quotes.push(q);
+  }
 
   if (!quotes.length) throw new ProviderError(`ssi-fcdata: empty DailyStockPrice for ${sym}`, SSI_FCDATA);
   return { quotes, sourceTs: newest };
 }
 
+/** In-memory day board cache (process-local) — cuts N×HTTP to ≤3 market pulls. */
+const dayBoardCache = new Map<
+  string,
+  { expiresAt: number; bySym: Map<string, Quote>; sourceTs: number | null }
+>();
+const dayBoardInflight = new Map<
+  string,
+  Promise<{ bySym: Map<string, Quote>; sourceTs: number | null }>
+>();
+
+const MARKETS = ["HOSE", "HNX", "UPCOM"] as const;
+
+async function fetchMarketDayPage(
+  market: string,
+  fromDate: string,
+  toDate: string,
+  pageIndex: number,
+): Promise<DailyStockPriceRow[]> {
+  const body = await ssiGet<SsiEnvelope<DailyStockPriceRow[]>>(
+    "/api/v2/Market/DailyStockPrice",
+    {
+      Market: market,
+      market,
+      FromDate: fromDate,
+      fromDate,
+      ToDate: toDate,
+      toDate,
+      PageIndex: pageIndex,
+      pageIndex,
+      PageSize: 1000,
+      pageSize: 1000,
+    },
+    18_000,
+  );
+  return Array.isArray(body.data) ? body.data : [];
+}
+
+async function loadDayBoard(fromDate: string, toDate: string): Promise<{
+  bySym: Map<string, Quote>;
+  sourceTs: number | null;
+}> {
+  const key = `${fromDate}|${toDate}`;
+  const hit = dayBoardCache.get(key);
+  if (hit && hit.expiresAt > Date.now()) return { bySym: hit.bySym, sourceTs: hit.sourceTs };
+
+  const inflight = dayBoardInflight.get(key);
+  if (inflight) return inflight;
+
+  const p = (async () => {
+    const bySym = new Map<string, Quote>();
+    let newest: number | null = null;
+
+    await Promise.all(
+      MARKETS.map(async (market) => {
+        try {
+          // Two pages max per market (≤2000 rows) — enough for liquid board
+          const pages = await Promise.all([
+            fetchMarketDayPage(market, fromDate, toDate, 1),
+            fetchMarketDayPage(market, fromDate, toDate, 2).catch(() => [] as DailyStockPriceRow[]),
+          ]);
+          for (const rows of pages) {
+            for (const r of rows) {
+              const q = rowToQuote(r);
+              if (!q) continue;
+              // Prefer latest row per symbol
+              const prev = bySym.get(q.symbol);
+              const t = parseSsiDate(q.updatedAt) ?? 0;
+              const pt = prev?.updatedAt ? parseSsiDate(prev.updatedAt) ?? 0 : 0;
+              if (!prev || t >= pt) bySym.set(q.symbol, q);
+              if (t > 0 && (newest == null || t > newest)) newest = t;
+            }
+          }
+        } catch {
+          /* one market fail — others still usable */
+        }
+      }),
+    );
+
+    dayBoardCache.set(key, {
+      expiresAt: Date.now() + 12_000, // 12s process cache
+      bySym,
+      sourceTs: newest,
+    });
+    return { bySym, sourceTs: newest };
+  })();
+
+  dayBoardInflight.set(key, p);
+  try {
+    return await p;
+  } finally {
+    dayBoardInflight.delete(key);
+  }
+}
+
+/**
+ * Fast path: pull today's board by market (≤6 HTTP) then filter symbols.
+ * Fallback: per-symbol DailyStockPrice for misses.
+ */
 export async function getSsiQuotes(symbols: string[]): Promise<{ quotes: Quote[]; sourceTs: number | null }> {
-  const uniq = [...new Set(symbols.map((s) => s.toUpperCase()).filter(Boolean))].slice(0, 20);
+  const uniq = [...new Set(symbols.map((s) => s.toUpperCase()).filter(Boolean))].slice(0, 40);
   if (!uniq.length) return { quotes: [], sourceTs: null };
 
-  const results = await Promise.allSettled(uniq.map((s) => getSsiDailyStockPrice(s)));
+  const today = formatSsiDate();
+  const board = await loadDayBoard(today, today);
   const quotes: Quote[] = [];
-  let newest: number | null = null;
-  for (const r of results) {
-    if (r.status !== "fulfilled") continue;
-    const sorted = [...r.value.quotes].sort((a, b) => {
-      const ta = a.updatedAt ? parseSsiDate(a.updatedAt) ?? 0 : 0;
-      const tb = b.updatedAt ? parseSsiDate(b.updatedAt) ?? 0 : 0;
-      return tb - ta;
-    });
-    if (sorted[0]) quotes.push(sorted[0]);
-    if (r.value.sourceTs != null && (newest == null || r.value.sourceTs > newest)) newest = r.value.sourceTs;
+  const missing: string[] = [];
+
+  for (const s of uniq) {
+    const q = board.bySym.get(s);
+    if (q) quotes.push(q);
+    else missing.push(s);
   }
+
+  // Fill gaps (rare / odd symbols) — limited concurrency
+  if (missing.length) {
+    const chunk = missing.slice(0, 8);
+    const results = await Promise.allSettled(chunk.map((s) => getSsiDailyStockPrice(s)));
+    for (const r of results) {
+      if (r.status !== "fulfilled") continue;
+      const sorted = [...r.value.quotes].sort((a, b) => {
+        const ta = a.updatedAt ? parseSsiDate(a.updatedAt) ?? 0 : 0;
+        const tb = b.updatedAt ? parseSsiDate(b.updatedAt) ?? 0 : 0;
+        return tb - ta;
+      });
+      if (sorted[0]) quotes.push(sorted[0]);
+    }
+  }
+
   if (!quotes.length) throw new ProviderError("ssi-fcdata: empty quotes batch", SSI_FCDATA);
-  return { quotes, sourceTs: newest };
+  return { quotes, sourceTs: board.sourceTs };
 }
 
 type IndexListRow = {
