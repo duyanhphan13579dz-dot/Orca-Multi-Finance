@@ -2,10 +2,17 @@ import "server-only";
 import { httpJson } from "../http";
 import type { IndexQuote, OhlcvBar, Quote } from "../types";
 import { ProviderError } from "./binance";
+import {
+  ssiConsumerId,
+  ssiConsumerSecret,
+  ssiCredentialsConfigured,
+  ensureSsiEnvAliases,
+} from "./ssi-credentials";
 
 /**
  * SSI FastConnect Data (FC Data) — full market REST adapter.
  * PrivateKey not required (FC Trading only).
+ * Credentials: SSI_API_KEY/SSI_API_SECRET or SSI_FC_CONSUMER_ID/SSI_FC_CONSUMER_SECRET.
  */
 
 export const SSI_FCDATA = "ssi-fcdata";
@@ -18,8 +25,10 @@ function baseUrl(): string {
   return (process.env.SSI_FC_DATA_BASE_URL ?? DEFAULT_BASE).replace(/\/$/, "");
 }
 
+/** True when SSI keys present — SSI_API_KEY/SECRET or SSI_FC_CONSUMER_ID/SECRET. */
 export function ssiFcConfigured(): boolean {
-  return Boolean(process.env.SSI_FC_CONSUMER_ID?.trim() && process.env.SSI_FC_CONSUMER_SECRET?.trim());
+  ensureSsiEnvAliases();
+  return ssiCredentialsConfigured();
 }
 
 const num = (v: unknown): number | null => {
@@ -89,10 +98,14 @@ type AccessTokenResponse = {
 };
 
 async function fetchAccessToken(): Promise<TokenBundle> {
-  const consumerID = process.env.SSI_FC_CONSUMER_ID?.trim();
-  const consumerSecret = process.env.SSI_FC_CONSUMER_SECRET?.trim();
+  ensureSsiEnvAliases();
+  const consumerID = ssiConsumerId();
+  const consumerSecret = ssiConsumerSecret();
   if (!consumerID || !consumerSecret) {
-    throw new ProviderError("ssi-fcdata: missing SSI_FC_CONSUMER_ID / SSI_FC_CONSUMER_SECRET", SSI_FCDATA);
+    throw new ProviderError(
+      "ssi-fcdata: missing credentials — set SSI_API_KEY + SSI_API_SECRET (or SSI_FC_CONSUMER_ID + SSI_FC_CONSUMER_SECRET)",
+      SSI_FCDATA,
+    );
   }
 
   const url = `${baseUrl()}/api/v2/Market/AccessToken`;
@@ -288,7 +301,7 @@ export async function getSsiDailyOhlc(
 }
 
 type DailyStockPriceRow = {
-  TradingDate?: string;
+  TradingDateDate?: string;
   Tradingdate?: string;
   Symbol?: string;
   Price?: string | number;
@@ -324,7 +337,7 @@ function rowToQuote(r: DailyStockPriceRow, fallbackSym?: string): Quote | null {
   const sym = String(r.Symbol ?? fallbackSym ?? "").toUpperCase();
   if (!sym) return null;
   return {
-    symbol: sym,
+    symbol: sym: sym,
     assetClass: "stock",
     price,
     change: num(r.Change) ?? num(r.Pricechange),
@@ -629,37 +642,18 @@ export async function getSsiUniverse(): Promise<
           if (rows.length < 1000) break;
         }
       } catch {
-        /* skip */
+        /* skip market */
       }
     }),
   );
 
   if (!out.length) throw new ProviderError("ssi-fcdata: empty Securities universe", SSI_FCDATA);
-  return out;
-}
-
-type IndexListRow = {
-  IndexCode?: string;
-  IndexName?: string;
-  ExchangeCode?: string;
-};
-
-export async function getSsiIndexList(): Promise<{ code: string; name: string | null }[]> {
-  const body = await ssiGet<SsiEnvelope<IndexListRow[]>>("/api/v2/Market/IndexList", {
-    Exchange: "HOSE",
-    exchange: "HOSE",
-    PageIndex: 1,
-    pageIndex: 1,
-    PageSize: 100,
-    pageSize: 100,
+  const seen = new Set<string>();
+  return out.filter((r) => {
+    if (seen.has(r.symbol)) return false;
+    seen.add(r.symbol);
+    return true;
   });
-  const rows = Array.isArray(body.data) ? body.data : [];
-  return rows
-    .map((r) => ({
-      code: String(r.IndexCode ?? "").toUpperCase(),
-      name: r.IndexName ?? null,
-    }))
-    .filter((x) => x.code);
 }
 
 export async function probeSsiFcData(): Promise<{
@@ -668,7 +662,11 @@ export async function probeSsiFcData(): Promise<{
   message: string;
 }> {
   if (!ssiFcConfigured()) {
-    return { configured: false, ok: false, message: "SSI_FC_CONSUMER_ID / SSI_FC_CONSUMER_SECRET chưa set" };
+    return {
+      configured: false,
+      ok: false,
+      message: "Chưa set SSI_API_KEY + SSI_API_SECRET (hoặc SSI_FC_CONSUMER_ID + SSI_FC_CONSUMER_SECRET)",
+   n    };
   }
   try {
     await getSsiAccessToken();
