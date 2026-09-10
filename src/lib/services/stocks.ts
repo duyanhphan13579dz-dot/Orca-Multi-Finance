@@ -34,6 +34,9 @@ import { validateBars, logQualityEvent } from "../quality";
 import { analyzeSeries, detectPatterns } from "../technical";
 import type { CandlePattern, IndexQuote, Meta, OhlcvBar, Quote, TechnicalSnapshot } from "../types";
 
+/** Vercel/serverless: không giữ được WS lâu — board dùng REST thay vì WS. */
+const IS_SERVERLESS = process.env.VERCEL === "1" || process.env.ORCA_SERVERLESS === "true";
+
 /**
  * Vietnam equity domain — provider ladder:
  *   1. SSI FastConnect v3 (developers.ssi.com.vn) — SSI_API_KEY/SECRET
@@ -273,8 +276,10 @@ export async function getVnMarketBoard(): Promise<{
 } | null> {
   bootSsiLive();
 
-  // SSI FastConnect v3 PRIMARY (live WS board + REST bands/indices/universe)
-  if (ssiFastConfigured() && wsEnabled()) {
+  // SSI FastConnect v3 PRIMARY
+  if (ssiFastConfigured()) {
+    // (a) LIVE WS whole-board — cần runtime persist (bỏ qua trên serverless/Vercel)
+    if (wsEnabled() && !IS_SERVERLESS) {
     try {
       const res = await cached("vn:market-board:ssi-fc:v1", {
         ttlMs: 15_000,
@@ -344,6 +349,52 @@ export async function getVnMarketBoard(): Promise<{
           stale: res.stale,
           note: `Phiên ${res.value.sessionDate} · ${res.value.quotes.length} mã LIVE · SSI FastConnect v3 PRIMARY`,
           slas: { liveSlaMs: 15_000, freshSlaMs: 120_000, delayedSlaMs: 6 * 3_600_000 },
+        }),
+      };
+    } catch {
+      /* fall through: REST board */
+    }
+    }
+
+    // (b) REST board — tập thanh khoản via securitiesSummary (serverless-friendly)
+    try {
+      const res = await cached("vn:market-board:ssi-fc-rest:v1", {
+        ttlMs: IS_SERVERLESS ? 60_000 : 30_000,
+        staleMs: 24 * 3_600_000,
+        producer: async () => {
+          const liquid = getVnBoardSnapshot().quotes.map((q) => q.symbol);
+          const [q, indices, master] = await Promise.all([
+            getFcQuotes(liquid, 100),
+            getFcIndices(INDEX_PRIORITY).catch(() => ({ items: [] as IndexQuote[], sourceTs: null as number | null })),
+            getFcMasterMap().catch(
+              () => ({ bySym: new Map<string, FcMasterRow>(), tradingDate: null as string | null }),
+            ),
+          ]);
+          if (q.quotes.length < 20) throw new Error(`ssi-fc REST board too thin (${q.quotes.length})`);
+          const nameBySym = new Map(getVnBoardSnapshot().universe.map((u) => [u.symbol, u.name]));
+          const quotes = q.quotes.map((x) => (x.name ? x : { ...x, name: nameBySym.get(x.symbol) ?? null }));
+          return {
+            quotes,
+            indices: sortIndices(indices.items),
+            universe: getVnBoardSnapshot().universe,
+            sessionDate: master.tradingDate ?? new Date().toISOString().slice(0, 10),
+            sourceTs: q.sourceTs,
+          };
+        },
+      });
+
+      return {
+        quotes: res.value.quotes,
+        indices: res.value.indices,
+        universe: res.value.universe,
+        sessionDate: res.value.sessionDate,
+        meta: buildMeta({
+          source: "ssi-fastconnect",
+          sourceTimestampMs: res.value.sourceTs,
+          cached: res.cached,
+          stale: res.stale,
+          note: `Phiên ${res.value.sessionDate} · ${res.value.quotes.length} mã · SSI FastConnect v3 REST (securitiesSummary)`,
+          slas: { liveSlaMs: 60_000, freshSlaMs: 300_000, delayedSlaMs: 6 * 3_600_000 },
         }),
       };
     } catch {

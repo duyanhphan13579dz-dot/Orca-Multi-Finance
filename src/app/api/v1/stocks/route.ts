@@ -4,6 +4,7 @@ import { getVnSession } from "@/lib/vn/sessions";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
+export const maxDuration = 30; // Vercel: REST board SSI (100 securitiesSummary) cần ~2-5s
 
 /**
  * GET /api/v1/stocks

@@ -552,8 +552,8 @@ async function mapPool<T, R>(
 }
 
 /** Quotes for a symbol list — securitiesSummary(today) + masterdata bands. */
-export async function getFcQuotes(symbols: string[]): Promise<{ quotes: Quote[]; sourceTs: number | null }> {
-  const uniq = [...new Set(symbols.map((s) => s.toUpperCase()).filter(Boolean))].slice(0, 40);
+export async function getFcQuotes(symbols: string[], max = 40): Promise<{ quotes: Quote[]; sourceTs: number | null }> {
+  const uniq = [...new Set(symbols.map((s) => s.toUpperCase()).filter(Boolean))].slice(0, max);
   if (!uniq.length) return { quotes: [], sourceTs: null };
 
   const today = fcDay();

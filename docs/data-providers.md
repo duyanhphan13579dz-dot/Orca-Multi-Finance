@@ -57,6 +57,8 @@ Tích hợp theo tài liệu chính thức <https://developers.ssi.com.vn/docs/a
 
 **Health & ops**: mọi request qua `http.ts` nên `ssi-fastconnect` xuất hiện trong `/api/v1/system/providers`; trạng thái stream tại `/api/v1/system/ssi-ws`; chẩn đoán tổng tại `/api/v1/ssi/status`.
 
+**Bảng giá v3 — hai chế độ theo runtime**: (a) runtime persist (self-host/`next start`) → WS `trade.<board>` cho TOÀN bảng live; (b) serverless/Vercel (`VERCEL=1`) → REST `data/securitiesSummary` (mapPool, concurrency 8) cho ~100 mã thanh khoản cao nhất + `data/indexSummary` cho chỉ số, ghép `data/masterdata` (trần/sàn/tham chiếu) — không phụ thuộc WS, khớp giới hạn function timeout. Sổ lệnh giao dịch (orderBook tài khoản) là REST thuần (`trading/orderBook`) nên hoạt động trên cả hai runtime — chỉ cần login app (+ OTP/private key cho đặt/sửa/hủy).
+
 ### SSI FC Data v2 legacy (`src/lib/providers/ssi-fcdata.ts` + `src/lib/realtime/ssi-ws.ts`)
 
 Adapter cũ theo guide.ssi.com.vn (`fc-data.ssi.com.vn/api/v2/Market/*`: AccessToken, DailyStockPrice, DailyOhlc, DailyIndex, Securities, IndexList) + DataHub SignalR (`SwitchChannel` X/B/MI). Giữ nguyên làm fallback khi chưa có key v3.
