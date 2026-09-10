@@ -1,41 +1,35 @@
 import "server-only";
+import { cached } from "../cache";
+import { buildMeta } from "../freshness";
+import * as binance from "../providers/binance";
+import { getYahooChart, yahooSymbolForPair, yahooIntervalFor } from "../providers/yahoo";
+import { getVnOhlcv, vnstockConfigured } from "./stocks";
+import * as vndirect from "../providers/vndirect";
+import { validateBars, detectGaps, logQualityEvent } from "../quality";
+import { aggregateCandles, binanceInterval, TF_MS, tfsFor, type ChartAssetType, type ChartCandle } from "../chart-const";
+import { ema, rsi, macd, sma, supportResistance } from "../technical";
 import { analyzeScalp } from "../engines/scalp";
-import type { OhlcvBar } from "../types";
-import { ema, macd, rsi, sma, supportResistance } from "../technical";
-import { getCryptoOhlcv } from "./crypto";
-import { getForexOhlcv } from "./forex";
-import { getVnOhlcv } from "./stocks";
+import type { Meta, OhlcvBar, TechnicalSnapshot } from "../types";
 
-export type ChartAssetType = "crypto" | "stock" | "forex" | "commodity";
-
-export interface ChartCandle {
-  time: number;
-  open: number;
-  high: number;
-  low: number;
-  close: number;
-  volume?: number;
-}
+/**
+ * CHART DATA ENGINE — one normalized pipeline for every asset class:
+ * provider → validation → quality → normalization (ChartCandle) →
+ * indicator bundle → meta. Frontend only consumes this service.
+ */
 
 export interface IndicatorPoint {
   time: number;
-  value: number;
+  value?: number;
 }
 
 export interface ChartIndicators {
   ema20: IndicatorPoint[];
   ema50: IndicatorPoint[];
-  sma20: IndicatorPoint[];
-  bbUpper: IndicatorPoint[];
-  bbMid: IndicatorPoint[];
-  bbLower: IndicatorPoint[];
-  vwap: IndicatorPoint[];
+  bollinger: { upper: IndicatorPoint[]; mid: IndicatorPoint[]; lower: IndicatorPoint[] } | null;
+  vwap: IndicatorPoint[] | null;
   rsi: IndicatorPoint[];
-  macd: IndicatorPoint[];
-  macdSignal: IndicatorPoint[];
-  macdHist: IndicatorPoint[];
-  support: number | null;
-  resistance: number | null;
+  macd: { macd: IndicatorPoint[]; signal: IndicatorPoint[]; histogram: IndicatorPoint[] } | null;
+  srLevels: { support: number[]; resistance: number[] };
 }
 
 export interface ChartSignalMarker {
@@ -54,12 +48,11 @@ export interface ChartMarketData {
   suspect: number;
 }
 
-/** deterministic markers — scalp signal only (Vol/RSI dots removed from chart). */
+/** deterministic markers — scalp only (yellow Vol xN / purple RSI dots removed). */
 export function computeMarkers(candles: ChartCandle[]): ChartSignalMarker[] {
   if (candles.length < 40) return [];
   const out: ChartSignalMarker[] = [];
-  // volume-spike (yellow Vol xN) and rsi-extreme (purple RSI N) intentionally omitted —
-  // they clutter the price pane; RSI/Vol remain available as separate indicator panes.
+  // Vol spike + RSI extreme markers intentionally not drawn on the price pane.
   const scalp = analyzeScalp(candles as OhlcvBar[], { timeframe: "chart" });
   if (scalp && scalp.direction !== "neutral" && scalp.strength >= 50) {
     const lastCandle = candles[candles.length - 1];
@@ -85,7 +78,6 @@ function toCandle(b: OhlcvBar): ChartCandle {
 }
 
 function points(times: number[], values: (number | null)[]): IndicatorPoint[] {
-  // Keep denser series for longer history (up to ~1200 points for smooth pan/zoom)
   const step = values.length > 1200 ? Math.ceil(values.length / 1200) : 1;
   const out: IndicatorPoint[] = [];
   for (let i = 0; i < times.length; i++) {
@@ -97,142 +89,167 @@ function points(times: number[], values: (number | null)[]): IndicatorPoint[] {
   return out;
 }
 
-function bollinger(
-  closes: number[],
-  period = 20,
-  mult = 2,
-): { upper: (number | null)[]; mid: (number | null)[]; lower: (number | null)[] } {
-  const mid = sma(closes, period);
-  const upper: (number | null)[] = Array(closes.length).fill(null);
-  const lower: (number | null)[] = Array(closes.length).fill(null);
+function bollingerSeries(closes: number[], times: number[], period = 20, mult = 2) {
+  const midArr = sma(closes, period);
+  const upper: IndicatorPoint[] = [];
+  const mid: IndicatorPoint[] = [];
+  const lower: IndicatorPoint[] = [];
   for (let i = period - 1; i < closes.length; i++) {
-    const slice = closes.slice(i - period + 1, i + 1);
-    const mean = mid[i];
+    const mean = midArr[i];
     if (mean == null) continue;
+    const slice = closes.slice(i - period + 1, i + 1);
     const variance = slice.reduce((s, x) => s + (x - mean) ** 2, 0) / period;
     const std = Math.sqrt(variance);
-    upper[i] = mean + mult * std;
-    lower[i] = mean - mult * std;
+    mid.push({ time: times[i], value: mean });
+    upper.push({ time: times[i], value: mean + mult * std });
+    lower.push({ time: times[i], value: mean - mult * std });
   }
   return { upper, mid, lower };
 }
 
-function computeVwap(candles: ChartCandle[]): (number | null)[] {
-  const out: (number | null)[] = Array(candles.length).fill(null);
+function vwapSeries(bars: ChartCandle[]): IndicatorPoint[] | null {
+  const out: IndicatorPoint[] = [];
   let cumPv = 0;
   let cumV = 0;
-  for (let i = 0; i < candles.length; i++) {
-    const c = candles[i];
+  for (const c of bars) {
     const typ = (c.high + c.low + c.close) / 3;
     const v = c.volume ?? 0;
-    if (v <= 0) {
-      out[i] = cumV > 0 ? cumPv / cumV : null;
-      continue;
+    if (v > 0) {
+      cumPv += typ * v;
+      cumV += v;
     }
-    cumPv += typ * v;
-    cumV += v;
-    out[i] = cumPv / cumV;
+    if (cumV > 0) out.push({ time: c.time, value: cumPv / cumV });
   }
-  return out;
+  return out.length ? out : null;
 }
 
-export function buildIndicators(candles: ChartCandle[]): ChartIndicators | null {
+export function computeIndicators(candles: ChartCandle[]): ChartIndicators | null {
   if (candles.length < 30) return null;
   const times = candles.map((c) => c.time);
   const closes = candles.map((c) => c.close);
-  const ema20 = ema(closes, 20);
-  const ema50 = ema(closes, 50);
-  const sma20 = sma(closes, 20);
-  const bb = bollinger(closes, 20, 2);
-  const vwap = computeVwap(candles);
-  const rsiArr = rsi(closes, 14);
+  const ema20 = points(times, ema(closes, 20));
+  const ema50 = points(times, ema(closes, 50));
+  const bb = bollingerSeries(closes, times, 20, 2);
+  const vwap = vwapSeries(candles);
+  const rsiArr = points(times, rsi(closes, 14));
   const m = macd(closes);
-  const sr = supportResistance(candles as OhlcvBar[]);
-
-  return {
-    ema20: points(times, ema20),
-    ema50: points(times, ema50),
-    sma20: points(times, sma20),
-    bbUpper: points(times, bb.upper),
-    bbMid: points(times, bb.mid),
-    bbLower: points(times, bb.lower),
-    vwap: points(times, vwap),
-    rsi: points(times, rsiArr),
+  const macdPts = {
     macd: points(times, m.macd),
-    macdSignal: points(times, m.signal),
-    macdHist: points(times, m.histogram),
-    support: sr.support,
-    resistance: sr.resistance,
+    signal: points(times, m.signal),
+    histogram: points(times, m.histogram),
+  };
+  const sr = supportResistance(candles as OhlcvBar[]);
+  return {
+    ema20,
+    ema50,
+    bollinger: bb.upper.length ? bb : null,
+    vwap,
+    rsi: rsiArr,
+    macd: macdPts.macd.length ? macdPts : null,
+    srLevels: {
+      support: sr.support != null ? [sr.support] : [],
+      resistance: sr.resistance != null ? [sr.resistance] : [],
+    },
   };
 }
 
-const TF_MS: Record<string, number> = {
-  "1m": 60_000,
-  "3m": 180_000,
-  "5m": 300_000,
-  "15m": 900_000,
-  "30m": 1_800_000,
-  "1h": 3_600_000,
-  "2h": 7_200_000,
-  "4h": 14_400_000,
-  "6h": 21_600_000,
-  "12h": 43_200_000,
-  "1d": 86_400_000,
-  "1w": 604_800_000,
-};
-
-function detectGaps(candles: ChartCandle[], intervalMs: number): number {
-  if (candles.length < 2 || intervalMs <= 0) return 0;
-  let gaps = 0;
-  for (let i = 1; i < candles.length; i++) {
-    const dt = candles[i].time - candles[i - 1].time;
-    if (dt > intervalMs * 2.5) gaps++;
-  }
-  return gaps;
+async function cryptoCandles(symbol: string, tf: string, limit: number): Promise<{ candles: ChartCandle[]; source: string; note?: string }> {
+  const interval = binanceInterval(tf);
+  const bars = await binance.getKlines(symbol, interval, limit);
+  return { candles: bars.map(toCandle), source: "binance" };
 }
 
-function countSuspect(candles: ChartCandle[]): number {
-  let n = 0;
-  for (const c of candles) {
-    if (c.high < c.low || c.open <= 0 || c.close <= 0) n++;
-    else if (c.high < Math.max(c.open, c.close) || c.low > Math.min(c.open, c.close)) n++;
-  }
-  return n;
+async function forexCandles(pair: string, tf: string, limit: number): Promise<{ candles: ChartCandle[]; source: string; note?: string }> {
+  const ySym = yahooSymbolForPair(pair);
+  if (!ySym) throw new Error(`unsupported forex pair ${pair}`);
+  const interval = yahooIntervalFor(tf);
+  const bars = await getYahooChart(ySym, interval, limit);
+  return { candles: bars.map(toCandle), source: "yahoo" };
 }
 
-async function loadBars(args: ChartArgs): Promise<OhlcvBar[] | null> {
-  const limit = Math.min(Math.max(args.limit ?? 300, 50), 2000);
-  const sym = args.symbol.toUpperCase();
-  try {
-    if (args.assetType === "crypto") {
-      const r = await getCryptoOhlcv(sym, args.timeframe, limit);
-      return r?.bars ?? null;
-    }
-    if (args.assetType === "stock") {
-      const r = await getVnOhlcv(sym, limit);
-      return r?.bars ?? null;
-    }
-    if (args.assetType === "forex" || args.assetType === "commodity") {
-      const r = await getForexOhlcv(sym, limit);
-      return r?.bars ?? null;
-    }
-  } catch {
-    return null;
+async function stockCandles(symbol: string, tf: string, limit: number): Promise<{ candles: ChartCandle[]; source: string; note?: string }> {
+  const r = await getVnOhlcv(symbol, Math.max(limit, 250));
+  if (!r?.bars?.length) throw new Error(`no stock bars for ${symbol}`);
+  let candles = r.bars.map(toCandle);
+  const ms = TF_MS[tf] ?? TF_MS["1d"];
+  if (ms && ms !== TF_MS["1d"] && ms < TF_MS["1d"]) {
+    // VN daily only — higher TF not available; keep daily
+  } else if (ms && ms > TF_MS["1d"]) {
+    candles = aggregateCandles(candles, ms);
   }
+  return { candles, source: r.meta?.source ?? "ssi-fcdata" };
+}
+
+function yahooCommoditySymbol(symbol: string): string | null {
+  const s = symbol.toUpperCase().replace(/[^A-Z0-9=\-._]/g, "");
+  const map: Record<string, string> = {
+    GOLD: "GC=F",
+    XAU: "GC=F",
+    XAUUSD: "GC=F",
+    SILVER: "SI=F",
+    XAG: "SI=F",
+    XAGUSD: "SI=F",
+    OIL: "CL=F",
+    WTI: "CL=F",
+    BRENT: "BZ=F",
+    NATGAS: "NG=F",
+    COPPER: "HG=F",
+    PLATINUM: "PL=F",
+  };
+  if (map[s]) return map[s];
+  if (s.includes("=")) return s;
   return null;
 }
 
-export async function getChartMarketData(args: ChartArgs): Promise<ChartMarketData | null> {
-  const bars = await loadBars(args);
-  if (!bars?.length) return null;
-  const candles = bars.map(toCandle);
-  const intervalMs = TF_MS[args.timeframe] ?? 86_400_000;
+export function isChartableCommodity(symbol: string): boolean {
+  return yahooCommoditySymbol(symbol) != null;
+}
+
+async function commodityCandles(symbol: string, tf: string, limit: number): Promise<{ candles: ChartCandle[]; source: string; note?: string }> {
+  const ySym = yahooCommoditySymbol(symbol);
+  if (!ySym) throw new Error(`unsupported commodity ${symbol}`);
+  const interval = yahooIntervalFor(tf);
+  const bars = await getYahooChart(ySym, interval, limit);
+  return { candles: bars.map(toCandle), source: "yahoo" };
+}
+
+export async function getChartHistory(args: ChartArgs): Promise<{ data: ChartMarketData; meta: Meta } | null> {
+  const limit = Math.min(Math.max(args.limit ?? 300, 50), 2000);
+  const tf = args.timeframe || "1d";
+  let pack: { candles: ChartCandle[]; source: string; note?: string };
+  try {
+    if (args.assetType === "crypto") pack = await cryptoCandles(args.symbol, tf, limit);
+    else if (args.assetType === "stock") pack = await stockCandles(args.symbol, tf, limit);
+    else if (args.assetType === "forex") pack = await forexCandles(args.symbol, tf, limit);
+    else pack = await commodityCandles(args.symbol, tf, limit);
+  } catch {
+    return null;
+  }
+  if (!pack.candles.length) return null;
+
+  const q = validateBars(pack.candles as unknown as OhlcvBar[]);
+  const candles = (q.cleaned as OhlcvBar[]).map(toCandle);
+  if (q.status !== "VALID") void logQualityEvent(pack.source, `chart:${args.symbol}`, q);
+
+  const intervalMs = TF_MS[tf] ?? 86_400_000;
+  const gaps = detectGaps(candles as unknown as OhlcvBar[], intervalMs);
+
   return {
-    candles,
-    indicators: buildIndicators(candles),
-    markers: computeMarkers(candles),
-    intervalMs,
-    gaps: detectGaps(candles, intervalMs),
-    suspect: countSuspect(candles),
+    data: {
+      candles,
+      indicators: computeIndicators(candles),
+      markers: computeMarkers(candles),
+      intervalMs,
+      gaps,
+      suspect: q.status === "VALID" ? 0 : 1,
+    },
+    meta: buildMeta({
+      source: pack.source,
+      sourceTimestampMs: candles[candles.length - 1]?.time ?? null,
+      note: pack.note,
+      slas: { liveSlaMs: 5_000, freshSlaMs: 60_000, delayedSlaMs: 300_000 },
+    }),
   };
 }
+
+export type { TechnicalSnapshot };
