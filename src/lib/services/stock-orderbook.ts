@@ -1,7 +1,7 @@
 import "server-only";
 import { buildMeta } from "../freshness";
 import { ssiFcConfigured } from "../providers/ssi-fcdata";
-import { ensureSsiWsStarted, ssiWs, type SsiOrderBook, type SsiTrade } from "../realtime/ssi-ws";
+import { ensureSsiWsStarted, ssiWs, type SsiOrderBook } from "../realtime/ssi-ws";
 import type { Meta } from "../types";
 
 export interface VnOrderBookLevel {
@@ -50,16 +50,33 @@ function bootSsiLive() {
   }
 }
 
-function mapTrades(list: SsiTrade[]): VnTrade[] {
-  return list.map((t) => ({
-    price: t.price,
-    volume: t.volume,
-    change: t.change,
-    changePercent: t.changePercent,
-    side: t.side,
-    time: t.time,
-    eventTime: t.eventTime,
-  }));
+/** Optional trade tape — present when ssi-ws exposes getTrades(). */
+function readTrades(symbol: string): VnTrade[] {
+  const eng = ssiWs as unknown as {
+    getTrades?: (symbol: string, limit?: number) => Array<{
+      price: number;
+      volume: number;
+      change: number | null;
+      changePercent: number | null;
+      side: "buy" | "sell" | "unknown";
+      time: string | null;
+      eventTime: number;
+    }>;
+  };
+  if (typeof eng.getTrades !== "function") return [];
+  try {
+    return eng.getTrades(symbol, 50).map((t) => ({
+      price: t.price,
+      volume: t.volume,
+      change: t.change,
+      changePercent: t.changePercent,
+      side: t.side,
+      time: t.time,
+      eventTime: t.eventTime,
+    }));
+  } catch {
+    return [];
+  }
 }
 
 export async function getVnOrderBook(
@@ -94,7 +111,7 @@ export async function getVnOrderBook(
     }
   }
 
-  const trades = mapTrades(ssiWs.getTrades(sym, 50));
+  const trades = readTrades(sym);
   const tradeBuyVol = trades.filter((t) => t.side === "buy").reduce((s, t) => s + t.volume, 0);
   const tradeSellVol = trades.filter((t) => t.side === "sell").reduce((s, t) => s + t.volume, 0);
   const tradeTotalVol = trades.reduce((s, t) => s + t.volume, 0);
