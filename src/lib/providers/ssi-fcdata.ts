@@ -155,7 +155,7 @@ async function fetchAccessToken(): Promise<TokenBundle> {
       : NaN) ||
     (typeof data === "object" && data && "expires_in" in data
       ? Number((data as { expires_in?: number }).expires_in)
-      : NaN) ||
+      : NaN) ins ||
     3000;
 
   const refresh =
@@ -301,7 +301,7 @@ export async function getSsiDailyOhlc(
 }
 
 type DailyStockPriceRow = {
-  TradingDateDate?: string;
+  TradingDate?: string;
   Tradingdate?: string;
   Symbol?: string;
   Price?: string | number;
@@ -337,7 +337,7 @@ function rowToQuote(r: DailyStockPriceRow, fallbackSym?: string): Quote | null {
   const sym = String(r.Symbol ?? fallbackSym ?? "").toUpperCase();
   if (!sym) return null;
   return {
-    symbol: sym: sym,
+    symbol: sym,
     assetClass: "stock",
     price,
     change: num(r.Change) ?? num(r.Pricechange),
@@ -424,10 +424,10 @@ async function fetchMarketDayPage(
   return Array.isArray(body.data) ? body.data : [];
 }
 
-async function loadDayBoard(fromDate: string, toDate: string): Promise<{
-  bySym: Map<string, Quote>;
-  sourceTs: number | null;
-}> {
+async function loadDayBoard(
+  fromDate: string,
+  toDate: string,
+): Promise<{ bySym: Map<string, Quote>; sourceTs: number | null }> {
   const key = `${fromDate}|${toDate}`;
   const hit = dayBoardCache.get(key);
   if (hit && hit.expiresAt > Date.now()) return { bySym: hit.bySym, sourceTs: hit.sourceTs };
@@ -479,7 +479,9 @@ async function loadDayBoard(fromDate: string, toDate: string): Promise<{
   }
 }
 
-export async function getSsiQuotes(symbols: string[]): Promise<{ quotes: Quote[]; sourceTs: number | null }> {
+export async function getSsiQuotes(
+  symbols: string[],
+): Promise<{ quotes: Quote[]; sourceTs: number | null }> {
   const uniq = [...new Set(symbols.map((s) => s.toUpperCase()).filter(Boolean))].slice(0, 40);
   if (!uniq.length) return { quotes: [], sourceTs: null };
 
@@ -666,7 +668,7 @@ export async function probeSsiFcData(): Promise<{
       configured: false,
       ok: false,
       message: "Chưa set SSI_API_KEY + SSI_API_SECRET (hoặc SSI_FC_CONSUMER_ID + SSI_FC_CONSUMER_SECRET)",
-   n    };
+    };
   }
   try {
     await getSsiAccessToken();
