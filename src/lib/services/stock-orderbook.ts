@@ -50,20 +50,8 @@ function bootSsiLive() {
 }
 
 function readTrades(symbol: string): VnTrade[] {
-  const eng = ssiWs as unknown as {
-    getTrades?: (symbol: string, limit?: number) => Array<{
-      price: number;
-      volume: number;
-      change: number | null;
-      changePercent: number | null;
-      side: "buy" | "sell" | "unknown";
-      time: string | null;
-      eventTime: number;
-    }>;
-  };
-  if (typeof eng.getTrades !== "function") return [];
   try {
-    return eng.getTrades(symbol, 50).map((t) => ({
+    return ssiWs.getTrades(symbol, 50).map((t) => ({
       price: t.price,
       volume: t.volume,
       change: t.change,
@@ -120,6 +108,7 @@ export async function getVnOrderBook(
 
   bootSsiLive();
 
+  // Hot path: in-memory cache first (0ms)
   let ob: SsiOrderBook | null = ssiWs.getOrderBook(sym, 20_000);
   if (!ob) {
     const q = ssiWs.getQuote(sym, 20_000);
@@ -127,19 +116,8 @@ export async function getVnOrderBook(
   }
 
   if (!ob) {
-    const waitFn = (ssiWs as unknown as {
-      waitForOrderBook?: (s: string, ms?: number) => Promise<SsiOrderBook | null>;
-    }).waitForOrderBook;
-    if (typeof waitFn === "function") {
-      ob = await waitFn.call(ssiWs, sym, 400);
-    } else {
-      ssiWs.watchSymbol(sym);
-      const deadline = Date.now() + 400;
-      while (!ob && Date.now() < deadline) {
-        await new Promise((r) => setTimeout(r, 40));
-        ob = ssiWs.getOrderBook(sym, 20_000) ?? ssiWs.getQuote(sym, 20_000)?.orderBook ?? null;
-      }
-    }
+    // Event-driven wait ≤250ms — no fixed sleep
+    ob = await ssiWs.waitForOrderBook(sym, 250);
   } else {
     ssiWs.watchSymbol(sym);
   }
