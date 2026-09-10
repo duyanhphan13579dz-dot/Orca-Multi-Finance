@@ -7,7 +7,9 @@ Mọi provider phía sau **Provider Adapter Interface** và bị metadata health
 
 | Domain | Primary | Fallbacks |
 | --- | --- | --- |
-| stocks (VN) | **SSI FastConnect v3** (env: `SSI_API_KEY`, `SSI_API_SECRET`) | SSI FC Data v2 legacy (`SSI_FC_CONSUMER_ID/SECRET`) → VNDirect (không cần key) |
+| stocks (VN) | **SSI FastConnect v3** (env: `SSI_API_KEY`, `SSI_API_SECRET`) | SSI FC Data v2 legacy (`SSI_FC_CONSUMER_ID/SECRET`) → VNDirect (không cần key) → LEVEL-4 snapshot |
+
+**LEVEL-4 snapshot (`vndirect-snapshot`)** — khi MỌI nguồn live đều không reachable, bảng giá/chỉ số/quotes VN phục vụ từ snapshot xác thực đóng cửa phiên (kéo nguyên văn từ `api-finfo.vndirect.com.vn`, xem `src/lib/providers/vn-board-snapshot.ts`): 100 mã thanh khoản cao nhất + 6 chỉ số, tên DN nguyên văn (thiếu thì để trống, không suy đoán). Meta ghi `source: vndirect-snapshot`, `freshness: STALE` và note "SNAPSHOT … phiên X" — không bao giờ giả làm dữ liệu live. Khi nguồn live hồi phục, ladder tự ưu tiên live trở lại.
 | crypto | Binance spot REST (`api.binance.com` → `api{1,2}.binance.com` → `data-api.binance.vision`) | Binance fapi cho futures (geo-dependent) |
 | forex | Biquote (env) | exchangerate-api open latest; Frankfurter/ECB daily history + previous fix |
 | commodities | Vietnambiz (SJC gold board) · Simplize (env key) | MSN Finance quotes (env instrument map) · Binance PAXGUSDT (vàng) |

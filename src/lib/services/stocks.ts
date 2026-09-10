@@ -5,6 +5,7 @@ import { getFinancialsForSymbol } from "../financial/service";
 import type { FinancialPackageMeta, GrowthSnapshot, NormalizedPeriod } from "../financial/types";
 import type { FinancialHealthResult } from "../engines/fundamental";
 import * as vndirect from "../providers/vndirect";
+import { getVnBoardSnapshot } from "../providers/vn-board-snapshot";
 import {
   getSsiDailyOhlc,
   getSsiFullBoard,
@@ -247,8 +248,20 @@ export async function getVnIndices(): Promise<{ items: IndexQuote[]; meta: Meta 
       }),
     };
   } catch {
-    return null;
+    /* fall through: snapshot */
   }
+
+  // LEVEL-4 — snapshot xác thực (đóng cửa phiên), không bao giờ giả làm live
+  const snap = getVnBoardSnapshot();
+  return {
+    items: sortIndices(snap.indices),
+    meta: buildMeta({
+      source: "vndirect-snapshot",
+      sourceTimestampMs: snap.sourceTs,
+      stale: true,
+      note: `SNAPSHOT đóng cửa phiên ${snap.sessionDate} (VNDirect) — nguồn live không khả dụng`,
+    }),
+  };
 }
 
 export async function getVnMarketBoard(): Promise<{
@@ -450,8 +463,24 @@ export async function getVnMarketBoard(): Promise<{
       }),
     };
   } catch {
-    return null;
+    /* fall through: snapshot */
   }
+
+  // LEVEL-4 — snapshot xác thực (đóng cửa phiên), không bao giờ giả làm live
+  const snap = getVnBoardSnapshot();
+  return {
+    quotes: snap.quotes,
+    indices: sortIndices(snap.indices),
+    universe: snap.universe,
+    sessionDate: snap.sessionDate,
+    meta: buildMeta({
+      source: "vndirect-snapshot",
+      sourceTimestampMs: snap.sourceTs,
+      stale: true,
+      note: `SNAPSHOT XÁC THỰC đóng cửa phiên ${snap.sessionDate} (VNDirect, 100 mã thanh khoản cao nhất) — mọi nguồn live không khả dụng`,
+      slas: { liveSlaMs: 60_000, freshSlaMs: 600_000, delayedSlaMs: 6 * 3_600_000 },
+    }),
+  };
 }
 
 export async function getVnUniverseList(): Promise<
@@ -676,8 +705,24 @@ export async function getVnQuotes(symbols: string[]): Promise<{ quotes: Quote[];
       }),
     };
   } catch {
-    return null;
+    /* fall through: snapshot */
   }
+
+  // LEVEL-4 — snapshot xác thực, chỉ trả các mã có trong snapshot
+  const snap = getVnBoardSnapshot();
+  const bySym = new Map(snap.quotes.map((q) => [q.symbol, q]));
+  const hits = uniq.map((s) => bySym.get(s)).filter((q): q is NonNullable<typeof q> => Boolean(q));
+  if (!hits.length) return null;
+  return {
+    quotes: hits,
+    meta: buildMeta({
+      source: "vndirect-snapshot",
+      sourceTimestampMs: snap.sourceTs,
+      stale: true,
+      partial: hits.length < uniq.length,
+      note: `SNAPSHOT đóng cửa phiên ${snap.sessionDate} (VNDirect) — nguồn live không khả dụng`,
+    }),
+  };
 }
 
 export async function getVnOhlcv(symbol: string, limit = 250): Promise<{ bars: OhlcvBar[]; meta: Meta } | null> {
