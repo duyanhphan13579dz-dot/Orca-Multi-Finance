@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import {
-  Bell, Bot, Boxes, CandlestickChart, ChartNoAxesCombined, ChevronsLeft, ChevronsRight, Coins, DollarSign,
+  Bell, Bot, Boxes, BookOpen, CandlestickChart, ChartNoAxesCombined, ChevronsLeft, ChevronsRight, Coins, DollarSign,
   Eye, FlaskConical, GaugeCircle, Globe2, Grid2x2, Home, Landmark, LogOut, Menu, Newspaper, NotebookPen, Settings, X,
 } from "lucide-react";
 import { TickerTape } from "@/components/ticker-tape";
@@ -42,6 +42,7 @@ const NAV_SECTIONS: { title: string; items: { href: string; label: string; icon:
     title: "WORKSPACE",
     items: [
       { href: "/watchlist", label: "Watchlist", icon: Eye },
+      { href: "/trading", label: "Sổ lệnh SSI", icon: BookOpen },
       { href: "/journal", label: "Nhật ký lệnh", icon: NotebookPen },
       { href: "/settings", label: "Cài đặt", icon: Settings },
     ],
