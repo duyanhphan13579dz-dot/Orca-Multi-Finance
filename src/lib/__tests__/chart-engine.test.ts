@@ -183,10 +183,10 @@ test("analyzeSeries returns finite snapshot on real-shaped data", () => {
   assert.ok(t.support.length >= 0 && t.resistance.length >= 0);
 });
 
-test("computeMarkers: spikes and RSI extremes become structured markers", () => {
+test("computeMarkers: no Vol/RSI dot markers on candles; only structured signals", () => {
   const bars = syntheticRising(140);
-  bars[100].volume = 3000; // engineered spike
+  bars[100].volume = 3000; // engineered spike — must NOT produce a dot marker
   const m = computeMarkers(bars);
-  assert.ok(m.some((x) => x.type === "volume-spike" && x.time === bars[100].time));
+  assert.ok(!m.some((x) => x.title.startsWith("Vol x") || x.title.startsWith("RSI ")));
   for (const mk of m) assert.ok(Number.isFinite(mk.time) && mk.title.length > 0);
 });

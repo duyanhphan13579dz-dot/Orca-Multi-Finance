@@ -53,8 +53,6 @@ export type SignalType =
   | "sell-signal"
   | "breakout"
   | "breakdown"
-  | "volume-spike"
-  | "rsi-extreme"
   | "news-event"
   | "risk-warning"
   | "ai-analysis";

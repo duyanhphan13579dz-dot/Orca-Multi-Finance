@@ -107,7 +107,7 @@ export interface ChartIndicators {
 
 export interface ChartSignalMarker {
   time: number;
-  type: "buy-signal" | "sell-signal" | "volume-spike" | "rsi-extreme" | "breakout" | "breakdown" | string;
+  type: "buy-signal" | "sell-signal" | "breakout" | "breakdown" | string;
   position: "aboveBar" | "belowBar" | "inBar";
   title: string;
 }

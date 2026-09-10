@@ -34,7 +34,7 @@ export interface ChartIndicators {
 
 export interface ChartSignalMarker {
   time: number;
-  type: "buy-signal" | "sell-signal" | "volume-spike" | "rsi-extreme" | "breakout" | "breakdown";
+  type: "buy-signal" | "sell-signal" | "breakout" | "breakdown";
   position: "aboveBar" | "belowBar" | "inBar";
   title: string;
 }
@@ -48,27 +48,10 @@ export interface ChartMarketData {
   suspect: number;
 }
 
-/** deterministic markers — volume spikes, RSI extreme closes, scalp signal */
+/** deterministic markers — scalp watch signal only (no dot clutter on candles) */
 export function computeMarkers(candles: ChartCandle[]): ChartSignalMarker[] {
   if (candles.length < 40) return [];
   const out: ChartSignalMarker[] = [];
-  const closes = candles.map((c) => c.close);
-  const vols = candles.map((c) => c.volume ?? 0);
-  const med = [...vols].filter((v) => v > 0).sort((a, b) => a - b);
-  const median = med.length ? med[Math.floor(med.length / 2)] : 0;
-  const rsiArr = rsi(closes, 14);
-  const scan = candles.slice(-160);
-  for (let i = candles.length - scan.length; i < candles.length; i++) {
-    if (median > 0 && vols[i] >= median * 2.2) {
-      out.push({ time: candles[i].time, type: "volume-spike", position: "inBar", title: `Vol x${(vols[i] / median).toFixed(1)}` });
-    }
-    const r = rsiArr[i];
-    const rPrev = rsiArr[i - 1];
-    if (r != null && rPrev != null) {
-      if (r >= 70 && rPrev < 70) out.push({ time: candles[i].time, type: "rsi-extreme", position: "aboveBar", title: `RSI ${r.toFixed(0)}` });
-      if (r <= 30 && rPrev > 30) out.push({ time: candles[i].time, type: "rsi-extreme", position: "belowBar", title: `RSI ${r.toFixed(0)}` });
-    }
-  }
   const scalp = analyzeScalp(candles as OhlcvBar[], { timeframe: "chart" });
   if (scalp && scalp.direction !== "neutral" && scalp.strength >= 50) {
     const lastCandle = candles[candles.length - 1];
