@@ -7,7 +7,7 @@ import { getSsiAccessToken, invalidateSsiToken, ssiFcConfigured } from "../provi
  * SSI FastConnect DataHub streaming — uses same credentials as REST (SSI_API_KEY / SSI_FC_*).
  *
  * Order book: X / X-QUOTE (BidPrice1–10 / AskPrice1–10).
- * Latency: fast reconnect, event-driven waitForOrderBook, 45s silent watchdog.
+ * forceEnable(): orderbook API can open WS even when SSI_WS_DISABLED=true (Vercel one-shot).
  */
 
 const RS = "\x1e";
@@ -212,10 +212,19 @@ class SsiMarketWsEngine {
   private indices = new Map<string, SsiLiveIndex>();
   private invocationId = 0;
   private subscribedSent = new Set<string>();
+  /** When true, ignore SSI_WS_DISABLED (order-book one-shot on serverless). */
+  private forceOn = false;
+
+  /** Temporarily allow WS even if SSI_WS_DISABLED=true (e.g. orderbook API). */
+  forceEnable(on = true) {
+    this.forceOn = on;
+  }
 
   private enabled(): boolean {
+    if (!ssiFcConfigured()) return false;
+    if (this.forceOn) return true;
     if (process.env.SSI_WS_DISABLED === "true") return false;
-    return ssiFcConfigured();
+    return true;
   }
 
   subscribe(channel: string): () => void {
@@ -237,7 +246,7 @@ class SsiMarketWsEngine {
     if (!s) return () => {};
     const u1 = this.subscribe(`X:${s}`);
     const u2 = this.subscribe(`B:${s}`);
-    if (this.state === "closed" || this.state === "retrying") void this.connect();
+    if (this.state === "closed" || this.state === "retrying" || this.state === "disabled") void this.connect();
     return () => {
       u1();
       u2();
@@ -275,7 +284,7 @@ class SsiMarketWsEngine {
     if (hit) return Promise.resolve(hit);
 
     this.watchSymbol(sym);
-    if (this.state === "closed" || this.state === "blocked") void this.connect();
+    if (this.state === "closed" || this.state === "blocked" || this.state === "disabled") void this.connect();
 
     return new Promise((resolve) => {
       let settled = false;
@@ -293,7 +302,7 @@ class SsiMarketWsEngine {
       });
 
       const timer = setTimeout(() => {
-        done(this.getOrderBook(sym, 20_000));
+        done(this.getOrderBook(sym, 60_000) ?? this.getOrderBook(sym, 72 * 60 * 60_000));
       }, Math.max(50, maxWaitMs));
       timer.unref?.();
     });
@@ -326,7 +335,7 @@ class SsiMarketWsEngine {
 
   start() {
     if (this.started) {
-      if (this.state === "closed" || this.state === "blocked") void this.connect();
+      if (this.state === "closed" || this.state === "blocked" || this.state === "disabled") void this.connect();
       return;
     }
     this.started = true;
