@@ -1,18 +1,16 @@
 import "server-only";
 import { httpJson } from "../http";
+import { ssiConsumerId, ssiConsumerSecret, ssiCredentialsConfigured } from "./ssi-credentials";
 import type { IndexQuote, OhlcvBar, Quote } from "../types";
 import { ProviderError } from "./binance";
-import {
-  ssiConsumerId,
-  ssiConsumerSecret,
-  ssiCredentialsConfigured,
-  ensureSsiEnvAliases,
-} from "./ssi-credentials";
 
 /**
  * SSI FastConnect Data (FC Data) — full market REST adapter.
  * PrivateKey not required (FC Trading only).
- * Credentials: SSI_API_KEY/SSI_API_SECRET or SSI_FC_CONSUMER_ID/SSI_FC_CONSUMER_SECRET.
+ *
+ * Credentials (any pair works):
+ *   SSI_API_KEY + SSI_API_SECRET
+ *   SSI_FC_CONSUMER_ID + SSI_FC_CONSUMER_SECRET
  */
 
 export const SSI_FCDATA = "ssi-fcdata";
@@ -25,9 +23,8 @@ function baseUrl(): string {
   return (process.env.SSI_FC_DATA_BASE_URL ?? DEFAULT_BASE).replace(/\/$/, "");
 }
 
-/** True when SSI keys present — SSI_API_KEY/SECRET or SSI_FC_CONSUMER_ID/SECRET. */
+/** True when SSI_API_KEY+SSI_API_SECRET or SSI_FC_CONSUMER_ID+SECRET are set. */
 export function ssiFcConfigured(): boolean {
-  ensureSsiEnvAliases();
   return ssiCredentialsConfigured();
 }
 
@@ -98,12 +95,11 @@ type AccessTokenResponse = {
 };
 
 async function fetchAccessToken(): Promise<TokenBundle> {
-  ensureSsiEnvAliases();
   const consumerID = ssiConsumerId();
   const consumerSecret = ssiConsumerSecret();
   if (!consumerID || !consumerSecret) {
     throw new ProviderError(
-      "ssi-fcdata: missing credentials — set SSI_API_KEY + SSI_API_SECRET (or SSI_FC_CONSUMER_ID + SSI_FC_CONSUMER_SECRET)",
+      "ssi-fcdata: missing credentials (set SSI_API_KEY + SSI_API_SECRET or SSI_FC_CONSUMER_ID + SSI_FC_CONSUMER_SECRET)",
       SSI_FCDATA,
     );
   }
@@ -155,7 +151,7 @@ async function fetchAccessToken(): Promise<TokenBundle> {
       : NaN) ||
     (typeof data === "object" && data && "expires_in" in data
       ? Number((data as { expires_in?: number }).expires_in)
-      : NaN) ins ||
+      : NaN) ||
     3000;
 
   const refresh =
@@ -424,10 +420,10 @@ async function fetchMarketDayPage(
   return Array.isArray(body.data) ? body.data : [];
 }
 
-async function loadDayBoard(
-  fromDate: string,
-  toDate: string,
-): Promise<{ bySym: Map<string, Quote>; sourceTs: number | null }> {
+async function loadDayBoard(fromDate: string, toDate: string): Promise<{
+  bySym: Map<string, Quote>;
+  sourceTs: number | null;
+}> {
   const key = `${fromDate}|${toDate}`;
   const hit = dayBoardCache.get(key);
   if (hit && hit.expiresAt > Date.now()) return { bySym: hit.bySym, sourceTs: hit.sourceTs };
@@ -479,9 +475,7 @@ async function loadDayBoard(
   }
 }
 
-export async function getSsiQuotes(
-  symbols: string[],
-): Promise<{ quotes: Quote[]; sourceTs: number | null }> {
+export async function getSsiQuotes(symbols: string[]): Promise<{ quotes: Quote[]; sourceTs: number | null }> {
   const uniq = [...new Set(symbols.map((s) => s.toUpperCase()).filter(Boolean))].slice(0, 40);
   if (!uniq.length) return { quotes: [], sourceTs: null };
 
@@ -650,34 +644,32 @@ export async function getSsiUniverse(): Promise<
   );
 
   if (!out.length) throw new ProviderError("ssi-fcdata: empty Securities universe", SSI_FCDATA);
-  const seen = new Set<string>();
-  return out.filter((r) => {
-    if (seen.has(r.symbol)) return false;
-    seen.add(r.symbol);
-    return true;
-  });
+  return out;
 }
 
-export async function probeSsiFcData(): Promise<{
+export async function probeSsiFcdata(): Promise<{
   configured: boolean;
   ok: boolean;
   message: string;
+  latencyMs?: number;
 }> {
   if (!ssiFcConfigured()) {
     return {
       configured: false,
       ok: false,
-      message: "Chưa set SSI_API_KEY + SSI_API_SECRET (hoặc SSI_FC_CONSUMER_ID + SSI_FC_CONSUMER_SECRET)",
+      message: "SSI_API_KEY / SSI_API_SECRET (hoặc SSI_FC_CONSUMER_*) chưa set",
     };
   }
+  const t0 = Date.now();
   try {
     await getSsiAccessToken();
-    return { configured: true, ok: true, message: "Auth token OK" };
+    return { configured: true, ok: true, message: "SSI AccessToken OK", latencyMs: Date.now() - t0 };
   } catch (e) {
     return {
       configured: true,
       ok: false,
       message: e instanceof Error ? e.message : "auth failed",
+      latencyMs: Date.now() - t0,
     };
   }
 }
