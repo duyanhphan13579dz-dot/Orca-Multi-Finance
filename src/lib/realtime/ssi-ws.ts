@@ -1,25 +1,17 @@
 import "server-only";
 import { recordFailure, recordSuccess } from "../health";
 import { eventBus } from "../events";
-import { ssiFcConfigured } from "../providers/ssi-fcdata";
-import { httpJson } from "../http";
+import { getSsiAccessToken, ssiFcConfigured } from "../providers/ssi-fcdata";
 
 /**
  * SSI FastConnect Data — market streaming (DataHub).
  *
  * Docs: https://guide.ssi.com.vn/ssi-products/fastconnect-data/streaming-data
- * Hub:  wss://fc-datahub.ssi.com.vn/v2.0  (SignalR JSON protocol)
+ * Hub:  wss://fc-datahub.ssi.com.vn/v2.0/Hubs/DataHub  (SignalR JSON)
  *
- * Channels (subscribe after connect):
- *   X:<SYM>   snapshot bid/ask + last
- *   X-TRADE:<SYM>
- *   B:<SYM>   tick OHLCV
- *   MI:<INDEX>
- *   F:<SYM>   session status
- *   R:<SYM>   foreign room
+ * Channels: X:SYM | B:SYM | MI:INDEX | F:SYM | R:SYM
  *
- * Serverless note: set SSI_WS_DISABLED=true on Vercel/Netlify — engine stays idle;
- * REST quote/OHLCV still works. Long-lived Node host can leave WS enabled.
+ * Serverless: set SSI_WS_DISABLED=true — REST still works.
  */
 
 const RS = "\x1e";
@@ -95,56 +87,6 @@ function hubBase(): string {
   return (process.env.SSI_FC_HUB_URL ?? DEFAULT_HUB).replace(/\/$/, "");
 }
 
-async function resolveAccessToken(): Promise<string> {
-  // Reuse REST auth from provider — dynamic import avoids circular init issues
-  const mod = await import("../providers/ssi-fcdata");
-  // probe forces token fetch path
-  const probe = await mod.probeSsiFcData();
-  if (!probe.ok) throw new Error(probe.message);
-
-  // Call AccessToken again via internal path by hitting a lightweight GET that needs Bearer
-  // Prefer dedicated export if present
-  const anyMod = mod as unknown as {
-    /** optional internal */
-    __getTokenForWs?: () => Promise<string>;
-  };
-  if (typeof anyMod.__getTokenForWs === "function") {
-    return anyMod.__getTokenForWs();
-  }
-
-  // Fallback: request token the same way REST does
-  const consumerID = process.env.SSI_FC_CONSUMER_ID?.trim();
-  const consumerSecret = process.env.SSI_FC_CONSUMER_SECRET?.trim();
-  if (!consumerID || !consumerSecret) throw new Error("missing SSI credentials");
-  const base = (process.env.SSI_FC_DATA_BASE_URL ?? "https://fc-data.ssi.com.vn").replace(/\/$/, "");
-  const res = await httpJson<{
-    data?: { accessToken?: string; access_token?: string };
-    accessToken?: string;
-    access_token?: string;
-  }>(`${base}/api/v2/Market/AccessToken`, {
-    provider: PROVIDER,
-    method: "POST",
-    timeoutMs: 12_000,
-    retries: 1,
-    headers: { Accept: "application/json", "Content-Type": "application/json" },
-    body: JSON.stringify({
-      consumerID,
-      consumerSecret,
-      ConsumerID: consumerID,
-      ConsumerSecret: consumerSecret,
-    }),
-  });
-  if (!res.ok || !res.data) throw new Error(res.error ?? "auth failed");
-  const d = res.data.data ?? res.data;
-  const token =
-    (d as { accessToken?: string }).accessToken ??
-    (d as { access_token?: string }).access_token ??
-    res.data.accessToken ??
-    res.data.access_token;
-  if (!token) throw new Error("no accessToken");
-  return token;
-}
-
 class SsiMarketWsEngine {
   private started = false;
   private state: SsiWsState = "closed";
@@ -167,7 +109,6 @@ class SsiMarketWsEngine {
     return ssiFcConfigured();
   }
 
-  /** Ref-counted channel subscription, e.g. X:VNM or MI:VNINDEX */
   subscribe(channel: string): () => void {
     if (!this.enabled()) return () => {};
     const ch = channel.trim().toUpperCase();
@@ -182,7 +123,6 @@ class SsiMarketWsEngine {
     };
   }
 
-  /** Convenience: quote + trade snapshot for a stock symbol */
   watchSymbol(symbol: string): () => void {
     const s = symbol.toUpperCase().replace(/[^A-Z0-9]/g, "");
     if (!s) return () => {};
@@ -255,7 +195,8 @@ class SsiMarketWsEngine {
   }
 
   private async connect() {
-    const WSImpl = (globalThis as { WebSocket?: new (url: string, protocols?: string | string[]) => WsLike }).WebSocket;
+    const WSImpl = (globalThis as { WebSocket?: new (url: string, protocols?: string | string[]) => WsLike })
+      .WebSocket;
     if (!WSImpl) {
       this.state = "disabled";
       this.lastError = "no native WebSocket in runtime";
@@ -264,8 +205,7 @@ class SsiMarketWsEngine {
 
     this.state = "connecting";
     try {
-      const token = await resolveAccessToken();
-      // SignalR-style URL with access_token (SSI DataHub)
+      const token = await getSsiAccessToken();
       const base = hubBase().replace(/^http/, "ws");
       const url = `${base}/Hubs/DataHub?access_token=${encodeURIComponent(token)}`;
 
@@ -274,7 +214,6 @@ class SsiMarketWsEngine {
 
       ws.onopen = () => {
         try {
-          // SignalR JSON handshake
           ws.send(`${JSON.stringify({ protocol: "json", version: 1 })}${RS}`);
         } catch (e) {
           this.lastError = e instanceof Error ? e.message : "handshake send failed";
@@ -328,7 +267,6 @@ class SsiMarketWsEngine {
   }
 
   private onRawMessage(raw: string) {
-    // SignalR frames may be concatenated with record separator
     const parts = raw.split(RS).filter((p) => p.length > 0);
     for (const part of parts) this.handleFrame(part);
   }
@@ -336,7 +274,6 @@ class SsiMarketWsEngine {
   private handleFrame(part: string) {
     this.noteMsg();
 
-    // Empty `{}` is handshake response
     if (part === "{}" || part === "{\n}") {
       this.state = "open";
       this.connectedAt = Date.now();
@@ -352,20 +289,16 @@ class SsiMarketWsEngine {
         type?: number;
         target?: string;
         arguments?: unknown[];
-        result?: unknown;
-        error?: unknown;
       };
 
-      // type 1 = Invocation
       if (msg.type === 1 && Array.isArray(msg.arguments)) {
         for (const arg of msg.arguments) this.ingestPayload(arg);
         return;
       }
 
-      // Some hubs push plain market envelopes
       this.ingestPayload(msg);
     } catch {
-      // Non-JSON control frames ignored
+      /* control frames */
     }
   }
 
@@ -373,15 +306,10 @@ class SsiMarketWsEngine {
     if (!this.ws || this.state !== "open" || !channels.length) return;
     for (const ch of channels) {
       try {
-        // SSI sample clients typically invoke SwitchChannel / Subscribe with channel string
         const id = String(++this.invocationId);
-        const payload = {
-          type: 1,
-          target: "SwitchChannel",
-          arguments: [ch],
-          invocationId: id,
-        };
-        this.ws.send(`${JSON.stringify(payload)}${RS}`);
+        this.ws.send(
+          `${JSON.stringify({ type: 1, target: "SwitchChannel", arguments: [ch], invocationId: id })}${RS}`,
+        );
       } catch {
         /* next reconnect */
       }
@@ -391,7 +319,6 @@ class SsiMarketWsEngine {
   private ingestPayload(arg: unknown) {
     if (arg == null) return;
 
-    // Envelope: { DataType, Content } where Content is JSON string or object
     if (typeof arg === "object" && arg !== null && "DataType" in arg) {
       const env = arg as { DataType?: string; Content?: unknown };
       const dt = String(env.DataType ?? "").toUpperCase();
