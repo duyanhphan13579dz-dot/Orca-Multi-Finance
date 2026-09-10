@@ -6,9 +6,9 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 /**
- * Live order book + match tape for a VN equity from SSI DataHub streaming.
- * Credentials: SSI_FC_CONSUMER_ID/SECRET or SSI_API_KEY/SSI_API_SECRET.
- * Requires SSI_WS_DISABLED != true (long-lived Node/VPS recommended).
+ * Order book + match tape.
+ * - In session: live SSI DataHub X channel
+ * - Outside session: last-session depth snapshot (if process still holds it or SSI pushes on subscribe)
  */
 export async function GET(_req: Request, ctx: { params: Promise<{ symbol: string }> }) {
   const { symbol } = await ctx.params;
@@ -26,7 +26,7 @@ export async function GET(_req: Request, ctx: { params: Promise<{ symbol: string
   if (process.env.SSI_WS_DISABLED === "true") {
     return unavailable(
       "ssi-ws",
-      "Sổ lệnh / khớp lệnh cần SSI WebSocket. Đặt SSI_WS_DISABLED=false trên runtime dài hạn (VPS). Serverless Vercel không giữ WS ổn định.",
+      "Sổ lệnh cần SSI WebSocket. Đặt SSI_WS_DISABLED=false trên VPS dài hạn để giữ snapshot phiên gần nhất.",
     );
   }
 
@@ -34,7 +34,7 @@ export async function GET(_req: Request, ctx: { params: Promise<{ symbol: string
   if (!r) {
     return unavailable(
       "ssi-ws",
-      `Chưa có độ sâu/khớp lệnh realtime cho ${symbol.toUpperCase()} — chờ tick X từ SSI trong phiên giao dịch.`,
+      `Chưa có sổ lệnh cho ${symbol.toUpperCase()} — trong phiên sẽ có realtime; ngoài phiên cần process đã nhận tick trước đó hoặc SSI snapshot khi subscribe.`,
     );
   }
   return ok(r.book, r.meta);

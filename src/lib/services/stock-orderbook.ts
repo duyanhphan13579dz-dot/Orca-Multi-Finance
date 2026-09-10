@@ -37,7 +37,31 @@ export interface VnOrderBook {
   tradeBuyVol: number;
   tradeSellVol: number;
   tradeTotalVol: number;
+  /** true = snapshot from previous session (outside continuous matching) */
+  fromLastSession: boolean;
 }
+
+/** HOSE continuous approx 09:00–11:30 & 13:00–14:45 VN time (with buffer). */
+function isVnSessionWindow(d = new Date()): boolean {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Ho_Chi_Minh",
+    weekday: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(d);
+  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? "";
+  const wd = get("weekday");
+  if (wd === "Sat" || wd === "Sun") return false;
+  const hour = Number(get("hour"));
+  const minute = Number(get("minute"));
+  const mins = hour * 60 + minute;
+  return (mins >= 8 * 60 + 45 && mins <= 11 * 60 + 45) || (mins >= 12 * 60 + 45 && mins <= 15 * 60);
+}
+
+/** Live SLA while in session; overnight keep last depth until next open. */
+const LIVE_MAX_AGE_MS = 20_000;
+const LAST_SESSION_MAX_AGE_MS = 20 * 60 * 60_000; // 20h — covers overnight + weekend start Mon morning edge
 
 function bootSsiLive() {
   if (!ssiFcConfigured()) return;
@@ -65,7 +89,12 @@ function readTrades(symbol: string): VnTrade[] {
   }
 }
 
-function toBook(sym: string, ob: SsiOrderBook | null, trades: VnTrade[]): VnOrderBook | null {
+function toBook(
+  sym: string,
+  ob: SsiOrderBook | null,
+  trades: VnTrade[],
+  fromLastSession: boolean,
+): VnOrderBook | null {
   if ((!ob || (ob.bids.length === 0 && ob.asks.length === 0)) && trades.length === 0) {
     return null;
   }
@@ -92,10 +121,11 @@ function toBook(sym: string, ob: SsiOrderBook | null, trades: VnTrade[]): VnOrde
     session: ob?.session ?? null,
     eventTime: ob?.eventTime ?? trades[0]?.eventTime ?? Date.now(),
     levels: Math.max(bids.length, asks.length),
-    trades,
-    tradeBuyVol,
-    tradeSellVol,
-    tradeTotalVol,
+    trades: fromLastSession ? [] : trades,
+    tradeBuyVol: fromLastSession ? 0 : tradeBuyVol,
+    tradeSellVol: fromLastSession ? 0 : tradeSellVol,
+    tradeTotalVol: fromLastSession ? 0 : tradeTotalVol,
+    fromLastSession,
   };
 }
 
@@ -104,35 +134,76 @@ export async function getVnOrderBook(
 ): Promise<{ book: VnOrderBook; meta: Meta } | null> {
   const sym = symbol.toUpperCase().replace(/[^A-Z0-9]/g, "");
   if (!sym || !ssiFcConfigured()) return null;
-  if (process.env.SSI_WS_DISABLED === "true") return null;
 
-  bootSsiLive();
+  const inSession = isVnSessionWindow();
+  const wsDisabled = process.env.SSI_WS_DISABLED === "true";
 
-  // Hot path: in-memory cache first (0ms)
-  let ob: SsiOrderBook | null = ssiWs.getOrderBook(sym, 20_000);
+  // Even with WS disabled, try in-memory last snapshot (same process that received ticks earlier)
+  if (!wsDisabled) bootSsiLive();
+
+  // 1) Fresh live depth
+  let ob: SsiOrderBook | null = ssiWs.getOrderBook(sym, LIVE_MAX_AGE_MS);
   if (!ob) {
-    const q = ssiWs.getQuote(sym, 20_000);
+    const q = ssiWs.getQuote(sym, LIVE_MAX_AGE_MS);
     ob = q?.orderBook ?? null;
   }
 
+  let fromLastSession = false;
+
+  // 2) In session: short event wait for first tick
+  if (!ob && !wsDisabled) {
+    try {
+      ob = await ssiWs.waitForOrderBook(sym, inSession ? 250 : 600);
+    } catch {
+      ob = null;
+    }
+  }
+
+  // 3) Outside session / no live tick: use last known depth (up to 20h)
   if (!ob) {
-    // Event-driven wait ≤250ms — no fixed sleep
-    ob = await ssiWs.waitForOrderBook(sym, 250);
+    ob = ssiWs.getOrderBook(sym, LAST_SESSION_MAX_AGE_MS);
+    if (!ob) {
+      const q = ssiWs.getQuote(sym, LAST_SESSION_MAX_AGE_MS);
+      ob = q?.orderBook ?? null;
+    }
+    if (ob) fromLastSession = true;
+  } else if (!inSession) {
+    // Still have a "fresh" cache but market is closed → treat as last session for UI labeling
+    const age = Date.now() - ob.eventTime;
+    if (age > LIVE_MAX_AGE_MS) fromLastSession = true;
   } else {
     ssiWs.watchSymbol(sym);
   }
 
-  const trades = readTrades(sym);
-  const book = toBook(sym, ob, trades);
+  // 4) Outside session: one more subscribe attempt — SSI often pushes last X snapshot on SwitchChannel
+  if (!ob && !wsDisabled && !inSession) {
+    ssiWs.watchSymbol(sym);
+    try {
+      ob = await ssiWs.waitForOrderBook(sym, 800);
+      if (ob) fromLastSession = true;
+    } catch {
+      /* ignore */
+    }
+  }
+
+  const trades = fromLastSession ? [] : readTrades(sym);
+  const book = toBook(sym, ob, trades, fromLastSession);
   if (!book) return null;
+
+  const ageMs = Date.now() - book.eventTime;
+  const note = fromLastSession
+    ? `Sổ lệnh phiên gần nhất · ${book.levels} mức · ${new Date(book.eventTime).toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })}`
+    : `Độ sâu SSI · ${book.levels} mức · ${trades.length} khớp · live`;
 
   return {
     book,
     meta: buildMeta({
-      source: "ssi-ws",
+      source: fromLastSession ? "ssi-ws-last-session" : "ssi-ws",
       sourceTimestampMs: book.eventTime,
-      note: `Độ sâu SSI · ${book.levels} mức · ${trades.length} khớp · low-latency`,
-      slas: { liveSlaMs: 5_000, freshSlaMs: 20_000, delayedSlaMs: 60_000 },
+      note,
+      slas: fromLastSession
+        ? { liveSlaMs: 5_000, freshSlaMs: 60_000, delayedSlaMs: LAST_SESSION_MAX_AGE_MS }
+        : { liveSlaMs: 5_000, freshSlaMs: 20_000, delayedSlaMs: 60_000 },
     }),
   };
 }
