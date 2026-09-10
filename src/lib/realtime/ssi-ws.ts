@@ -8,6 +8,7 @@ import { getSsiAccessToken, invalidateSsiToken, ssiFcConfigured } from "../provi
  *
  * Order book: X / X-QUOTE (BidPrice1–10 / AskPrice1–10).
  * forceEnable(): orderbook API can open WS even when SSI_WS_DISABLED=true (Vercel one-shot).
+ * Reconnect: fast first hops, urgent on watchSymbol, session-aware silent/backoff.
  */
 
 const RS = "\x1e";
@@ -15,6 +16,7 @@ const DEFAULT_HUB = "https://fc-datahub.ssi.com.vn/v2.0";
 const PROVIDER = "ssi-ws";
 const MAX_AUTH_FAILS = 5;
 const SILENT_MS = 45_000;
+const SILENT_MS_SESSION = 25_000; // tighter in HOSE hours
 const RETRY_BUDGET = 32;
 
 export type SsiWsState = "open" | "connecting" | "closed" | "blocked" | "disabled" | "retrying";
@@ -154,19 +156,23 @@ function classifyFail(msg: string): FailKind {
 }
 
 function computeBackoffMs(kind: FailKind, attempt: number, authFailures: number): number {
+  // Attempt 1–2: near-instant. Later: full-jitter exponential, capped per class.
   const table: Record<FailKind, { base: number; max: number; expCap: number }> = {
-    network: { base: 250, max: 12_000, expCap: 6 },
-    handshake: { base: 400, max: 10_000, expCap: 5 },
-    silent: { base: 600, max: 20_000, expCap: 5 },
-    rate_limit: { base: 5_000, max: 120_000, expCap: 4 },
-    auth: { base: 10_000, max: 240_000, expCap: 4 },
-    unknown: { base: 500, max: 20_000, expCap: 6 },
+    network: { base: 120, max: 8_000, expCap: 7 },
+    handshake: { base: 200, max: 8_000, expCap: 6 },
+    silent: { base: 300, max: 12_000, expCap: 6 },
+    rate_limit: { base: 4_000, max: 90_000, expCap: 4 },
+    auth: { base: 8_000, max: 180_000, expCap: 4 },
+    unknown: { base: 200, max: 12_000, expCap: 6 },
   };
   const cfg = table[kind];
   const n = Math.min(Math.max(attempt, 1), cfg.expCap);
+  if (kind !== "auth" && kind !== "rate_limit" && n <= 2) {
+    return n === 1 ? 40 + Math.floor(Math.random() * 80) : 80 + Math.floor(Math.random() * 170);
+  }
   const exp = kind === "auth" ? Math.min(Math.max(authFailures, 1), cfg.expCap) : n;
   const ceiling = Math.min(cfg.base * 2 ** (exp - 1), cfg.max);
-  const jittered = Math.floor(ceiling * (0.3 + Math.random() * 0.7));
+  const jittered = Math.floor(ceiling * (0.35 + Math.random() * 0.65));
   return Math.max(Math.floor(cfg.base / 2), jittered);
 }
 
@@ -246,7 +252,10 @@ class SsiMarketWsEngine {
     if (!s) return () => {};
     const u1 = this.subscribe(`X:${s}`);
     const u2 = this.subscribe(`B:${s}`);
-    if (this.state === "closed" || this.state === "retrying" || this.state === "disabled") void this.connect();
+    // Active subscriber → reconnect ASAP (skip long pending backoff)
+    if (this.state !== "open" && this.state !== "connecting") {
+      this.reconnectUrgent("watchSymbol");
+    }
     return () => {
       u1();
       u2();
@@ -340,7 +349,7 @@ class SsiMarketWsEngine {
     }
     this.started = true;
     void this.connect();
-    this.watchdog = setInterval(() => this.checkLiveness(), 15_000);
+    this.watchdog = setInterval(() => this.checkLiveness(), 8_000);
     this.watchdog.unref?.();
   }
 
@@ -471,9 +480,39 @@ class SsiMarketWsEngine {
     }
   }
 
-  private failAndReconnect(reason: string) {
-    if (this.retryScheduled && this.state === "retrying") return;
+  /** Cancel long backoff and reconnect within ~50–150ms (new subscriber / force). */
+  private reconnectUrgent(_reason: string) {
+    if (!this.enabled()) return;
+    if (this.state === "open" || this.state === "connecting") return;
+    if (this.authFailures >= MAX_AUTH_FAILS) return;
 
+    this.clearRetryTimer();
+    this.state = "retrying";
+    this.retryScheduled = true;
+    const delay = 50 + Math.floor(Math.random() * 100);
+    this.nextRetryAt = Date.now() + delay;
+    this.timer = setTimeout(() => {
+      this.retryScheduled = false;
+      this.nextRetryAt = null;
+      void this.connect();
+    }, delay);
+    this.timer.unref?.();
+  }
+
+  private scheduleReconnect(delay: number) {
+    this.state = "retrying";
+    this.retryScheduled = true;
+    this.nextRetryAt = Date.now() + delay;
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = setTimeout(() => {
+      this.retryScheduled = false;
+      this.nextRetryAt = null;
+      void this.connect();
+    }, delay);
+    this.timer.unref?.();
+  }
+
+  private failAndReconnect(reason: string) {
     const kind = classifyFail(reason);
     this.lastFailKind = kind;
     this.lastError = reason.slice(0, 240);
@@ -482,7 +521,10 @@ class SsiMarketWsEngine {
     this.subscribedSent.clear();
     this.ws = null;
 
-    if (!this.enabled()) return;
+    if (!this.enabled()) {
+      this.clearRetryTimer();
+      return;
+    }
 
     if (kind === "auth") {
       this.authFailures += 1;
@@ -499,14 +541,16 @@ class SsiMarketWsEngine {
     this.reconnectAttempts += 1;
 
     if (this.reconnectAttempts > RETRY_BUDGET && kind !== "auth") {
-      const cooldown = (isVnSessionWindow() ? 45_000 : 3 * 60_000) + Math.floor(Math.random() * 15_000);
+      const cooldown =
+        (isVnSessionWindow() ? 30_000 : 2 * 60_000) + Math.floor(Math.random() * 15_000);
       this.state = "retrying";
       this.retryScheduled = true;
       this.nextRetryAt = Date.now() + cooldown;
       if (this.timer) clearTimeout(this.timer);
       this.timer = setTimeout(() => {
         this.retryScheduled = false;
-        this.reconnectAttempts = Math.floor(RETRY_BUDGET / 2);
+        this.nextRetryAt = null;
+        this.reconnectAttempts = Math.floor(RETRY_BUDGET / 3);
         void this.connect();
       }, cooldown);
       this.timer.unref?.();
@@ -516,24 +560,26 @@ class SsiMarketWsEngine {
     let delay = computeBackoffMs(kind, this.reconnectAttempts, this.authFailures);
 
     if (isVnSessionWindow() && (kind === "network" || kind === "silent" || kind === "handshake")) {
-      delay = Math.max(100, Math.floor(delay * 0.45));
+      delay = Math.max(40, Math.floor(delay * 0.4));
     }
 
-    this.state = "retrying";
-    this.retryScheduled = true;
-    this.nextRetryAt = Date.now() + delay;
-    if (this.timer) clearTimeout(this.timer);
-    this.timer = setTimeout(() => {
-      this.retryScheduled = false;
-      this.nextRetryAt = null;
-      void this.connect();
-    }, delay);
-    this.timer.unref?.();
+    // If already scheduled sooner, keep the earlier timer
+    if (this.retryScheduled && this.nextRetryAt != null) {
+      const remaining = this.nextRetryAt - Date.now();
+      if (remaining > 0 && remaining <= delay) {
+        this.state = "retrying";
+        return;
+      }
+    }
+
+    this.scheduleReconnect(delay);
   }
 
   private checkLiveness() {
     if (!this.enabled()) return;
-    if (this.state === "open" && this.lastMessageAt && Date.now() - this.lastMessageAt > SILENT_MS) {
+    if (this.state !== "open" || !this.lastMessageAt) return;
+    const limit = isVnSessionWindow() ? SILENT_MS_SESSION : SILENT_MS;
+    if (Date.now() - this.lastMessageAt > limit) {
       this.lastError = "silent timeout";
       this.hardClose();
       this.failAndReconnect("silent timeout");
