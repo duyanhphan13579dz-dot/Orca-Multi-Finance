@@ -6,8 +6,9 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 /**
- * Live order book (sổ lệnh) for a VN equity symbol from SSI DataHub streaming.
- * Requires SSI_FC_CONSUMER_ID + SSI_FC_CONSUMER_SECRET and SSI_WS_DISABLED != true.
+ * Live order book + match tape for a VN equity from SSI DataHub streaming.
+ * Credentials: SSI_FC_CONSUMER_ID/SECRET or SSI_API_KEY/SSI_API_SECRET.
+ * Requires SSI_WS_DISABLED != true (long-lived Node/VPS recommended).
  */
 export async function GET(_req: Request, ctx: { params: Promise<{ symbol: string }> }) {
   const { symbol } = await ctx.params;
@@ -18,14 +19,14 @@ export async function GET(_req: Request, ctx: { params: Promise<{ symbol: string
   if (!ssiFcConfigured()) {
     return unavailable(
       "ssi-fcdata",
-      "Chưa cấu hình SSI FastConnect (SSI_FC_CONSUMER_ID / SSI_FC_CONSUMER_SECRET).",
+      "Chưa cấu hình SSI (SSI_API_KEY + SSI_API_SECRET hoặc SSI_FC_CONSUMER_ID + SSI_FC_CONSUMER_SECRET).",
     );
   }
 
   if (process.env.SSI_WS_DISABLED === "true") {
     return unavailable(
       "ssi-ws",
-      "Sổ lệnh cần SSI WebSocket streaming. Trên serverless hãy chạy Node/VPS dài hạn và đặt SSI_WS_DISABLED=false (hoặc xóa biến).",
+      "Sổ lệnh / khớp lệnh cần SSI WebSocket. Đặt SSI_WS_DISABLED=false trên runtime dài hạn (VPS). Serverless Vercel không giữ WS ổn định.",
     );
   }
 
@@ -33,7 +34,7 @@ export async function GET(_req: Request, ctx: { params: Promise<{ symbol: string
   if (!r) {
     return unavailable(
       "ssi-ws",
-      `Chưa có sổ lệnh realtime cho ${symbol.toUpperCase()} — đang chờ tick X từ SSI DataHub (mở trang trong phiên giao dịch hoặc đợi vài giây).`,
+      `Chưa có độ sâu/khớp lệnh realtime cho ${symbol.toUpperCase()} — chờ tick X từ SSI trong phiên giao dịch.`,
     );
   }
   return ok(r.book, r.meta);

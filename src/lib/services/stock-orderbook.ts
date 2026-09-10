@@ -1,14 +1,29 @@
 import "server-only";
 import { buildMeta } from "../freshness";
 import { ssiFcConfigured } from "../providers/ssi-fcdata";
-import { ensureSsiWsStarted, ssiWs, type SsiOrderBook } from "../realtime/ssi-ws";
+import { ensureSsiWsStarted, ssiWs, type SsiOrderBook, type SsiTrade } from "../realtime/ssi-ws";
 import type { Meta } from "../types";
 
-/** Live order book (sổ lệnh) from SSI DataHub streaming (X / X-QUOTE). */
+export interface VnOrderBookLevel {
+  price: number;
+  volume: number;
+}
+
+export interface VnTrade {
+  price: number;
+  volume: number;
+  change: number | null;
+  changePercent: number | null;
+  side: "buy" | "sell" | "unknown";
+  time: string | null;
+  eventTime: number;
+}
+
+/** Live order book (sổ lệnh) + match tape from SSI DataHub streaming. */
 export interface VnOrderBook {
   symbol: string;
-  bids: { price: number; volume: number }[];
-  asks: { price: number; volume: number }[];
+  bids: VnOrderBookLevel[];
+  asks: VnOrderBookLevel[];
   bidTotal: number;
   askTotal: number;
   imbalance: number | null;
@@ -19,6 +34,10 @@ export interface VnOrderBook {
   session: string | null;
   eventTime: number;
   levels: number;
+  trades: VnTrade[];
+  tradeBuyVol: number;
+  tradeSellVol: number;
+  tradeTotalVol: number;
 }
 
 function bootSsiLive() {
@@ -29,6 +48,18 @@ function bootSsiLive() {
   } catch {
     /* non-fatal */
   }
+}
+
+function mapTrades(list: SsiTrade[]): VnTrade[] {
+  return list.map((t) => ({
+    price: t.price,
+    volume: t.volume,
+    change: t.change,
+    changePercent: t.changePercent,
+    side: t.side,
+    time: t.time,
+    eventTime: t.eventTime,
+  }));
 }
 
 export async function getVnOrderBook(
@@ -48,53 +79,64 @@ export async function getVnOrderBook(
 
   ssiWs.watchSymbol(sym);
 
-  let ob: SsiOrderBook | null = ssiWs.getOrderBook(sym, 45_000);
+  let ob: SsiOrderBook | null = ssiWs.getOrderBook(sym, 60_000);
   if (!ob) {
-    const q = ssiWs.getQuote(sym, 45_000);
+    const q = ssiWs.getQuote(sym, 60_000);
     ob = q?.orderBook ?? null;
   }
 
   if (!ob) {
-    await new Promise((r) => setTimeout(r, 800));
-    ob = ssiWs.getOrderBook(sym, 45_000);
+    await new Promise((r) => setTimeout(r, 900));
+    ob = ssiWs.getOrderBook(sym, 60_000);
     if (!ob) {
-      const q = ssiWs.getQuote(sym, 45_000);
+      const q = ssiWs.getQuote(sym, 60_000);
       ob = q?.orderBook ?? null;
     }
   }
 
-  if (!ob || (ob.bids.length === 0 && ob.asks.length === 0)) {
+  const trades = mapTrades(ssiWs.getTrades(sym, 50));
+  const tradeBuyVol = trades.filter((t) => t.side === "buy").reduce((s, t) => s + t.volume, 0);
+  const tradeSellVol = trades.filter((t) => t.side === "sell").reduce((s, t) => s + t.volume, 0);
+  const tradeTotalVol = trades.reduce((s, t) => s + t.volume, 0);
+
+  if ((!ob || (ob.bids.length === 0 && ob.asks.length === 0)) && trades.length === 0) {
     return null;
   }
 
-  const bidTotal = ob.bidTotal;
-  const askTotal = ob.askTotal;
+  const bids = ob?.bids ?? [];
+  const asks = ob?.asks ?? [];
+  const bidTotal = ob?.bidTotal ?? 0;
+  const askTotal = ob?.askTotal ?? 0;
   const total = bidTotal + askTotal;
   const imbalance = total > 0 ? (bidTotal - askTotal) / total : null;
 
   const book: VnOrderBook = {
     symbol: sym,
-    bids: ob.bids,
-    asks: ob.asks,
+    bids,
+    asks,
     bidTotal,
     askTotal,
     imbalance,
-    lastPrice: ob.lastPrice,
-    ceiling: ob.ceiling,
-    floor: ob.floor,
-    ref: ob.ref,
-    session: ob.session,
-    eventTime: ob.eventTime,
-    levels: Math.max(ob.bids.length, ob.asks.length),
+    lastPrice: ob?.lastPrice ?? trades[0]?.price ?? null,
+    ceiling: ob?.ceiling ?? null,
+    floor: ob?.floor ?? null,
+    ref: ob?.ref ?? null,
+    session: ob?.session ?? null,
+    eventTime: ob?.eventTime ?? trades[0]?.eventTime ?? Date.now(),
+    levels: Math.max(bids.length, asks.length),
+    trades,
+    tradeBuyVol,
+    tradeSellVol,
+    tradeTotalVol,
   };
 
   return {
     book,
     meta: buildMeta({
       source: "ssi-ws",
-      sourceTimestampMs: ob.eventTime,
-      note: `Sổ lệnh SSI · ${book.levels} mức · kênh X`,
-      slas: { liveSlaMs: 15_000, freshSlaMs: 45_000, delayedSlaMs: 120_000 },
+      sourceTimestampMs: book.eventTime,
+      note: `Độ sâu SSI · ${book.levels} mức · ${trades.length} khớp`,
+      slas: { liveSlaMs: 15_000, freshSlaMs: 60_000, delayedSlaMs: 180_000 },
     }),
   };
 }
