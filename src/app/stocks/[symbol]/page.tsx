@@ -35,37 +35,42 @@ export default function StockOverviewPage({ params }: { params: Promise<{ symbol
 
   return (
     <div className="space-y-3">
-      {q || data.bars.length > 0 ? (
-        <OrcaChart
-          symbol={data.symbol}
-          assetType="stock"
-          defaultTimeframe="1d"
-          height={400}
-          title={data.symbol}
-          extraLevels={[
-            ...(q?.ceilingPrice != null
-              ? [{ label: "Trần", price: q.ceilingPrice, color: "rgba(181,140,255,0.7)" }]
-              : []),
-            ...(q?.referencePrice != null
-              ? [{ label: "Tham chiếu", price: q.referencePrice, color: "rgba(245,165,36,0.7)" }]
-              : []),
-            ...(q?.floorPrice != null
-              ? [{ label: "Sàn", price: q.floorPrice, color: "rgba(56,189,248,0.7)" }]
-              : []),
-          ]}
-        />
-      ) : (
-        <Panel title="Biểu đồ">
-          <p className="text-[12px] text-ink-3">Chưa có chuỗi giá để vẽ biểu đồ.</p>
-        </Panel>
-      )}
+      {/* Chart + sổ lệnh / khớp lệnh — layout terminal */}
+      <div className="grid gap-3 xl:grid-cols-[1fr_minmax(320px,420px)]">
+        <div className="min-w-0">
+          {q || data.bars.length > 0 ? (
+            <OrcaChart
+              symbol={data.symbol}
+              assetType="stock"
+              defaultTimeframe="1d"
+              height={420}
+              title={data.symbol}
+              extraLevels={[
+                ...(q?.ceilingPrice != null
+                  ? [{ label: "Trần", price: q.ceilingPrice, color: "rgba(181,140,255,0.7)" }]
+                  : []),
+                ...(q?.referencePrice != null
+                  ? [{ label: "Tham chiếu", price: q.referencePrice, color: "rgba(245,165,36,0.7)" }]
+                  : []),
+                ...(q?.floorPrice != null
+                  ? [{ label: "Sàn", price: q.floorPrice, color: "rgba(56,189,248,0.7)" }]
+                  : []),
+              ]}
+            />
+          ) : (
+            <Panel title="Biểu đồ">
+              <p className="text-[12px] text-ink-3">Chưa có chuỗi giá để vẽ biểu đồ.</p>
+            </Panel>
+          )}
+        </div>
+        <div className="min-w-0">
+          <OrderBookPanel symbol={data.symbol} compact />
+        </div>
+      </div>
 
       <div className="grid gap-3 lg:grid-cols-2">
-        <OrderBookPanel symbol={data.symbol} />
-        <div className="space-y-3">
-          <TechRecoPanel symbol={data.symbol} />
-          <StockStructurePanel symbol={data.symbol} />
-        </div>
+        <TechRecoPanel symbol={data.symbol} />
+        <StockStructurePanel symbol={data.symbol} />
       </div>
 
       {data.technical ? <TechnicalPanel tech={data.technical} patterns={data.patterns} /> : null}
