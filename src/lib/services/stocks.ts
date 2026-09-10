@@ -909,16 +909,10 @@ export async function getVnStockDetail(symbol: string): Promise<{ detail: VnStoc
   if (!fin?.financials.income && !fin?.financials.balance) failed.push("financials");
   if (!quote && !bars.length && !fin) return null;
 
+  // notes chỉ dành cho agent/intelligence engine — KHÔNG render ra UI.
   const notes: string[] = [];
   if (failed.length) notes.push(`Một số bộ dữ liệu chưa khả dụng: ${failed.join(", ")}`);
   if (fin?.notes?.length) notes.push(...fin.notes);
-  if (ssiFastConfigured()) {
-    notes.push("Nguồn thị trường PRIMARY: SSI FastConnect v3 (developers.ssi.com.vn).");
-  } else if (ssiFcConfigured()) {
-    notes.push("Nguồn thị trường PRIMARY: SSI FastConnect · VNDirect chỉ khi SSI lỗi.");
-  } else {
-    notes.push("Nguồn tạm: VNDirect — set SSI_API_KEY + SSI_API_SECRET để dùng SSI FastConnect v3.");
-  }
 
   const detail: VnStockDetail = {
     symbol: sym,

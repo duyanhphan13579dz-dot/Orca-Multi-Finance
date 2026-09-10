@@ -212,10 +212,6 @@ export default function StockFinancialsPage({ params }: { params: Promise<{ symb
           Schema chuẩn hóa theo Financial Report Data Engine. Đối chiếu đa nguồn (SSC / CafeF / SSI) thuộc Phase 5.
         </p>
       </Panel>
-
-      {data.notes.length > 0 && (
-        <p className="text-[11px] text-warn/90">{data.notes.join(" • ")}</p>
-      )}
     </div>
   );
 }

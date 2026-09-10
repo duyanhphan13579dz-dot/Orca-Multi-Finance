@@ -218,10 +218,6 @@ export default function StockProfilePage({ params }: { params: Promise<{ symbol:
           </p>
         )}
       </Panel>
-
-      {data.notes.length > 0 && (
-        <p className="text-[11px] text-warn/90">{data.notes.join(" • ")}</p>
-      )}
     </div>
   );
 }
