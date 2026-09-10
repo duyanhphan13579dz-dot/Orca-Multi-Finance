@@ -1,22 +1,22 @@
 import "server-only";
 import { recordFailure, recordSuccess } from "../health";
 import { eventBus } from "../events";
-import { getSsiAccessToken, ssiFcConfigured } from "../providers/ssi-fcdata";
+import { getSsiAccessToken, invalidateSsiToken, ssiFcConfigured } from "../providers/ssi-fcdata";
 
 /**
- * SSI FastConnect Data — market streaming (DataHub).
+ * SSI FastConnect DataHub streaming — zero-config when env keys present.
  *
- * Docs: https://guide.ssi.com.vn/ssi-products/fastconnect-data/streaming-data
- * Hub:  wss://fc-datahub.ssi.com.vn/v2.0/Hubs/DataHub  (SignalR JSON)
- *
- * Channels: X:SYM | B:SYM | MI:INDEX | F:SYM | R:SYM
- *
- * Serverless: set SSI_WS_DISABLED=true — REST still works.
+ * Env:
+ *   SSI_FC_CONSUMER_ID / SSI_FC_CONSUMER_SECRET  (required)
+ *   SSI_FC_HUB_URL                                (optional)
+ *   SSI_WS_DISABLED=true                          (serverless)
  */
 
 const RS = "\x1e";
 const DEFAULT_HUB = "https://fc-datahub.ssi.com.vn/v2.0";
 const PROVIDER = "ssi-ws";
+const MAX_AUTH_FAILS = 5;
+const SILENT_MS = 90_000;
 
 export type SsiWsState = "open" | "connecting" | "closed" | "blocked" | "disabled" | "retrying";
 
@@ -61,6 +61,7 @@ export interface SsiWsStats {
   lastMessageAt: number | null;
   messagesPerMin: number;
   reconnectAttempts: number;
+  authFailures: number;
   lastError: string | null;
   channels: string[];
   quotesTracked: number;
@@ -87,13 +88,28 @@ function hubBase(): string {
   return (process.env.SSI_FC_HUB_URL ?? DEFAULT_HUB).replace(/\/$/, "");
 }
 
+function isAuthError(msg: string): boolean {
+  const m = msg.toLowerCase();
+  return (
+    m.includes("401") ||
+    m.includes("unauthorized") ||
+    m.includes("token") ||
+    m.includes("auth") ||
+    m.includes("credential") ||
+    m.includes("access denied")
+  );
+}
+
 class SsiMarketWsEngine {
   private started = false;
   private state: SsiWsState = "closed";
   private ws: WsLike | null = null;
+  private connectGen = 0;
+  private connecting = false;
   private connectedAt: number | null = null;
   private lastMessageAt: number | null = null;
   private reconnectAttempts = 0;
+  private authFailures = 0;
   private lastError: string | null = null;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private watchdog: ReturnType<typeof setInterval> | null = null;
@@ -103,6 +119,7 @@ class SsiMarketWsEngine {
   private quotes = new Map<string, SsiLiveQuote>();
   private indices = new Map<string, SsiLiveIndex>();
   private invocationId = 0;
+  private subscribedSent = new Set<string>();
 
   private enabled(): boolean {
     if (process.env.SSI_WS_DISABLED === "true") return false;
@@ -115,11 +132,13 @@ class SsiMarketWsEngine {
     if (!ch) return () => {};
     this.channelRefs.set(ch, (this.channelRefs.get(ch) ?? 0) + 1);
     this.start();
-    if (this.state === "open") this.sendSubscribe([ch]);
+    if (this.state === "open" && !this.subscribedSent.has(ch)) this.sendSubscribe([ch]);
     return () => {
       const n = (this.channelRefs.get(ch) ?? 0) - 1;
-      if (n <= 0) this.channelRefs.delete(ch);
-      else this.channelRefs.set(ch, n);
+      if (n <= 0) {
+        this.channelRefs.delete(ch);
+        this.subscribedSent.delete(ch);
+      } else this.channelRefs.set(ch, n);
     };
   }
 
@@ -138,6 +157,14 @@ class SsiMarketWsEngine {
     const c = code.toUpperCase().replace(/[^A-Z0-9]/g, "");
     if (!c) return () => {};
     return this.subscribe(`MI:${c}`);
+  }
+
+  /** Ensure core indices are streaming when SSI is live. */
+  ensureCoreIndices() {
+    if (!this.enabled()) return;
+    for (const code of ["VNINDEX", "VN30", "HNX", "UPCOM", "HNX30"]) {
+      this.watchIndex(code);
+    }
   }
 
   getQuote(symbol: string, maxAgeMs = 30_000): SsiLiveQuote | null {
@@ -159,6 +186,7 @@ class SsiMarketWsEngine {
       lastMessageAt: this.lastMessageAt,
       messagesPerMin: this.msgsPerMin(),
       reconnectAttempts: this.reconnectAttempts,
+      authFailures: this.authFailures,
       lastError: this.lastError,
       channels: [...this.channelRefs.keys()],
       quotesTracked: this.quotes.size,
@@ -167,11 +195,20 @@ class SsiMarketWsEngine {
   }
 
   start() {
-    if (this.started || !this.enabled()) return;
+    if (!this.enabled()) {
+      this.state = "disabled";
+      return;
+    }
+    if (this.started) {
+      if (this.state === "closed" || this.state === "blocked") void this.connect();
+      return;
+    }
     this.started = true;
     void this.connect();
-    this.watchdog = setInterval(() => this.checkLiveness(), 20_000);
-    this.watchdog.unref?.();
+    if (!this.watchdog) {
+      this.watchdog = setInterval(() => this.checkLiveness(), 15_000);
+      this.watchdog.unref?.();
+    }
   }
 
   private noteMsg(now = Date.now()) {
@@ -194,7 +231,34 @@ class SsiMarketWsEngine {
     return sum;
   }
 
+  private hardClose() {
+    const ws = this.ws;
+    this.ws = null;
+    this.subscribedSent.clear();
+    if (!ws) return;
+    try {
+      ws.onopen = null;
+      ws.onmessage = null;
+      ws.onerror = null;
+      ws.onclose = null;
+      ws.close();
+    } catch {
+      /* noop */
+    }
+  }
+
   private async connect() {
+    if (!this.enabled()) {
+      this.state = "disabled";
+      return;
+    }
+    if (this.connecting) return;
+    if (this.authFailures >= MAX_AUTH_FAILS) {
+      this.state = "blocked";
+      this.lastError = `auth circuit open after ${this.authFailures} failures — check SSI keys`;
+      return;
+    }
+
     const WSImpl = (globalThis as { WebSocket?: new (url: string, protocols?: string | string[]) => WsLike })
       .WebSocket;
     if (!WSImpl) {
@@ -203,16 +267,35 @@ class SsiMarketWsEngine {
       return;
     }
 
+    this.connecting = true;
     this.state = "connecting";
+    const gen = ++this.connectGen;
+    this.hardClose();
+
     try {
       const token = await getSsiAccessToken();
+      if (gen !== this.connectGen) return; // superseded
+
       const base = hubBase().replace(/^http/, "ws");
       const url = `${base}/Hubs/DataHub?access_token=${encodeURIComponent(token)}`;
-
       const ws = new WSImpl(url);
       this.ws = ws;
 
+      const handshakeTimer = setTimeout(() => {
+        if (gen !== this.connectGen) return;
+        if (this.state === "connecting") {
+          this.lastError = "handshake timeout";
+          try {
+            ws.close();
+          } catch {
+            this.failAndReconnect("handshake timeout");
+          }
+        }
+      }, 12_000);
+      handshakeTimer.unref?.();
+
       ws.onopen = () => {
+        if (gen !== this.connectGen) return;
         try {
           ws.send(`${JSON.stringify({ protocol: "json", version: 1 })}${RS}`);
         } catch (e) {
@@ -220,9 +303,14 @@ class SsiMarketWsEngine {
         }
       };
 
-      ws.onmessage = (e) => this.onRawMessage(String(e.data ?? ""));
+      ws.onmessage = (e) => {
+        if (gen !== this.connectGen) return;
+        clearTimeout(handshakeTimer);
+        this.onRawMessage(String(e.data ?? ""));
+      };
 
       ws.onerror = (e) => {
+        if (gen !== this.connectGen) return;
         this.lastError =
           e && typeof e === "object" && "message" in e
             ? String((e as { message: unknown }).message).slice(0, 200)
@@ -230,22 +318,44 @@ class SsiMarketWsEngine {
       };
 
       ws.onclose = (ev) => {
-        this.state = this.lastError ? "blocked" : "closed";
-        recordFailure(PROVIDER, this.lastError ?? `close ${ev.code ?? ""}`);
-        this.scheduleReconnect();
+        if (gen !== this.connectGen) return;
+        clearTimeout(handshakeTimer);
+        const reason = this.lastError ?? `close ${ev.code ?? ""} ${ev.reason ?? ""}`.trim();
+        this.failAndReconnect(reason);
       };
     } catch (err) {
-      this.lastError = err instanceof Error ? err.message : "connect failed";
-      this.state = "blocked";
-      recordFailure(PROVIDER, this.lastError);
-      this.scheduleReconnect();
+      const msg = err instanceof Error ? err.message : "connect failed";
+      if (isAuthError(msg)) {
+        this.authFailures += 1;
+        invalidateSsiToken();
+      }
+      this.failAndReconnect(msg);
+    } finally {
+      this.connecting = false;
     }
   }
 
-  private scheduleReconnect() {
+  private failAndReconnect(reason: string) {
+    this.lastError = reason.slice(0, 240);
+    this.state = isAuthError(reason) ? "blocked" : "closed";
+    recordFailure(PROVIDER, this.lastError);
+    this.subscribedSent.clear();
+    this.ws = null;
+
     if (!this.enabled()) return;
+    if (this.authFailures >= MAX_AUTH_FAILS) {
+      this.state = "blocked";
+      this.lastError = `auth circuit open — ${this.lastError}`;
+      return;
+    }
+
     this.reconnectAttempts += 1;
-    const delay = Math.min(2000 * 2 ** Math.min(this.reconnectAttempts, 5), 60_000) + Math.random() * 1000;
+    // Auth errors: longer backoff; network: exponential up to 60s
+    const authSlow = isAuthError(reason);
+    const base = authSlow
+      ? Math.min(15_000 * 2 ** Math.min(this.authFailures, 4), 300_000)
+      : Math.min(1500 * 2 ** Math.min(this.reconnectAttempts, 6), 60_000);
+    const delay = base + Math.random() * 800;
     this.state = "retrying";
     if (this.timer) clearTimeout(this.timer);
     this.timer = setTimeout(() => void this.connect(), delay);
@@ -253,17 +363,32 @@ class SsiMarketWsEngine {
   }
 
   private checkLiveness() {
-    if (this.state === "open" && this.lastMessageAt && Date.now() - this.lastMessageAt > 90_000) {
-      this.lastError = "stream silent > 90s — reconnect";
-      try {
-        this.ws?.close();
-      } catch {
-        this.scheduleReconnect();
-      }
+    if (!this.enabled()) return;
+    if (this.state === "open" && this.lastMessageAt && Date.now() - this.lastMessageAt > SILENT_MS) {
+      this.lastError = `stream silent > ${SILENT_MS / 1000}s — reconnect`;
+      this.hardClose();
+      this.failAndReconnect(this.lastError);
+      return;
+    }
+    // Recover from blocked if auth failures cooled (manual key fix)
+    if (this.state === "blocked" && this.authFailures >= MAX_AUTH_FAILS) {
+      // stay blocked until process restart or resetAuthCircuit()
+      return;
+    }
+    if ((this.state === "closed" || this.state === "blocked") && this.channelRefs.size > 0 && !this.connecting) {
+      void this.connect();
     }
     const now = Date.now();
     for (const [k, v] of this.quotes) if (now - v.eventTime > 300_000) this.quotes.delete(k);
     for (const [k, v] of this.indices) if (now - v.eventTime > 300_000) this.indices.delete(k);
+  }
+
+  /** Call after fixing credentials without redeploy. */
+  resetAuthCircuit() {
+    this.authFailures = 0;
+    this.reconnectAttempts = 0;
+    invalidateSsiToken();
+    if (this.enabled()) void this.connect();
   }
 
   private onRawMessage(raw: string) {
@@ -278,8 +403,10 @@ class SsiMarketWsEngine {
       this.state = "open";
       this.connectedAt = Date.now();
       this.reconnectAttempts = 0;
+      this.authFailures = 0;
       this.lastError = null;
       recordSuccess(PROVIDER, 0);
+      this.subscribedSent.clear();
       this.sendSubscribe([...this.channelRefs.keys()]);
       return;
     }
@@ -289,7 +416,16 @@ class SsiMarketWsEngine {
         type?: number;
         target?: string;
         arguments?: unknown[];
+        error?: string;
       };
+
+      if (msg.error && isAuthError(String(msg.error))) {
+        this.authFailures += 1;
+        invalidateSsiToken();
+        this.hardClose();
+        this.failAndReconnect(String(msg.error));
+        return;
+      }
 
       if (msg.type === 1 && Array.isArray(msg.arguments)) {
         for (const arg of msg.arguments) this.ingestPayload(arg);
@@ -298,20 +434,22 @@ class SsiMarketWsEngine {
 
       this.ingestPayload(msg);
     } catch {
-      /* control frames */
+      /* control */
     }
   }
 
   private sendSubscribe(channels: string[]) {
     if (!this.ws || this.state !== "open" || !channels.length) return;
     for (const ch of channels) {
+      if (this.subscribedSent.has(ch)) continue;
       try {
         const id = String(++this.invocationId);
         this.ws.send(
           `${JSON.stringify({ type: 1, target: "SwitchChannel", arguments: [ch], invocationId: id })}${RS}`,
         );
+        this.subscribedSent.add(ch);
       } catch {
-        /* next reconnect */
+        this.subscribedSent.delete(ch);
       }
     }
   }
@@ -376,9 +514,7 @@ class SsiMarketWsEngine {
         source: rtype === "X-TRADE" ? "X-TRADE" : "X",
       };
       this.quotes.set(symbol, q);
-      if (eventBus.subscriberCount(`ssi:tick:${symbol}`) > 0) {
-        eventBus.emit(`ssi:tick:${symbol}`, q);
-      }
+      if (eventBus.subscriberCount(`ssi:tick:${symbol}`) > 0) eventBus.emit(`ssi:tick:${symbol}`, q);
       return;
     }
 
@@ -408,9 +544,7 @@ class SsiMarketWsEngine {
         source: "B",
       };
       this.quotes.set(symbol, q);
-      if (eventBus.subscriberCount(`ssi:tick:${symbol}`) > 0) {
-        eventBus.emit(`ssi:tick:${symbol}`, q);
-      }
+      if (eventBus.subscriberCount(`ssi:tick:${symbol}`) > 0) eventBus.emit(`ssi:tick:${symbol}`, q);
       return;
     }
 
@@ -431,9 +565,7 @@ class SsiMarketWsEngine {
         eventTime: now,
       };
       this.indices.set(code, idx);
-      if (eventBus.subscriberCount(`ssi:index:${code}`) > 0) {
-        eventBus.emit(`ssi:index:${code}`, idx);
-      }
+      if (eventBus.subscriberCount(`ssi:index:${code}`) > 0) eventBus.emit(`ssi:index:${code}`, idx);
     }
   }
 }
@@ -444,4 +576,7 @@ g.__orcaSsiWs = ssiWs;
 
 export function ensureSsiWsStarted() {
   ssiWs.start();
+  if (ssiFcConfigured() && process.env.SSI_WS_DISABLED !== "true") {
+    ssiWs.ensureCoreIndices();
+  }
 }
