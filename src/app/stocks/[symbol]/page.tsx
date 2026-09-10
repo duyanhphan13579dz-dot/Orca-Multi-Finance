@@ -9,6 +9,7 @@ import { TechnicalPanel } from "@/components/technical-panel";
 import { TechRecoPanel } from "@/components/stocks/tech-reco-panel";
 import { StockNewsSentiment } from "@/components/stocks/news-sentiment-chip";
 import { StockStructurePanel } from "@/components/stocks/structure-panel";
+import { OrderBookPanel } from "@/components/stocks/order-book-panel";
 
 export default function StockOverviewPage({ params }: { params: Promise<{ symbol: string }> }) {
   const [symbol, setSymbol] = useState("");
@@ -59,9 +60,13 @@ export default function StockOverviewPage({ params }: { params: Promise<{ symbol
         </Panel>
       )}
 
-      <TechRecoPanel symbol={data.symbol} />
-
-      <StockStructurePanel symbol={data.symbol} />
+      <div className="grid gap-3 lg:grid-cols-2">
+        <OrderBookPanel symbol={data.symbol} />
+        <div className="space-y-3">
+          <TechRecoPanel symbol={data.symbol} />
+          <StockStructurePanel symbol={data.symbol} />
+        </div>
+      </div>
 
       {data.technical ? <TechnicalPanel tech={data.technical} patterns={data.patterns} /> : null}
 
