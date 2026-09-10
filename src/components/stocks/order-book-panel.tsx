@@ -7,25 +7,41 @@ import { FreshnessDot, Loading, Panel, Unavailable } from "@/components/ui";
 function fmtPrice(p: number): string {
   if (p >= 1000) return p.toLocaleString("vi-VN", { maximumFractionDigits: 0 });
   if (p >= 10) return p.toLocaleString("vi-VN", { maximumFractionDigits: 2 });
-  return p.toLocaleString("vi-VN", { maximumFractionDigits: 3 });
+  return p.toLocaleString("vi-VN", { maximumFractionDigits: 2 });
 }
 
 function fmtVol(v: number): string {
   if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(2)}M`;
-  if (v >= 1_000) return `${(v / 1_000).toFixed(1)}K`;
+  if (v >= 1_000) return `${(v / 1_000).toFixed(v >= 10_000 ? 1 : 2)}K`;
   return v.toLocaleString("vi-VN");
 }
 
-export function OrderBookPanel({ symbol }: { symbol: string }) {
+function fmtTime(t: string | null, eventTime: number): string {
+  if (t && /^\d{1,2}:\d{2}/.test(t)) return t.length >= 8 ? t.slice(0, 8) : t;
+  try {
+    return new Date(eventTime).toLocaleTimeString("vi-VN", {
+      timeZone: "Asia/Ho_Chi_Minh",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false,
+    });
+  } catch {
+    return "—";
+  }
+}
+
+/** Terminal-style market depth + match tape (layout giống bảng độ sâu / khớp lệnh). */
+export function OrderBookPanel({ symbol, compact = false }: { symbol: string; compact?: boolean }) {
   const { res, data, meta, isLoading } = useApi<VnOrderBook>(
     symbol ? `/api/v1/stocks/${symbol}/orderbook` : null,
-    { refreshInterval: 5_000 },
+    { refreshInterval: 3_000 },
   );
 
   if (!symbol || (isLoading && !res)) {
     return (
-      <Panel title="Sổ lệnh">
-        <Loading rows={6} />
+      <Panel title="Độ sâu thị trường">
+        <Loading rows={8} />
       </Panel>
     );
   }
@@ -33,7 +49,7 @@ export function OrderBookPanel({ symbol }: { symbol: string }) {
   if (!res?.success || !data) {
     return (
       <Panel
-        title="Sổ lệnh"
+        title="Độ sâu thị trường"
         right={<FreshnessDot status={meta?.freshness ?? "UNAVAILABLE"} ageMs={meta?.ageMs} />}
       >
         <Unavailable
@@ -41,142 +57,211 @@ export function OrderBookPanel({ symbol }: { symbol: string }) {
           note={
             res && !res.success
               ? res.error.message
-              : "Cần SSI WebSocket (SSI_WS_DISABLED=false) và đang trong phiên giao dịch."
+              : "Cần SSI WebSocket (SSI_WS_DISABLED=false) trong phiên giao dịch."
           }
         />
       </Panel>
     );
   }
 
-  const maxVol = Math.max(
+  const levels = Math.max(data.bids.length, data.asks.length, 1);
+  const maxLevelVol = Math.max(
     ...data.bids.map((l) => l.volume),
     ...data.asks.map((l) => l.volume),
     1,
   );
-  const levels = Math.max(data.bids.length, data.asks.length, 1);
-  const imb = data.imbalance;
+  const depthMax = Math.max(data.bidTotal, data.askTotal, 1);
+  const buyShare =
+    data.bidTotal + data.askTotal > 0
+      ? (data.bidTotal / (data.bidTotal + data.askTotal)) * 100
+      : 50;
+
+  const histPrices = [
+    ...data.bids.map((b) => ({ price: b.price, vol: b.volume, side: "bid" as const })),
+    ...data.asks.map((a) => ({ price: a.price, vol: a.volume, side: "ask" as const })),
+  ].sort((a, b) => a.price - b.price);
+  const histMax = Math.max(...histPrices.map((h) => h.vol), 1);
+
+  const trades = data.trades ?? [];
+  const showLevels = compact ? Math.min(levels, 5) : Math.min(levels, 10);
 
   return (
-    <Panel
-      title={
-        <span className="inline-flex items-center gap-2">
-          Sổ lệnh
-          <span className="text-[10px] font-normal text-ink-3">{data.levels} mức · SSI</span>
-        </span>
-      }
-      right={<FreshnessDot status={meta?.freshness} ageMs={meta?.ageMs} />}
-      pad={false}
-    >
-      <div className="border-b border-line px-3 py-2 text-[11px] text-ink-2 sm:px-3.5">
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
-          {data.lastPrice != null && (
-            <span>
-              Khớp: <strong className="num text-ink">{fmtPrice(data.lastPrice)}</strong>
-            </span>
-          )}
-          {data.ref != null && (
-            <span>
-              TC: <span className="num">{fmtPrice(data.ref)}</span>
-            </span>
-          )}
-          {data.ceiling != null && (
-            <span className="text-accent">
-              Trần: <span className="num">{fmtPrice(data.ceiling)}</span>
-            </span>
-          )}
-          {data.floor != null && (
-            <span className="text-[rgb(56,189,248)]">
-              Sàn: <span className="num">{fmtPrice(data.floor)}</span>
-            </span>
-          )}
-          {imb != null && (
-            <span>
-              Cân bằng:{" "}
-              <strong className={imb > 0.05 ? "text-up" : imb < -0.05 ? "text-down" : "text-ink-2"}>
-                {imb > 0 ? "+" : ""}
-                {(imb * 100).toFixed(1)}%
-              </strong>
-              <span className="text-ink-3"> (mua − bán)</span>
-            </span>
-          )}
+    <div className={`grid gap-3 ${compact ? "" : "xl:grid-cols-2"}`}>
+      <Panel
+        title={
+          <span className="inline-flex items-center gap-2">
+            Độ sâu thị trường
+            <span className="text-[10px] font-normal text-ink-3">{data.levels || showLevels} mức</span>
+          </span>
+        }
+        right={<FreshnessDot status={meta?.freshness} ageMs={meta?.ageMs} />}
+        pad={false}
+      >
+        <div className="grid grid-cols-4 gap-1 border-b border-line bg-panel-2 px-2 py-1.5 text-[10px] font-medium uppercase tracking-wide text-ink-3 sm:px-3">
+          <span className="text-right">KL</span>
+          <span className="text-right text-up">Giá mua</span>
+          <span className="text-left text-down">Giá bán</span>
+          <span className="text-left">KL</span>
         </div>
-      </div>
 
-      <div className="grid grid-cols-2 gap-0 text-[11px]">
-        <div className="border-r border-line">
-          <div className="grid grid-cols-3 gap-1 border-b border-line bg-panel-2 px-2 py-1.5 text-[10px] uppercase tracking-wide text-ink-3">
-            <span className="text-right">KL mua</span>
-            <span className="text-right">Giá mua</span>
-            <span className="text-right text-ink-3/70">#</span>
-          </div>
-          {Array.from({ length: levels }).map((_, i) => {
-            const lvl = data.bids[i];
-            if (!lvl) {
-              return (
-                <div key={`b-empty-${i}`} className="grid grid-cols-3 gap-1 px-2 py-1 text-ink-3/40">
-                  <span className="num text-right">—</span>
-                  <span className="num text-right">—</span>
-                  <span className="text-right">{i + 1}</span>
-                </div>
-              );
-            }
-            const w = Math.min(100, (lvl.volume / maxVol) * 100);
+        <div className="divide-y divide-line/40">
+          {Array.from({ length: showLevels }).map((_, i) => {
+            const bid = data.bids[i];
+            const ask = data.asks[i];
+            const bidW = bid ? Math.min(100, (bid.volume / maxLevelVol) * 100) : 0;
+            const askW = ask ? Math.min(100, (ask.volume / maxLevelVol) * 100) : 0;
             return (
-              <div key={`b-${i}`} className="relative grid grid-cols-3 gap-1 px-2 py-1">
-                <div
-                  className="pointer-events-none absolute inset-y-0 right-0 bg-up/10"
-                  style={{ width: `${w}%` }}
-                />
-                <span className="num relative z-10 text-right text-ink-2">{fmtVol(lvl.volume)}</span>
-                <span className="num relative z-10 text-right font-medium text-up">{fmtPrice(lvl.price)}</span>
-                <span className="relative z-10 text-right text-ink-3">{i + 1}</span>
+              <div key={i} className="relative grid grid-cols-4 gap-1 px-2 py-1 text-[11px] sm:px-3">
+                {bid && (
+                  <div
+                    className="pointer-events-none absolute inset-y-0 left-0 bg-up/10"
+                    style={{ width: `${bidW / 2}%` }}
+                  />
+                )}
+                {ask && (
+                  <div
+                    className="pointer-events-none absolute inset-y-0 right-0 bg-down/10"
+                    style={{ width: `${askW / 2}%` }}
+                  />
+                )}
+                <span className="num relative z-10 text-right text-ink-2">
+                  {bid ? fmtVol(bid.volume) : "—"}
+                </span>
+                <span className="num relative z-10 text-right font-semibold text-up">
+                  {bid ? fmtPrice(bid.price) : "—"}
+                </span>
+                <span className="num relative z-10 text-left font-semibold text-down">
+                  {ask ? fmtPrice(ask.price) : "—"}
+                </span>
+                <span className="num relative z-10 text-left text-ink-2">
+                  {ask ? fmtVol(ask.volume) : "—"}
+                </span>
               </div>
             );
           })}
-          <div className="border-t border-line px-2 py-1.5 text-right text-[10px] text-ink-3">
-            Tổng mua: <span className="num text-up">{fmtVol(data.bidTotal)}</span>
+        </div>
+
+        <div className="border-t border-line px-2 py-2 sm:px-3">
+          <div className="mb-1 flex items-center justify-between text-[10px]">
+            <span className="text-up">
+              Dư mua: <span className="num font-medium">{fmtVol(data.bidTotal)}</span>
+            </span>
+            <span className="text-down">
+              Dư bán: <span className="num font-medium">{fmtVol(data.askTotal)}</span>
+            </span>
+          </div>
+          <div className="flex h-1.5 overflow-hidden rounded-full bg-panel-3">
+            <div className="bg-up transition-all" style={{ width: `${buyShare}%` }} />
+            <div className="bg-down transition-all" style={{ width: `${100 - buyShare}%` }} />
           </div>
         </div>
 
-        <div>
-          <div className="grid grid-cols-3 gap-1 border-b border-line bg-panel-2 px-2 py-1.5 text-[10px] uppercase tracking-wide text-ink-3">
-            <span className="text-left text-ink-3/70">#</span>
-            <span className="text-left">Giá bán</span>
-            <span className="text-left">KL bán</span>
+        {histPrices.length > 0 && (
+          <div className="border-t border-line px-2 py-2 sm:px-3">
+            <div className="mb-1 text-[10px] uppercase tracking-wide text-ink-3">
+              Biểu đồ độ sâu thị trường
+            </div>
+            <div className="flex h-24 items-end gap-0.5">
+              {histPrices.map((h, i) => {
+                const hPct = Math.max(8, (h.vol / histMax) * 100);
+                return (
+                  <div
+                    key={`${h.side}-${h.price}-${i}`}
+                    className="group relative flex min-w-0 flex-1 flex-col items-center justify-end"
+                    title={`${fmtPrice(h.price)} · ${fmtVol(h.vol)}`}
+                  >
+                    <div
+                      className={`w-full rounded-t-sm ${h.side === "bid" ? "bg-up/80" : "bg-down/80"}`}
+                      style={{ height: `${hPct}%` }}
+                    />
+                  </div>
+                );
+              })}
+            </div>
+            <div className="mt-1 flex justify-between text-[9px] text-ink-3">
+              {histPrices[0] && <span className="num">{fmtPrice(histPrices[0].price)}</span>}
+              {data.lastPrice != null && (
+                <span className="num text-ink-2">Khớp {fmtPrice(data.lastPrice)}</span>
+              )}
+              {histPrices[histPrices.length - 1] && (
+                <span className="num">{fmtPrice(histPrices[histPrices.length - 1].price)}</span>
+              )}
+            </div>
           </div>
-          {Array.from({ length: levels }).map((_, i) => {
-            const lvl = data.asks[i];
-            if (!lvl) {
+        )}
+      </Panel>
+
+      <Panel
+        title={
+          <span className="inline-flex flex-wrap items-center gap-x-2 gap-y-0.5">
+            Khớp lệnh
+            <span className="text-[10px] font-normal text-ink-3">
+              KL: {fmtVol(data.tradeTotalVol || depthMax)}
+              {data.tradeBuyVol > 0 && (
+                <>
+                  {" "}
+                  · <span className="text-up">M: {fmtVol(data.tradeBuyVol)}</span>
+                </>
+              )}
+              {data.tradeSellVol > 0 && (
+                <>
+                  {" "}
+                  · <span className="text-down">B: {fmtVol(data.tradeSellVol)}</span>
+                </>
+              )}
+            </span>
+          </span>
+        }
+        pad={false}
+      >
+        <div className="grid grid-cols-[auto_1fr_1fr_auto_auto] gap-x-2 border-b border-line bg-panel-2 px-2 py-1.5 text-[10px] font-medium uppercase tracking-wide text-ink-3 sm:px-3">
+          <span>Thời gian</span>
+          <span className="text-right">KL</span>
+          <span className="text-right">Giá</span>
+          <span className="text-right">+/−</span>
+          <span className="text-center">M/B</span>
+        </div>
+
+        <div className={`overflow-y-auto ${compact ? "max-h-48" : "max-h-80"}`}>
+          {trades.length === 0 ? (
+            <p className="px-3 py-4 text-center text-[11px] text-ink-3">
+              Chưa có tick khớp lệnh — giữ trang mở trong phiên để nhận X-TRADE.
+            </p>
+          ) : (
+            trades.slice(0, compact ? 15 : 40).map((tr, i) => {
+              const up = (tr.change ?? 0) > 0;
+              const down = (tr.change ?? 0) < 0;
+              const sideLabel =
+                tr.side === "buy" ? "M" : tr.side === "sell" ? "B" : "—";
+              const sideCls =
+                tr.side === "buy" ? "text-up" : tr.side === "sell" ? "text-down" : "text-ink-3";
+              const priceCls = up ? "text-up" : down ? "text-down" : "text-ink";
               return (
-                <div key={`a-empty-${i}`} className="grid grid-cols-3 gap-1 px-2 py-1 text-ink-3/40">
-                  <span className="text-left">{i + 1}</span>
-                  <span className="num text-left">—</span>
-                  <span className="num text-left">—</span>
+                <div
+                  key={`${tr.eventTime}-${i}`}
+                  className="grid grid-cols-[auto_1fr_1fr_auto_auto] gap-x-2 border-b border-line/30 px-2 py-1 text-[11px] sm:px-3"
+                >
+                  <span className="num text-ink-3">{fmtTime(tr.time, tr.eventTime)}</span>
+                  <span className="num text-right text-ink-2">{fmtVol(tr.volume)}</span>
+                  <span className={`num text-right font-medium ${priceCls}`}>{fmtPrice(tr.price)}</span>
+                  <span className={`num text-right ${priceCls}`}>
+                    {tr.change != null
+                      ? `${tr.change > 0 ? "+" : ""}${tr.change.toFixed(2)}`
+                      : "—"}
+                    {tr.changePercent != null && (
+                      <span className="ml-1 text-[10px] opacity-80">
+                        {tr.changePercent > 0 ? "+" : ""}
+                        {tr.changePercent.toFixed(1)}
+                      </span>
+                    )}
+                  </span>
+                  <span className={`text-center font-semibold ${sideCls}`}>{sideLabel}</span>
                 </div>
               );
-            }
-            const w = Math.min(100, (lvl.volume / maxVol) * 100);
-            return (
-              <div key={`a-${i}`} className="relative grid grid-cols-3 gap-1 px-2 py-1">
-                <div
-                  className="pointer-events-none absolute inset-y-0 left-0 bg-down/10"
-                  style={{ width: `${w}%` }}
-                />
-                <span className="relative z-10 text-left text-ink-3">{i + 1}</span>
-                <span className="num relative z-10 text-left font-medium text-down">{fmtPrice(lvl.price)}</span>
-                <span className="num relative z-10 text-left text-ink-2">{fmtVol(lvl.volume)}</span>
-              </div>
-            );
-          })}
-          <div className="border-t border-line px-2 py-1.5 text-left text-[10px] text-ink-3">
-            Tổng bán: <span className="num text-down">{fmtVol(data.askTotal)}</span>
-          </div>
+            })
+          )}
         </div>
-      </div>
-
-      {meta?.note && (
-        <div className="border-t border-line px-3 py-1.5 text-[10px] text-ink-3 sm:px-3.5">{meta.note}</div>
-      )}
-    </Panel>
+      </Panel>
+    </div>
   );
 }
