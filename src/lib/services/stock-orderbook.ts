@@ -1,4 +1,5 @@
 import "server-only";
+import { cached, peekStale } from "../cache";
 import { buildMeta } from "../freshness";
 import { ssiFcConfigured } from "../providers/ssi-fcdata";
 import { ensureSsiWsStarted, ssiWs, type SsiOrderBook } from "../realtime/ssi-ws";
@@ -60,7 +61,56 @@ function isVnSessionWindow(d = new Date()): boolean {
 }
 
 const LIVE_MAX_AGE_MS = 20_000;
-const LAST_SESSION_MAX_AGE_MS = 20 * 60 * 60_000; // 20h
+/** Keep last depth overnight + weekend (Mon morning still useful). */
+const LAST_SESSION_MAX_AGE_MS = 72 * 60 * 60_000; // 72h
+
+function cacheKey(sym: string) {
+  return `vn:orderbook:last:${sym}`;
+}
+
+/** Persist depth snapshot so outside-session / cold paths can still serve it. */
+async function rememberLastBook(sym: string, book: VnOrderBook): Promise<void> {
+  const snapshot: VnOrderBook = {
+    ...book,
+    trades: [],
+    tradeBuyVol: 0,
+    tradeSellVol: 0,
+    tradeTotalVol: 0,
+    fromLastSession: true,
+  };
+  try {
+    await cached(cacheKey(sym), {
+      ttlMs: LAST_SESSION_MAX_AGE_MS,
+      staleMs: LAST_SESSION_MAX_AGE_MS,
+      skipCache: true,
+      producer: async () => snapshot,
+    });
+  } catch {
+    /* non-fatal */
+  }
+}
+
+async function recallLastBook(sym: string): Promise<VnOrderBook | null> {
+  const peek = peekStale<VnOrderBook>(cacheKey(sym));
+  if (peek?.value && (peek.value.bids?.length || peek.value.asks?.length)) {
+    return { ...peek.value, fromLastSession: true };
+  }
+  try {
+    const r = await cached<VnOrderBook>(cacheKey(sym), {
+      ttlMs: LAST_SESSION_MAX_AGE_MS,
+      staleMs: LAST_SESSION_MAX_AGE_MS,
+      producer: async () => {
+        throw new Error("no-orderbook-snapshot");
+      },
+    });
+    if (r.value && (r.value.bids?.length || r.value.asks?.length)) {
+      return { ...r.value, fromLastSession: true };
+    }
+  } catch {
+    /* miss */
+  }
+  return null;
+}
 
 function bootSsiLive() {
   if (!ssiFcConfigured()) return;
@@ -139,40 +189,53 @@ export async function getVnOrderBook(
 
   if (!wsDisabled) bootSsiLive();
 
-  let ob: SsiOrderBook | null = ssiWs.getOrderBook(sym, LIVE_MAX_AGE_MS);
-  if (!ob) {
-    const q = ssiWs.getQuote(sym, LIVE_MAX_AGE_MS);
-    ob = q?.orderBook ?? null;
+  // ── 1) Live depth (short maxAge) ──────────────────────────────────────────
+  let ob: SsiOrderBook | null = null;
+  try {
+    ob = ssiWs.getOrderBook(sym, LIVE_MAX_AGE_MS);
+    if (!ob) {
+      const q = ssiWs.getQuote(sym, LIVE_MAX_AGE_MS);
+      ob = q?.orderBook ?? null;
+    }
+  } catch {
+    ob = null;
   }
 
   let fromLastSession = false;
 
+  // ── 2) Event wait for first tick (live path) ─────────────────────────────
   if (!ob && !wsDisabled) {
     try {
-      ob = await ssiWs.waitForOrderBook(sym, inSession ? 250 : 600);
+      ob = await ssiWs.waitForOrderBook(sym, inSession ? 250 : 800);
     } catch {
       ob = null;
     }
   }
 
+  // ── 3) WS memory: last known depth up to 72h ─────────────────────────────
   if (!ob) {
-    ob = ssiWs.getOrderBook(sym, LAST_SESSION_MAX_AGE_MS);
-    if (!ob) {
-      const q = ssiWs.getQuote(sym, LAST_SESSION_MAX_AGE_MS);
-      ob = q?.orderBook ?? null;
+    try {
+      ob = ssiWs.getOrderBook(sym, LAST_SESSION_MAX_AGE_MS);
+      if (!ob) {
+        const q = ssiWs.getQuote(sym, LAST_SESSION_MAX_AGE_MS);
+        ob = q?.orderBook ?? null;
+      }
+      if (ob) fromLastSession = true;
+    } catch {
+      /* engine missing / PLACEHOLDER */
     }
-    if (ob) fromLastSession = true;
   } else if (!inSession) {
     const age = Date.now() - ob.eventTime;
     if (age > LIVE_MAX_AGE_MS) fromLastSession = true;
-  } else {
+  } else if (!wsDisabled) {
     ssiWs.watchSymbol(sym);
   }
 
+  // ── 4) Outside session: one more subscribe — SSI may push last X snapshot ─
   if (!ob && !wsDisabled && !inSession) {
-    ssiWs.watchSymbol(sym);
     try {
-      ob = await ssiWs.waitForOrderBook(sym, 800);
+      ssiWs.watchSymbol(sym);
+      ob = await ssiWs.waitForOrderBook(sym, 1200);
       if (ob) fromLastSession = true;
     } catch {
       /* ignore */
@@ -180,20 +243,35 @@ export async function getVnOrderBook(
   }
 
   const trades = fromLastSession ? [] : readTrades(sym);
-  const book = toBook(sym, ob, trades, fromLastSession);
+  let book = toBook(sym, ob, trades, fromLastSession);
+
+  // ── 5) Persist successful depth for later (outside session / other instances)
+  if (book && (book.bids.length > 0 || book.asks.length > 0)) {
+    void rememberLastBook(sym, book);
+  }
+
+  // ── 6) Fallback: Redis / memory snapshot from a previous live session ─────
+  if (!book) {
+    const recalled = await recallLastBook(sym);
+    if (recalled) {
+      book = recalled;
+      fromLastSession = true;
+    }
+  }
+
   if (!book) return null;
 
-  const note = fromLastSession
+  const note = book.fromLastSession
     ? `Sổ lệnh phiên gần nhất · ${book.levels} mức · ${new Date(book.eventTime).toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })}`
-    : `Độ sâu SSI · ${book.levels} mức · ${trades.length} khớp · live`;
+    : `Độ sâu SSI · ${book.levels} mức · ${(book.trades ?? []).length} khớp · live`;
 
   return {
     book,
     meta: buildMeta({
-      source: fromLastSession ? "ssi-ws-last-session" : "ssi-ws",
+      source: book.fromLastSession ? "ssi-ws-last-session" : "ssi-ws",
       sourceTimestampMs: book.eventTime,
       note,
-      slas: fromLastSession
+      slas: book.fromLastSession
         ? { liveSlaMs: 5_000, freshSlaMs: 60_000, delayedSlaMs: LAST_SESSION_MAX_AGE_MS }
         : { liveSlaMs: 5_000, freshSlaMs: 20_000, delayedSlaMs: 60_000 },
     }),

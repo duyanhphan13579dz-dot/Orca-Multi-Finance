@@ -7,8 +7,8 @@ export const runtime = "nodejs";
 
 /**
  * Order book + match tape.
- * - In session: live SSI DataHub X channel
- * - Outside session: last-session depth snapshot (if process still holds it or SSI pushes on subscribe)
+ * - In session: live SSI DataHub X (when WS enabled)
+ * - Outside session: last-session snapshot (WS memory / Redis cache up to 72h)
  */
 export async function GET(_req: Request, ctx: { params: Promise<{ symbol: string }> }) {
   const { symbol } = await ctx.params;
@@ -23,18 +23,15 @@ export async function GET(_req: Request, ctx: { params: Promise<{ symbol: string
     );
   }
 
-  if (process.env.SSI_WS_DISABLED === "true") {
-    return unavailable(
-      "ssi-ws",
-      "Sổ lệnh cần SSI WebSocket. Đặt SSI_WS_DISABLED=false trên VPS dài hạn để giữ snapshot phiên gần nhất.",
-    );
-  }
-
+  // Still attempt getVnOrderBook when WS disabled — may serve Redis/memory last-session snapshot
   const r = await getVnOrderBook(symbol);
   if (!r) {
+    const wsOff = process.env.SSI_WS_DISABLED === "true";
     return unavailable(
       "ssi-ws",
-      `Chưa có sổ lệnh cho ${symbol.toUpperCase()} — trong phiên sẽ có realtime; ngoài phiên cần process đã nhận tick trước đó hoặc SSI snapshot khi subscribe.`,
+      wsOff
+        ? `Chưa có sổ lệnh ${symbol.toUpperCase()}. Cần SSI_WS_DISABLED=false trong phiên để thu depth; ngoài phiên sẽ hiện snapshot đã lưu (Redis/memory).`
+        : `Chưa có sổ lệnh ${symbol.toUpperCase()} — trong phiên có realtime; ngoài phiên hiện snapshot phiên gần nhất nếu đã từng nhận tick.`,
     );
   }
   return ok(r.book, r.meta);
