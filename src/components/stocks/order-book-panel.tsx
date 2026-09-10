@@ -66,6 +66,7 @@ export function OrderBookPanel({ symbol, compact = false }: { symbol: string; co
           tradeBuyVol: partial.tradeBuyVol ?? base?.tradeBuyVol ?? 0,
           tradeSellVol: partial.tradeSellVol ?? base?.tradeSellVol ?? 0,
           tradeTotalVol: partial.tradeTotalVol ?? base?.tradeTotalVol ?? 0,
+          fromLastSession: partial.fromLastSession ?? base?.fromLastSession ?? false,
         };
         if (next.bids.length || next.asks.length) {
           next.levels = Math.max(next.bids.length, next.asks.length);
@@ -78,106 +79,88 @@ export function OrderBookPanel({ symbol, compact = false }: { symbol: string; co
     [restData, symbol],
   );
 
+  // Sync REST payload into live state
   useEffect(() => {
-    if (!symbol || typeof window === "undefined" || typeof EventSource === "undefined") {
-      setSseState("off");
-      return;
+    if (restData) {
+      setLive((prev) => {
+        if (!prev) return restData;
+        // Prefer fresher eventTime
+        if ((restData.eventTime ?? 0) >= (prev.eventTime ?? 0)) return restData;
+        return prev;
+      });
     }
-    setSseState("connecting");
-    const es = new EventSource(`/api/v1/stocks/${symbol}/orderbook/stream`);
+  }, [restData]);
 
-    es.addEventListener("snapshot", (ev) => {
-      try {
-        const payload = JSON.parse((ev as MessageEvent).data) as { book?: VnOrderBook | null };
-        if (payload.book) {
-          setLive(payload.book);
-          setSseState("open");
+  // Optional SSE stream for lower latency when available
+  useEffect(() => {
+    if (!symbol) return;
+    let es: EventSource | null = null;
+    let closed = false;
+    const url = `/api/v1/stocks/${symbol}/orderbook/stream`;
+    try {
+      setSseState("connecting");
+      es = new EventSource(url);
+      es.onopen = () => {
+        if (!closed) setSseState("open");
+      };
+      es.onerror = () => {
+        if (!closed) setSseState("error");
+      };
+      es.onmessage = (ev) => {
+        try {
+          const payload = JSON.parse(ev.data) as Partial<VnOrderBook>;
+          mergeBook(payload);
+        } catch {
+          /* ignore */
         }
-      } catch {
-        /* ignore */
-      }
-    });
-
-    es.addEventListener("orderbook", (ev) => {
-      try {
-        const payload = JSON.parse((ev as MessageEvent).data) as {
-          orderBook?: {
-            symbol: string;
-            bids: { price: number; volume: number }[];
-            asks: { price: number; volume: number }[];
-            bidTotal: number;
-            askTotal: number;
-            lastPrice: number | null;
-            ceiling: number | null;
-            floor: number | null;
-            ref: number | null;
-            session: string | null;
-            eventTime: number;
-          };
-        };
-        const ob = payload.orderBook;
-        if (!ob) return;
-        mergeBook({
-          symbol: ob.symbol,
-          bids: ob.bids,
-          asks: ob.asks,
-          bidTotal: ob.bidTotal,
-          askTotal: ob.askTotal,
-          lastPrice: ob.lastPrice,
-          ceiling: ob.ceiling,
-          floor: ob.floor,
-          ref: ob.ref,
-          session: ob.session,
-          eventTime: ob.eventTime,
-        });
-        setSseState("open");
-      } catch {
-        /* ignore */
-      }
-    });
-
-    es.addEventListener("trade", (ev) => {
-      try {
-        const payload = JSON.parse((ev as MessageEvent).data) as { trade?: VnTrade };
-        const tr = payload.trade;
-        if (!tr) return;
-        setLive((prev) => {
-          if (!prev) return prev;
-          const trades = [
-            tr,
-            ...prev.trades.filter(
-              (x) => !(x.eventTime === tr.eventTime && x.price === tr.price && x.volume === tr.volume),
-            ),
-          ].slice(0, 50);
-          const tradeBuyVol = trades.filter((t) => t.side === "buy").reduce((s, t) => s + t.volume, 0);
-          const tradeSellVol = trades.filter((t) => t.side === "sell").reduce((s, t) => s + t.volume, 0);
-          return {
-            ...prev,
-            lastPrice: tr.price,
-            trades,
-            tradeBuyVol,
-            tradeSellVol,
-            tradeTotalVol: trades.reduce((s, t) => s + t.volume, 0),
-            eventTime: tr.eventTime,
-          };
-        });
-      } catch {
-        /* ignore */
-      }
-    });
-
-    es.onerror = () => setSseState("error");
-
+      };
+      es.addEventListener("book", (ev) => {
+        try {
+          const payload = JSON.parse((ev as MessageEvent).data) as Partial<VnOrderBook>;
+          mergeBook(payload);
+        } catch {
+          /* ignore */
+        }
+      });
+      es.addEventListener("trade", (ev) => {
+        try {
+          const tr = JSON.parse((ev as MessageEvent).data) as VnTrade;
+          setLive((prev) => {
+            if (!prev) return prev;
+            const trades = [tr, ...(prev.trades ?? [])].slice(0, 50);
+            const tradeBuyVol = trades.filter((t) => t.side === "buy").reduce((s, t) => s + t.volume, 0);
+            const tradeSellVol = trades.filter((t) => t.side === "sell").reduce((s, t) => s + t.volume, 0);
+            return {
+              ...prev,
+              trades,
+              tradeBuyVol,
+              tradeSellVol,
+              tradeTotalVol: trades.reduce((s, t) => s + t.volume, 0),
+              lastPrice: tr.price,
+              eventTime: tr.eventTime,
+              fromLastSession: false,
+            };
+          });
+        } catch {
+          /* ignore */
+        }
+      });
+    } catch {
+      setSseState("off");
+    }
     return () => {
-      es.close();
+      closed = true;
+      es?.close();
       setSseState("off");
     };
   }, [symbol, mergeBook]);
 
-  const data = live ?? (res?.success ? restData : null) ?? null;
+  const data = live ?? restData;
   const ageMs = data?.eventTime != null ? Date.now() - data.eventTime : restMeta?.ageMs;
   const freshness: FreshnessStatus =
-    sseState === "open" && data ? "LIVE" : (restMeta?.freshness ?? (data ? "FRESH" : "UNAVAILABLE"));
+    sseState === "open" && data && !data.fromLastSession
+      ? "LIVE"
+      : (restMeta?.freshness ?? (data ? "FRESH" : "UNAVAILABLE"));
 
   if (!symbol || (isLoading && !res && !live)) {
     return (
@@ -195,7 +178,7 @@ export function OrderBookPanel({ symbol, compact = false }: { symbol: string; co
           note={
             res && !res.success
               ? res.error.message
-              : "Cần SSI WebSocket (SSI_WS_DISABLED=false) trong phiên giao dịch."
+              : "Cần SSI WebSocket (SSI_WS_DISABLED=false). Ngoài phiên sẽ hiện snapshot phiên gần nhất nếu đã có."
           }
         />
       </Panel>
@@ -231,6 +214,11 @@ export function OrderBookPanel({ symbol, compact = false }: { symbol: string; co
               {data.levels || showLevels} mức
               {sseState === "open" ? " · SSE" : ""}
             </span>
+            {data.fromLastSession ? (
+              <span className="rounded bg-warn/15 px-1.5 py-0.5 text-[10px] font-medium text-warn">
+                Phiên gần nhất
+              </span>
+            ) : null}
           </span>
         }
         right={<FreshnessDot status={freshness} ageMs={ageMs} />}
@@ -263,10 +251,18 @@ export function OrderBookPanel({ symbol, compact = false }: { symbol: string; co
                     style={{ width: `${askW / 2}%` }}
                   />
                 )}
-                <span className="num relative z-10 text-right text-ink-2">{bid ? fmtVol(bid.volume) : "—"}</span>
-                <span className="num relative z-10 text-right font-semibold text-up">{bid ? fmtPrice(bid.price) : "—"}</span>
-                <span className="num relative z-10 text-left font-semibold text-down">{ask ? fmtPrice(ask.price) : "—"}</span>
-                <span className="num relative z-10 text-left text-ink-2">{ask ? fmtVol(ask.volume) : "—"}</span>
+                <span className="num relative z-10 text-right text-ink-2">
+                  {bid ? fmtVol(bid.volume) : "—"}
+                </span>
+                <span className="num relative z-10 text-right font-semibold text-up">
+                  {bid ? fmtPrice(bid.price) : "—"}
+                </span>
+                <span className="num relative z-10 text-left font-semibold text-down">
+                  {ask ? fmtPrice(ask.price) : "—"}
+                </span>
+                <span className="num relative z-10 text-left text-ink-2">
+                  {ask ? fmtVol(ask.volume) : "—"}
+                </span>
               </div>
             );
           })}
@@ -289,7 +285,9 @@ export function OrderBookPanel({ symbol, compact = false }: { symbol: string; co
 
         {histPrices.length > 0 && (
           <div className="border-t border-line px-2 py-2 sm:px-3">
-            <div className="mb-1 text-[10px] uppercase tracking-wide text-ink-3">Biểu đồ độ sâu thị trường</div>
+            <div className="mb-1 text-[10px] uppercase tracking-wide text-ink-3">
+              Biểu đồ độ sâu thị trường
+            </div>
             <div className="flex h-24 items-end gap-0.5">
               {histPrices.map((h, i) => {
                 const hPct = Math.max(8, (h.vol / histMax) * 100);
@@ -309,7 +307,9 @@ export function OrderBookPanel({ symbol, compact = false }: { symbol: string; co
             </div>
             <div className="mt-1 flex justify-between text-[9px] text-ink-3">
               {histPrices[0] && <span className="num">{fmtPrice(histPrices[0].price)}</span>}
-              {data.lastPrice != null && <span className="num text-ink-2">Khớp {fmtPrice(data.lastPrice)}</span>}
+              {data.lastPrice != null && (
+                <span className="num text-ink-2">Khớp {fmtPrice(data.lastPrice)}</span>
+              )}
               {histPrices[histPrices.length - 1] && (
                 <span className="num">{fmtPrice(histPrices[histPrices.length - 1].price)}</span>
               )}
@@ -323,19 +323,11 @@ export function OrderBookPanel({ symbol, compact = false }: { symbol: string; co
           <span className="inline-flex flex-wrap items-center gap-x-2 gap-y-0.5">
             Khớp lệnh
             <span className="text-[10px] font-normal text-ink-3">
-              KL: {fmtVol(data.tradeTotalVol || depthMax)}
-              {data.tradeBuyVol > 0 && (
-                <>
-                  {" "}
-                  · <span className="text-up">M: {fmtVol(data.tradeBuyVol)}</span>
-                </>
-              )}
-              {data.tradeSellVol > 0 && (
-                <>
-                  {" "}
-                  · <span className="text-down">B: {fmtVol(data.tradeSellVol)}</span>
-                </>
-              )}
+              {data.fromLastSession
+                ? "Ngoài phiên — không có tick khớp mới"
+                : `KL: ${fmtVol(data.tradeTotalVol || depthMax)}${
+                    data.tradeBuyVol > 0 ? ` · M: ${fmtVol(data.tradeBuyVol)}` : ""
+                  }${data.tradeSellVol > 0 ? ` · B: ${fmtVol(data.tradeSellVol)}` : ""}`}
             </span>
           </span>
         }
@@ -352,7 +344,9 @@ export function OrderBookPanel({ symbol, compact = false }: { symbol: string; co
         <div className={`overflow-y-auto ${compact ? "max-h-48" : "max-h-80"}`}>
           {trades.length === 0 ? (
             <p className="px-3 py-4 text-center text-[11px] text-ink-3">
-              Chưa có tick khớp lệnh — giữ trang mở trong phiên để nhận X-TRADE.
+              {data.fromLastSession
+                ? "Đang hiển thị độ sâu phiên gần nhất — khớp lệnh chỉ cập nhật trong phiên."
+                : "Chưa có tick khớp lệnh — giữ trang mở trong phiên để nhận X-TRADE."}
             </p>
           ) : (
             trades.slice(0, compact ? 15 : 40).map((tr, i) => {
@@ -371,7 +365,9 @@ export function OrderBookPanel({ symbol, compact = false }: { symbol: string; co
                   <span className="num text-right text-ink-2">{fmtVol(tr.volume)}</span>
                   <span className={`num text-right font-medium ${priceCls}`}>{fmtPrice(tr.price)}</span>
                   <span className={`num text-right ${priceCls}`}>
-                    {tr.change != null ? `${tr.change > 0 ? "+" : ""}${tr.change.toFixed(2)}` : "—"}
+                    {tr.change != null
+                      ? `${tr.change > 0 ? "+" : ""}${tr.change.toFixed(2)}`
+                      : "—"}
                     {tr.changePercent != null && (
                       <span className="ml-1 text-[10px] opacity-80">
                         {tr.changePercent > 0 ? "+" : ""}
