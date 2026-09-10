@@ -6,10 +6,8 @@ import { getSsiAccessToken, invalidateSsiToken, ssiFcConfigured } from "../provi
 /**
  * SSI FastConnect DataHub streaming — zero-config when env keys present.
  *
- * Env:
- *   SSI_FC_CONSUMER_ID / SSI_FC_CONSUMER_SECRET  (required)
- *   SSI_FC_HUB_URL                                (optional)
- *   SSI_WS_DISABLED=true                          (serverless)
+ * Backoff: full-jitter exponential by error class (network / handshake /
+ * rate-limit / auth / silent). Retry budget + auth circuit breaker.
  */
 
 const RS = "\x1e";
@@ -17,8 +15,12 @@ const DEFAULT_HUB = "https://fc-datahub.ssi.com.vn/v2.0";
 const PROVIDER = "ssi-ws";
 const MAX_AUTH_FAILS = 5;
 const SILENT_MS = 90_000;
+/** After this many consecutive network reconnects, enter long cooldown then soft-reset. */
+const RETRY_BUDGET = 24;
 
 export type SsiWsState = "open" | "connecting" | "closed" | "blocked" | "disabled" | "retrying";
+
+type FailKind = "network" | "handshake" | "rate_limit" | "auth" | "silent" | "unknown";
 
 export interface SsiLiveQuote {
   symbol: string;
@@ -63,6 +65,8 @@ export interface SsiWsStats {
   reconnectAttempts: number;
   authFailures: number;
   lastError: string | null;
+  lastFailKind: FailKind | null;
+  nextRetryAt: number | null;
   channels: string[];
   quotesTracked: number;
   indicesTracked: number;
@@ -88,16 +92,73 @@ function hubBase(): string {
   return (process.env.SSI_FC_HUB_URL ?? DEFAULT_HUB).replace(/\/$/, "");
 }
 
-function isAuthError(msg: string): boolean {
+function classifyFail(msg: string): FailKind {
   const m = msg.toLowerCase();
-  return (
+  if (
     m.includes("401") ||
     m.includes("unauthorized") ||
-    m.includes("token") ||
-    m.includes("auth") ||
     m.includes("credential") ||
-    m.includes("access denied")
-  );
+    m.includes("access denied") ||
+    (m.includes("token") && (m.includes("invalid") || m.includes("expired") || m.includes("missing")))
+  ) {
+    return "auth";
+  }
+  if (m.includes("429") || m.includes("rate") || m.includes("quota") || m.includes("throttl")) {
+    return "rate_limit";
+  }
+  if (m.includes("handshake") || m.includes("protocol")) return "handshake";
+  if (m.includes("silent")) return "silent";
+  if (
+    m.includes("timeout") ||
+    m.includes("econn") ||
+    m.includes("network") ||
+    m.includes("socket") ||
+    m.includes("close") ||
+    m.includes("reset")
+  ) {
+    return "network";
+  }
+  return "unknown";
+}
+
+/** Full-jitter exponential backoff (AWS style). */
+function computeBackoffMs(kind: FailKind, attempt: number, authFailures: number): number {
+  // [base, max] per class
+  const table: Record<FailKind, { base: number; max: number; expCap: number }> = {
+    network: { base: 800, max: 45_000, expCap: 6 },
+    handshake: { base: 1_200, max: 30_000, expCap: 5 },
+    silent: { base: 2_000, max: 60_000, expCap: 5 },
+    rate_limit: { base: 8_000, max: 180_000, expCap: 4 },
+    auth: { base: 12_000, max: 300_000, expCap: 4 },
+    unknown: { base: 1_500, max: 60_000, expCap: 6 },
+  };
+  const cfg = table[kind];
+  const n = Math.min(Math.max(attempt, 1), cfg.expCap);
+  // Auth uses authFailures so successive bad keys slow harder
+  const exp =
+    kind === "auth" ? Math.min(Math.max(authFailures, 1), cfg.expCap) : n;
+  const ceiling = Math.min(cfg.base * 2 ** (exp - 1), cfg.max);
+  // full jitter: uniform(0, ceiling)
+  const jittered = Math.floor(Math.random() * ceiling);
+  // floor so we never spin-retry faster than ~base/2
+  return Math.max(Math.floor(cfg.base / 2), jittered);
+}
+
+/** True during VN equity session-ish hours (Mon–Fri 08:30–15:15 +07). */
+function isVnSessionWindow(now = Date.now()): boolean {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Ho_Chi_Minh",
+    weekday: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(new Date(now));
+  const wd = parts.find((p) => p.type === "weekday")?.value ?? "";
+  if (wd === "Sat" || wd === "Sun") return false;
+  const hh = Number(parts.find((p) => p.type === "hour")?.value ?? 0);
+  const mm = Number(parts.find((p) => p.type === "minute")?.value ?? 0);
+  const mins = hh * 60 + mm;
+  return mins >= 8 * 60 + 30 && mins <= 15 * 60 + 15;
 }
 
 class SsiMarketWsEngine {
@@ -111,6 +172,9 @@ class SsiMarketWsEngine {
   private reconnectAttempts = 0;
   private authFailures = 0;
   private lastError: string | null = null;
+  private lastFailKind: FailKind | null = null;
+  private nextRetryAt: number | null = null;
+  private retryScheduled = false;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private watchdog: ReturnType<typeof setInterval> | null = null;
   private secBuckets = new Int16Array(60);
@@ -159,7 +223,6 @@ class SsiMarketWsEngine {
     return this.subscribe(`MI:${c}`);
   }
 
-  /** Ensure core indices are streaming when SSI is live. */
   ensureCoreIndices() {
     if (!this.enabled()) return;
     for (const code of ["VNINDEX", "VN30", "HNX", "UPCOM", "HNX30"]) {
@@ -188,6 +251,8 @@ class SsiMarketWsEngine {
       reconnectAttempts: this.reconnectAttempts,
       authFailures: this.authFailures,
       lastError: this.lastError,
+      lastFailKind: this.lastFailKind,
+      nextRetryAt: this.nextRetryAt,
       channels: [...this.channelRefs.keys()],
       quotesTracked: this.quotes.size,
       indicesTracked: this.indices.size,
@@ -247,6 +312,15 @@ class SsiMarketWsEngine {
     }
   }
 
+  private clearRetryTimer() {
+    if (this.timer) {
+      clearTimeout(this.timer);
+      this.timer = null;
+    }
+    this.retryScheduled = false;
+    this.nextRetryAt = null;
+  }
+
   private async connect() {
     if (!this.enabled()) {
       this.state = "disabled";
@@ -256,6 +330,7 @@ class SsiMarketWsEngine {
     if (this.authFailures >= MAX_AUTH_FAILS) {
       this.state = "blocked";
       this.lastError = `auth circuit open after ${this.authFailures} failures — check SSI keys`;
+      this.lastFailKind = "auth";
       return;
     }
 
@@ -269,12 +344,13 @@ class SsiMarketWsEngine {
 
     this.connecting = true;
     this.state = "connecting";
+    this.clearRetryTimer();
     const gen = ++this.connectGen;
     this.hardClose();
 
     try {
       const token = await getSsiAccessToken();
-      if (gen !== this.connectGen) return; // superseded
+      if (gen !== this.connectGen) return;
 
       const base = hubBase().replace(/^http/, "ws");
       const url = `${base}/Hubs/DataHub?access_token=${encodeURIComponent(token)}`;
@@ -325,7 +401,7 @@ class SsiMarketWsEngine {
       };
     } catch (err) {
       const msg = err instanceof Error ? err.message : "connect failed";
-      if (isAuthError(msg)) {
+      if (classifyFail(msg) === "auth") {
         this.authFailures += 1;
         invalidateSsiToken();
       }
@@ -336,29 +412,65 @@ class SsiMarketWsEngine {
   }
 
   private failAndReconnect(reason: string) {
+    // Debounce: only one scheduled retry at a time
+    if (this.retryScheduled && this.state === "retrying") return;
+
+    const kind = classifyFail(reason);
+    this.lastFailKind = kind;
     this.lastError = reason.slice(0, 240);
-    this.state = isAuthError(reason) ? "blocked" : "closed";
+    this.state = kind === "auth" ? "blocked" : "closed";
     recordFailure(PROVIDER, this.lastError);
     this.subscribedSent.clear();
     this.ws = null;
 
     if (!this.enabled()) return;
+
+    if (kind === "auth") {
+      this.authFailures += 1;
+      invalidateSsiToken();
+    }
+
     if (this.authFailures >= MAX_AUTH_FAILS) {
       this.state = "blocked";
       this.lastError = `auth circuit open — ${this.lastError}`;
+      this.clearRetryTimer();
       return;
     }
 
     this.reconnectAttempts += 1;
-    // Auth errors: longer backoff; network: exponential up to 60s
-    const authSlow = isAuthError(reason);
-    const base = authSlow
-      ? Math.min(15_000 * 2 ** Math.min(this.authFailures, 4), 300_000)
-      : Math.min(1500 * 2 ** Math.min(this.reconnectAttempts, 6), 60_000);
-    const delay = base + Math.random() * 800;
+
+    // Retry budget exhausted → long cooldown then soft-reset attempt counter
+    if (this.reconnectAttempts > RETRY_BUDGET && kind !== "auth") {
+      const cooldown = 5 * 60_000 + Math.floor(Math.random() * 30_000);
+      this.state = "retrying";
+      this.retryScheduled = true;
+      this.nextRetryAt = Date.now() + cooldown;
+      if (this.timer) clearTimeout(this.timer);
+      this.timer = setTimeout(() => {
+        this.retryScheduled = false;
+        this.reconnectAttempts = Math.floor(RETRY_BUDGET / 2); // soft reset
+        void this.connect();
+      }, cooldown);
+      this.timer.unref?.();
+      return;
+    }
+
+    let delay = computeBackoffMs(kind, this.reconnectAttempts, this.authFailures);
+
+    // During market hours, prefer slightly snappier recovery for network blips
+    if (isVnSessionWindow() && (kind === "network" || kind === "silent" || kind === "handshake")) {
+      delay = Math.floor(delay * 0.7);
+    }
+
     this.state = "retrying";
+    this.retryScheduled = true;
+    this.nextRetryAt = Date.now() + delay;
     if (this.timer) clearTimeout(this.timer);
-    this.timer = setTimeout(() => void this.connect(), delay);
+    this.timer = setTimeout(() => {
+      this.retryScheduled = false;
+      this.nextRetryAt = null;
+      void this.connect();
+    }, delay);
     this.timer.unref?.();
   }
 
@@ -370,12 +482,13 @@ class SsiMarketWsEngine {
       this.failAndReconnect(this.lastError);
       return;
     }
-    // Recover from blocked if auth failures cooled (manual key fix)
-    if (this.state === "blocked" && this.authFailures >= MAX_AUTH_FAILS) {
-      // stay blocked until process restart or resetAuthCircuit()
-      return;
-    }
-    if ((this.state === "closed" || this.state === "blocked") && this.channelRefs.size > 0 && !this.connecting) {
+    if (this.state === "blocked" && this.authFailures >= MAX_AUTH_FAILS) return;
+    if (
+      (this.state === "closed" || this.state === "blocked") &&
+      this.channelRefs.size > 0 &&
+      !this.connecting &&
+      !this.retryScheduled
+    ) {
       void this.connect();
     }
     const now = Date.now();
@@ -383,10 +496,11 @@ class SsiMarketWsEngine {
     for (const [k, v] of this.indices) if (now - v.eventTime > 300_000) this.indices.delete(k);
   }
 
-  /** Call after fixing credentials without redeploy. */
   resetAuthCircuit() {
     this.authFailures = 0;
     this.reconnectAttempts = 0;
+    this.lastFailKind = null;
+    this.clearRetryTimer();
     invalidateSsiToken();
     if (this.enabled()) void this.connect();
   }
@@ -405,6 +519,8 @@ class SsiMarketWsEngine {
       this.reconnectAttempts = 0;
       this.authFailures = 0;
       this.lastError = null;
+      this.lastFailKind = null;
+      this.clearRetryTimer();
       recordSuccess(PROVIDER, 0);
       this.subscribedSent.clear();
       this.sendSubscribe([...this.channelRefs.keys()]);
@@ -419,7 +535,7 @@ class SsiMarketWsEngine {
         error?: string;
       };
 
-      if (msg.error && isAuthError(String(msg.error))) {
+      if (msg.error && classifyFail(String(msg.error)) === "auth") {
         this.authFailures += 1;
         invalidateSsiToken();
         this.hardClose();
