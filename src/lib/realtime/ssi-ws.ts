@@ -4,12 +4,9 @@ import { eventBus } from "../events";
 import { getSsiAccessToken, invalidateSsiToken, ssiFcConfigured } from "../providers/ssi-fcdata";
 
 /**
- * SSI FastConnect DataHub streaming — zero-config when env keys present.
+ * SSI FastConnect DataHub streaming — uses same credentials as REST (SSI_API_KEY / SSI_FC_*).
  *
- * Backoff: full-jitter exponential by error class (network / handshake /
- * rate-limit / auth / silent). Retry budget + auth circuit breaker.
- *
- * Order book (sổ lệnh): channels X / X-QUOTE carry BidPrice1–10 / AskPrice1–10.
+ * Order book: X / X-QUOTE (BidPrice1–10 / AskPrice1–10).
  * Latency: fast reconnect, event-driven waitForOrderBook, 45s silent watchdog.
  */
 
@@ -17,7 +14,7 @@ const RS = "\x1e";
 const DEFAULT_HUB = "https://fc-datahub.ssi.com.vn/v2.0";
 const PROVIDER = "ssi-ws";
 const MAX_AUTH_FAILS = 5;
-const SILENT_MS = 45_000; // faster dead-link detect
+const SILENT_MS = 45_000;
 const RETRY_BUDGET = 32;
 
 export type SsiWsState = "open" | "connecting" | "closed" | "blocked" | "disabled" | "retrying";
@@ -157,7 +154,6 @@ function classifyFail(msg: string): FailKind {
 }
 
 function computeBackoffMs(kind: FailKind, attempt: number, authFailures: number): number {
-  // Low-latency bias: short first retries, still full-jitter to avoid thundering herd.
   const table: Record<FailKind, { base: number; max: number; expCap: number }> = {
     network: { base: 250, max: 12_000, expCap: 6 },
     handshake: { base: 400, max: 10_000, expCap: 5 },
@@ -170,7 +166,6 @@ function computeBackoffMs(kind: FailKind, attempt: number, authFailures: number)
   const n = Math.min(Math.max(attempt, 1), cfg.expCap);
   const exp = kind === "auth" ? Math.min(Math.max(authFailures, 1), cfg.expCap) : n;
   const ceiling = Math.min(cfg.base * 2 ** (exp - 1), cfg.max);
-  // 30–100% of ceiling (prefer quicker than pure 0–100% random)
   const jittered = Math.floor(ceiling * (0.3 + Math.random() * 0.7));
   return Math.max(Math.floor(cfg.base / 2), jittered);
 }
@@ -189,7 +184,6 @@ function isVnSessionWindow(d = new Date()): boolean {
   const hour = Number(get("hour"));
   const minute = Number(get("minute"));
   const mins = hour * 60 + minute;
-  // HOSE continuous ~9:00–11:30, 13:00–14:45 (+ buffer)
   return (mins >= 8 * 60 + 45 && mins <= 11 * 60 + 45) || (mins >= 12 * 60 + 45 && mins <= 15 * 60);
 }
 
@@ -243,7 +237,6 @@ class SsiMarketWsEngine {
     if (!s) return () => {};
     const u1 = this.subscribe(`X:${s}`);
     const u2 = this.subscribe(`B:${s}`);
-    // Kick connection immediately so first depth arrives ASAP
     if (this.state === "closed" || this.state === "retrying") void this.connect();
     return () => {
       u1();
@@ -276,10 +269,6 @@ class SsiMarketWsEngine {
     return list.slice(0, limit);
   }
 
-  /**
-   * Event-driven wait for first depth tick — avoids fixed sleep on API path.
-   * Resolves early when order book arrives; times out after maxWaitMs.
-   */
   waitForOrderBook(symbol: string, maxWaitMs = 400): Promise<SsiOrderBook | null> {
     const sym = symbol.toUpperCase();
     const hit = this.getOrderBook(sym, 20_000);
@@ -683,7 +672,6 @@ class SsiMarketWsEngine {
         }
       }
 
-      // Match tape (khớp lệnh) from X-TRADE / LastVol
       const lastVol = num(c.LastVol);
       if (price != null && price > 0 && lastVol != null && lastVol > 0) {
         const sideRaw = String(c.Side ?? c.side ?? "").toUpperCase();
