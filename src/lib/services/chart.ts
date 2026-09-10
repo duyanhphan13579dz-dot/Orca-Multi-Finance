@@ -153,129 +153,171 @@ export function computeIndicators(candles: ChartCandle[]): ChartIndicators | nul
   };
 }
 
-async function cryptoCandles(
-  symbol: string,
-  tf: string,
-  limit: number,
-): Promise<{ candles: ChartCandle[]; source: string; note?: string }> {
-  const interval = binanceInterval(tf);
-  const bars = await binance.getKlines(symbol, interval, limit);
+async function cryptoCandles(symbol: string, tf: string, limit: number): Promise<{ candles: ChartCandle[]; source: string; note?: string }> {
+  const bars = await binance.getKlinesDeep(symbol, binanceInterval(tf), Math.min(limit, 5000));
   return { candles: bars.map(toCandle), source: "binance" };
 }
 
-async function forexCandles(
-  pair: string,
-  tf: string,
-  limit: number,
-): Promise<{ candles: ChartCandle[]; source: string; note?: string }> {
-  const ySym = yahooSymbolForPair(pair);
-  if (!ySym) throw new Error(`unsupported forex pair ${pair}`);
-  const interval = yahooIntervalFor(tf);
-  const bars = await getYahooChart(ySym, interval, limit);
-  return { candles: bars.map(toCandle), source: "yahoo" };
+async function forexCandles(pair: string, tf: string, limit: number): Promise<{ candles: ChartCandle[]; source: string; note?: string }> {
+  const cfg = yahooIntervalFor(tf);
+  if (!cfg) throw new Error("unsupported forex timeframe");
+  const y = await getYahooChart(yahooSymbolForPair(pair), cfg.interval, cfg.range);
+  let candles = y.candles;
+  if (cfg.aggregate4h) candles = aggregateCandles(candles, TF_MS["4h"]);
+  return {
+    candles: candles.slice(-limit),
+    source: "yahoo-fx (public candles)",
+    note: "Biquote chưa cấu hình — historical candles từ public data provider được phê duyệt; giá realtime vẫn qua forex engine",
+  };
 }
 
-async function stockCandles(
-  symbol: string,
-  tf: string,
-  limit: number,
-): Promise<{ candles: ChartCandle[]; source: string; note?: string }> {
-  const dayLimit = Math.max(limit, 250);
+async function stockCandles(symbol: string, tf: string, limit: number): Promise<{ candles: ChartCandle[]; source: string; note?: string }> {
+  const dayLimit =
+    tf === "1d" ? Math.min(limit, 1500) : tf === "1w" ? Math.min(limit * 8, 2000) : Math.min(limit * 30, 2500);
+
   if (vndirect.isVnIndexSymbol(symbol)) {
     const bars = await vndirect.getVndIndexOhlcv(symbol, dayLimit);
-    const candles = bars.map(toCandle);
-    return {
-      candles: candles.slice(-limit),
-      source: "vndirect-index",
-      note: "Chuỗi chỉ số VN (OHLCV ngày)",
-    };
+    let candles = bars.map(toCandle);
+    if (tf === "1w") candles = aggregateCandles(candles, TF_MS["1w"]).slice(-limit);
+    if (tf === "1M") candles = aggregateCandles(candles, TF_MS["1M"]).slice(-limit);
+    return { candles: candles.slice(-limit), source: "vndirect-index", note: "Chuỗi chỉ số VN (OHLCV ngày)" };
   }
+
   const r = await getVnOhlcv(symbol, dayLimit);
-  if (!r?.bars?.length) throw new Error(`no stock bars for ${symbol}`);
+  if (!r) throw new Error("stock_ohlcv_unavailable");
   let candles = r.bars.map(toCandle);
-  const ms = TF_MS[tf] ?? TF_MS["1d"];
-  if (ms && ms > TF_MS["1d"]) {
-    candles = aggregateCandles(candles, ms);
-  }
-  return { candles: candles.slice(-limit), source: (r as { meta?: { source?: string } }).meta?.source ?? "ssi-fcdata" };
+  if (tf === "1w") candles = aggregateCandles(candles, TF_MS["1w"]).slice(-limit);
+  if (tf === "1M") candles = aggregateCandles(candles, TF_MS["1M"]).slice(-limit);
+  return { candles: candles.slice(-limit), source: r.meta.source, note: r.meta.note };
 }
 
+/** Map VietnamBiz / common commodity codes → Yahoo futures tickers (real OHLC). */
 function yahooCommoditySymbol(symbol: string): string | null {
-  const s = symbol.toUpperCase().replace(/[^A-Z0-9=\-._]/g, "");
-  const map: Record<string, string> = {
+  const s = symbol.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  const exact: Record<string, string> = {
+    XAUUSD: "GC=F",
     GOLD: "GC=F",
     XAU: "GC=F",
-    XAUUSD: "GC=F",
+    XAGUSD: "SI=F",
     SILVER: "SI=F",
     XAG: "SI=F",
-    XAGUSD: "SI=F",
     OIL: "CL=F",
     WTI: "CL=F",
+    CRUDE: "CL=F",
     BRENT: "BZ=F",
     NATGAS: "NG=F",
+    NG: "NG=F",
     COPPER: "HG=F",
     PLATINUM: "PL=F",
   };
-  if (map[s]) return map[s];
-  if (s.includes("=")) return s;
+  if (exact[s]) return exact[s];
+  if (s.endsWith("=F") || s.includes("=")) return symbol.toUpperCase();
   return null;
 }
 
 export function isChartableCommodity(symbol: string): boolean {
+  if (symbol === "XAUUSD" || symbol === "GOLD" || symbol === "XAU") return true;
   return yahooCommoditySymbol(symbol) != null;
 }
 
-async function commodityCandles(
-  symbol: string,
-  tf: string,
-  limit: number,
-): Promise<{ candles: ChartCandle[]; source: string; note?: string }> {
+async function commodityCandles(symbol: string, tf: string, limit: number): Promise<{ candles: ChartCandle[]; source: string; note?: string }> {
+  if (symbol === "XAUUSD" || symbol === "GOLD" || symbol === "XAU" || symbol.toUpperCase().includes("VANG")) {
+    try {
+      const bars = await binance.getKlinesDeep("PAXGUSDT", binanceInterval(tf), Math.min(limit, 3000));
+      if (bars.length >= 10) {
+        return {
+          candles: bars.map(toCandle),
+          source: "binance (PAXG ≈ XAU spot)",
+          note: "Vàng thế giới qua PAXG (1:1 gold-ounce, USD) — nguồn thực thị trường 24/7",
+        };
+      }
+    } catch {
+      /* fall through to Yahoo */
+    }
+  }
+
   const ySym = yahooCommoditySymbol(symbol);
-  if (!ySym) throw new Error(`unsupported commodity ${symbol}`);
-  const interval = yahooIntervalFor(tf);
-  const bars = await getYahooChart(ySym, interval, limit);
-  return { candles: bars.map(toCandle), source: "yahoo" };
+  if (!ySym) throw new Error("commodity_history_unavailable");
+
+  const cfg = yahooIntervalFor(tf === "1w" ? "1w" : tf === "1M" ? "1M" : tf === "4h" ? "4h" : tf === "1h" ? "1h" : "1d");
+  if (!cfg) throw new Error("commodity_timeframe_unsupported");
+  const y = await getYahooChart(ySym, cfg.interval, cfg.range);
+  let candles = (y.candles as ChartCandle[]).slice(-limit);
+  if (cfg.aggregate4h) {
+    candles = aggregateCandles(candles, 4 * 3_600_000);
+  }
+  if (candles.length < 5) throw new Error("commodity_history_empty");
+  return {
+    candles,
+    source: `yahoo-finance (${ySym})`,
+    note: "Chuỗi OHLC futures/spot Yahoo — tham chiếu biến động quốc tế, có thể khác giá VietnamBiz (VND/nội địa).",
+  };
 }
 
-export async function getChartHistory(
-  args: ChartArgs,
-): Promise<{ data: ChartMarketData; meta: Meta } | null> {
-  const limit = Math.min(Math.max(args.limit ?? 300, 50), 2000);
-  const tf = args.timeframe || "1d";
-  let pack: { candles: ChartCandle[]; source: string; note?: string };
+export async function getChartHistory(args: ChartArgs): Promise<{ data: ChartMarketData; meta: Meta } | null> {
+  const symbol = args.symbol.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  const tf = args.timeframe;
+  const limit = Math.min(Math.max(args.limit ?? 500, 50), args.assetType === "crypto" ? 5000 : 2000);
+  if (!tfsFor(args.assetType).includes(tf)) return null;
+
   try {
-    if (args.assetType === "crypto") pack = await cryptoCandles(args.symbol, tf, limit);
-    else if (args.assetType === "stock") pack = await stockCandles(args.symbol, tf, limit);
-    else if (args.assetType === "forex") pack = await forexCandles(args.symbol, tf, limit);
-    else pack = await commodityCandles(args.symbol, tf, limit);
-  } catch {
-    return null;
-  }
-  if (!pack.candles.length) return null;
+    const res = await cached(`chart:${args.assetType}:${symbol}:${tf}:${limit}`, {
+      ttlMs: args.assetType === "crypto" ? 18_000 : args.assetType === "forex" ? 45_000 : 60_000,
+      staleMs: 24 * 3_600_000,
+      producer: async () => {
+        const raw =
+          args.assetType === "crypto"
+            ? await cryptoCandles(symbol, tf, limit)
+            : args.assetType === "forex"
+              ? await forexCandles(symbol, tf, limit)
+              : args.assetType === "commodity"
+                ? await commodityCandles(symbol, tf, limit)
+                : await stockCandles(symbol, tf, limit);
 
-  const q = validateBars(pack.candles as unknown as OhlcvBar[]);
-  const candles = (q.cleaned as OhlcvBar[]).map(toCandle);
-  if (q.status !== "VALID") void logQualityEvent(pack.source, `chart:${args.symbol}`, q);
+        const q = validateBars(raw.candles as OhlcvBar[]);
+        if (q.status !== "VALID") void logQualityEvent("chart-engine", `${args.assetType}:${symbol}:${tf}`, q);
+        if (q.status === "INVALID") throw new Error("invalid candle series");
+        const gap = detectGaps(q.cleaned, TF_MS[tf]);
+        const suspect = (q.status === "SUSPECT" ? 1 : 0) + (gap ? 1 : 0);
+        return {
+          candles: q.cleaned,
+          source: raw.source,
+          note: raw.note,
+          gaps: gap ? Number(gap.value ?? 0) : 0,
+          suspect,
+        };
+      },
+    });
 
-  const intervalMs = TF_MS[tf] ?? 86_400_000;
-  const gaps = detectGaps(candles as unknown as OhlcvBar[], intervalMs);
+    const { candles, source, note, gaps, suspect } = res.value;
+    const last = candles[candles.length - 1];
+    const meta = buildMeta({
+      source,
+      sourceTimestampMs: last?.time ?? Date.now(),
+      cached: res.cached,
+      stale: res.stale,
+      note: [note, gaps ? `${gaps} khoảng trống dữ liệu trong chuỗi` : null, suspect ? `quality: SUSPECT flags đã log` : null]
+        .filter(Boolean)
+        .join(" · ") || undefined,
+      slas:
+        args.assetType === "crypto"
+          ? { liveSlaMs: TF_MS[tf] * 1.5, freshSlaMs: TF_MS[tf] * 4, delayedSlaMs: TF_MS[tf] * 20 }
+          : { liveSlaMs: TF_MS[tf] * 2, freshSlaMs: TF_MS[tf] * 6, delayedSlaMs: TF_MS[tf] * 48 },
+    });
+    meta.qualityStatus = suspect ? "SUSPECT" : "VALID";
 
-  return {
-    data: {
+    const data: ChartMarketData = {
       candles,
       indicators: computeIndicators(candles),
       markers: computeMarkers(candles),
-      intervalMs,
+      intervalMs: TF_MS[tf],
       gaps,
-      suspect: q.status === "VALID" ? 0 : 1,
-    },
-    meta: buildMeta({
-      source: pack.source,
-      sourceTimestampMs: candles[candles.length - 1]?.time ?? null,
-      note: pack.note,
-      slas: { liveSlaMs: 5_000, freshSlaMs: 60_000, delayedSlaMs: 300_000 },
-    }),
-  };
+      suspect,
+    };
+    return { data, meta };
+  } catch {
+    return null;
+  }
 }
 
 export type { TechnicalSnapshot };
