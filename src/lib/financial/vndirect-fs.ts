@@ -16,6 +16,7 @@ import { metricKeyFromItemCode, metricProfileForSymbol, type MetricProfile } fro
  *   modelType 1 = Balance Sheet
  *   modelType 2 = Income Statement
  *   modelType 3 = Cash Flow
+ * reportType QUARTER/ANNUAL = mẫu hợp nhất DStock (KHÔNG dùng QUARTER2/ANNUAL2 — lệch số).
  * Không scrape HTML. SSI không tham gia domain này.
  */
 
@@ -203,7 +204,7 @@ export function periodsToLegacyRows(
 async function fetchStatementPage(
   symbol: string,
   modelType: 1 | 2 | 3,
-  reportType: "QUARTER2" | "ANNUAL2",
+  reportType: "QUARTER" | "ANNUAL",
   size: number,
 ): Promise<RawRow[]> {
   const path = `/v4/financial_statements?q=code:${symbol}~modelType:${modelType}~reportType:${reportType}&size=${size}&sort=fiscalDate:desc`;
@@ -222,7 +223,7 @@ async function fetchStatementPage(
 
 /**
  * Lấy BCTC chuẩn DStock cho mọi mã: 3 báo cáo × (quý + năm) từ api-finfo.
- * UI tách income / balance / cashflow qua periodsToStatementTables.
+ * reportType = QUARTER | ANNUAL (khớp số liệu DStock).
  */
 export async function fetchVndirectFinancials(
   symbol: string,
@@ -235,8 +236,8 @@ export async function fetchVndirectFinancials(
 
   const jobs: Promise<RawRow[]>[] = [];
   for (const model of [1, 2, 3] as const) {
-    jobs.push(fetchStatementPage(sym, model, "QUARTER2", 800));
-    jobs.push(fetchStatementPage(sym, model, "ANNUAL2", 400));
+    jobs.push(fetchStatementPage(sym, model, "QUARTER", 800));
+    jobs.push(fetchStatementPage(sym, model, "ANNUAL", 400));
   }
   const chunks = await Promise.all(jobs);
   const all = chunks.flat();
