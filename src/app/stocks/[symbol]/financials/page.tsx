@@ -14,41 +14,69 @@ const TABS: { key: TabKey; label: string }[] = [
   { key: "ratios", label: "Chỉ số" },
 ];
 
+/** Metadata fields — never show as metric rows */
+const META_KEYS = new Set([
+  "period",
+  "year",
+  "quarter",
+  "fiscalDate",
+  "source",
+  "periodType",
+  "metricProfile",
+  "metricLabelsVi",
+  "metricLabelsEn",
+]);
+
 const METRIC_VI: Record<string, string> = {
+  // Income
   revenue: "Doanh thu",
   netRevenue: "Doanh thu thuần",
-  cogs: "Giá vốn",
+  cogs: "Giá vốn hàng bán",
   grossProfit: "Lợi nhuận gộp",
-  operatingProfit: "LN từ HĐKD",
+  operatingProfit: "LN thuần từ HĐKD",
   ebit: "EBIT",
   ebitda: "EBITDA",
   interestExpense: "Chi phí lãi vay",
   profitBeforeTax: "LN trước thuế",
-  taxExpense: "Thuế TNDN",
-  netIncome: "LN ròng",
+  taxExpense: "Chi phí thuế TNDN",
+  netIncome: "LN sau thuế",
+  netProfit: "LN sau thuế",
   netIncomeParent: "LN thuộc công ty mẹ",
-  cash: "Tiền & tương đương",
-  shortTermInvestments: "ĐT ngắn hạn",
-  receivables: "Phải thu",
+  // Balance
+  cash: "Tiền & tương đương tiền",
+  shortTermInvestments: "Đầu tư tài chính ngắn hạn",
+  receivables: "Phải thu ngắn hạn",
   inventory: "Hàng tồn kho",
   currentAssets: "Tài sản ngắn hạn",
-  fixedAssets: "TSCĐ",
+  fixedAssets: "Tài sản cố định",
   longTermAssets: "Tài sản dài hạn",
   totalAssets: "Tổng tài sản",
-  shortTermDebt: "Nợ ngắn hạn",
-  longTermDebt: "Nợ dài hạn",
-  currentLiabilities: "Nợ ngắn hạn (CL)",
+  shortTermDebt: "Vay ngắn hạn",
+  longTermDebt: "Vay dài hạn",
+  currentLiabilities: "Nợ ngắn hạn",
   totalLiabilities: "Tổng nợ phải trả",
   equity: "Vốn chủ sở hữu",
-  retainedEarnings: "LN giữ lại",
-  operatingCashFlow: "LC tiền HĐKD",
-  investingCashFlow: "LC tiền đầu tư",
-  financingCashFlow: "LC tiền tài chính",
-  capex: "Capex",
-  freeCashFlow: "FCF",
+  retainedEarnings: "Lợi nhuận giữ lại",
+  // Cash flow
+  operatingCashFlow: "LC tiền thuần từ HĐKD",
+  investingCashFlow: "LC tiền thuần từ HĐ đầu tư",
+  financingCashFlow: "LC tiền thuần từ HĐ tài chính",
+  capex: "Mua sắm TSCĐ (Capex)",
+  freeCashFlow: "Dòng tiền tự do (FCF)",
   cashBegin: "Tiền đầu kỳ",
   cashEnd: "Tiền cuối kỳ",
+  // Ratios
+  grossMargin: "Biên LN gộp",
+  operatingMargin: "Biên LN HĐKD",
+  netMargin: "Biên LN ròng",
+  roe: "ROE",
+  roa: "ROA",
+  debtToEquity: "Nợ / Vốn chủ",
+  currentRatio: "Hệ số thanh toán hiện hành",
+  ocfToNi: "OCF / LN ròng",
 };
+
+const RATIO_PCT_KEYS = new Set(["grossMargin", "operatingMargin", "netMargin", "roe", "roa"]);
 
 function statusVi(s: string | undefined): string {
   switch (s) {
@@ -63,6 +91,16 @@ function statusVi(s: string | undefined): string {
     default:
       return s ?? "—";
   }
+}
+
+function formatMetricValue(key: string, v: number): string {
+  if (RATIO_PCT_KEYS.has(key)) {
+    return `${(v * 100).toFixed(1)}%`;
+  }
+  if (key === "debtToEquity" || key === "currentRatio" || key === "ocfToNi") {
+    return v.toFixed(2);
+  }
+  return fmtCompact(v);
 }
 
 export default function StockFinancialsPage({ params }: { params: Promise<{ symbol: string }> }) {
@@ -90,7 +128,9 @@ export default function StockFinancialsPage({ params }: { params: Promise<{ symb
   const sourceLabel = fm?.primarySource ?? "vndirect-fs";
   const rows = data.financials[tab];
 
-  const metricKeys = Object.keys(rows?.[0] ?? {}).filter((k) => typeof rows?.[0]?.[k] === "number");
+  const metricKeys = Object.keys(rows?.[0] ?? {}).filter(
+    (k) => !META_KEYS.has(k) && typeof rows?.[0]?.[k] === "number",
+  );
   const preferred = Object.keys(METRIC_VI).filter((k) => metricKeys.includes(k));
   const rest = metricKeys.filter((k) => !METRIC_VI[k]);
   const orderedKeys = [...preferred, ...rest].slice(0, 24);
@@ -194,10 +234,12 @@ export default function StockFinancialsPage({ params }: { params: Promise<{ symb
               <tbody>
                 {orderedKeys.map((k) => (
                   <tr key={k} className="border-b border-line/40">
-                    <td className="max-w-52 truncate py-1.5 pr-3 text-ink-2">{METRIC_VI[k] ?? k}</td>
+                    <td className="max-w-56 truncate py-1.5 pr-3 text-ink-2" title={METRIC_VI[k] ?? k}>
+                      {METRIC_VI[k] ?? k}
+                    </td>
                     {rows.slice(0, 6).map((r, i) => (
                       <td key={i} className="num py-1.5 text-right">
-                        {typeof r[k] === "number" ? fmtCompact(r[k] as number) : "—"}
+                        {typeof r[k] === "number" ? formatMetricValue(k, r[k] as number) : "—"}
                       </td>
                     ))}
                   </tr>
@@ -209,7 +251,8 @@ export default function StockFinancialsPage({ params }: { params: Promise<{ symb
 
         <p className="mt-2 text-[10px] text-ink-3">
           Số liệu tuyệt đối (VND) từ api-finfo VNDIRECT — cùng nguồn structured với DStock. DStock UI thường
-          hiển thị đơn vị <strong className="text-ink-2">tỷ đồng</strong>.
+          hiển thị đơn vị <strong className="text-ink-2">tỷ đồng</strong>. Chỉ số biên lợi nhuận / ROE /
+          ROA hiển thị dạng %.
         </p>
       </Panel>
 
