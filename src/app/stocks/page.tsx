@@ -27,7 +27,12 @@ export default function VnMarketCenterPage() {
   const session = snap?.vnSession;
   const quotes = useMemo(() => {
     let list = data?.quotes ?? [];
-    if (q) list = list.filter((x) => x.symbol.includes(q.toUpperCase()) || (x.name ?? "").toUpperCase().includes(q.toUpperCase()));
+    if (q)
+      list = list.filter(
+        (x) =>
+          x.symbol.includes(q.toUpperCase()) ||
+          (x.name ?? "").toUpperCase().includes(q.toUpperCase()),
+      );
     if (sector) list = list.filter((x) => sectorOf(x.symbol) === sector);
     return list;
   }, [data, q, sector]);
@@ -42,6 +47,12 @@ export default function VnMarketCenterPage() {
             <CandlestickChart className="size-5 text-accent-primary" /> VN Market Center
           </h1>
           <Badge tone="accent">HOSE · HNX · UPCoM</Badge>
+          <Link
+            href="/stocks/sectors"
+            className="rounded-md border border-accent/30 bg-accent/10 px-2 py-0.5 text-[11px] font-medium text-accent hover:bg-accent/20"
+          >
+            Xu hướng ngành
+          </Link>
           {data?.sessionDate && <Badge tone="neutral">Phiên {data.sessionDate}</Badge>}
           {data?.count != null && <Badge tone="neutral">{data.count} mã</Badge>}
           {session && <Badge tone={session.trading ? "up" : "warn"}>{session.labelVi}</Badge>}
@@ -56,7 +67,9 @@ export default function VnMarketCenterPage() {
               <div
                 key={i.code}
                 className={`rounded-lg border p-3 ${
-                  big === 0 ? "border-accent-primary/40 bg-accent-primary/5" : "border-border-subtle bg-surface-elevated"
+                  big === 0
+                    ? "border-accent-primary/40 bg-accent-primary/5"
+                    : "border-border-subtle bg-surface-elevated"
                 }`}
               >
                 <div className="flex items-center justify-between text-[11px] text-text-secondary">
@@ -64,7 +77,9 @@ export default function VnMarketCenterPage() {
                   <Chg value={i.changePercent} arrow={false} />
                 </div>
                 <div className="num mt-1 text-[19px] font-semibold">{fmtNum(i.value, 2)}</div>
-                {i.volume != null && <div className="num text-[10px] text-text-muted">KL {fmtCompact(i.volume)}</div>}
+                {i.volume != null && (
+                  <div className="num text-[10px] text-text-muted">KL {fmtCompact(i.volume)}</div>
+                )}
               </div>
             ))}
           </div>
@@ -76,7 +91,11 @@ export default function VnMarketCenterPage() {
       {!res?.success ? (
         <Unavailable
           title="Chưa kéo được dữ liệu thị trường VN"
-          note={res && !res.success ? res.error.message : "Nguồn VNDirect/VNStock tạm không phản hồi — thử lại sau hoặc kiểm tra /system."}
+          note={
+            res && !res.success
+              ? res.error.message
+              : "Nguồn VNDirect/VNStock tạm không phản hồi — thử lại sau hoặc kiểm tra /system."
+          }
         />
       ) : (
         <>
@@ -128,10 +147,15 @@ export default function VnMarketCenterPage() {
                   {quotes.map((qu) => (
                     <tr key={qu.symbol} className="border-t border-border-subtle/70 hover:bg-surface-elevated/50">
                       <td className="py-2 pl-1">
-                        <Link href={`/stocks/${qu.symbol}`} className="font-semibold text-accent-primary hover:underline">
+                        <Link
+                          href={`/stocks/${qu.symbol}`}
+                          className="font-semibold text-accent-primary hover:underline"
+                        >
                           {qu.symbol}
                         </Link>
-                        {qu.name && <div className="max-w-[140px] truncate text-[10px] text-text-muted">{qu.name}</div>}
+                        {qu.name && (
+                          <div className="max-w-[140px] truncate text-[10px] text-text-muted">{qu.name}</div>
+                        )}
                       </td>
                       <td className="num py-2 text-right font-medium">{fmtNum(qu.price, 2)}</td>
                       <td className="py-2 text-right">
@@ -152,12 +176,12 @@ export default function VnMarketCenterPage() {
             </div>
           </Panel>
 
-          <Panel title="Ngành chứng khoán Việt Nam (Security Master)" pad={false}>
+          <Panel title="Ngành chứng khoán Việt Nam" pad={false}>
             <div className="grid grid-cols-2 gap-1.5 p-3 md:grid-cols-4">
               {VN_SECTOR_MAP.slice(0, 16).map((s) => (
                 <Link
                   key={s.name}
-                  href={`/screener?universe=stocks&sector=${encodeURIComponent(s.name)}`}
+                  href="/stocks/sectors"
                   className="hover-lift flex items-center justify-between rounded-md border border-border-subtle bg-surface-elevated px-2.5 py-2"
                 >
                   <span className="truncate text-[12px] text-text-secondary">{s.name}</span>
