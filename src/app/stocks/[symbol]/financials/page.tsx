@@ -91,7 +91,6 @@ export default function StockFinancialsPage({ params }: { params: Promise<{ symb
   const rows = data.financials[tab];
 
   const metricKeys = Object.keys(rows?.[0] ?? {}).filter((k) => typeof rows?.[0]?.[k] === "number");
-  // Prefer known schema order
   const preferred = Object.keys(METRIC_VI).filter((k) => metricKeys.includes(k));
   const rest = metricKeys.filter((k) => !METRIC_VI[k]);
   const orderedKeys = [...preferred, ...rest].slice(0, 24);
@@ -142,7 +141,7 @@ export default function StockFinancialsPage({ params }: { params: Promise<{ symb
         </div>
         {fm?.freshnessStatus === "LATEST_AVAILABLE" && (
           <p className="mt-2 text-[11px] text-ink-3">
-            Đang hiển thị kỳ gần nhất hiện có. Kỳ mới hơn (nếu có) sẽ cập nhật khi nguồn công bố / SSI sẵn sàng.
+            Đang hiển thị kỳ gần nhất hiện có. Kỳ mới hơn (nếu có) sẽ cập nhật khi VNDIRECT DStock công bố.
           </p>
         )}
         {fm?.freshnessStatus === "STALE" && (
@@ -209,7 +208,8 @@ export default function StockFinancialsPage({ params }: { params: Promise<{ symb
         )}
 
         <p className="mt-2 text-[10px] text-ink-3">
-          Schema chuẩn hóa theo Financial Report Data Engine. Đối chiếu đa nguồn (SSC / CafeF / SSI) thuộc Phase 5.
+          Schema chuẩn hóa theo Financial Report Data Engine. Nguồn primary: VNDIRECT DStock; đối chiếu SSC
+          (official filings) khi có.
         </p>
       </Panel>
 
