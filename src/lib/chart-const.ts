@@ -120,3 +120,13 @@ export interface ChartMarketData {
   gaps: number;
   suspect: number;
 }
+
+/** Explicit type re-exports for client imports (isolatedModules / type-only). */
+export type {
+  ChartCandle,
+  ChartAssetType,
+  IndicatorPoint,
+  ChartIndicators,
+  ChartSignalMarker,
+  ChartMarketData,
+};
