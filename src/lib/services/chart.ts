@@ -133,12 +133,16 @@ export function computeIndicators(candles: ChartCandle[]): ChartIndicators | nul
   const vwap = vwapSeries(candles);
   const rsiArr = points(times, rsi(closes, 14));
   const m = macd(closes);
+  const hist = m.line.map((v, i) =>
+    v != null && m.signal[i] != null ? (v as number) - (m.signal[i] as number) : null,
+  );
   const macdPts = {
-    macd: points(times, m.macd),
+    macd: points(times, m.line),
     signal: points(times, m.signal),
-    histogram: points(times, m.histogram),
+    histogram: points(times, hist),
   };
-  const sr = supportResistance(candles as OhlcvBar[]);
+  const ohlcv: OhlcvBar[] = candles.map((c) => ({ ...c, volume: c.volume ?? 0 }));
+  const sr = supportResistance(ohlcv, Math.min(120, candles.length));
   return {
     ema20,
     ema50,
@@ -146,10 +150,7 @@ export function computeIndicators(candles: ChartCandle[]): ChartIndicators | nul
     vwap,
     rsi: rsiArr,
     macd: macdPts.macd.length ? macdPts : null,
-    srLevels: {
-      support: sr.support != null ? [sr.support] : [],
-      resistance: sr.resistance != null ? [sr.resistance] : [],
-    },
+    srLevels: sr,
   };
 }
 
