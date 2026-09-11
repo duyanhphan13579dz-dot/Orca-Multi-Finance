@@ -3,57 +3,138 @@ import { env } from "../env";
 import { httpJson } from "../http";
 
 /**
- * LLM GATEWAY — model selection by task role, provider-agnostic.
- * Supports optional multi-turn history for conversation continuity.
+ * LLM GATEWAY — OpenRouter-first, role-based model selection.
  *
- * AI_BASE_URL is optional: if omitted, namespace models (e.g. qwen/…)
- * route to OpenRouter; otherwise OpenAI-compatible default.
+ * Env (Vercel):
+ *   OPENROUTER_API_KEY   — primary key
+ *   OPENROUTER_MODEL     — default model id (provider/model)
+ *   AI_MODEL_REASONING   — deep reasoning / compare
+ *   AI_MODEL_REPORT      — financial report / analysis / forecast
+ *   AI_MODEL_ANALYSIS    — optional alias for report
+ *   GROQ_*               — optional fast path (not default for BCTC analysis)
  */
 
-export type LlmRole = "reasoning" | "analysis" | "classification";
+export type LlmRole = "reasoning" | "analysis" | "classification" | "report";
 
 export interface LlmResult {
   text: string;
   model: string;
   role: LlmRole;
   latencyMs: number;
+  provider: "openrouter" | "groq" | "openai-compatible";
 }
 
 export type ChatTurn = { role: "user" | "assistant"; content: string };
 
-export function modelFor(role: LlmRole): string {
-  return process.env[`AI_MODEL_${role.toUpperCase()}`]?.trim() ?? env.aiModel;
+function firstDefined(...vals: (string | undefined)[]): string | undefined {
+  for (const v of vals) {
+    if (v && v.trim()) return v.trim();
+  }
+  return undefined;
 }
 
-function resolveBaseUrl(model: string): string {
-  const explicit = env.aiBaseUrl?.replace(/\/$/, "");
-  if (explicit) return explicit;
-  // provider/model ids (OpenRouter-style) — no AI_BASE_URL required
-  if (model.includes("/")) return "https://openrouter.ai/api/v1";
-  return "https://api.openai.com/v1";
+/** Chọn model theo role — bám biến Vercel của user */
+export function modelFor(role: LlmRole): string {
+  if (role === "reasoning") {
+    return (
+      firstDefined(env.aiModelReasoning, process.env.AI_MODEL_REASONING, env.openrouterModel, env.aiModel) ??
+      "qwen/qwen3-32b"
+    );
+  }
+  if (role === "report" || role === "analysis") {
+    return (
+      firstDefined(
+        env.aiModelReport,
+        env.aiModelAnalysis,
+        process.env.AI_MODEL_REPORT,
+        process.env.AI_MODEL_ANALYSIS,
+        env.openrouterModel,
+        env.aiModel,
+      ) ?? "qwen/qwen3-32b"
+    );
+  }
+  // classification → model nhẹ / default OpenRouter
+  return firstDefined(env.openrouterModel, env.aiModel, env.groqModel) ?? "qwen/qwen3-32b";
+}
+
+function resolveProvider(model: string): {
+  baseUrl: string;
+  apiKey: string | undefined;
+  provider: LlmResult["provider"];
+} {
+  // Explicit AI_BASE_URL wins
+  if (env.aiBaseUrl?.trim()) {
+    const base = env.aiBaseUrl.replace(/\/$/, "");
+    const isOr = base.includes("openrouter");
+    const isGroq = base.includes("groq");
+    return {
+      baseUrl: base,
+      apiKey: isOr
+        ? env.openrouterApiKey ?? env.aiProviderKey
+        : isGroq
+          ? env.groqApiKey ?? env.aiProviderKey
+          : env.aiProviderKey,
+      provider: isOr ? "openrouter" : isGroq ? "groq" : "openai-compatible",
+    };
+  }
+
+  // OpenRouter when key present OR model looks like provider/model
+  if (env.openrouterApiKey || model.includes("/")) {
+    return {
+      baseUrl: "https://openrouter.ai/api/v1",
+      apiKey: env.openrouterApiKey ?? env.aiProviderKey,
+      provider: "openrouter",
+    };
+  }
+
+  if (env.groqApiKey) {
+    return {
+      baseUrl: (env.groqBaseUrl ?? "https://api.groq.com/openai/v1").replace(/\/$/, ""),
+      apiKey: env.groqApiKey,
+      provider: "groq",
+    };
+  }
+
+  return {
+    baseUrl: "https://api.openai.com/v1",
+    apiKey: env.aiProviderKey,
+    provider: "openai-compatible",
+  };
 }
 
 export function llmConfigured(): boolean {
-  return Boolean(env.aiProviderKey);
+  return Boolean(env.openrouterApiKey || env.aiProviderKey || env.groqApiKey);
 }
 
+/** Thông tin registry (không lộ secret) — dùng /system hoặc debug */
 export function llmRegistryInfo() {
-  const model = env.aiModel;
+  const roles: LlmRole[] = ["reasoning", "analysis", "report", "classification"];
+  const models: Record<string, string> = {};
+  for (const r of roles) models[r] = modelFor(r);
+  const sample = modelFor("analysis");
+  const { baseUrl, provider } = resolveProvider(sample);
   return {
     configured: llmConfigured(),
-    baseUrl: resolveBaseUrl(model),
-    models: {
-      reasoning: modelFor("reasoning"),
-      analysis: modelFor("analysis"),
-      classification: modelFor("classification"),
+    provider,
+    baseUrl,
+    models,
+    envPresent: {
+      OPENROUTER_API_KEY: Boolean(env.openrouterApiKey),
+      OPENROUTER_MODEL: Boolean(env.openrouterModel),
+      AI_MODEL_REASONING: Boolean(env.aiModelReasoning),
+      AI_MODEL_REPORT: Boolean(env.aiModelReport),
+      AI_MODEL_ANALYSIS: Boolean(env.aiModelAnalysis),
+      GROQ_API_KEY: Boolean(env.groqApiKey),
+      AI_PROVIDER_KEY: Boolean(process.env.AI_PROVIDER_KEY?.trim()),
     },
+    /** Model OpenRouter mặc định đang resolve (không phải secret) */
+    openrouterModelResolved: env.openrouterModel ?? env.aiModel ?? null,
   };
 }
 
 interface ChatOptions {
   system: string;
   user: string;
-  /** Prior turns (oldest → newest). Current user message is `user`, not duplicated here. */
   history?: ChatTurn[];
   temperature?: number;
   maxTokens?: number;
@@ -63,9 +144,10 @@ interface ChatOptions {
 type ChatResponse = { choices?: { message?: { content?: string } }[] };
 
 export async function llmChat(role: LlmRole, opts: ChatOptions): Promise<LlmResult | null> {
-  if (!env.aiProviderKey) return null;
   const model = modelFor(role);
-  const baseUrl = resolveBaseUrl(model);
+  const { baseUrl, apiKey, provider } = resolveProvider(model);
+  if (!apiKey) return null;
+
   const t0 = performance.now();
 
   const history = (opts.history ?? [])
@@ -82,20 +164,39 @@ export async function llmChat(role: LlmRole, opts: ChatOptions): Promise<LlmResu
     { role: "user", content: opts.user },
   ];
 
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${apiKey}`,
+  };
+  // OpenRouter khuyến nghị HTTP-Referer + X-Title
+  if (provider === "openrouter") {
+    headers["HTTP-Referer"] = process.env.VERCEL_URL
+      ? `https://${process.env.VERCEL_URL}`
+      : "https://orca-multi-finance.vercel.app";
+    headers["X-Title"] = "Orca Multi Finance";
+  }
+
   const res = await httpJson<ChatResponse>(`${baseUrl}/chat/completions`, {
-    provider: `llm:${role}`,
+    provider: `llm:${provider}:${role}`,
     method: "POST",
-    timeoutMs: opts.timeoutMs ?? 28_000,
+    timeoutMs: opts.timeoutMs ?? 45_000,
     retries: 0,
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${env.aiProviderKey}` },
+    headers,
     body: JSON.stringify({
       model,
       temperature: opts.temperature ?? 0.3,
-      max_tokens: opts.maxTokens ?? 900,
+      max_tokens: opts.maxTokens ?? 1200,
       messages,
     }),
   });
+
   const text = res.data?.choices?.[0]?.message?.content;
   if (!res.ok || !text || !text.trim()) return null;
-  return { text: text.trim(), model, role, latencyMs: Math.round(performance.now() - t0) };
+  return {
+    text: text.trim(),
+    model,
+    role,
+    latencyMs: Math.round(performance.now() - t0),
+    provider,
+  };
 }

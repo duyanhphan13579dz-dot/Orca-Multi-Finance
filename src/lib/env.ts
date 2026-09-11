@@ -31,14 +31,15 @@ export const env = {
    *   NEXT     = SSI Flashconnect as primary, VNDirect as fallback
    * VNStock vars kept only for backward-compat env files; service layer no longer calls VNStock.
    */
-  vnstockBaseUrl: opt(process.env.VNSTOCK_BASE_URL) ?? "https://api.vnstock.com",
+  vnstockBaseUrl: opt(process.env.VNSTOCK_BASE_URL),
   vnstockApiKey: opt(process.env.VNSTOCK_API_KEY),
+
   vndirectBaseUrl: opt(process.env.VNDIRECT_BASE_URL) ?? "https://api-finfo.vndirect.com.vn",
 
   /* Crypto — Binance */
   binanceBaseUrl: opt(process.env.BINANCE_BASE_URL),
   binanceFapiBaseUrl: opt(process.env.BINANCE_FAPI_BASE_URL),
-  binanceApiKey: opt(process.env.BINANCE_API_KEY), // only needed for private endpoints
+  binanceApiKey: opt(process.env.BINANCE_API_KEY),
 
   /* Forex — Biquote */
   biquoteBaseUrl: opt(process.env.BIQUOTE_BASE_URL),
@@ -52,7 +53,9 @@ export const env = {
   /* Optional MSN Finance instrument map for world commodities (JSON: {"GOLD":"id",...}) */
   msnCommodityMap: (() => {
     try {
-      return process.env.MSN_COMMODITY_MAP ? (JSON.parse(process.env.MSN_COMMODITY_MAP) as Record<string, string>) : {};
+      return process.env.MSN_COMMODITY_MAP
+        ? (JSON.parse(process.env.MSN_COMMODITY_MAP) as Record<string, string>)
+        : {};
     } catch {
       return {} as Record<string, string>;
     }
@@ -66,11 +69,36 @@ export const env = {
   redisNote,
   jwtSecret: opt(process.env.JWT_SECRET) ?? "orca-dev-insecure-secret-change-in-production",
 
-  /* Optional LLM for the AI Agent (OpenAI-compatible) */
-  aiProviderKey: opt(process.env.AI_PROVIDER_KEY),
-  /* Base URL optional; namespace models resolve via OpenRouter when unset. */
-  aiBaseUrl: opt(process.env.AI_BASE_URL) ?? "",
-  aiModel: opt(process.env.AI_MODEL) ?? "qwen/qwen3.8-27b",
+  /*
+   * LLM — ưu tiên OpenRouter (OPENROUTER_API_KEY / OPENROUTER_MODEL).
+   * Tương thích ngược: AI_PROVIDER_KEY, AI_MODEL, AI_BASE_URL.
+   * Phân vai:
+   *   reasoning → AI_MODEL_REASONING → OPENROUTER_MODEL → AI_MODEL
+   *   analysis / report → AI_MODEL_REPORT → AI_MODEL_ANALYSIS → OPENROUTER_MODEL → AI_MODEL
+   * Groq (GROQ_*) giữ cho task tốc độ cao nếu được gọi riêng sau này.
+   */
+  openrouterApiKey: opt(process.env.OPENROUTER_API_KEY),
+  openrouterModel: opt(process.env.OPENROUTER_MODEL),
+  groqApiKey: opt(process.env.GROQ_API_KEY),
+  groqBaseUrl: opt(process.env.GROQ_BASE_URL) ?? "https://api.groq.com/openai/v1",
+  groqModel: opt(process.env.GROQ_MODEL),
+
+  aiProviderKey:
+    opt(process.env.OPENROUTER_API_KEY) ??
+    opt(process.env.AI_PROVIDER_KEY) ??
+    opt(process.env.GROQ_API_KEY),
+  aiBaseUrl:
+    opt(process.env.AI_BASE_URL) ??
+    (opt(process.env.OPENROUTER_API_KEY) ? "https://openrouter.ai/api/v1" : undefined) ??
+    "",
+  aiModel:
+    opt(process.env.OPENROUTER_MODEL) ??
+    opt(process.env.AI_MODEL) ??
+    opt(process.env.AI_MODEL_REPORT) ??
+    "qwen/qwen3-32b",
+  aiModelReasoning: opt(process.env.AI_MODEL_REASONING),
+  aiModelReport: opt(process.env.AI_MODEL_REPORT),
+  aiModelAnalysis: opt(process.env.AI_MODEL_ANALYSIS),
 };
 
 export const isProd = env.nodeEnv === "production";
