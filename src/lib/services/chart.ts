@@ -5,6 +5,8 @@ import * as binance from "../providers/binance";
 import { getYahooChart, yahooSymbolForPair, yahooIntervalFor } from "../providers/yahoo";
 import { getVnOhlcv, vnstockConfigured } from "./stocks";
 import * as vndirect from "../providers/vndirect";
+import { getSsiIntradayOhlc } from "../providers/ssi-market-catalog";
+import { ssiFcConfigured } from "../providers/ssi-fcdata";
 import { validateBars, detectGaps, logQualityEvent } from "../quality";
 import { aggregateCandles, binanceInterval, TF_MS, tfsFor, type ChartAssetType, type ChartCandle } from "../chart-const";
 import { ema, rsi, macd, sma, supportResistance } from "../technical";
@@ -52,7 +54,6 @@ export interface ChartMarketData {
 export function computeMarkers(candles: ChartCandle[]): ChartSignalMarker[] {
   if (candles.length < 40) return [];
   const out: ChartSignalMarker[] = [];
-  // Vol spike + RSI extreme markers intentionally not drawn on the price pane.
   const scalp = analyzeScalp(candles as OhlcvBar[], { timeframe: "chart" });
   if (scalp && scalp.direction !== "neutral" && scalp.strength >= 50) {
     const lastCandle = candles[candles.length - 1];
@@ -173,6 +174,7 @@ async function forexCandles(pair: string, tf: string, limit: number): Promise<{ 
 }
 
 async function stockCandles(symbol: string, tf: string, limit: number): Promise<{ candles: ChartCandle[]; source: string; note?: string }> {
+  const intradayRes: Record<string, number> = { "1m": 1, "3m": 3, "5m": 5, "15m": 15, "30m": 30, "1h": 60 };
   const dayLimit =
     tf === "1d" ? Math.min(limit, 1500) : tf === "1w" ? Math.min(limit * 8, 2000) : Math.min(limit * 30, 2500);
 
@@ -184,6 +186,27 @@ async function stockCandles(symbol: string, tf: string, limit: number): Promise<
     return { candles: candles.slice(-limit), source: "vndirect-index", note: "Chuỗi chỉ số VN (OHLCV ngày)" };
   }
 
+  // SSI IntradayOhlc for intraday timeframes
+  if (intradayRes[tf] && ssiFcConfigured()) {
+    try {
+      const bars = await getSsiIntradayOhlc(symbol, {
+        resolution: intradayRes[tf],
+        pageSize: 1000,
+        maxPages: 5,
+      });
+      const candles = bars.map(toCandle).slice(-limit);
+      if (candles.length) {
+        return {
+          candles,
+          source: "ssi-fcdata-intraday",
+          note: `SSI IntradayOhlc ${tf}`,
+        };
+      }
+    } catch {
+      /* fall through to daily */
+    }
+  }
+
   const r = await getVnOhlcv(symbol, dayLimit);
   if (!r) throw new Error("stock_ohlcv_unavailable");
   let candles = r.bars.map(toCandle);
@@ -192,7 +215,6 @@ async function stockCandles(symbol: string, tf: string, limit: number): Promise<
   return { candles: candles.slice(-limit), source: r.meta.source, note: r.meta.note };
 }
 
-/** Map VietnamBiz / common commodity codes → Yahoo futures tickers (real OHLC). */
 function yahooCommoditySymbol(symbol: string): string | null {
   const s = symbol.toUpperCase().replace(/[^A-Z0-9]/g, "");
   const exact: Record<string, string> = {
