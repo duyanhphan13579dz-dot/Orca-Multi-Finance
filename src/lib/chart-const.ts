@@ -35,7 +35,6 @@ export const TF_MS: Record<string, number> = {
 
 export const CRYPTO_TFS = ["1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "12h", "1d", "1w", "1M"] as const;
 export const FOREX_TFS = ["5m", "15m", "30m", "1h", "4h", "1d", "1w", "1M"] as const;
-/** Stock: daily + SSI IntradayOhlc (1m–1h) when SSI_API_KEY configured */
 export const STOCK_TFS = ["1m", "3m", "5m", "15m", "30m", "1h", "1d", "1w", "1M"] as const;
 
 export function tfsFor(asset: ChartAssetType): readonly string[] {
@@ -88,4 +87,36 @@ export function aggregateCandles(candles: ChartCandle[], tfMs: number): ChartCan
   }
   if (cur) out.push(cur);
   return out;
+}
+
+/** Client-safe indicator/payload shapes (also used by server chart service). */
+export interface IndicatorPoint {
+  time: number;
+  value?: number;
+}
+
+export interface ChartIndicators {
+  ema20: IndicatorPoint[];
+  ema50: IndicatorPoint[];
+  bollinger: { upper: IndicatorPoint[]; mid: IndicatorPoint[]; lower: IndicatorPoint[] } | null;
+  vwap: IndicatorPoint[] | null;
+  rsi: IndicatorPoint[];
+  macd: { macd: IndicatorPoint[]; signal: IndicatorPoint[]; histogram: IndicatorPoint[] } | null;
+  srLevels: { support: number[]; resistance: number[] };
+}
+
+export interface ChartSignalMarker {
+  time: number;
+  type: "buy-signal" | "sell-signal" | "volume-spike" | "rsi-extreme" | "breakout" | "breakdown" | string;
+  position: "aboveBar" | "belowBar" | "inBar";
+  title: string;
+}
+
+export interface ChartMarketData {
+  candles: ChartCandle[];
+  indicators: ChartIndicators | null;
+  markers: ChartSignalMarker[];
+  intervalMs: number;
+  gaps: number;
+  suspect: number;
 }
