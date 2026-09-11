@@ -3,10 +3,11 @@ import { logSourceAttempt, logSourceResult } from "./monitor";
 import type { FinancialSourceMeta, NormalizedPeriod, SourceRole } from "./types";
 
 /**
- * Financial Provider Interface — Phase 1 Source Priority Engine.
+ * Financial Provider Interface — Source Priority Engine.
+ *
  * Providers are tried in ascending priority (1 = highest).
- * SSI Flashconnect will register as priority 1 when configured;
- * VNDirect is temporary primary (priority 2).
+ * VNDIRECT DStock is PRIMARY for financial statements.
+ * SSI is not part of this router (Market Data domain only).
  */
 
 export interface FinancialProviderResult {

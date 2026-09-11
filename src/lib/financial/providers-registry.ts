@@ -1,42 +1,23 @@
 import "server-only";
-import { env } from "../env";
 import type { FinancialProvider } from "./provider";
 import { fetchVndirectFinancials } from "./vndirect-fs";
 
 /**
- * Source Priority Registry
+ * Financial Statement Source Registry
  *
- * CURRENT (temporary):
- *   1. SSI Flashconnect — not configured → skipped
- *   2. VNDirect structured FS — active primary
+ * Architecture lock (Orca Financial Data Engine):
+ *   - VNDIRECT DStock / api-finfo = PRIMARY for BCTC (B/S, I/S, C/F)
+ *   - SSI FastConnect = Market Data only (price, OHLCV, quote, order book, index)
+ *   - SSI is NEVER registered here as a BCTC provider or fallback
  *
- * NEXT WEEK:
- *   Enable SSI as priority 1; VNDirect becomes fallback (priority 2).
+ * Pipeline: Collector → Raw → Validate → Normalize → Analytics
+ * AI only consumes validated/normalized periods — never invents missing figures.
  */
-
-function ssiConfigured(): boolean {
-  return Boolean(
-    process.env.SSI_FLASHCONNECT_URL ||
-      process.env.SSI_API_KEY ||
-      process.env.SSI_BASE_URL,
-  );
-}
-
-const ssiProvider: FinancialProvider = {
-  id: "ssi-flashconnect",
-  role: "PRIMARY_SOURCE_OF_TRUTH",
-  priority: 1,
-  enabled: () => ssiConfigured(),
-  fetch: async () => {
-    // Adapter lands when SSI credentials + endpoints are wired.
-    return null;
-  },
-};
 
 const vndirectProvider: FinancialProvider = {
   id: "vndirect-fs",
-  role: "FAST_STRUCTURED_DATA_SOURCE",
-  priority: 2,
+  role: "PRIMARY_SOURCE_OF_TRUTH",
+  priority: 1,
   enabled: () => true,
   fetch: async (symbol, opts) => {
     const r = await fetchVndirectFinancials(symbol, opts);
@@ -45,15 +26,14 @@ const vndirectProvider: FinancialProvider = {
       periods: r.periods,
       latencyMs: r.latencyMs,
       sourceId: "vndirect-fs",
-      role: "FAST_STRUCTURED_DATA_SOURCE",
-      priority: 2,
-      note: "VNDirect financial_statements (tạm thời primary — SSI ưu tiên khi sẵn sàng)",
+      role: "PRIMARY_SOURCE_OF_TRUTH",
+      priority: 1,
+      note: "VNDIRECT DStock / api-finfo financial_statements — primary BCTC",
     };
   },
 };
 
 export function listFinancialProviders(): FinancialProvider[] {
-  // env.vnstock reserved; intentionally not registered after VNStock decommission.
-  void env;
-  return [ssiProvider, vndirectProvider];
+  // SSI intentionally omitted — Market Data domain only.
+  return [vndirectProvider];
 }
