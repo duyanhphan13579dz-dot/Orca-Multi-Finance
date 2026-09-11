@@ -5,25 +5,29 @@ import { normalizePeriodMetrics, periodsToStatementTables } from "./statements";
 import { metricKeyFromItemCode, metricProfileForSymbol, type MetricProfile } from "./metric-dictionary";
 
 /**
- * VNDIRECT Financial Collector — PRIMARY BCTC (cùng nguồn structured mà DStock dùng).
+ * DStock / VNDIRECT Financial Collector — PRIMARY BCTC.
  *
- * Tham chiếu hiển thị (SYMBOL động — HPG chỉ là ví dụ mẫu):
- *   BS  https://dstock.vndirect.com.vn/bang-can-doi-ke-toan/{SYMBOL}
- *   IS  https://dstock.vndirect.com.vn/bao-cao-ket-qua-kinh-doanh/{SYMBOL}
- *   CF  https://dstock.vndirect.com.vn/bao-cao-luu-chuyen-tien-te/{SYMBOL}
+ * API mà chính DStock gọi (api-finfo):
+ *   GET /v4/financial_models?q=codeList:{SYMBOL}~modelType:...~displayLevel:0,1,2,3
+ *   GET /v4/financial_statements?q=code:{SYMBOL}~reportType:QUARTER|ANNUAL~modelType:...
  *
- * Feed: api-finfo /v4/financial_statements
- *   modelType 1 = Balance Sheet
- *   modelType 2 = Income Statement
- *   modelType 3 = Cash Flow
- * reportType QUARTER/ANNUAL = mẫu hợp nhất DStock (KHÔNG dùng QUARTER2/ANNUAL2 — lệch số).
- * Không scrape HTML. SSI không tham gia domain này.
+ * modelType: 1 = BS, 2 = IS, 3 = CF (NON_FINANCE / TT202).
+ * reportType: QUARTER | ANNUAL (không dùng *2 — lệch số).
+ *
+ * itemCode map bám itemVnName từ financial_models (DStock), không đoán mò.
  */
 
 const VND = "vndirect-fs";
 const BASE = (process.env.VNDIRECT_BASE_URL ?? "https://api-finfo.vndirect.com.vn").replace(/\/$/, "");
 
-/** DStock-aligned itemCode → canonical metric (NON_FINANCE / TT202). */
+const DSTOCK_HEADERS: Record<string, string> = {
+  Accept: "application/json",
+  Origin: "https://dstock.vndirect.com.vn",
+  Referer: "https://dstock.vndirect.com.vn/",
+  "User-Agent": "OrcaFinancial/1.0 (+dstock-api-finfo)",
+};
+
+/** Balance sheet — itemVnName từ DStock financial_models modelType=1 */
 const BS: Record<number, keyof NormalizedMetrics> = {
   11000: "currentAssets",
   11100: "cash",
@@ -54,37 +58,61 @@ const BS: Record<number, keyof NormalizedMetrics> = {
   12700: "totalAssets",
 };
 
+/**
+ * Income statement — map theo itemVnName DStock (HPG / TT202 NON_FINANCE):
+ *   21000 Tổng doanh thu HĐKD
+ *   21001 Doanh thu thuần
+ *   22100 Giá vốn hàng bán
+ *   23100 Lợi nhuận gộp
+ *   23110 LN thuần từ HĐKD
+ *   23800 LN kế toán trước thuế
+ *   22070 Chi phí thuế TNDN
+ *   23003 LN sau thuế TNDN
+ *   23000 LN sau thuế của CT mẹ
+ */
 const IS: Record<number, keyof NormalizedMetrics> = {
-  21000: "netRevenue",
-  21001: "revenue",
+  21000: "revenue",
+  21001: "netRevenue",
   22100: "cogs",
-  22200: "grossProfit",
-  22500: "interestExpense",
-  22510: "interestExpense",
-  23000: "profitBeforeTax",
-  23003: "operatingProfit",
+  23100: "grossProfit",
+  23110: "operatingProfit",
   23010: "ebit",
-  23100: "ebitda",
-  23600: "taxExpense",
-  23800: "netIncome",
-  23810: "netIncomeParent",
+  22510: "interestExpense",
+  22500: "interestExpense",
+  23800: "profitBeforeTax",
+  22070: "taxExpense",
+  23003: "netIncome",
+  23000: "netIncomeParent",
 };
 
+/**
+ * Cash flow — map theo itemVnName DStock:
+ *   32000 LC tiền thuần từ HĐKD
+ *   33000 LC tiền thuần từ HĐ đầu tư
+ *   34000 LC tiền thuần từ HĐ tài chính
+ *   32100 Mua sắm TSCĐ (capex)
+ *   36000 / 37000 tiền đầu / cuối kỳ
+ */
 const CF: Record<number, keyof NormalizedMetrics> = {
-  31200: "operatingCashFlow",
-  32000: "investingCashFlow",
+  32000: "operatingCashFlow",
+  33000: "investingCashFlow",
+  34000: "financingCashFlow",
   32100: "capex",
-  32500: "capex",
-  33000: "financingCashFlow",
   36000: "cashBegin",
   37000: "cashEnd",
 };
 
-/** URL provenance theo mã — không hardcode HPG. */
 const DSTOCK_URL: Record<1 | 2 | 3, (sym: string) => string> = {
   1: (s) => `https://dstock.vndirect.com.vn/bang-can-doi-ke-toan/${s}`,
   2: (s) => `https://dstock.vndirect.com.vn/bao-cao-ket-qua-kinh-doanh/${s}`,
   3: (s) => `https://dstock.vndirect.com.vn/bao-cao-luu-chuyen-tien-te/${s}`,
+};
+
+/** modelType sets giống request DStock (IS có 2,90,102,412). */
+const MODEL_TYPES: Record<1 | 2 | 3, string> = {
+  1: "1,91,103,413",
+  2: "2,90,102,412",
+  3: "3,92,104,414",
 };
 
 interface RawRow {
@@ -126,8 +154,17 @@ function resolveMetricKey(
   modelType: number,
   profile: MetricProfile,
 ): keyof NormalizedMetrics | null {
-  const map = modelType === 1 ? BS : modelType === 2 ? IS : modelType === 3 ? CF : null;
-  return (map && map[itemCode]) || metricKeyFromItemCode(itemCode, profile);
+  // Prefer explicit DStock maps; fall back to dictionary
+  const primary =
+    modelType === 1 || modelType === 91 || modelType === 103 || modelType === 413
+      ? BS
+      : modelType === 2 || modelType === 90 || modelType === 102 || modelType === 412
+        ? IS
+        : modelType === 3 || modelType === 92 || modelType === 104 || modelType === 414
+          ? CF
+          : null;
+  if (primary && primary[itemCode]) return primary[itemCode];
+  return metricKeyFromItemCode(itemCode, profile);
 }
 
 function pivot(rows: RawRow[], profile: MetricProfile, symbol: string): NormalizedPeriod[] {
@@ -149,11 +186,14 @@ function pivot(rows: RawRow[], profile: MetricProfile, symbol: string): Normaliz
       const code = Number(r.itemCode);
       if (!Number.isFinite(code)) continue;
       const mt = Number(r.modelType);
-      if (mt === 1 || mt === 2 || mt === 3) modelCounts[mt as 1 | 2 | 3] += 1;
+      if (mt === 1 || mt === 91 || mt === 103 || mt === 413) modelCounts[1] += 1;
+      else if (mt === 2 || mt === 90 || mt === 102 || mt === 412) modelCounts[2] += 1;
+      else if (mt === 3 || mt === 92 || mt === 104 || mt === 414) modelCounts[3] += 1;
       const key = resolveMetricKey(code, mt, profile);
       if (!key) continue;
       const v = r.numericValue;
       if (!Number.isFinite(v)) continue;
+      // Prefer first fill; explicit maps use primary totals first via sort of codes if needed
       if (metrics[key] == null) metrics[key] = v;
     }
 
@@ -177,7 +217,7 @@ function pivot(rows: RawRow[], profile: MetricProfile, symbol: string): Normaliz
       source: VND,
       sourceUrl: DSTOCK_URL[bestModel](symbol),
       filingDate: head.modifiedDate ?? head.createdDate ?? null,
-      confidence: 0.8,
+      confidence: 0.85,
       metrics: normalized,
     });
   }
@@ -203,27 +243,25 @@ export function periodsToLegacyRows(
 
 async function fetchStatementPage(
   symbol: string,
-  modelType: 1 | 2 | 3,
+  modelKind: 1 | 2 | 3,
   reportType: "QUARTER" | "ANNUAL",
   size: number,
 ): Promise<RawRow[]> {
-  const path = `/v4/financial_statements?q=code:${symbol}~modelType:${modelType}~reportType:${reportType}&size=${size}&sort=fiscalDate:desc`;
+  const modelType = MODEL_TYPES[modelKind];
+  const path = `/v4/financial_statements?q=code:${symbol}~reportType:${reportType}~modelType:${modelType}&size=${size}&sort=fiscalDate:desc`;
   const res = await httpJson<{ data?: RawRow[] }>(`${BASE}${path}`, {
     provider: VND,
-    timeoutMs: 14_000,
+    timeoutMs: 16_000,
     retries: 1,
-    headers: {
-      Accept: "application/json",
-      "User-Agent": "OrcaFinancial/1.0 (+vndirect-fs)",
-    },
+    headers: DSTOCK_HEADERS,
   });
   if (!res.ok || !res.data?.data?.length) return [];
   return res.data.data;
 }
 
 /**
- * Lấy BCTC chuẩn DStock cho mọi mã: 3 báo cáo × (quý + năm) từ api-finfo.
- * reportType = QUARTER | ANNUAL (khớp số liệu DStock).
+ * Lấy BCTC trực tiếp API DStock (api-finfo) cho mọi mã.
+ * 3 báo cáo × quý + năm; map itemCode theo itemVnName DStock.
  */
 export async function fetchVndirectFinancials(
   symbol: string,
@@ -236,8 +274,8 @@ export async function fetchVndirectFinancials(
 
   const jobs: Promise<RawRow[]>[] = [];
   for (const model of [1, 2, 3] as const) {
-    jobs.push(fetchStatementPage(sym, model, "QUARTER", 800));
-    jobs.push(fetchStatementPage(sym, model, "ANNUAL", 400));
+    jobs.push(fetchStatementPage(sym, model, "QUARTER", 2000));
+    jobs.push(fetchStatementPage(sym, model, "ANNUAL", 800));
   }
   const chunks = await Promise.all(jobs);
   const all = chunks.flat();
