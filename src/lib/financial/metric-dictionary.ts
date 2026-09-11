@@ -312,7 +312,7 @@ export function metricProfileForSymbol(symbolOrProfile?: string | MetricProfile)
   if (symbolOrProfile === "bank" || symbolOrProfile === "nonbank") return symbolOrProfile;
   if (!symbolOrProfile) return "nonbank";
   const p = getIndustryProfile(String(symbolOrProfile));
-  return p?.id === "bank" ? "bank" : "nonbank";
+  return p.id === "BANKING" ? "bank" : "nonbank";
 }
 
 export const INCOME_METRIC_ORDER: MetricKey[] = [
