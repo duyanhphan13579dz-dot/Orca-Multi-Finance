@@ -4,6 +4,11 @@ import type { NormalizedMetrics, NormalizedPeriod } from "./types";
 import { normalizePeriodMetrics, periodsToStatementTables } from "./statements";
 import { metricKeyFromItemCode, metricProfileForSymbol, type MetricProfile } from "./metric-dictionary";
 
+/**
+ * VNDIRECT Financial Collector — PRIMARY BCTC source (api-finfo structured).
+ * DStock pages are provenance/reference URLs only; do not scrape HTML long-term.
+ * SSI is not used here (Market Data domain).
+ */
 const VND = "vndirect-fs";
 const BASE = (process.env.VNDIRECT_BASE_URL ?? "https://api-finfo.vndirect.com.vn").replace(/\/$/, "");
 
@@ -134,7 +139,7 @@ function pivot(rows: RawRow[], profile: MetricProfile): NormalizedPeriod[] {
       auditStatus: "unknown",
       currency: "VND",
       source: VND,
-      sourceUrl: `${BASE}/v4/financial_statements?q=code:${head.code}`,
+      sourceUrl: `https://dstock.vndirect.com.vn/bao-cao-ket-qua-kinh-doanh/${String(head.code).toUpperCase()}`,
       filingDate: head.modifiedDate ?? head.createdDate ?? null,
       confidence: 0.75,
       metrics: normalized,
@@ -169,6 +174,7 @@ export async function fetchVndirectFinancials(
   const t0 = performance.now();
   const limit = opts?.limitPeriods ?? 12;
 
+  // Structured DStock feed via api-finfo (not HTML scrape)
   const queries = [
     `/v4/financial_statements?q=code:${sym}~reportType:QUARTER2&size=400&sort=fiscalDate:desc`,
     `/v4/financial_statements?q=code:${sym}~reportType:ANNUAL2&size=200&sort=fiscalDate:desc`,
