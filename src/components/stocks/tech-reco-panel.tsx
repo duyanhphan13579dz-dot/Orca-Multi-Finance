@@ -73,14 +73,12 @@ export const TechRecoPanel = memo(function TechRecoPanel({ symbol }: { symbol: s
               <span className="ml-1.5 text-[12px] font-normal text-text-muted">/ 100</span>
             </div>
           </div>
-          <p className="max-w-md text-[12px] leading-relaxed text-text-secondary">{quant.summary}</p>
         </div>
 
-        <div className="relative h-2 overflow-hidden rounded-full bg-background-secondary">
-          <div className="absolute inset-y-0 left-1/2 w-px bg-border-subtle" />
+        <div className="h-1.5 overflow-hidden rounded-full bg-surface-elevated">
           <div
-            className={`absolute inset-y-0 ${quant.score >= 0 ? "left-1/2 bg-positive/70" : "right-1/2 bg-negative/70"}`}
-            style={{ width: `${Math.min(50, Math.abs(quant.score) / 2)}%` }}
+            className={`h-full rounded-full ${quant.score >= 0 ? "bg-positive" : "bg-negative"}`}
+            style={{ width: `${Math.min(100, Math.abs(quant.score))}%` }}
           />
         </div>
 
@@ -136,18 +134,6 @@ export const TechRecoPanel = memo(function TechRecoPanel({ symbol }: { symbol: s
             )}
           </div>
         )}
-
-        {!llm && llmStatus === "skipped" && (
-          <p className="text-[10.5px] text-text-muted">LLM chưa bật (AI_PROVIDER_KEY) — đang hiển thị điểm quant.</p>
-        )}
-        {!llm && (llmStatus === "unavailable" || llmStatus === "failed") && (
-          <p className="text-[10.5px] text-text-muted">LLM tạm không phản hồi — giữ điểm quant kỹ thuật.</p>
-        )}
-
-        <p className="text-[10px] leading-relaxed text-text-muted">
-          Tổng hợp kỹ thuật phục vụ nghiên cứu — không phải khuyến nghị mua/bán. Kết hợp thêm cơ bản & thanh khoản trước
-          khi quyết định.
-        </p>
       </div>
     </Panel>
   );
