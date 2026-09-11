@@ -7,7 +7,7 @@ import { metricKeyFromItemCode, metricProfileForSymbol, type MetricProfile } fro
 /**
  * VNDIRECT Financial Collector — PRIMARY BCTC (cùng nguồn structured mà DStock dùng).
  *
- * Tham chiếu hiển thị:
+ * Tham chiếu hiển thị (SYMBOL động — HPG chỉ là ví dụ mẫu):
  *   BS  https://dstock.vndirect.com.vn/bang-can-doi-ke-toan/{SYMBOL}
  *   IS  https://dstock.vndirect.com.vn/bao-cao-ket-qua-kinh-doanh/{SYMBOL}
  *   CF  https://dstock.vndirect.com.vn/bao-cao-luu-chuyen-tien-te/{SYMBOL}
@@ -79,6 +79,7 @@ const CF: Record<number, keyof NormalizedMetrics> = {
   37000: "cashEnd",
 };
 
+/** URL provenance theo mã — không hardcode HPG. */
 const DSTOCK_URL: Record<1 | 2 | 3, (sym: string) => string> = {
   1: (s) => `https://dstock.vndirect.com.vn/bang-can-doi-ke-toan/${s}`,
   2: (s) => `https://dstock.vndirect.com.vn/bao-cao-ket-qua-kinh-doanh/${s}`,
@@ -155,7 +156,10 @@ function pivot(rows: RawRow[], profile: MetricProfile, symbol: string): Normaliz
       if (metrics[key] == null) metrics[key] = v;
     }
 
-    const bestModel = ([1, 2, 3] as const).sort((a, b) => modelCounts[b] - modelCounts[a])[0];
+    let bestModel: 1 | 2 | 3 = 2;
+    for (const m of [1, 2, 3] as const) {
+      if (modelCounts[m] > modelCounts[bestModel]) bestModel = m;
+    }
     const normalized = normalizePeriodMetrics(metrics);
     const filled = Object.values(normalized).filter((v) => v != null).length;
     if (filled < 3) continue;
@@ -217,7 +221,7 @@ async function fetchStatementPage(
 }
 
 /**
- * Lấy BCTC chuẩn DStock: 3 báo cáo × (quý + năm) từ api-finfo.
+ * Lấy BCTC chuẩn DStock cho mọi mã: 3 báo cáo × (quý + năm) từ api-finfo.
  * UI tách income / balance / cashflow qua periodsToStatementTables.
  */
 export async function fetchVndirectFinancials(
