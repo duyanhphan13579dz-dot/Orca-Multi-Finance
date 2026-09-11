@@ -82,6 +82,7 @@ export default function StockFundamentalsPage({ params }: { params: Promise<{ sy
   const h = data.financialHealth;
   const fm = data.financialMeta;
   const growth = data.financialGrowth;
+  // FinancialHealthResult uses scores.overall (not score)
   const overall = h?.scores?.overall ?? null;
   const g = h?.groups;
 
