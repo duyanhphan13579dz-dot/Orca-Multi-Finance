@@ -216,7 +216,7 @@ export async function buildMarketIntel(): Promise<{ intel: MarketIntel; meta: Me
 
       const intel: MarketIntel = {
         session,
-        sessionHint: session.label,
+        sessionHint: session.labelVi,
         indices,
         indicesAvailable,
         breadth,
@@ -260,11 +260,35 @@ function fmtCompactLocal(n: number): string {
   return String(Math.round(n));
 }
 
+export interface IndexConstituent {
+  symbol: string;
+  name: string | null;
+  sector: string | null;
+  price: number | null;
+  changePercent: number | null;
+}
+
 export interface IndexDetail {
   code: string;
   name: string;
+  exchange: string;
+  note: string | null;
   quote: IndexQuote | null;
   session: VnSessionInfo;
+  pressure: {
+    available: boolean;
+    buying: number;
+    selling: number;
+    net: number | null;
+    basis: string;
+  };
+  breadth: BreadthData;
+  intel: {
+    trend: string;
+    momentum: string;
+    breadthState: string;
+    liquidity: string;
+  };
   capitalFlow: CapitalFlowAnalysis;
   contributors: {
     positive: ContributionRow[];
@@ -272,15 +296,18 @@ export interface IndexDetail {
     hasWeights: boolean;
     note: string;
   };
+  constituents: IndexConstituent[];
   liquidity: { available: boolean; note: string };
   sections: Record<string, FreshnessStatus>;
 }
 
 export async function buildIndexDetail(code: string): Promise<{ detail: IndexDetail; meta: Meta } | null> {
-  const def = VN_INDICES.find((i) => i.code === code.toUpperCase()) ?? {
-    code: code.toUpperCase(),
-    name: code.toUpperCase(),
-  };
+  const raw = code.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  const def =
+    VN_INDICES.find(
+      (i) => i.code === raw || i.aliases?.some((a) => a.toUpperCase().replace(/[^A-Z0-9]/g, "") === raw),
+    ) ?? null;
+  if (!def) return null;
 
   const [{ intel, meta }, statsRes, marketRes, foreignRes] = await Promise.all([
     buildMarketIntel(),
@@ -289,12 +316,13 @@ export async function buildIndexDetail(code: string): Promise<{ detail: IndexDet
     vndirect.getVndForeignFlow().catch(() => null),
   ]);
 
-  const quote = intel.indices?.find((i) => i.code === def.code) ?? null;
-  const constituents = (marketRes?.quotes ?? [])
+  const quote =
+    intel.indices?.find((i) => i.code === def.code || i.code === vndirect.vndIndexCode(def.code)) ?? null;
+  const boardQuotes = (marketRes?.quotes ?? [])
     .filter((c) => c.price != null)
     .sort((a, b) => Math.abs(b.changePercent ?? 0) - Math.abs(a.changePercent ?? 0));
 
-  const contribSource = constituents
+  const contribSource = boardQuotes
     .filter((c) => c.changePercent != null)
     .map((c) => ({ symbol: c.symbol, changePercent: c.changePercent, weightPct: null as number | null }));
   const computed = computeContributions(quote?.value ?? null, contribSource);
@@ -349,19 +377,96 @@ export async function buildIndexDetail(code: string): Promise<{ detail: IndexDet
         ? "Có dữ liệu giá trị giao dịch"
         : "UNAVAILABLE";
 
+  let pressure: IndexDetail["pressure"];
+  if (capitalFlow.available && capitalFlow.foreignBuy != null && capitalFlow.foreignSell != null) {
+    const total = capitalFlow.foreignBuy + capitalFlow.foreignSell;
+    const buying = total > 0 ? Math.round((capitalFlow.foreignBuy / total) * 100) : 50;
+    const selling = 100 - buying;
+    pressure = {
+      available: true,
+      buying,
+      selling,
+      net: capitalFlow.foreignNet,
+      basis: `Tỷ trọng mua/bán theo GT khối ngoại phiên ${capitalFlow.sessionDate ?? "—"} (toàn thị trường listed).`,
+    };
+  } else {
+    pressure = {
+      available: false,
+      buying: 0,
+      selling: 0,
+      net: null,
+      basis: "Chưa có dữ liệu áp lực mua/bán từ khối ngoại cho phiên này.",
+    };
+  }
+
+  const breadth: BreadthData =
+    statsRes && (statsRes.advances > 0 || statsRes.declines > 0)
+      ? {
+          advancers: statsRes.advances,
+          decliners: statsRes.declines,
+          unchanged: statsRes.unchanged,
+          source: "vndirect vnmarket_prices",
+          available: true,
+          note: `Độ rộng sàn gắn với ${def.code}`,
+        }
+      : intel.breadth;
+
+  const trendComp = intel.condition.components.find((c) => c.key === "trend");
+  const liqComp = intel.condition.components.find((c) => c.key === "liquidity");
+  const breadthComp = intel.condition.components.find((c) => c.key === "breadth");
+  const intelBlock = {
+    trend:
+      trendComp?.available && trendComp.score != null ? `${Math.round(trendComp.score)}/100` : "UNAVAILABLE",
+    momentum:
+      intel.condition.score != null
+        ? `${Math.round(intel.condition.score)} (${intel.condition.rating})`
+        : "UNAVAILABLE",
+    breadthState:
+      breadthComp?.available && breadthComp.score != null
+        ? `${Math.round(breadthComp.score)}/100`
+        : breadth.available
+          ? `${breadth.advancers}↑ ${breadth.decliners}↓`
+          : "UNAVAILABLE",
+    liquidity:
+      liqComp?.available && liqComp.score != null
+        ? `${Math.round(liqComp.score)}/100`
+        : liquidityAvailable
+          ? liquidityNote
+          : "UNAVAILABLE",
+  };
+
+  const constituents: IndexConstituent[] = boardQuotes.slice(0, 40).map((q) => {
+    const sec = getSecurity(q.symbol);
+    return {
+      symbol: q.symbol,
+      name: sec?.name ?? null,
+      sector: sec?.sector ?? null,
+      price: q.price ?? null,
+      changePercent: q.changePercent ?? null,
+    };
+  });
+
   const detail: IndexDetail = {
     code: def.code,
     name: def.name,
+    exchange: def.exchange,
+    note: quote ? null : `Chưa lấy được quote chỉ số ${def.code} từ nguồn VN — giữ trạng thái UNAVAILABLE.`,
     quote,
     session: intel.session,
+    pressure,
+    breadth,
+    intel: intelBlock,
     capitalFlow,
     contributors,
+    constituents,
     liquidity: { available: liquidityAvailable, note: liquidityNote },
     sections: {
       quote: quote ? meta.freshness : "UNAVAILABLE",
       flow: capitalFlow.available ? "FRESH" : "UNAVAILABLE",
       liquidity: liquidityAvailable ? "FRESH" : "UNAVAILABLE",
       contributors: contributors.positive.length || contributors.negative.length ? "FRESH" : "UNAVAILABLE",
+      breadth: breadth.available ? "FRESH" : "UNAVAILABLE",
+      pressure: pressure.available ? "FRESH" : "UNAVAILABLE",
     },
   };
 
