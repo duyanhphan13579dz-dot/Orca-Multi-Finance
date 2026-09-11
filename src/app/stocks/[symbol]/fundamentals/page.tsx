@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useApi } from "@/lib/hooks";
 import type { VnStockDetail } from "@/lib/services/stocks";
 import { Chg, fmtCompact, Loading, Panel, Unavailable } from "@/components/ui";
+import { AiFinancialPanel } from "@/components/stocks/ai-financial-panel";
 
 /* ───────────────── helpers ───────────────── */
 
@@ -60,7 +61,6 @@ function div(a: number | null, b: number | null): number | null {
   return a / b;
 }
 
-/** Tính chỉ số từ snapshot BCTC (cùng nguồn trang Báo cáo tài chính) */
 function ratiosFromSnapshot(detail: VnStockDetail) {
   const income = detail.financials.income?.[0] as Record<string, unknown> | undefined;
   const balance = detail.financials.balance?.[0] as Record<string, unknown> | undefined;
@@ -102,7 +102,6 @@ function ratiosFromSnapshot(detail: VnStockDetail) {
     assetTurnover: div(rev, assets),
     receivableDays: recv != null && rev ? (recv * 365) / rev : null,
     inventoryDays: inv != null && rev ? (inv * 365) / rev : null,
-    // structure
     cash,
     currentAssets: ca,
     longTermAssets: n(balance?.longTermAssets) ?? (assets != null && ca != null ? assets - ca : null),
@@ -153,8 +152,6 @@ function fmtX(v: number | null | undefined): string {
   return `${v.toFixed(2)}x`;
 }
 
-/* ───────────────── SVG charts ───────────────── */
-
 function ScoreGauge({ score, label }: { score: number | null; label: string }) {
   const s = score != null ? Math.max(0, Math.min(100, score)) : 0;
   const r = 42;
@@ -187,33 +184,25 @@ function ScoreGauge({ score, label }: { score: number | null; label: string }) {
   );
 }
 
-function RadarScores({
-  scores,
-}: {
-  scores: { key: string; label: string; value: number | null }[];
-}) {
+function RadarScores({ scores }: { scores: { key: string; label: string; value: number | null }[] }) {
   const cx = 100;
   const cy = 100;
   const R = 70;
-  const n = scores.length;
-  if (n < 3) return null;
-
+  const nPts = scores.length;
+  if (nPts < 3) return null;
   const pt = (i: number, ratio: number) => {
-    const ang = -Math.PI / 2 + (i * 2 * Math.PI) / n;
+    const ang = -Math.PI / 2 + (i * 2 * Math.PI) / nPts;
     return [cx + R * ratio * Math.cos(ang), cy + R * ratio * Math.sin(ang)] as const;
   };
-
   const grid = [0.25, 0.5, 0.75, 1].map((ratio) => {
     const pts = scores.map((_, i) => pt(i, ratio).join(",")).join(" ");
     return <polygon key={ratio} points={pts} fill="none" stroke="rgba(148,163,184,0.2)" strokeWidth="1" />;
   });
-
   const dataPts = scores.map((s, i) => {
     const v = s.value != null ? Math.max(0, Math.min(100, s.value)) / 100 : 0;
     return pt(i, v);
   });
   const poly = dataPts.map((p) => p.join(",")).join(" ");
-
   return (
     <svg width="220" height="220" viewBox="0 0 200 200" className="mx-auto">
       {grid}
@@ -245,9 +234,7 @@ function BarChart({
   colors: string[];
   height?: number;
 }) {
-  if (!series.length) {
-    return <p className="py-6 text-center text-[11px] text-ink-3">Chưa có chuỗi số liệu BCTC.</p>;
-  }
+  if (!series.length) return <p className="py-6 text-center text-[11px] text-ink-3">Chưa có chuỗi số liệu BCTC.</p>;
   const allVals = series.flatMap((s) => seriesKeys.map((k) => s.values[k.key])).filter((v): v is number => v != null);
   const maxAbs = Math.max(...allVals.map((v) => Math.abs(v)), 1);
   const w = Math.max(280, series.length * 48);
@@ -257,7 +244,6 @@ function BarChart({
   const chartH = height - padB - padT;
   const groupW = (w - padL * 2) / series.length;
   const barW = Math.min(14, (groupW * 0.7) / seriesKeys.length);
-
   return (
     <div className="overflow-x-auto">
       <svg width={w} height={height} className="min-w-full">
@@ -273,15 +259,7 @@ function BarChart({
                 const x = gx - (seriesKeys.length * barW) / 2 + j * barW;
                 const y = v >= 0 ? padT + chartH / 2 - h : padT + chartH / 2;
                 return (
-                  <rect
-                    key={sk.key}
-                    x={x}
-                    y={y}
-                    width={barW - 1}
-                    height={Math.max(h, 1)}
-                    fill={colors[j % colors.length]}
-                    rx={2}
-                  >
+                  <rect key={sk.key} x={x} y={y} width={barW - 1} height={Math.max(h, 1)} fill={colors[j % colors.length]} rx={2}>
                     <title>
                       {sk.label} · {s.period}: {fmtCompact(v)}
                     </title>
@@ -320,38 +298,22 @@ function LineChart({
   height?: number;
   asPercent?: boolean;
 }) {
-  if (!series.length) {
-    return <p className="py-6 text-center text-[11px] text-ink-3">Chưa có chuỗi số liệu.</p>;
-  }
+  if (!series.length) return <p className="py-6 text-center text-[11px] text-ink-3">Chưa có chuỗi số liệu.</p>;
   const w = Math.max(280, series.length * 56);
   const pad = { l: 8, r: 8, t: 12, b: 28 };
   const chartH = height - pad.t - pad.b;
   const chartW = w - pad.l - pad.r;
-
-  const allVals = series
-    .flatMap((s) => seriesKeys.map((k) => s.values[k.key]))
-    .filter((v): v is number => v != null);
-  if (!allVals.length) {
-    return <p className="py-6 text-center text-[11px] text-ink-3">Chưa đủ điểm dữ liệu.</p>;
-  }
+  const allVals = series.flatMap((s) => seriesKeys.map((k) => s.values[k.key])).filter((v): v is number => v != null);
+  if (!allVals.length) return <p className="py-6 text-center text-[11px] text-ink-3">Chưa đủ điểm dữ liệu.</p>;
   const minV = Math.min(...allVals, 0);
   const maxV = Math.max(...allVals, 0);
   const span = maxV - minV || 1;
-
   const xAt = (i: number) => pad.l + (series.length === 1 ? chartW / 2 : (i / (series.length - 1)) * chartW);
   const yAt = (v: number) => pad.t + chartH - ((v - minV) / span) * chartH;
-
   return (
     <div className="overflow-x-auto">
       <svg width={w} height={height} className="min-w-full">
-        <line
-          x1={pad.l}
-          y1={yAt(0)}
-          x2={w - pad.r}
-          y2={yAt(0)}
-          stroke="rgba(148,163,184,0.25)"
-          strokeDasharray="4 3"
-        />
+        <line x1={pad.l} y1={yAt(0)} x2={w - pad.r} y2={yAt(0)} stroke="rgba(148,163,184,0.25)" strokeDasharray="4 3" />
         {seriesKeys.map((sk, j) => {
           const pts: string[] = [];
           series.forEach((s, i) => {
@@ -391,16 +353,10 @@ function LineChart({
   );
 }
 
-function PieChart({
-  slices,
-}: {
-  slices: { label: string; value: number | null; color: string }[];
-}) {
+function PieChart({ slices }: { slices: { label: string; value: number | null; color: string }[] }) {
   const valid = slices.filter((s) => s.value != null && s.value > 0) as { label: string; value: number; color: string }[];
   const total = valid.reduce((a, s) => a + s.value, 0);
-  if (!total) {
-    return <p className="py-6 text-center text-[11px] text-ink-3">Chưa có cơ cấu từ BCTC.</p>;
-  }
+  if (!total) return <p className="py-6 text-center text-[11px] text-ink-3">Chưa có cơ cấu từ BCTC.</p>;
   const R = 56;
   const cx = 70;
   const cy = 70;
@@ -421,7 +377,6 @@ function PieChart({
       pct: (s.value / total) * 100,
     });
   }
-
   return (
     <div className="flex flex-wrap items-center gap-4">
       <svg width="140" height="140" viewBox="0 0 140 140">
@@ -446,8 +401,6 @@ function PieChart({
   );
 }
 
-/* ───────────────── page ───────────────── */
-
 export default function StockFundamentalsPage({ params }: { params: Promise<{ symbol: string }> }) {
   const [symbol, setSymbol] = useState("");
   useEffect(() => {
@@ -459,7 +412,6 @@ export default function StockFundamentalsPage({ params }: { params: Promise<{ sy
   });
 
   const derived = useMemo(() => (data ? ratiosFromSnapshot(data) : null), [data]);
-
   const incomeSeries = useMemo(
     () =>
       seriesFrom(data?.financials.income as Record<string, unknown>[] | null, [
@@ -521,11 +473,8 @@ export default function StockFundamentalsPage({ params }: { params: Promise<{ sy
     { key: "cf", label: "Dòng tiền", value: h?.scores?.cashflow ?? null },
     { key: "eff", label: "Hiệu quả", value: h?.scores?.efficiency ?? null },
   ];
-
-  // Ưu tiên chỉ số tính từ snapshot BCTC; fallback health.groups
   const r = derived;
   const g = h?.groups;
-
   const pick = (fromSnap: number | null | undefined, fromHealth: number | null | undefined) =>
     fromSnap != null ? fromSnap : fromHealth ?? null;
 
@@ -585,6 +534,8 @@ export default function StockFundamentalsPage({ params }: { params: Promise<{ sy
           </div>
         </div>
       </Panel>
+
+      <AiFinancialPanel symbol={symbol} />
 
       <div className="grid gap-3 lg:grid-cols-2">
         <Panel title="Cơ cấu tài sản (kỳ mới nhất)">
@@ -681,8 +632,7 @@ export default function StockFundamentalsPage({ params }: { params: Promise<{ sy
           ))}
         </div>
         <p className="mt-2 text-[10px] text-ink-3">
-          Số liệu lấy trực tiếp từ snapshot trang Báo cáo tài chính (income / balance / cashflow), không nguồn
-          riêng.
+          Số liệu lấy trực tiếp từ snapshot trang Báo cáo tài chính (income / balance / cashflow).
         </p>
       </Panel>
 
