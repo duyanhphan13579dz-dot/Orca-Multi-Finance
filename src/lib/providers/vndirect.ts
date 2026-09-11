@@ -71,77 +71,56 @@ async function vndGet<T>(path: string, timeoutMs = 12_000): Promise<T> {
 export async function getVndUniverse(): Promise<
   { symbol: string; name: string | null; exchange: string | null; industry: string | null }[]
 > {
-  const pageSize = 200;
-  const out: { symbol: string; name: string | null; exchange: string | null; industry: string | null }[] = [];
-  let page = 1;
-  let totalPages = 1;
-  while (page <= totalPages && page <= 20) {
-    const payload = await vndGet<Page<VndStockMeta>>(
-      `/v4/stocks?q=type:stock~status:listed&size=${pageSize}&page=${page}&fields=code,companyName,floor,industryName,status,type`,
-    );
-    const rows = payload.data ?? [];
-    totalPages = Math.max(1, Number(payload.totalPages) || 1);
-    for (const r of rows) {
+  const payload = await vndGet<Page<VndStockMeta>>("/v4/stocks?q=type:STOCK~status:LISTED&size=3000&page=1", 20_000);
+  const rows = payload.data ?? [];
+  return rows
+    .map((r) => {
       const symbol = String(r.code ?? "").toUpperCase();
-      if (!symbol) continue;
-      out.push({
+      if (!symbol) return null;
+      return {
         symbol,
         name: r.companyName ?? r.companyNameEng ?? null,
-        exchange: (r.floor ?? null)?.toUpperCase() ?? null,
+        exchange: r.floor ?? null,
         industry: r.industryName ?? null,
-      });
-    }
-    if (!rows.length) break;
-    page += 1;
-  }
-  if (!out.length) throw new ProviderError("vndirect: empty universe", VNDIRECT);
-  return out;
+      };
+    })
+    .filter((x): x is NonNullable<typeof x> => x != null);
 }
 
 export async function getVndLatestSessionDate(): Promise<string> {
-  const payload = await vndGet<Page<{ date?: string; code?: string }>>(
-    `/v4/vnmarket_prices?q=code:VNINDEX&size=1&sort=date:desc`,
-  );
+  const payload = await vndGet<Page<{ date?: string }>>("/v4/stock_prices?size=1&sort=date:desc", 10_000);
   const d = payload.data?.[0]?.date;
-  if (!d) throw new ProviderError("vndirect: cannot resolve session date", VNDIRECT);
-  return d.slice(0, 10);
+  if (!d) throw new ProviderError("vndirect: no session date", VNDIRECT);
+  return String(d).slice(0, 10);
 }
 
 export async function getVndIndices(): Promise<{ items: IndexQuote[]; sourceTs: number | null }> {
-  const date = await getVndLatestSessionDate();
-  const codes = ["VNINDEX", "VN30", "HNX", "UPCOM", "VN100", "HNX30"];
-  const payload = await vndGet<Page<VndPriceRow>>(
-    `/v4/vnmarket_prices?q=code:${codes.join(",")}~date:${date}&size=20&sort=code:asc`,
-  );
+  const codes = ["VNINDEX", "VN30", "HNX", "HNX30", "UPCOM"];
+  const items: IndexQuote[] = [];
   let newest: number | null = null;
-  const items = (payload.data ?? [])
-    .map((r): IndexQuote | null => {
-      const code = String(r.code ?? "").toUpperCase();
-      const value = num(r.close);
-      if (!code || value == null) return null;
-      const chg = num(r.change);
-      const pct = num(r.pctChange) ?? num(r.changePercent) ?? num(r.changeRatio);
-      const ts = r.date ? Date.parse(`${r.date}T${r.time ?? "15:00:00"}+07:00`) : null;
-      if (ts != null && Number.isFinite(ts) && (newest == null || ts > newest)) newest = ts;
-      return {
+  for (const code of codes) {
+    try {
+      const payload = await vndGet<Page<VndPriceRow>>(
+        `/v4/vnmarket_prices?q=code:${code}&size=1&sort=date:desc`,
+        10_000,
+      );
+      const r = payload.data?.[0];
+      if (!r?.close) continue;
+      const t = r.date ? Date.parse(`${r.date}T15:00:00+07:00`) : null;
+      if (t != null && Number.isFinite(t) && (newest == null || t > newest)) newest = t;
+      items.push({
         code,
         name: code,
-        value,
-        change: chg ?? 0,
-        changePercent: pct ?? 0,
+        value: r.close,
+        change: num(r.change) ?? 0,
+        changePercent: num(r.changePercent) ?? num(r.changeRatio) ?? num(r.pctChange) ?? 0,
         volume: num(r.nmVolume),
         updatedAt: r.date ?? null,
-      };
-    })
-    .filter((x): x is IndexQuote => x != null);
-
-  const PRIORITY = ["VNINDEX", "VN30", "HNX", "UPCOM", "HNX30", "VN100"];
-  items.sort((a, b) => {
-    const ia = PRIORITY.indexOf(a.code);
-    const ib = PRIORITY.indexOf(b.code);
-    return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
-  });
-
+      });
+    } catch {
+      /* skip */
+    }
+  }
   if (!items.length) throw new ProviderError("vndirect: empty indices", VNDIRECT);
   return { items, sourceTs: newest };
 }
@@ -150,39 +129,31 @@ export async function getVndMarketQuotes(
   sessionDate?: string,
 ): Promise<{ quotes: Quote[]; sourceTs: number | null; sessionDate: string }> {
   const date = sessionDate ?? (await getVndLatestSessionDate());
-  const pageSize = 200;
-  const quotes: Quote[] = [];
+  const pageSize = 500;
   let page = 1;
   let totalPages = 1;
+  const quotes: Quote[] = [];
   let newest: number | null = null;
 
-  while (page <= totalPages && page <= 25) {
+  while (page <= totalPages && page <= 12) {
     const payload = await vndGet<Page<VndPriceRow>>(
-      `/v4/stock_prices?q=date:${date}&size=${pageSize}&page=${page}&sort=code:asc`,
-      18_000,
+      `/v4/stock_prices?q=date:${date}~type:STOCK&size=${pageSize}&page=${page}`,
+      20_000,
     );
-    const rows = payload.data ?? [];
+    const data = payload.data ?? [];
     totalPages = Math.max(1, Number(payload.totalPages) || 1);
-    for (const r of rows) {
+    for (const r of data) {
       const symbol = String(r.code ?? "").toUpperCase();
       const price = num(r.close);
       if (!symbol || price == null || price <= 0) continue;
-      const cp =
-        num(r.pctChange) != null
-          ? num(r.pctChange)
-          : num(r.changePercent) != null
-            ? num(r.changePercent)
-            : num(r.changeRatio) != null
-              ? (num(r.changeRatio) as number) * 100
-              : null;
-      const ts = r.date ? Date.parse(`${r.date}T${r.time ?? "15:00:00"}+07:00`) : null;
-      if (ts != null && Number.isFinite(ts) && (newest == null || ts > newest)) newest = ts;
+      const t = r.date ? Date.parse(`${r.date}T15:00:00+07:00`) : null;
+      if (t != null && Number.isFinite(t) && (newest == null || t > newest)) newest = t;
       quotes.push({
         symbol,
         assetClass: "stock",
         price,
         change: num(r.change),
-        changePercent: cp,
+        changePercent: num(r.changePercent) ?? num(r.changeRatio) ?? num(r.pctChange),
         open: num(r.open),
         high: num(r.high),
         low: num(r.low),
@@ -194,120 +165,104 @@ export async function getVndMarketQuotes(
         updatedAt: r.date ?? null,
       });
     }
-    if (!rows.length) break;
+    if (!data.length) break;
     page += 1;
   }
 
-  if (!quotes.length) throw new ProviderError("vndirect: empty market board", VNDIRECT);
+  if (!quotes.length) throw new ProviderError("vndirect: empty market quotes", VNDIRECT);
   return { quotes, sourceTs: newest, sessionDate: date };
 }
 
 export async function getVndQuotes(symbols: string[]): Promise<{ quotes: Quote[]; sourceTs: number | null }> {
-  const chunks = symbols.slice(0, 40).map((s) => s.toUpperCase());
-  if (!chunks.length) return { quotes: [], sourceTs: null };
+  const uniq = [...new Set(symbols.map((s) => s.toUpperCase()).filter(Boolean))].slice(0, 40);
+  if (!uniq.length) return { quotes: [], sourceTs: null };
   const date = await getVndLatestSessionDate();
-  const payload = await vndGet<Page<VndPriceRow>>(
-    `/v4/stock_prices?q=code:${chunks.join(",")}~date:${date}&size=${chunks.length}&sort=code:asc`,
-  );
+  const quotes: Quote[] = [];
   let newest: number | null = null;
-  const quotes = (payload.data ?? [])
-    .map((r): Quote | null => {
-      const symbol = String(r.code ?? "").toUpperCase();
-      const price = num(r.close);
-      if (!symbol || price == null || price <= 0) return null;
-      const tsDate = r.date ? Date.parse(r.date) : null;
-      const cp =
-        num(r.pctChange) != null
-          ? num(r.pctChange)
-          : num(r.changeRatio) != null
-            ? (num(r.changeRatio) as number) * 100
-            : num(r.changePercent);
-      if (tsDate != null && (newest == null || tsDate > newest)) newest = tsDate;
-      return {
-        symbol,
-        assetClass: "stock",
-        price,
-        change: num(r.change),
-        changePercent: cp,
-        open: num(r.open),
-        high: num(r.high),
-        low: num(r.low),
-        volume: num(r.nmVolume),
-        quoteVolume: num(r.nmValue),
-        referencePrice: num(r.basicPrice),
-        ceilingPrice: num(r.ceilingPrice),
-        floorPrice: num(r.floorPrice),
-        updatedAt: r.date ?? null,
-      };
-    })
-    .filter((x): x is Quote => x !== null);
-  if (!quotes.length) throw new ProviderError("vndirect: empty payload", VNDIRECT);
+  const results = await Promise.allSettled(
+    uniq.map((s) =>
+      vndGet<Page<VndPriceRow>>(`/v4/stock_prices?q=code:${s}~date:${date}&size=1&sort=date:desc`, 10_000),
+    ),
+  );
+  for (const r of results) {
+    if (r.status !== "fulfilled") continue;
+    const row = r.value.data?.[0];
+    if (!row) continue;
+    const symbol = String(row.code ?? "").toUpperCase();
+    const price = num(row.close);
+    if (!symbol || price == null) continue;
+    const t = row.date ? Date.parse(`${row.date}T15:00:00+07:00`) : null;
+    if (t != null && Number.isFinite(t) && (newest == null || t > newest)) newest = t;
+    quotes.push({
+      symbol,
+      assetClass: "stock",
+      price,
+      change: num(row.change),
+      changePercent: num(row.changePercent) ?? num(row.changeRatio) ?? num(row.pctChange),
+      open: num(row.open),
+      high: num(row.high),
+      low: num(row.low),
+      volume: num(row.nmVolume),
+      quoteVolume: num(row.nmValue),
+      referencePrice: num(row.basicPrice),
+      ceilingPrice: num(row.ceilingPrice),
+      floorPrice: num(row.floorPrice),
+      updatedAt: row.date ?? null,
+    });
+  }
+  if (!quotes.length) throw new ProviderError("vndirect: empty quotes batch", VNDIRECT);
   return { quotes, sourceTs: newest };
 }
 
 export async function getVndOhlcv(symbol: string, size = 250): Promise<OhlcvBar[]> {
-  const s = encodeURIComponent(symbol.toUpperCase());
-  const res = await httpJson<{ data?: VndPriceRow[] }>(
-    `${base()}/v4/stock_prices?sort=date:desc&q=code:${s}&size=${size}&fields=code,date,open,high,low,close,nmVolume`,
-    { provider: VNDIRECT, timeoutMs: 9_000, retries: 1 },
+  const payload = await vndGet<Page<VndPriceRow>>(
+    `/v4/stock_prices?q=code:${symbol.toUpperCase()}&size=${Math.min(size, 1500)}&sort=date:asc`,
+    18_000,
   );
-  if (!res.ok || !res.data?.data) throw new ProviderError(`vndirect: ${res.error ?? "unreachable"}`, VNDIRECT);
-  const bars = res.data.data
-    .map((r): OhlcvBar | null => {
-      const t = r.date ? Date.parse(r.date) : NaN;
-      const o = num(r.open);
-      const h = num(r.high);
-      const l = num(r.low);
-      const c = num(r.close);
-      if (!Number.isFinite(t) || o == null || h == null || l == null || c == null) return null;
-      return { time: t, open: o, high: h, low: l, close: c, volume: num(r.nmVolume) ?? 0 };
-    })
-    .filter((x): x is OhlcvBar => x !== null)
-    .sort((a, b) => a.time - b.time);
-  if (!bars.length) throw new ProviderError("vndirect: empty ohlcv", VNDIRECT);
+  const rows = payload.data ?? [];
+  const bars: OhlcvBar[] = [];
+  for (const r of rows) {
+    const t = r.date ? Date.parse(`${r.date}T15:00:00+07:00`) : NaN;
+    const o = num(r.open);
+    const h = num(r.high);
+    const l = num(r.low);
+    const c = num(r.close);
+    if (!Number.isFinite(t) || o == null || h == null || l == null || c == null) continue;
+    bars.push({ time: t, open: o, high: h, low: l, close: c, volume: num(r.nmVolume) ?? 0 });
+  }
+  if (!bars.length) throw new ProviderError(`vndirect: empty ohlcv ${symbol}`, VNDIRECT);
   return bars;
 }
 
 export function vndIndexCode(code: string): string {
-  const c = code.toUpperCase().replace(/[^A-Z0-9]/g, "");
-  const map: Record<string, string> = {
-    VNINDEX: "VNINDEX",
-    VNI: "VNINDEX",
-    VN30: "VN30",
-    VN100: "VN100",
-    HNXINDEX: "HNX",
-    HNX: "HNX",
-    HNX30: "HNX30",
-    UPCOM: "UPCOM",
-  };
-  return map[c] ?? c;
+  const c = code.toUpperCase();
+  if (c === "VNINDEX" || c === "VN-INDEX") return "VNINDEX";
+  if (c === "HNXINDEX" || c === "HNX-INDEX") return "HNX";
+  return c;
 }
 
-const INDEX_CODES = new Set(["VNINDEX", "VN30", "VN100", "HNX", "HNXINDEX", "HNX30", "UPCOM", "VNI"]);
-
 export function isVnIndexSymbol(symbol: string): boolean {
-  return INDEX_CODES.has(symbol.toUpperCase().replace(/[^A-Z0-9]/g, ""));
+  const c = symbol.toUpperCase();
+  return ["VNINDEX", "VN30", "HNX", "HNX30", "UPCOM", "VN100", "HNXINDEX"].includes(c);
 }
 
 export async function getVndIndexOhlcv(code: string, size = 250): Promise<OhlcvBar[]> {
-  const c = encodeURIComponent(vndIndexCode(code));
+  const idx = vndIndexCode(code);
   const payload = await vndGet<Page<VndPriceRow>>(
-    `/v4/vnmarket_prices?q=code:${c}&size=${Math.min(size, 500)}&sort=date:desc`,
-    15_000,
+    `/v4/vnmarket_prices?q=code:${idx}&size=${Math.min(size, 1500)}&sort=date:asc`,
+    18_000,
   );
-  const bars = (payload.data ?? [])
-    .map((r): OhlcvBar | null => {
-      const t = r.date ? Date.parse(r.date) : NaN;
-      const o = num(r.open);
-      const h = num(r.high);
-      const l = num(r.low);
-      const cl = num(r.close);
-      if (!Number.isFinite(t) || o == null || h == null || l == null || cl == null) return null;
-      return { time: t, open: o, high: h, low: l, close: cl, volume: num(r.nmVolume) ?? 0 };
-    })
-    .filter((x): x is OhlcvBar => x != null)
-    .sort((a, b) => a.time - b.time);
-  if (!bars.length) throw new ProviderError("vndirect: empty index ohlcv", VNDIRECT);
+  const bars: OhlcvBar[] = [];
+  for (const r of payload.data ?? []) {
+    const t = r.date ? Date.parse(`${r.date}T15:00:00+07:00`) : NaN;
+    const o = num(r.open) ?? num(r.close);
+    const h = num(r.high) ?? o;
+    const l = num(r.low) ?? o;
+    const c = num(r.close);
+    if (!Number.isFinite(t) || o == null || h == null || l == null || c == null) continue;
+    bars.push({ time: t, open: o, high: h, low: l, close: c, volume: num(r.nmVolume) ?? 0 });
+  }
+  if (!bars.length) throw new ProviderError(`vndirect: empty index ohlcv ${code}`, VNDIRECT);
   return bars;
 }
 
@@ -316,29 +271,26 @@ export type VndIndexSessionStats = {
   advances: number;
   declines: number;
   unchanged: number;
-  noTrade: number;
-  volume: number | null;
   value: number | null;
-  date: string | null;
   sourceTs: number | null;
 };
 
 export async function getVndIndexSessionStats(code: string): Promise<VndIndexSessionStats> {
-  const c = encodeURIComponent(vndIndexCode(code));
-  const payload = await vndGet<Page<VndPriceRow>>(`/v4/vnmarket_prices?q=code:${c}&size=1&sort=date:desc`);
+  const idx = vndIndexCode(code);
+  const payload = await vndGet<Page<VndPriceRow>>(
+    `/v4/vnmarket_prices?q=code:${idx}&size=1&sort=date:desc`,
+    10_000,
+  );
   const r = payload.data?.[0];
-  if (!r) throw new ProviderError("vndirect: empty index stats", VNDIRECT);
-  const ts = r.date ? Date.parse(`${r.date}T${r.time ?? "15:00:00"}+07:00`) : null;
+  if (!r) throw new ProviderError(`vndirect: no index stats ${code}`, VNDIRECT);
+  const t = r.date ? Date.parse(`${r.date}T15:00:00+07:00`) : null;
   return {
-    code: String(r.code ?? code).toUpperCase(),
+    code: idx,
     advances: num(r.advances) ?? 0,
     declines: num(r.declines) ?? 0,
     unchanged: num(r.noChange) ?? 0,
-    noTrade: num(r.noTrade) ?? 0,
-    volume: num(r.nmVolume),
-    value: num(r.nmValue) ?? num(r.accumulatedVal),
-    date: r.date ?? null,
-    sourceTs: ts != null && Number.isFinite(ts) ? ts : null,
+    value: num(r.accumulatedVal) ?? num(r.nmValue),
+    sourceTs: t != null && Number.isFinite(t) ? t : null,
   };
 }
 
@@ -389,6 +341,68 @@ export async function getVndForeignFlow(sessionDate?: string): Promise<VndForeig
     totalPages = Math.max(1, Number(payload.totalPages) || 1);
     for (const r of data) {
       if ((r.type ?? "STOCK").toUpperCase() !== "STOCK") continue;
+      const symbol = String(r.code ?? "").toUpperCase();
+      if (!symbol) continue;
+      const bv = num(r.buyVal) ?? 0;
+      const sv = num(r.sellVal) ?? 0;
+      const nv = num(r.netVal) ?? bv - sv;
+      buyVal += bv;
+      sellVal += sv;
+      netVal += nv;
+      stockCount += 1;
+      if (Math.abs(nv) > 0) {
+        rows.push({ symbol, buyVal: bv, sellVal: sv, netVal: nv, floor: r.floor ?? null });
+      }
+    }
+    if (!data.length) break;
+    page += 1;
+  }
+
+  rows.sort((a, b) => b.netVal - a.netVal);
+  const topNetBuy = rows.filter((r) => r.netVal > 0).slice(0, 8);
+  const topNetSell = [...rows].filter((r) => r.netVal < 0).sort((a, b) => a.netVal - b.netVal).slice(0, 8);
+  const ts = Date.parse(`${date}T15:00:00+07:00`);
+
+  return {
+    sessionDate: date,
+    buyVal,
+    sellVal,
+    netVal,
+    stockCount,
+    topNetBuy,
+    topNetSell,
+    sourceTs: Number.isFinite(ts) ? ts : null,
+  };
+}
+
+/** Aggregate foreign investor flow on ETFs (type:ETF) for a session date. */
+export async function getVndEtfFlow(sessionDate?: string): Promise<VndForeignFlowSummary> {
+  const date = sessionDate ?? (await getVndLatestSessionDate());
+  const pageSize = 100;
+  let page = 1;
+  let totalPages = 1;
+  let buyVal = 0;
+  let sellVal = 0;
+  let netVal = 0;
+  let stockCount = 0;
+  const rows: VndForeignFlowRow[] = [];
+
+  while (page <= totalPages && page <= 10) {
+    const payload = await vndGet<
+      Page<{
+        code?: string;
+        type?: string;
+        floor?: string;
+        buyVal?: number;
+        sellVal?: number;
+        netVal?: number;
+        tradingDate?: string;
+      }>
+    >(`/v4/foreigns?q=tradingDate:${date}~type:ETF&size=${pageSize}&page=${page}`, 18_000);
+    const data = payload.data ?? [];
+    totalPages = Math.max(1, Number(payload.totalPages) || 1);
+    for (const r of data) {
+      if ((r.type ?? "ETF").toUpperCase() !== "ETF") continue;
       const symbol = String(r.code ?? "").toUpperCase();
       if (!symbol) continue;
       const bv = num(r.buyVal) ?? 0;
