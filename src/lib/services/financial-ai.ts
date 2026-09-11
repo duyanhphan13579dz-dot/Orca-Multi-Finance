@@ -98,7 +98,6 @@ function avgGrowth(values: number[]): number | null {
     rates.push((cur - prev) / Math.abs(prev));
   }
   if (!rates.length) return null;
-  // Winsorize extremes
   const clipped = rates.map((r) => Math.max(-0.5, Math.min(0.8, r)));
   return clipped.reduce((a, b) => a + b, 0) / clipped.length;
 }
@@ -295,8 +294,12 @@ function tryParseStructured(text: string): FinancialAiAnalysis["structured"] {
   }
 }
 
-/** Prompt tối ưu: ngắn, buộc bám số, output có cấu trúc */
-const SYS_ANALYSIS = `Bạn là chuyên gia phân tích BCTC doanh nghiệp niêm yết Việt Nam (ORCA).
+/** Prompt tối ưu — fence JSON dùng string thường để tránh phá template literal */
+const SYS_ANALYSIS_JSON_HINT =
+  'Cuối cùng thêm block:\n```json\n{"healthSummary":"...","trendSummary":"...","strengths":["..."],"risks":["..."],"watchpoints":["..."],"outlook":"..."}\n```';
+
+const SYS_ANALYSIS =
+  `Bạn là chuyên gia phân tích BCTC doanh nghiệp niêm yết Việt Nam (ORCA).
 Nguồn DUY NHẤT: JSON context (snapshot trang Báo cáo tài chính + điểm sức khỏe + ngành).
 
 BẮT BUỘC:
@@ -313,10 +316,7 @@ CẤU TRÚC:
 5) Rủi ro & theo dõi (3–4 bullet)
 6) Outlook 1–2 câu
 
-Cuối cùng thêm block:
-\\`\\`\\`json
-{"healthSummary":"...","trendSummary":"...","strengths":["..."],"risks":["..."],"watchpoints":["..."],"outlook":"..."}
-\\`\\`\\``;
+` + SYS_ANALYSIS_JSON_HINT;
 
 const SYS_FORECAST = `Bạn là chuyên gia dự báo doanh thu ngắn hạn từ chuỗi BCTC quý VN.
 Chỉ giải thích kịch bản dựa trên số HISTORY + FORECAST_ENGINE đã tính sẵn trong context.
@@ -388,7 +388,6 @@ export async function analyzeFinancialHealthAi(
     timeoutMs: 50_000,
   });
 
-  // fallback role analysis if report model fails
   if (!llm) {
     llm = await llmChat("analysis", {
       system: SYS_ANALYSIS,
@@ -468,7 +467,6 @@ export async function forecastRevenueAi(
   if (!detailRes?.detail) return null;
 
   const income = (detailRes.detail.financials.income ?? []) as Record<string, unknown>[];
-  // income[0] = mới nhất → reverse cho chuỗi thời gian tăng
   const chrono = [...income]
     .map((r) => ({
       period: periodOf(r),
@@ -511,7 +509,6 @@ export async function forecastRevenueAi(
 
   const vals = chrono.map((r) => r.netRevenue);
   const qoq = avgGrowth(vals);
-  // approximate YoY if ≥5 points (lag 4)
   let yoy: number | null = null;
   if (vals.length >= 5) {
     const yoyRates: number[] = [];
@@ -525,7 +522,6 @@ export async function forecastRevenueAi(
     }
   }
 
-  // Blend: ưu tiên QoQ, neo nhẹ về YoY/4 nếu có
   let baseG = qoq ?? 0.02;
   if (yoy != null) baseG = 0.65 * baseG + 0.35 * (yoy / 4);
   baseG = Math.max(-0.25, Math.min(0.35, baseG));
