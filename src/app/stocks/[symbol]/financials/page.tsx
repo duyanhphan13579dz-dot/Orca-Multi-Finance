@@ -208,9 +208,47 @@ export default function StockFinancialsPage({ params }: { params: Promise<{ symb
         )}
 
         <p className="mt-2 text-[10px] text-ink-3">
-          Schema chuẩn hóa theo Financial Report Data Engine. Nguồn primary: VNDIRECT DStock; đối chiếu SSC
-          (official filings) khi có.
+          Số liệu tuyệt đối (VND) từ api-finfo VNDIRECT — cùng nguồn structured với DStock. DStock UI thường
+          hiển thị đơn vị <strong className="text-ink-2">tỷ đồng</strong>.
         </p>
+      </Panel>
+
+      <Panel title="Nguồn đối chiếu (VNDIRECT DStock)">
+        <ul className="space-y-1.5 text-[12px]">
+          <li>
+            <span className="text-ink-3">Bảng cân đối kế toán: </span>
+            <a
+              className="text-accent underline-offset-2 hover:underline"
+              href={`https://dstock.vndirect.com.vn/bang-can-doi-ke-toan/${symbol}`}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              dstock.vndirect.com.vn/bang-can-doi-ke-toan/{symbol}
+            </a>
+          </li>
+          <li>
+            <span className="text-ink-3">Kết quả kinh doanh: </span>
+            <a
+              className="text-accent underline-offset-2 hover:underline"
+              href={`https://dstock.vndirect.com.vn/bao-cao-ket-qua-kinh-doanh/${symbol}`}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              dstock.vndirect.com.vn/bao-cao-ket-qua-kinh-doanh/{symbol}
+            </a>
+          </li>
+          <li>
+            <span className="text-ink-3">Lưu chuyển tiền tệ: </span>
+            <a
+              className="text-accent underline-offset-2 hover:underline"
+              href={`https://dstock.vndirect.com.vn/bao-cao-luu-chuyen-tien-te/${symbol}`}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              dstock.vndirect.com.vn/bao-cao-luu-chuyen-tien-te/{symbol}
+            </a>
+          </li>
+        </ul>
       </Panel>
 
       {data.notes.length > 0 && (
