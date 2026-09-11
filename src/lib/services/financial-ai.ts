@@ -1,5 +1,5 @@
 import "server-only";
-import { llmChat, llmConfigured } from "../ai/gateway";
+import { llmChat, llmConfigured, modelFor } from "../ai/gateway";
 import { collectFactNumbers, validateOutput } from "../ai/validate";
 import { buildMeta } from "../freshness";
 import type { Meta } from "../types";
@@ -23,6 +23,31 @@ export interface FinancialAiAnalysis {
   sourceNote: string;
 }
 
+export interface RevenueForecastPoint {
+  period: string;
+  netRevenue: number | null;
+  kind: "actual" | "forecast";
+  scenario?: "base" | "bull" | "bear";
+}
+
+export interface RevenueForecastResult {
+  symbol: string;
+  method: string;
+  currencyNote: string;
+  history: RevenueForecastPoint[];
+  forecast: RevenueForecastPoint[];
+  metrics: {
+    lastRevenue: number | null;
+    avgQoqGrowth: number | null;
+    avgYoyGrowth: number | null;
+    baseGrowthUsed: number | null;
+  };
+  narrative: string | null;
+  model: string | null;
+  usedLlm: boolean;
+  sourceNote: string;
+}
+
 function num(v: unknown): number | null {
   return typeof v === "number" && Number.isFinite(v) ? v : null;
 }
@@ -35,14 +60,55 @@ function pct(v: number | null): string {
 function compact(v: number | null): string {
   if (v == null) return "n/a";
   const a = Math.abs(v);
-  if (a >= 1e12) return `${(v / 1e12).toFixed(2)}T`;
-  if (a >= 1e9) return `${(v / 1e9).toFixed(2)}B`;
-  if (a >= 1e6) return `${(v / 1e6).toFixed(2)}M`;
+  if (a >= 1e12) return `${(v / 1e12).toFixed(2)} nghìn tỷ`;
+  if (a >= 1e9) return `${(v / 1e9).toFixed(2)} tỷ`;
+  if (a >= 1e6) return `${(v / 1e6).toFixed(2)} triệu`;
   return v.toFixed(0);
 }
 
-/** Xây context có cấu trúc từ snapshot BCTC + health engine + sector trend */
-function buildContext(symbol: string, detail: NonNullable<Awaited<ReturnType<typeof getVnStockDetail>>>["detail"], sector: Awaited<ReturnType<typeof getSectorTrendForSymbol>>) {
+function periodOf(r: Record<string, unknown>): string {
+  if (typeof r.period === "string" && r.period) return r.period;
+  if (r.year != null && r.quarter != null) return `${r.year}-Q${r.quarter}`;
+  if (r.year != null) return String(r.year);
+  return "—";
+}
+
+function nextQuarterLabel(period: string, i: number): string {
+  const m = period.match(/(\d{4})-?Q?(\d)/i);
+  if (!m) return `F+${i}`;
+  let y = Number(m[1]);
+  let q = Number(m[2]);
+  for (let k = 0; k < i; k++) {
+    q += 1;
+    if (q > 4) {
+      q = 1;
+      y += 1;
+    }
+  }
+  return `${y}-Q${q}`;
+}
+
+function avgGrowth(values: number[]): number | null {
+  if (values.length < 2) return null;
+  const rates: number[] = [];
+  for (let i = 1; i < values.length; i++) {
+    const prev = values[i - 1]!;
+    const cur = values[i]!;
+    if (prev === 0) continue;
+    rates.push((cur - prev) / Math.abs(prev));
+  }
+  if (!rates.length) return null;
+  // Winsorize extremes
+  const clipped = rates.map((r) => Math.max(-0.5, Math.min(0.8, r)));
+  return clipped.reduce((a, b) => a + b, 0) / clipped.length;
+}
+
+/** Context chỉ từ snapshot trang BCTC (+ health/sector phụ trợ) */
+function buildContext(
+  symbol: string,
+  detail: NonNullable<Awaited<ReturnType<typeof getVnStockDetail>>>["detail"],
+  sector: Awaited<ReturnType<typeof getSectorTrendForSymbol>>,
+) {
   const income = (detail.financials.income ?? []) as Record<string, unknown>[];
   const balance = (detail.financials.balance ?? []) as Record<string, unknown>[];
   const cashflow = (detail.financials.cashflow ?? []) as Record<string, unknown>[];
@@ -54,15 +120,17 @@ function buildContext(symbol: string, detail: NonNullable<Awaited<ReturnType<typ
   const g = detail.financialGrowth;
   const fm = detail.financialMeta;
 
-  const periods = income.slice(0, 6).map((r) => ({
-    period: r.period ?? `${r.year ?? ""}${r.quarter != null ? `Q${r.quarter}` : ""}`,
+  const periods = income.slice(0, 8).map((r) => ({
+    period: periodOf(r),
     netRevenue: num(r.netRevenue) ?? num(r.revenue),
     grossProfit: num(r.grossProfit),
+    operatingProfit: num(r.operatingProfit) ?? num(r.ebit),
     netIncome: num(r.netIncome) ?? num(r.netProfit),
   }));
 
   return {
     symbol,
+    dataSource: "financials_snapshot_page",
     quote: detail.quote
       ? {
           price: detail.quote.price,
@@ -78,7 +146,7 @@ function buildContext(symbol: string, detail: NonNullable<Awaited<ReturnType<typ
       reportTypeLabel: fm?.reportTypeLabel ?? null,
     },
     latestIncome: {
-      period: latestI.period ?? null,
+      period: periodOf(latestI),
       netRevenue: num(latestI.netRevenue) ?? num(latestI.revenue),
       grossProfit: num(latestI.grossProfit),
       operatingProfit: num(latestI.operatingProfit) ?? num(latestI.ebit),
@@ -125,11 +193,11 @@ function buildContext(symbol: string, detail: NonNullable<Awaited<ReturnType<typ
           latestPeriod: g.latestPeriod,
           yoy: g.yoy
             .filter((c) => c.changePct != null)
-            .slice(0, 8)
+            .slice(0, 10)
             .map((c) => ({ metric: c.metric, changePct: c.changePct })),
           qoq: g.qoq
             .filter((c) => c.changePct != null)
-            .slice(0, 8)
+            .slice(0, 10)
             .map((c) => ({ metric: c.metric, changePct: c.changePct })),
         }
       : null,
@@ -157,49 +225,38 @@ function deterministicFallback(ctx: ReturnType<typeof buildContext>): FinancialA
   const yoyNi = ctx.growth?.yoy.find((x) => x.metric === "netIncome" || x.metric === "netRevenue");
   const lines: string[] = [];
 
-  lines.push(
-    `**${ctx.symbol}** — đánh giá sức khỏe tài chính (engine nội bộ, không LLM).`,
-  );
+  lines.push(`**${ctx.symbol}** — đánh giá sức khỏe tài chính từ snapshot BCTC (engine, chưa LLM).`);
   lines.push(
     `Điểm tổng: **${overall != null ? Math.round(overall) : "n/a"}/100**` +
       (h?.industry ? ` · Ngành: ${h.industry.labelVi}` : "") +
       (ctx.financialMeta.latestPeriod ? ` · Kỳ: ${ctx.financialMeta.latestPeriod}` : ""),
   );
-
   if (h?.scores) {
     lines.push(
       `Trụ cột — Sinh lời: ${h.scores.profitability ?? "n/a"}, Thanh khoản: ${h.scores.liquidity ?? "n/a"}, Đòn bẩy: ${h.scores.leverage ?? "n/a"}, Dòng tiền: ${h.scores.cashflow ?? "n/a"}, Hiệu quả: ${h.scores.efficiency ?? "n/a"}.`,
     );
   }
-
   lines.push(
-    `Snapshot BCTC — DT thuần: ${compact(ctx.latestIncome.netRevenue)}, LNST: ${compact(ctx.latestIncome.netIncome)}, Tổng TS: ${compact(ctx.latestBalance.totalAssets)}, VCSH: ${compact(ctx.latestBalance.equity)}, OCF: ${compact(ctx.latestCashflow.operatingCashFlow)}.`,
+    `BCTC — DT thuần: ${compact(ctx.latestIncome.netRevenue)}, LNST: ${compact(ctx.latestIncome.netIncome)}, Tổng TS: ${compact(ctx.latestBalance.totalAssets)}, VCSH: ${compact(ctx.latestBalance.equity)}, OCF: ${compact(ctx.latestCashflow.operatingCashFlow)}.`,
   );
-
   if (ctx.latestRatios) {
     lines.push(
       `Chỉ số — ROE ${pct(ctx.latestRatios.roe)}, ROA ${pct(ctx.latestRatios.roa)}, biên ròng ${pct(ctx.latestRatios.netMargin)}, Nợ/VCSH ${ctx.latestRatios.debtToEquity?.toFixed(2) ?? "n/a"}x.`,
     );
   }
-
   if (sector) {
     lines.push(
       `Xu hướng ngành **${sector.sector}**: ${sector.trendLabelVi ?? "—"}` +
         (sector.trendScore != null ? ` (điểm ${sector.trendScore})` : "") +
-        (sector.avgChangePercent != null ? `, %TB ngành ${pct(sector.avgChangePercent / 100)}` : "") +
         ".",
     );
   }
-
   if (yoyNi?.changePct != null) {
     lines.push(`Tăng trưởng gần nhất (${yoyNi.metric} YoY): ${pct(yoyNi.changePct)}.`);
   }
-
   if (h?.riskFlags?.length) {
     lines.push(`Cờ rủi ro: ${h.riskFlags.slice(0, 4).join("; ")}.`);
   }
-
-  lines.push("Gợi ý: bật AI_PROVIDER_KEY để có luận điểm AI chi tiết hơn (cùng số liệu snapshot BCTC).");
 
   return {
     symbol: ctx.symbol,
@@ -210,21 +267,20 @@ function deterministicFallback(ctx: ReturnType<typeof buildContext>): FinancialA
       strengths: [],
       risks: h?.riskFlags?.slice(0, 5) ?? [],
       watchpoints: ["Theo dõi kỳ BCTC tiếp theo", "Đối chiếu DStock"],
-      outlook: "Phân tích deterministic — chờ LLM để có outlook định tính.",
+      outlook: "Phân tích deterministic — bật OpenRouter để có luận điểm AI.",
     },
     model: null,
     latencyMs: null,
     usedLlm: false,
-    sourceNote: "Deterministic từ snapshot BCTC + health engine + sector trend",
+    sourceNote: "Deterministic từ snapshot BCTC + health + sector",
   };
 }
 
 function tryParseStructured(text: string): FinancialAiAnalysis["structured"] {
-  // Tìm block JSON nếu model trả về
   const m = text.match(/```json\s*([\s\S]*?)```/i) ?? text.match(/\{[\s\S]*"healthSummary"[\s\S]*\}/);
   if (!m) return null;
   try {
-    const raw = m[1] ?? m[0];
+    const raw = (m[1] ?? m[0]).trim();
     const j = JSON.parse(raw) as Record<string, unknown>;
     return {
       healthSummary: String(j.healthSummary ?? ""),
@@ -239,22 +295,36 @@ function tryParseStructured(text: string): FinancialAiAnalysis["structured"] {
   }
 }
 
-const SYS = `Bạn là chuyên gia phân tích tài chính doanh nghiệp niêm yết Việt Nam (ORCA).
-Nhiệm vụ: đánh giá SỨC KHỎE TÀI CHÍNH và XU HƯỚNG từ context JSON (snapshot BCTC + điểm engine + ngành).
+/** Prompt tối ưu: ngắn, buộc bám số, output có cấu trúc */
+const SYS_ANALYSIS = `Bạn là chuyên gia phân tích BCTC doanh nghiệp niêm yết Việt Nam (ORCA).
+Nguồn DUY NHẤT: JSON context (snapshot trang Báo cáo tài chính + điểm sức khỏe + ngành).
 
-Quy tắc bắt buộc:
-1) CHỈ dùng số trong context — không bịa doanh thu, LN, ROE, điểm.
-2) Viết tiếng Việt, rõ ràng, 4–7 đoạn ngắn.
-3) Cấu trúc nội dung:
-   - Tóm tắt sức khỏe (điểm tổng + trụ cột nổi bật)
-   - Xu hướng kết quả KD / dòng tiền / ngành
-   - Điểm mạnh (bullet)
-   - Rủi ro & điểm cần theo dõi
-   - Outlook ngắn (không khuyến nghị mua/bán tuyệt đối)
-4) Cuối bài thêm một block JSON (fenced \\'\\'\\'json) với keys:
-   healthSummary, trendSummary, strengths[], risks[], watchpoints[], outlook
-5) Đơn vị tiền: nêu rõ nếu dùng tỷ/triệu; % ghi rõ.
-6) Không disclaimer dài dòng.`;
+BẮT BUỘC:
+- Chỉ dùng số có trong context. Không bịa DT/LN/ROE/điểm.
+- Tiếng Việt, súc tích, 5–8 đoạn ngắn hoặc bullet.
+- Không khuyến nghị mua/bán tuyệt đối.
+- Đơn vị: nêu rõ tỷ/triệu VND khi trích số lớn.
+
+CẤU TRÚC:
+1) Sức khỏe: điểm tổng + 1–2 trụ cột nổi bật
+2) Xu hướng: DT/LN/OCF + YoY/QoQ nếu có
+3) Ngành: so với trendScore ngành (nếu có)
+4) Điểm mạnh (3 bullet)
+5) Rủi ro & theo dõi (3–4 bullet)
+6) Outlook 1–2 câu
+
+Cuối cùng thêm block:
+\\`\\`\\`json
+{"healthSummary":"...","trendSummary":"...","strengths":["..."],"risks":["..."],"watchpoints":["..."],"outlook":"..."}
+\\`\\`\\``;
+
+const SYS_FORECAST = `Bạn là chuyên gia dự báo doanh thu ngắn hạn từ chuỗi BCTC quý VN.
+Chỉ giải thích kịch bản dựa trên số HISTORY + FORECAST_ENGINE đã tính sẵn trong context.
+Không đổi số forecast engine. Tiếng Việt, 4–6 câu:
+- Cơ sở tăng trưởng QoQ/YoY đã dùng
+- Kịch bản base/bull/bear nghĩa là gì
+- Rủi ro làm lệch dự báo
+Không khuyến nghị mua/bán.`;
 
 export async function analyzeFinancialHealthAi(
   symbolRaw: string,
@@ -274,7 +344,7 @@ export async function analyzeFinancialHealthAi(
     return {
       analysis: {
         symbol,
-        narrative: `${symbol}: chưa có snapshot BCTC để phân tích sức khỏe tài chính.`,
+        narrative: `${symbol}: chưa có snapshot BCTC để phân tích.`,
         structured: null,
         model: null,
         latencyMs: null,
@@ -294,9 +364,8 @@ export async function analyzeFinancialHealthAi(
   }
 
   if (!llmConfigured()) {
-    const fb = deterministicFallback(ctx);
     return {
-      analysis: fb,
+      analysis: deterministicFallback(ctx),
       meta: buildMeta({
         source: detailRes.meta.source,
         sourceTimestampMs: detailRes.meta.sourceTimestamp
@@ -304,34 +373,45 @@ export async function analyzeFinancialHealthAi(
           : null,
         cached: detailRes.meta.cached,
         stale: detailRes.meta.stale,
-        note: "AI chưa cấu hình — dùng engine deterministic",
+        note: "OpenRouter/AI chưa cấu hình — deterministic",
       }),
     };
   }
 
-  const user = `Phân tích sức khỏe tài chính và xu hướng cho ${symbol}.\n\nCONTEXT (JSON):\n${JSON.stringify(ctx)}`;
+  const user = `Phân tích sức khỏe & xu hướng ${symbol} từ snapshot BCTC.\n\nCONTEXT:\n${JSON.stringify(ctx)}`;
 
-  let llm = await llmChat("analysis", {
-    system: SYS,
+  let llm = await llmChat("report", {
+    system: SYS_ANALYSIS,
     user,
-    temperature: 0.35,
+    temperature: 0.28,
     maxTokens: 1400,
-    timeoutMs: 45_000,
+    timeoutMs: 50_000,
   });
+
+  // fallback role analysis if report model fails
+  if (!llm) {
+    llm = await llmChat("analysis", {
+      system: SYS_ANALYSIS,
+      user,
+      temperature: 0.28,
+      maxTokens: 1400,
+      timeoutMs: 50_000,
+    });
+  }
 
   if (llm) {
     const facts = collectFactNumbers(ctx);
-    const val = validateOutput(llm.text, facts, 0.05);
+    const val = validateOutput(llm.text, facts, 0.08);
     if (!val.ok && val.unsupported.length > 0) {
-      const repair = await llmChat("analysis", {
-        system: `${SYS}\nSTRICT REPAIR: chỉ dùng số trong CONTEXT. Các claim trước bị loại: ${val.unsupported
+      const repair = await llmChat("report", {
+        system: `${SYS_ANALYSIS}\nSTRICT REPAIR: chỉ số trong CONTEXT. Claim lỗi: ${val.unsupported
           .slice(0, 6)
           .map((u) => u.raw)
           .join(", ")}.`,
         user,
-        temperature: 0.2,
+        temperature: 0.15,
         maxTokens: 1200,
-        timeoutMs: 40_000,
+        timeoutMs: 45_000,
       });
       if (repair) llm = repair;
     }
@@ -354,7 +434,6 @@ export async function analyzeFinancialHealthAi(
   }
 
   const structured = tryParseStructured(llm.text);
-  // Bỏ block JSON khỏi narrative hiển thị nếu có
   const narrative = llm.text.replace(/```json[\s\S]*?```/gi, "").trim();
 
   return {
@@ -365,7 +444,7 @@ export async function analyzeFinancialHealthAi(
       model: llm.model,
       latencyMs: llm.latencyMs,
       usedLlm: true,
-      sourceNote: "LLM analysis trên snapshot BCTC + health + sector trend",
+      sourceNote: `OpenRouter/LLM (${llm.model}) trên snapshot BCTC`,
     },
     meta: buildMeta({
       source: `${detailRes.meta.source}+llm:${llm.model}`,
@@ -374,7 +453,167 @@ export async function analyzeFinancialHealthAi(
         : Date.now(),
       cached: false,
       stale: detailRes.meta.stale,
-      note: `AI financial analysis · ${llm.latencyMs}ms`,
+      note: `AI financial analysis · ${llm.latencyMs}ms · model ${llm.model}`,
+    }),
+  };
+}
+
+/** Dự báo DT thuần 4 quý tới từ chuỗi income snapshot BCTC */
+export async function forecastRevenueAi(
+  symbolRaw: string,
+  horizons = 4,
+): Promise<{ forecast: RevenueForecastResult; meta: Meta } | null> {
+  const symbol = symbolRaw.toUpperCase();
+  const detailRes = await getVnStockDetail(symbol);
+  if (!detailRes?.detail) return null;
+
+  const income = (detailRes.detail.financials.income ?? []) as Record<string, unknown>[];
+  // income[0] = mới nhất → reverse cho chuỗi thời gian tăng
+  const chrono = [...income]
+    .map((r) => ({
+      period: periodOf(r),
+      netRevenue: num(r.netRevenue) ?? num(r.revenue),
+    }))
+    .filter((r) => r.netRevenue != null)
+    .slice(0, 12)
+    .reverse() as { period: string; netRevenue: number }[];
+
+  if (chrono.length < 2) {
+    return {
+      forecast: {
+        symbol,
+        method: "insufficient_history",
+        currencyNote: "VND (snapshot BCTC)",
+        history: chrono.map((r) => ({ ...r, kind: "actual" as const })),
+        forecast: [],
+        metrics: {
+          lastRevenue: chrono.at(-1)?.netRevenue ?? null,
+          avgQoqGrowth: null,
+          avgYoyGrowth: null,
+          baseGrowthUsed: null,
+        },
+        narrative: "Chưa đủ chuỗi doanh thu trên snapshot BCTC để dự báo.",
+        model: null,
+        usedLlm: false,
+        sourceNote: "Need ≥2 periods of netRevenue",
+      },
+      meta: buildMeta({
+        source: detailRes.meta.source,
+        sourceTimestampMs: detailRes.meta.sourceTimestamp
+          ? Date.parse(detailRes.meta.sourceTimestamp)
+          : null,
+        cached: detailRes.meta.cached,
+        stale: detailRes.meta.stale,
+        note: "insufficient BCTC history",
+      }),
+    };
+  }
+
+  const vals = chrono.map((r) => r.netRevenue);
+  const qoq = avgGrowth(vals);
+  // approximate YoY if ≥5 points (lag 4)
+  let yoy: number | null = null;
+  if (vals.length >= 5) {
+    const yoyRates: number[] = [];
+    for (let i = 4; i < vals.length; i++) {
+      const prev = vals[i - 4]!;
+      const cur = vals[i]!;
+      if (prev !== 0) yoyRates.push((cur - prev) / Math.abs(prev));
+    }
+    if (yoyRates.length) {
+      yoy = yoyRates.reduce((a, b) => a + b, 0) / yoyRates.length;
+    }
+  }
+
+  // Blend: ưu tiên QoQ, neo nhẹ về YoY/4 nếu có
+  let baseG = qoq ?? 0.02;
+  if (yoy != null) baseG = 0.65 * baseG + 0.35 * (yoy / 4);
+  baseG = Math.max(-0.25, Math.min(0.35, baseG));
+
+  const last = vals[vals.length - 1]!;
+  const lastPeriod = chrono[chrono.length - 1]!.period;
+  const H = Math.min(Math.max(horizons, 1), 8);
+
+  const forecastPts: RevenueForecastPoint[] = [];
+  for (let i = 1; i <= H; i++) {
+    const period = nextQuarterLabel(lastPeriod, i);
+    const base = last * Math.pow(1 + baseG, i);
+    forecastPts.push({ period, netRevenue: Math.round(base), kind: "forecast", scenario: "base" });
+    forecastPts.push({
+      period,
+      netRevenue: Math.round(base * (1 + Math.abs(baseG) * 0.8 + 0.03)),
+      kind: "forecast",
+      scenario: "bull",
+    });
+    forecastPts.push({
+      period,
+      netRevenue: Math.round(base * (1 - Math.abs(baseG) * 0.8 - 0.03)),
+      kind: "forecast",
+      scenario: "bear",
+    });
+  }
+
+  const engineCtx = {
+    symbol,
+    history: chrono,
+    metrics: {
+      lastRevenue: last,
+      avgQoqGrowth: qoq,
+      avgYoyGrowth: yoy,
+      baseGrowthUsed: baseG,
+    },
+    forecastBase: forecastPts.filter((p) => p.scenario === "base"),
+  };
+
+  let narrative: string | null = null;
+  let model: string | null = null;
+  let usedLlm = false;
+
+  if (llmConfigured()) {
+    const llm = await llmChat("report", {
+      system: SYS_FORECAST,
+      user: `Giải thích dự báo doanh thu ${symbol}:\n${JSON.stringify(engineCtx)}`,
+      temperature: 0.25,
+      maxTokens: 700,
+      timeoutMs: 40_000,
+    });
+    if (llm) {
+      narrative = llm.text;
+      model = llm.model;
+      usedLlm = true;
+    }
+  }
+
+  if (!narrative) {
+    narrative = `Dự báo DT thuần ${symbol}: tăng trưởng QoQ TB ${pct(qoq)}, YoY TB ${pct(yoy)}. Engine dùng tốc độ base ${pct(baseG)}/quý cho ${H} quý tới (base/bull/bear). Số liệu từ snapshot BCTC.`;
+  }
+
+  return {
+    forecast: {
+      symbol,
+      method: "qoq_blend_yoy_winsorized",
+      currencyNote: "VND tuyệt đối từ snapshot BCTC (cùng nguồn trang Báo cáo tài chính)",
+      history: chrono.map((r) => ({ period: r.period, netRevenue: r.netRevenue, kind: "actual" as const })),
+      forecast: forecastPts,
+      metrics: {
+        lastRevenue: last,
+        avgQoqGrowth: qoq,
+        avgYoyGrowth: yoy,
+        baseGrowthUsed: baseG,
+      },
+      narrative,
+      model: model ?? modelFor("report"),
+      usedLlm,
+      sourceNote: usedLlm ? `Engine + LLM ${model}` : "Engine deterministic từ BCTC",
+    },
+    meta: buildMeta({
+      source: detailRes.meta.source,
+      sourceTimestampMs: detailRes.meta.sourceTimestamp
+        ? Date.parse(detailRes.meta.sourceTimestamp)
+        : null,
+      cached: detailRes.meta.cached,
+      stale: detailRes.meta.stale,
+      note: `Revenue forecast · growth ${pct(baseG)}`,
     }),
   };
 }
