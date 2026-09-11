@@ -375,62 +375,99 @@ export async function getVndForeignFlow(sessionDate?: string): Promise<VndForeig
   };
 }
 
-/** Aggregate foreign investor flow on ETFs (type:ETF) for a session date. */
-export async function getVndEtfFlow(sessionDate?: string): Promise<VndForeignFlowSummary> {
-  const date = sessionDate ?? (await getVndLatestSessionDate());
-  const pageSize = 100;
-  let page = 1;
-  let totalPages = 1;
-  let buyVal = 0;
-  let sellVal = 0;
-  let netVal = 0;
-  let stockCount = 0;
-  const rows: VndForeignFlowRow[] = [];
+async function resolveEtfSessionDate(preferred?: string): Promise<string> {
+  if (preferred) return preferred;
+  try {
+    return await getVndLatestSessionDate();
+  } catch {
+    /* fall through */
+  }
+  const probe = await vndGet<Page<{ tradingDate?: string }>>(
+    `/v4/foreigns?q=type:ETF&size=1&sort=tradingDate:desc`,
+    12_000,
+  );
+  const d = probe.data?.[0]?.tradingDate;
+  if (!d) throw new ProviderError("vndirect: no ETF foreign session date", VNDIRECT);
+  return String(d).slice(0, 10);
+}
 
-  while (page <= totalPages && page <= 10) {
-    const payload = await vndGet<
-      Page<{
-        code?: string;
-        type?: string;
-        floor?: string;
-        buyVal?: number;
-        sellVal?: number;
-        netVal?: number;
-        tradingDate?: string;
-      }>
-    >(`/v4/foreigns?q=tradingDate:${date}~type:ETF&size=${pageSize}&page=${page}`, 18_000);
-    const data = payload.data ?? [];
-    totalPages = Math.max(1, Number(payload.totalPages) || 1);
-    for (const r of data) {
-      if ((r.type ?? "ETF").toUpperCase() !== "ETF") continue;
-      const symbol = String(r.code ?? "").toUpperCase();
-      if (!symbol) continue;
-      const bv = num(r.buyVal) ?? 0;
-      const sv = num(r.sellVal) ?? 0;
-      const nv = num(r.netVal) ?? bv - sv;
-      buyVal += bv;
-      sellVal += sv;
-      netVal += nv;
-      stockCount += 1;
-      if (Math.abs(nv) > 0) {
-        rows.push({ symbol, buyVal: bv, sellVal: sv, netVal: nv, floor: r.floor ?? null });
+/** Aggregate foreign investor flow on listed ETFs (VNDirect foreigns type:ETF). */
+export async function getVndEtfFlow(sessionDate?: string): Promise<VndForeignFlowSummary> {
+  let date = await resolveEtfSessionDate(sessionDate);
+
+  const load = async (d: string) => {
+    const pageSize = 100;
+    let page = 1;
+    let totalPages = 1;
+    let buyVal = 0;
+    let sellVal = 0;
+    let netVal = 0;
+    let stockCount = 0;
+    const rows: VndForeignFlowRow[] = [];
+
+    while (page <= totalPages && page <= 10) {
+      const payload = await vndGet<
+        Page<{
+          code?: string;
+          type?: string;
+          floor?: string;
+          buyVal?: number;
+          sellVal?: number;
+          netVal?: number;
+          tradingDate?: string;
+        }>
+      >(`/v4/foreigns?q=tradingDate:${d}~type:ETF&size=${pageSize}&page=${page}`, 18_000);
+      const data = payload.data ?? [];
+      totalPages = Math.max(1, Number(payload.totalPages) || 1);
+      for (const r of data) {
+        if ((r.type ?? "ETF").toUpperCase() !== "ETF") continue;
+        const symbol = String(r.code ?? "").toUpperCase();
+        if (!symbol) continue;
+        const bv = num(r.buyVal) ?? 0;
+        const sv = num(r.sellVal) ?? 0;
+        const nv = num(r.netVal) ?? bv - sv;
+        buyVal += bv;
+        sellVal += sv;
+        netVal += nv;
+        stockCount += 1;
+        if (Math.abs(nv) > 0) {
+          rows.push({ symbol, buyVal: bv, sellVal: sv, netVal: nv, floor: r.floor ?? null });
+        }
       }
+      if (!data.length) break;
+      page += 1;
     }
-    if (!data.length) break;
-    page += 1;
+    return { buyVal, sellVal, netVal, stockCount, rows };
+  };
+
+  let pack = await load(date);
+  if (pack.stockCount === 0 || (pack.buyVal === 0 && pack.sellVal === 0)) {
+    const probe = await vndGet<Page<{ tradingDate?: string }>>(
+      `/v4/foreigns?q=type:ETF&size=1&sort=tradingDate:desc`,
+      12_000,
+    );
+    const alt = probe.data?.[0]?.tradingDate ? String(probe.data[0].tradingDate).slice(0, 10) : null;
+    if (alt && alt !== date) {
+      date = alt;
+      pack = await load(date);
+    }
   }
 
-  rows.sort((a, b) => b.netVal - a.netVal);
-  const topNetBuy = rows.filter((r) => r.netVal > 0).slice(0, 8);
-  const topNetSell = [...rows].filter((r) => r.netVal < 0).sort((a, b) => a.netVal - b.netVal).slice(0, 8);
+  if (pack.stockCount === 0 && pack.buyVal === 0 && pack.sellVal === 0) {
+    throw new ProviderError(`vndirect: empty ETF flow ${date}`, VNDIRECT);
+  }
+
+  pack.rows.sort((a, b) => b.netVal - a.netVal);
+  const topNetBuy = pack.rows.filter((r) => r.netVal > 0).slice(0, 8);
+  const topNetSell = [...pack.rows].filter((r) => r.netVal < 0).sort((a, b) => a.netVal - b.netVal).slice(0, 8);
   const ts = Date.parse(`${date}T15:00:00+07:00`);
 
   return {
     sessionDate: date,
-    buyVal,
-    sellVal,
-    netVal,
-    stockCount,
+    buyVal: pack.buyVal,
+    sellVal: pack.sellVal,
+    netVal: pack.netVal,
+    stockCount: pack.stockCount,
     topNetBuy,
     topNetSell,
     sourceTs: Number.isFinite(ts) ? ts : null,
