@@ -3,10 +3,11 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
+/** Thứ tự ưu tiên: Tổng quan → Báo cáo tài chính → Cơ bản → Doanh nghiệp */
 const TABS = [
   { href: "", label: "Tổng quan & Kỹ thuật", key: "overview" },
-  { href: "/fundamentals", label: "Cơ bản", key: "fundamentals" },
-  { href: "/financials", label: "Báo cáo TC", key: "financials" },
+  { href: "/financials", label: "Báo cáo tài chính", key: "financials" },
+  { href: "/fundamentals", label: "Phân tích cơ bản", key: "fundamentals" },
   { href: "/profile", label: "Doanh nghiệp", key: "profile" },
 ] as const;
 

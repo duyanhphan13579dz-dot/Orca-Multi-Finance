@@ -5,6 +5,19 @@ import { useApi } from "@/lib/hooks";
 import type { VnStockDetail } from "@/lib/services/stocks";
 import { fmtCompact, Loading, Panel, Unavailable } from "@/components/ui";
 
+const GROWTH_VI: Record<string, string> = {
+  revenue: "Doanh thu",
+  netRevenue: "Doanh thu thuần",
+  grossProfit: "Lợi nhuận gộp",
+  operatingProfit: "LN thuần từ HĐKD",
+  netIncome: "Lợi nhuận sau thuế",
+  operatingCashFlow: "LC tiền từ HĐKD",
+  freeCashFlow: "Dòng tiền tự do (FCF)",
+  totalAssets: "Tổng tài sản",
+  equity: "Vốn chủ sở hữu",
+  totalLiabilities: "Tổng nợ phải trả",
+};
+
 function healthLabel(score: number | null | undefined): string {
   if (score == null) return "Chưa đủ dữ liệu";
   if (score >= 80) return "Xuất sắc (80–100)";
@@ -19,7 +32,7 @@ function statusVi(s: string | undefined): string {
     case "VERIFIED":
       return "Đã xác thực";
     case "LATEST_AVAILABLE":
-      return "Dữ liệu gần nhất hiện có";
+      return "Kỳ gần nhất hiện có";
     case "STALE":
       return "Bản lưu gần nhất";
     case "SOURCE_UNAVAILABLE":
@@ -82,13 +95,12 @@ export default function StockFundamentalsPage({ params }: { params: Promise<{ sy
   const h = data.financialHealth;
   const fm = data.financialMeta;
   const growth = data.financialGrowth;
-  // FinancialHealthResult uses scores.overall (not score)
   const overall = h?.scores?.overall ?? null;
   const g = h?.groups;
 
   return (
     <div className="space-y-3">
-      <Panel title="Sức khỏe tài chính">
+      <Panel title="Sức khỏe tài chính (tự động)">
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <div>
             <div className="text-[10px] uppercase text-ink-3">Điểm tổng</div>
@@ -104,7 +116,11 @@ export default function StockFundamentalsPage({ params }: { params: Promise<{ sy
             <div className="text-[10px] uppercase text-ink-3">Kỳ / Phạm vi</div>
             <div className="font-medium text-ink-2">
               {fm?.latestPeriod ?? "—"}
-              {fm?.statementScope && fm.statementScope !== "unknown" ? ` · ${fm.statementScope}` : ""}
+              {fm?.statementScope === "consolidated"
+                ? " · Hợp nhất"
+                : fm?.statementScope === "standalone"
+                  ? " · Riêng"
+                  : ""}
             </div>
           </div>
           <div>
@@ -136,7 +152,7 @@ export default function StockFundamentalsPage({ params }: { params: Promise<{ sy
 
         {h?.industry && (
           <p className="mt-2 text-[11px] text-ink-3">
-            <strong className="text-ink-2">Profile ngành:</strong> {h.industry.labelVi} ({h.industry.id})
+            <strong className="text-ink-2">Ngành:</strong> {h.industry.labelVi} ({h.industry.id})
           </p>
         )}
 
@@ -150,47 +166,47 @@ export default function StockFundamentalsPage({ params }: { params: Promise<{ sy
       </Panel>
 
       {g && (
-        <Panel title="Nhóm chỉ số">
+        <Panel title="Chỉ số tài chính (tính tự động từ BCTC)">
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
             <RatioBlock
               title="Sinh lời"
               items={[
-                { label: "Biên gộp", value: g.profitability.grossMargin, kind: "pct" },
-                { label: "Biên HĐKD", value: g.profitability.operatingMargin, kind: "pct" },
-                { label: "Biên ròng", value: g.profitability.netMargin, kind: "pct" },
-                { label: "ROE", value: g.profitability.roe, kind: "pct" },
-                { label: "ROA", value: g.profitability.roa, kind: "pct" },
+                { label: "Biên lợi nhuận gộp", value: g.profitability.grossMargin, kind: "pct" },
+                { label: "Biên lợi nhuận HĐKD", value: g.profitability.operatingMargin, kind: "pct" },
+                { label: "Biên lợi nhuận ròng", value: g.profitability.netMargin, kind: "pct" },
+                { label: "ROE (LNST / Vốn chủ)", value: g.profitability.roe, kind: "pct" },
+                { label: "ROA (LNST / Tổng TS)", value: g.profitability.roa, kind: "pct" },
               ]}
             />
             <RatioBlock
               title="Thanh khoản"
               items={[
-                { label: "Current ratio", value: g.liquidity.currentRatio, kind: "x" },
-                { label: "Quick ratio", value: g.liquidity.quickRatio, kind: "x" },
-                { label: "Cash ratio", value: g.liquidity.cashRatio, kind: "x" },
+                { label: "Hệ số thanh toán hiện hành", value: g.liquidity.currentRatio, kind: "x" },
+                { label: "Hệ số thanh toán nhanh", value: g.liquidity.quickRatio, kind: "x" },
+                { label: "Hệ số tiền mặt", value: g.liquidity.cashRatio, kind: "x" },
               ]}
             />
             <RatioBlock
               title="Đòn bẩy"
               items={[
-                { label: "Nợ / VCSH", value: g.leverage.debtToEquity, kind: "x" },
-                { label: "Nợ / Tài sản", value: g.leverage.debtToAssets, kind: "x" },
-                { label: "Interest coverage", value: g.leverage.interestCoverage, kind: "x" },
+                { label: "Nợ / Vốn chủ sở hữu", value: g.leverage.debtToEquity, kind: "x" },
+                { label: "Nợ / Tổng tài sản", value: g.leverage.debtToAssets, kind: "x" },
+                { label: "Khả năng trả lãi (Interest coverage)", value: g.leverage.interestCoverage, kind: "x" },
               ]}
             />
             <RatioBlock
               title="Dòng tiền"
               items={[
-                { label: "OCF / LN", value: g.cashflow.ocfToNi, kind: "x" },
-                { label: "FCF margin", value: g.cashflow.fcfMargin, kind: "pct" },
+                { label: "OCF / Lợi nhuận sau thuế", value: g.cashflow.ocfToNi, kind: "x" },
+                { label: "Biên FCF", value: g.cashflow.fcfMargin, kind: "pct" },
               ]}
             />
             <RatioBlock
               title="Hiệu quả"
               items={[
-                { label: "Asset turnover", value: g.efficiency.assetTurnover, kind: "x" },
-                { label: "Receivable days", value: g.efficiency.receivableDays, kind: "num" },
-                { label: "Inventory days", value: g.efficiency.inventoryDays, kind: "num" },
+                { label: "Vòng quay tài sản", value: g.efficiency.assetTurnover, kind: "x" },
+                { label: "Số ngày phải thu", value: g.efficiency.receivableDays, kind: "num" },
+                { label: "Số ngày tồn kho", value: g.efficiency.inventoryDays, kind: "num" },
               ]}
             />
           </div>
@@ -198,13 +214,13 @@ export default function StockFundamentalsPage({ params }: { params: Promise<{ sy
       )}
 
       {growth && (growth.yoy.length > 0 || growth.qoq.length > 0) && (
-        <Panel title="Tăng trưởng">
+        <Panel title="Tăng trưởng (tự động YoY / QoQ)">
           <div className="grid gap-3 md:grid-cols-2">
             <div>
               <div className="mb-1 text-[11px] font-medium text-ink-3">
-                YoY
+                So cùng kỳ năm trước (YoY)
                 {growth.latestPeriod && growth.priorYearPeriod
-                  ? ` (${growth.latestPeriod} vs ${growth.priorYearPeriod})`
+                  ? ` · ${growth.latestPeriod} vs ${growth.priorYearPeriod}`
                   : ""}
               </div>
               {!growth.yoy.length ? (
@@ -213,7 +229,7 @@ export default function StockFundamentalsPage({ params }: { params: Promise<{ sy
                 <ul className="space-y-1 text-[12px]">
                   {growth.yoy.map((c) => (
                     <li key={c.metric} className="flex justify-between gap-2">
-                      <span className="text-ink-3">{c.metric}</span>
+                      <span className="text-ink-3">{GROWTH_VI[c.metric] ?? c.metric}</span>
                       <span className="num font-medium">
                         {c.changePct != null ? `${(c.changePct * 100).toFixed(1)}%` : "—"}
                       </span>
@@ -224,9 +240,9 @@ export default function StockFundamentalsPage({ params }: { params: Promise<{ sy
             </div>
             <div>
               <div className="mb-1 text-[11px] font-medium text-ink-3">
-                QoQ
+                So quý liền trước (QoQ)
                 {growth.latestPeriod && growth.priorQuarterPeriod
-                  ? ` (${growth.latestPeriod} vs ${growth.priorQuarterPeriod})`
+                  ? ` · ${growth.latestPeriod} vs ${growth.priorQuarterPeriod}`
                   : ""}
               </div>
               {!growth.qoq.length ? (
@@ -235,7 +251,7 @@ export default function StockFundamentalsPage({ params }: { params: Promise<{ sy
                 <ul className="space-y-1 text-[12px]">
                   {growth.qoq.map((c) => (
                     <li key={c.metric} className="flex justify-between gap-2">
-                      <span className="text-ink-3">{c.metric}</span>
+                      <span className="text-ink-3">{GROWTH_VI[c.metric] ?? c.metric}</span>
                       <span className="num font-medium">
                         {c.changePct != null ? `${(c.changePct * 100).toFixed(1)}%` : "—"}
                       </span>
