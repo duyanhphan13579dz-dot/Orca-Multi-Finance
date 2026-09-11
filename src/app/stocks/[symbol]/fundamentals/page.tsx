@@ -211,10 +211,10 @@ export default function StockFundamentalsPage({ params }: { params: Promise<{ sy
               ) : (
                 <ul className="space-y-1 text-[12px]">
                   {growth.yoy.map((c) => (
-                    <li key={c.key} className="flex justify-between gap-2">
-                      <span className="text-ink-3">{c.labelVi ?? c.key}</span>
+                    <li key={c.metric} className="flex justify-between gap-2">
+                      <span className="text-ink-3">{c.metric}</span>
                       <span className="num font-medium">
-                        {c.value != null ? `${(c.value * 100).toFixed(1)}%` : "—"}
+                        {c.changePct != null ? `${(c.changePct * 100).toFixed(1)}%` : "—"}
                       </span>
                     </li>
                   ))}
@@ -233,10 +233,10 @@ export default function StockFundamentalsPage({ params }: { params: Promise<{ sy
               ) : (
                 <ul className="space-y-1 text-[12px]">
                   {growth.qoq.map((c) => (
-                    <li key={c.key} className="flex justify-between gap-2">
-                      <span className="text-ink-3">{c.labelVi ?? c.key}</span>
+                    <li key={c.metric} className="flex justify-between gap-2">
+                      <span className="text-ink-3">{c.metric}</span>
                       <span className="num font-medium">
-                        {c.value != null ? `${(c.value * 100).toFixed(1)}%` : "—"}
+                        {c.changePct != null ? `${(c.changePct * 100).toFixed(1)}%` : "—"}
                       </span>
                     </li>
                   ))}
