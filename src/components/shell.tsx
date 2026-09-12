@@ -88,8 +88,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     };
   }, [mobileOpen]);
 
-  const sidebarW = collapsed ? "w-[56px]" : "w-[208px]";
-  const mainML = collapsed ? "lg:ml-[56px]" : "lg:ml-[208px]";
+  const sidebarW = collapsed ? "w-[52px]" : "w-[192px]";
+  const mainML = collapsed ? "lg:ml-[52px]" : "lg:ml-[192px]";
 
   return (
     <div className="flex min-h-dvh overflow-x-hidden">
@@ -207,7 +207,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       {/* main column */}
       <div className={`flex min-w-0 flex-1 flex-col transition-[margin] duration-200 ${mainML}`}>
         <header className="sticky top-0 z-30 border-b border-border-subtle bg-background-primary/90 backdrop-blur supports-[backdrop-filter]:bg-background-primary/80 pt-[env(safe-area-inset-top)]">
-          <div className="flex h-12 items-center gap-2 px-2.5 sm:h-[52px] sm:gap-3 sm:px-3 md:px-4">
+          <div className="flex h-11 items-center gap-1.5 px-2 sm:h-12 sm:gap-2 sm:px-2.5 md:px-3">
             <button
               onClick={() => setMobileOpen(true)}
               className="grid size-10 shrink-0 place-items-center rounded-md text-text-secondary hover:bg-surface-elevated lg:hidden"
@@ -229,7 +229,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </div>
           <TickerTape />
         </header>
-        <main className="min-w-0 flex-1 px-2.5 py-3 sm:px-3 sm:py-4 md:px-4">
+        <main className="min-w-0 flex-1 px-2 py-2 sm:px-2.5 sm:py-3 md:px-3">
           <div className="mb-2.5 md:hidden">
             <GlobalSearch />
           </div>
