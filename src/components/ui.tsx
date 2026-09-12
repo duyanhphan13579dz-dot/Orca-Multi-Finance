@@ -3,27 +3,51 @@ import type { FreshnessStatus, Meta } from "@/lib/types";
 
 export function Panel({
   title,
+  subtitle,
+  eyebrow,
   right,
+  footer,
   children,
   className = "",
   pad = true,
+  tone = "default",
 }: {
   title?: React.ReactNode;
+  subtitle?: React.ReactNode;
+  eyebrow?: React.ReactNode;
   right?: React.ReactNode;
+  footer?: React.ReactNode;
   children: React.ReactNode;
   className?: string;
   pad?: boolean;
+  tone?: "default" | "elevated" | "inset";
 }) {
+  const toneClass = tone === "elevated" ? "panel-elevated" : tone === "inset" ? "panel-inset" : "";
   return (
-    <section className={`panel ${className}`}>
-      {(title != null || right != null) && (
-        <div className="mb-2.5 flex items-center justify-between gap-2 border-b border-border-subtle/60 px-3.5 pb-2 pt-3">
-          <h3 className="text-[12.5px] font-semibold tracking-wide text-text-primary">{title}</h3>
-          {right}
-        </div>
+    <section className={`panel ${toneClass} ${className}`}>
+      {(title != null || right != null || eyebrow != null || subtitle != null) && (
+        <header className="panel-header">
+          <div className="min-w-0 space-y-0.5">
+            {eyebrow != null && <div className="panel-eyebrow">{eyebrow}</div>}
+            {title != null && <h3 className="panel-title">{title}</h3>}
+            {subtitle != null && <p className="panel-subtitle">{subtitle}</p>}
+          </div>
+          {right != null && <div className="panel-actions">{right}</div>}
+        </header>
       )}
-      <div className={pad ? "px-3.5 pb-3.5" : ""}>{children}</div>
+      <div className={pad ? "panel-body" : ""}>{children}</div>
+      {footer != null && <footer className="panel-footer">{footer}</footer>}
     </section>
+  );
+}
+
+export function PanelMetric({ label, value, detail, tone = "neutral" }: { label: React.ReactNode; value: React.ReactNode; detail?: React.ReactNode; tone?: "neutral" | "up" | "down" | "warn" }) {
+  return (
+    <div className={`panel-metric panel-metric-${tone}`}>
+      <span className="panel-metric-label">{label}</span>
+      <strong className="panel-metric-value num">{value}</strong>
+      {detail != null && <span className="panel-metric-detail">{detail}</span>}
+    </div>
   );
 }
 
