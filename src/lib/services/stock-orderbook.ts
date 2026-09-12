@@ -158,6 +158,14 @@ async function recallLastBook(sym: string): Promise<VnOrderBook | null> {
   return null;
 }
 
+/** Persist a raw SSI depth snapshot for the scheduled session snapshot job. */
+export async function persistSsiOrderBookSnapshot(ob: SsiOrderBook): Promise<boolean> {
+  const book = toBook(ob.symbol, ob, [], true);
+  if (!book || (!book.bids.length && !book.asks.length)) return false;
+  await rememberLastBook(ob.symbol, book);
+  return true;
+}
+
 function readTrades(symbol: string): VnTrade[] {
   try {
     return ssiWs.getTrades(symbol, 50).map((t) => ({

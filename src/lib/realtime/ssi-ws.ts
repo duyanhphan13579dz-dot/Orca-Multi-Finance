@@ -270,6 +270,22 @@ class SsiMarketWsEngine {
     return this.subscribe(`quote.${c}`);
   }
 
+  watchExchange(exchange: string): () => void {
+    const board = exchange.toLowerCase().replace(/[^a-z0-9]/g, "");
+    if (!board) return () => {};
+    const unsubs = [
+      this.subscribe(`quote.${board}`),
+      this.subscribe(`trade.${board}`),
+      this.subscribe(`market.${board}`),
+    ];
+    if (this.state !== "open" && this.state !== "connecting") this.reconnectUrgent("watchExchange");
+    return () => unsubs.forEach((unsub) => unsub());
+  }
+
+  getOrderBooks(): SsiOrderBook[] {
+    return [...this.orderBooks.values()];
+  }
+
   ensureCoreIndices() {
     for (const c of ["VNINDEX", "VN30", "HNX", "HNX30", "UPCOM"]) this.watchIndex(c);
   }

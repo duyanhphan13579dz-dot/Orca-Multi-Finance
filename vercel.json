@@ -1,6 +1,14 @@
 {
   "crons": [
     {
+      "path": "/api/v1/cron/stocks",
+      "schedule": "25 4 * * 1-5"
+    },
+    {
+      "path": "/api/v1/cron/stocks",
+      "schedule": "25 7 * * 1-5"
+    },
+    {
       "path": "/api/v1/cron/commodities",
       "schedule": "0 1 * * *"
     },
