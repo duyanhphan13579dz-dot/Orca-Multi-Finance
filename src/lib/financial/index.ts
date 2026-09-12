@@ -6,8 +6,10 @@
  * - Financial statements (BCTC / analysis): VNDirect stays primary and only — SSI is never a
  *   financial provider here (see src/lib/financial/providers-registry.ts).
  */
+import { ssiFcConfigured } from "../providers/ssi-fcdata";
+
 export function vnProviderLayout() {
-  const ssiLive = require("./providers/ssi-fcdata").ssiFcConfigured();
+  const ssiLive = ssiFcConfigured();
   return {
     market: { primary: ssiLive ? "ssi-fcdata" : "vndirect", fallback: ssiLive ? "vndirect" : null },
     financial: { primary: "vndirect", fallback: null },

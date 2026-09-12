@@ -1,7 +1,7 @@
 import "server-only";
 import { cached } from "../cache";
 import { buildMeta } from "../freshness";
-import { getFinancialsForSymbol } from "../financial/service";
+import { getFinancialsForSymbol, vnProviderLayout } from "../financial";
 import type { FinancialPackageMeta, GrowthSnapshot, NormalizedPeriod } from "../financial/types";
 import type { FinancialHealthResult } from "../engines/fundamental";
 import * as vndirect from "../providers/vndirect";
@@ -55,7 +55,7 @@ export function vnstockConfigured(): boolean {
 export function vnPrimaryProvider(): "ssi-fcdata" | "vndirect" {
   // SSI là primary cho market data (chỉ số, bảng giá, quote, OHLCV, universe).
   // Financial statements giữ VNDirect làm primary — xem providers-registry.ts.
-  return require("./financial").vnProviderLayout().market.primary === "ssi-fcdata" ? "ssi-fcdata" : "vndirect";
+  return vnProviderLayout().market.primary === "ssi-fcdata" ? "ssi-fcdata" : "vndirect";
 }
 
 function liveQuoteFromWs(symbol: string): Quote | null {

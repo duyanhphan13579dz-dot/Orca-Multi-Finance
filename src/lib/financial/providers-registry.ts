@@ -1,6 +1,7 @@
 import "server-only";
 import type { FinancialProvider } from "./provider";
 import { fetchVndirectFinancials } from "./vndirect-fs";
+import { ssiFcConfigured } from "../providers/ssi-fcdata";
 
 /**
  * Financial Provider Layout
@@ -35,18 +36,6 @@ export function vnProviderLayout(): VnProviderLayout {
       fallback: "vndirect",
     },
   };
-}
-
-// SSI FastConnect — Market Data (không phải financial statements).
-// `ssiCfgured()` nằm trong provider module để tránh circular import.
-function ssiFcConfigured(): boolean {
-  try {
-    // Defer to the actual provider implementation used across the codebase.
-    const { ssiFcConfigured: real } = require("../providers/ssi-fcdata");
-    return typeof real === "function" ? real() : false;
-  } catch {
-    return false;
-  }
 }
 
 const vndirectProvider: FinancialProvider = {
