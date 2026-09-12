@@ -14,8 +14,29 @@ import { getSettingsSnapshot, resolveRefresh } from "./settings";
  */
 
 const FETCH_TIMEOUT_MS = 22_000;
+const CLIENT_DEDUPE_MS = 1_500;
+const pendingFetches = new Map<string, { promise: Promise<ApiResponse<unknown>>; startedAt: number }>();
 
 const fetcher = async <T>(url: string, timeoutMs = FETCH_TIMEOUT_MS): Promise<ApiResponse<T>> => {
+  const existing = pendingFetches.get(url);
+  if (existing && Date.now() - existing.startedAt < CLIENT_DEDUPE_MS) return existing.promise as Promise<ApiResponse<T>>;
+
+  const promise = fetcherUncached<T>(url, timeoutMs);
+  pendingFetches.set(url, { promise: promise as Promise<ApiResponse<unknown>>, startedAt: Date.now() });
+  void promise.then(
+    () => {
+      const current = pendingFetches.get(url);
+      if (current?.promise === promise) pendingFetches.delete(url);
+    },
+    () => {
+      const current = pendingFetches.get(url);
+      if (current?.promise === promise) pendingFetches.delete(url);
+    },
+  );
+  return promise;
+};
+
+const fetcherUncached = async <T>(url: string, timeoutMs = FETCH_TIMEOUT_MS): Promise<ApiResponse<T>> => {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {

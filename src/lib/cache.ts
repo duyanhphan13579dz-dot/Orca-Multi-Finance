@@ -96,11 +96,8 @@ export async function cached<T>(
       mem.set(key, entry);
       const r = await getRedis();
       if (r) {
-        try {
-          await r.set(`orca:${key}`, JSON.stringify(entry), "PX", Math.max(ttlMs, staleMs));
-        } catch {
-          /* ignore */
-        }
+        // Redis is a mirror; never make the request wait on a remote cache write.
+        void r.set(`orca:${key}`, JSON.stringify(entry), "PX", Math.max(ttlMs, staleMs)).catch(() => undefined);
       }
       return { value, cached: false, stale: false, producedAt: entry.producedAt };
     } catch (err) {
