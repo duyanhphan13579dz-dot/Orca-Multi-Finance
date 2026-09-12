@@ -50,6 +50,16 @@ export default function AgentPage() {
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
+
+  function renderAnswer(text: string) {
+    return text.split("\n").map((line, index) => {
+      const trimmed = line.trim();
+      if (trimmed.startsWith("## ")) return <h3 key={index} className="mt-3 text-sm font-semibold text-accent first:mt-0">{trimmed.slice(3)}</h3>;
+      if (/^[-•] /.test(trimmed)) return <div key={index} className="ml-3 list-item">{trimmed}</div>;
+      if (!trimmed) return <div key={index} className="h-2" />;
+      return <p key={index}>{line}</p>;
+    });
+  }
   // Keep a ref so history is consistent even before React state flushes
   const messagesRef = useRef(messages);
   messagesRef.current = messages;
@@ -131,7 +141,7 @@ export default function AgentPage() {
                 m.role === "user" ? "border-accent/30 bg-accent/10 text-ink" : "border-line bg-panel-2 text-ink"
               }`}
             >
-              <div className="whitespace-pre-wrap">{m.text}</div>
+              <div className="space-y-1.5">{m.role === "agent" ? renderAnswer(m.text) : m.text}</div>
             </div>
           </div>
         ))}
