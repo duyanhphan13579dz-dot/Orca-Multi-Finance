@@ -440,7 +440,7 @@ export async function answerQuestion(question: string, prefs: AgentPrefs = {}, h
     const tagged = history.filter((h) => h.content?.trim());
     const sameTopic = tagged.filter((h) => h.role !== "user" || detectIntent(h.content).kind === intent.kind || detectIntent(h.content).kind === "general");
     const chatHistory = (sameTopic.length >= 2 ? sameTopic : tagged).slice(-8).map((h) => ({ role: (h.role === "user" ? "user" : "assistant") as "user" | "assistant", content: h.content.trim().slice(0, 2_500) }));
-    const first = await llmChat(role, { system: sys, user, history: chatHistory, temperature: 0.35, maxTokens: prefs.depth === "deep" ? 1400 : 1100 });
+    const first = await llmChat(role, { system: sys, user, history: chatHistory, temperature: 0.35, maxTokens: prefs.depth === "deep" ? 1400 : 1100, modelOverride: "openai/gpt-oss-120b" });
     if (first) {
       const use = await validateMaybeRepair(first, user, factNums, role, sys);
       if (use.text) { finalAnswer = use.text; mode = "llm"; model = first.model; outputValidation = use.validation; }
@@ -465,7 +465,7 @@ export async function answerQuestion(question: string, prefs: AgentPrefs = {}, h
 async function validateMaybeRepair(first: LlmResult, user: string, facts: Set<number>, role: "reasoning" | "analysis", sys: string): Promise<{ text: string | null; model: string; validation: Meta["outputValidation"] }> {
   let val = validateOutput(first.text, facts);
   if (val.ok) return { text: first.text, model: first.model, validation: { validated: true, unsupportedClaims: 0 } };
-  const regen = await llmChat(role, { system: `${sys}\nSTRICT: chỉ dùng số trong context. Sai trước: ${val.unsupported.slice(0, 5).map((u) => u.raw).join(", ")}.`, user, temperature: 0.2, maxTokens: 1100 });
+  const regen = await llmChat(role, { system: `${sys}\nSTRICT: chỉ dùng số trong context. Sai trước: ${val.unsupported.slice(0, 5).map((u) => u.raw).join(", ")}.`, user, temperature: 0.2, maxTokens: 1100, modelOverride: "openai/gpt-oss-120b" });
   if (!regen) return { text: null, model: first.model, validation: { validated: false, unsupportedClaims: val.unsupported.length, recovered: "deterministic" } };
   val = validateOutput(regen.text, facts);
   if (val.ok) return { text: regen.text, model: first.model, validation: { validated: true, unsupportedClaims: 0, recovered: "regenerated" } };
