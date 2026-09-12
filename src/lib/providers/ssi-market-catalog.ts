@@ -402,6 +402,33 @@ type DailyIndexRow = {
 };
 
 /** Index Summary (DailyIndex + breadth). */
+export async function getSsiIndexHistory(
+  indexId: string,
+  opts?: { fromDate?: string; toDate?: string; pageSize?: number },
+): Promise<{ time: number; open: number; high: number; low: number; close: number; volume?: number }[]> {
+  const code = indexId.toUpperCase();
+  const fromDate = opts?.fromDate ?? formatSsiDate(new Date(Date.now() - 5 * 365 * 24 * 60 * 60 * 1000));
+  const toDate = opts?.toDate ?? formatSsiDate();
+  const body = await ssiGet<SsiEnvelope<DailyIndexRow[]>>("/api/v2/Market/DailyIndex", {
+    IndexId: code, indexId: code, FromDate: fromDate, fromDate, ToDate: toDate, toDate,
+    PageIndex: 1, pageIndex: 1, PageSize: opts?.pageSize ?? 2000, pageSize: opts?.pageSize ?? 2000,
+    Ascending: true, ascending: true,
+  });
+  const rows = Array.isArray(body.data) ? body.data : [];
+  return rows.flatMap((row) => {
+    const close = num(row.IndexValue);
+    const rawDate = row.TradingDate ?? row["Trading Date"];
+    const dateText = rawDate ? String(rawDate).trim() : "";
+    const dateMatch = dateText.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})$/);
+    const isoDate = dateMatch ? `${dateMatch[3]}-${dateMatch[2].padStart(2, "0")}-${dateMatch[1].padStart(2, "0")}` : dateText;
+    const time = isoDate ? Date.parse(`${isoDate}T15:00:00+07:00`) : NaN;
+    if (close == null || !Number.isFinite(time)) return [];
+    const previous = num(row.Change) != null ? close - (num(row.Change) ?? 0) : close;
+    return [{ time, open: previous, high: Math.max(previous, close), low: Math.min(previous, close), close, volume: num(row.Totalmatchvol) ?? num(row.Totalvol) ?? undefined }];
+  });
+}
+
+/** Index Summary (DailyIndex + breadth). */
 export async function getSsiIndexSummary(
   indexId: string,
   opts?: { fromDate?: string; toDate?: string },
