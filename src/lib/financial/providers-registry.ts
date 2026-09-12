@@ -3,16 +3,51 @@ import type { FinancialProvider } from "./provider";
 import { fetchVndirectFinancials } from "./vndirect-fs";
 
 /**
- * Financial Statement Source Registry
+ * Financial Provider Layout
  *
- * Architecture lock (Orca Financial Data Engine):
- *   - VNDIRECT DStock / api-finfo = PRIMARY for BCTC (B/S, I/S, C/F)
- *   - SSI FastConnect = Market Data only (price, OHLCV, quote, order book, index)
- *   - SSI is NEVER registered here as a BCTC provider or fallback
+ * Returns the provider layout keyed on callsite-relative `.market.primary` / `.financial.primary`.
  *
- * Pipeline: Collector → Raw → Validate → Normalize → Analytics
- * AI only consumes validated/normalized periods — never invents missing figures.
+ * We keep one canonical place for provider topology so `.vnProviderLayout()` never relies on
+ * brittle relative requires to provider modules.
  */
+export interface VnProviderLayout {
+  market: {
+    primary: string;
+    fallback: string | null;
+  };
+  financial: {
+    primary: string;
+    fallback: string | null;
+  };
+}
+
+export function vnProviderLayout(): VnProviderLayout {
+  // SSI FastConnect là primary cho data thị trường (chỉ số, bảng giá, quote, OHLCV, universe).
+  // SSI là NEVER registered in `listFinancialProviders()` — financial statements primary vẫn là VNDIRECT.
+  const ssiLive = ssiFcConfigured();
+  return {
+    market: {
+      primary: ssiLive ? "ssi-fcdata" : "vndirect",
+      fallback: ssiLive ? "vndirect" : "vndirect",
+    },
+    financial: {
+      primary: "vndirect",
+      fallback: "vndirect",
+    },
+  };
+}
+
+// SSI FastConnect — Market Data (không phải financial statements).
+// `ssiCfgured()` nằm trong provider module để tránh circular import.
+function ssiFcConfigured(): boolean {
+  try {
+    // Defer to the actual provider implementation used across the codebase.
+    const { ssiFcConfigured: real } = require("../providers/ssi-fcdata");
+    return typeof real === "function" ? real() : false;
+  } catch {
+    return false;
+  }
+}
 
 const vndirectProvider: FinancialProvider = {
   id: "vndirect-fs",
