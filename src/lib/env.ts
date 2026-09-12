@@ -26,9 +26,11 @@ export const env = {
   nodeEnv: process.env.NODE_ENV ?? "development",
 
   /*
-   * Vietnam stocks provider strategy (temporary):
-   *   PRIMARY  = VNDirect (api-finfo) — no key required
-   *   NEXT     = SSI Flashconnect as primary, VNDirect as fallback
+   * Vietnam stocks provider strategy:
+   *   PRIMARY  = SSI Flashconnect (fc-data.ssi.com.vn) — market data: indices, board, quotes, OHLCV, universe
+   *   FALLBACK = VNDirect (api-finfo) — khi SSI không cấu hình hoặc không phản hồi
+   *   FINANCIAL = VNDirect giữ làm primary duy nhất cho báo cáo tài chính & phân tích cơ bản
+   *     (SSI không nằm trong financial provider router — xem src/lib/financial/providers-registry.ts)
    * VNStock vars kept only for backward-compat env files; service layer no longer calls VNStock.
    */
   vnstockBaseUrl: opt(process.env.VNSTOCK_BASE_URL),

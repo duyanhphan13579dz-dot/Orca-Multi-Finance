@@ -51,7 +51,10 @@ export function vnstockConfigured(): boolean {
   return vnMarketConfigured();
 }
 
+// Map provider ưu tiên hiện tại — SSI Flashconnect làm primary khi đã cấu hình.
 export function vnPrimaryProvider(): "ssi-fcdata" | "vndirect" {
+  // SSI là primary cho market data (chỉ số, bảng giá, quote, OHLCV, universe).
+  // Financial statements giữ VNDirect làm primary — xem providers-registry.ts.
   return ssiFcConfigured() ? "ssi-fcdata" : "vndirect";
 }
 
