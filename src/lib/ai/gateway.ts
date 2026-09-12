@@ -153,7 +153,7 @@ export async function llmChat(role: LlmRole, opts: ChatOptions): Promise<LlmResu
 
   const history = (opts.history ?? [])
     .filter((t) => t.content?.trim())
-    .slice(-8)
+    .slice(-16)
     .map((t) => ({
       role: t.role === "assistant" ? ("assistant" as const) : ("user" as const),
       content: t.content.trim().slice(0, 2_500),
