@@ -245,7 +245,9 @@ async function stockCandles(symbol: string, tf: string, limit: number): Promise<
     try {
       const bars = await getSsiIndexHistory(ssiChartSymbol(symbol), { pageSize: Math.min(dayLimit, 2000) });
       if (bars.length >= 5) {
-        let candles: ChartCandle[] = bars.map((bar) => ({ ...bar, volume: bar.volume ?? 0 }));
+        const realBars = bars.filter((bar) => !bar.synthetic);
+        if (realBars.length < Math.max(5, bars.length * 0.8)) throw new Error("ssi_daily_index_missing_real_ohlc");
+        let candles: ChartCandle[] = realBars.map((bar) => ({ time: bar.time, open: bar.open, high: bar.high, low: bar.low, close: bar.close, volume: bar.volume ?? 0 }));
         if (tf === "1w") candles = aggregateCandles(candles, TF_MS["1w"]);
         if (tf === "1M") candles = aggregateCandles(candles, TF_MS["1M"]);
         const indexQuality = validateIndexCandles(symbol, candles);
@@ -262,20 +264,6 @@ async function stockCandles(symbol: string, tf: string, limit: number): Promise<
     let candles = bars.map(toCandle);
     if (tf === "1w") candles = aggregateCandles(candles, TF_MS["1w"]).slice(-limit);
     if (tf === "1M") candles = aggregateCandles(candles, TF_MS["1M"]).slice(-limit);
-    // VNDIRECT historical index levels can be stale relative to the live quote.
-    // Calibrate the full fallback series to the same current index level so the
-    // headline quote and the chart cannot show two different scales.
-    try {
-      const current = (await vndirect.getVndIndices()).items.find((item) => item.code === symbol);
-      const lastClose = candles.at(-1)?.close;
-      if (current?.value && lastClose && Math.abs(current.value - lastClose) / lastClose > 0.02) {
-        const ratio = current.value / lastClose;
-        candles = candles.map((c) => ({ ...c, open: c.open * ratio, high: c.high * ratio, low: c.low * ratio, close: c.close * ratio }));
-        return { candles: candles.slice(-limit), source: "vndirect-index-calibrated", note: `VNDirect lịch sử đã căn chỉnh theo quote hiện tại ${current.value.toLocaleString("vi-VN")} để đồng bộ chỉ số và chart` };
-      }
-    } catch {
-      /* return raw fallback if quote calibration is unavailable */
-    }
     const indexQuality = validateIndexCandles(symbol, candles);
     if (indexQuality.valid.length < Math.max(5, candles.length * 0.8)) {
       throw new Error(indexQuality.reason ?? "index_fallback_out_of_range");

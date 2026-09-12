@@ -379,6 +379,18 @@ type DailyIndexRow = {
   Indexcode?: string;
   IndexName?: string;
   IndexValue?: string | number;
+  Open?: string | number;
+  High?: string | number;
+  Low?: string | number;
+  Close?: string | number;
+  OpenIndex?: string | number;
+  HighIndex?: string | number;
+  LowIndex?: string | number;
+  CloseIndex?: string | number;
+  IndexOpen?: string | number;
+  IndexHigh?: string | number;
+  IndexLow?: string | number;
+  IndexClose?: string | number;
   Change?: string | number;
   RatioChange?: string | number;
   Totalmatchvol?: string | number;
@@ -405,7 +417,7 @@ type DailyIndexRow = {
 export async function getSsiIndexHistory(
   indexId: string,
   opts?: { fromDate?: string; toDate?: string; pageSize?: number },
-): Promise<{ time: number; open: number; high: number; low: number; close: number; volume?: number }[]> {
+): Promise<{ time: number; open: number; high: number; low: number; close: number; volume?: number; synthetic?: boolean }[]> {
   const code = indexId.toUpperCase();
   const fromDate = opts?.fromDate ?? formatSsiDate(new Date(Date.now() - 5 * 365 * 24 * 60 * 60 * 1000));
   const toDate = opts?.toDate ?? formatSsiDate();
@@ -416,15 +428,26 @@ export async function getSsiIndexHistory(
   });
   const rows = Array.isArray(body.data) ? body.data : [];
   return rows.flatMap((row) => {
-    const close = num(row.IndexValue);
+    const close = num(row.IndexClose ?? row.CloseIndex ?? row.Close ?? row.IndexValue);
+    const open = num(row.IndexOpen ?? row.OpenIndex ?? row.Open);
+    const high = num(row.IndexHigh ?? row.HighIndex ?? row.High);
+    const low = num(row.IndexLow ?? row.LowIndex ?? row.Low);
     const rawDate = row.TradingDate ?? row["Trading Date"];
     const dateText = rawDate ? String(rawDate).trim() : "";
     const dateMatch = dateText.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})$/);
     const isoDate = dateMatch ? `${dateMatch[3]}-${dateMatch[2].padStart(2, "0")}-${dateMatch[1].padStart(2, "0")}` : dateText;
     const time = isoDate ? Date.parse(`${isoDate}T15:00:00+07:00`) : NaN;
     if (close == null || !Number.isFinite(time)) return [];
-    const previous = num(row.Change) != null ? close - (num(row.Change) ?? 0) : close;
-    return [{ time, open: previous, high: Math.max(previous, close), low: Math.min(previous, close), close, volume: num(row.Totalmatchvol) ?? num(row.Totalvol) ?? undefined }];
+    const fallbackOpen = num(row.Change) != null ? close - (num(row.Change) ?? 0) : close;
+    const candle = {
+      time,
+      open: open ?? fallbackOpen,
+      high: high ?? Math.max(open ?? fallbackOpen, close),
+      low: low ?? Math.min(open ?? fallbackOpen, close),
+      close,
+      volume: num(row.Totalmatchvol) ?? num(row.Totalvol) ?? undefined,
+    };
+    return [{ ...candle, synthetic: open == null || high == null || low == null }];
   });
 }
 
