@@ -109,7 +109,7 @@ export interface SsiWsStats {
 type WsLike = {
   onopen: (() => void) | null;
   onmessage: ((e: { data: unknown }) => void) | null;
-  onerror: ((e: unknown }) => void) | null;
+  onerror: ((e: unknown) => void) | null;
   onclose: ((e: { code?: number; reason?: string }) => void) | null;
   close: () => void;
   send: (data: string) => void;
