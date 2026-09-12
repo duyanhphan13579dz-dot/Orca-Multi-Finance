@@ -3,6 +3,7 @@ import { eventBus } from "../events";
 import { TF_MS, type ChartCandle } from "../chart-const";
 import { validateQuote, logQualityEvent } from "../quality";
 import { binanceWs, KLINE_INTERVALS, type KlineCandle } from "./binance-ws";
+import { ensureSsiWsStarted } from "./ssi-ws";
 
 /**
  * CANDLE AGGREGATION ENGINE — live current-candles from centralized tick/kline feed.
@@ -54,7 +55,14 @@ class CandleAggregator {
       this.subs.set(sym, tfMap);
     }
     if (tfMap.size === 0 && !this.tickOffs.has(sym)) {
-      this.tickOffs.set(sym, eventBus.on(`tick:${sym}`, (p) => this.feed(p as Tick)));
+      if (opts?.crypto) {
+        this.tickOffs.set(sym, eventBus.on(`tick:${sym}`, (p) => this.feed(p as Tick, "crypto")));
+      } else {
+        ensureSsiWsStarted();
+        const indexOff = eventBus.on(`ssi:index:${sym}`, (p) => this.feedSsiIndex(p as { code: string; value: number; volume?: number; eventTime: number }));
+        const quoteOff = eventBus.on(`ssi:quote:${sym}`, (p) => this.feedSsiQuote(p as { symbol: string; price: number; volume?: number | null; eventTime: number }));
+        this.tickOffs.set(sym, () => { indexOff(); quoteOff(); });
+      }
     }
     const firstForTf = (tfMap.get(tf) ?? 0) === 0;
     tfMap.set(tf, (tfMap.get(tf) ?? 0) + 1);
@@ -155,7 +163,7 @@ class CandleAggregator {
     }
   }
 
-  feed(tick: Tick) {
+  feed(tick: Tick, assetClass: "crypto" | "vn" = "crypto") {
     const tfMap = this.subs.get(tick.symbol.toUpperCase());
     if (!tfMap || tfMap.size === 0) return;
 
@@ -183,7 +191,7 @@ class CandleAggregator {
           changePercent: null,
           updatedAt: new Date(tick.ts).toISOString(),
         },
-        { assetClass: "crypto", staleMs: 5 * 60_000, sourceTimestampMs: tick.ts },
+        { assetClass: assetClass === "vn" ? "stock" : "crypto", staleMs: 5 * 60_000, sourceTimestampMs: tick.ts },
       );
       quality = q.status;
       // Never cache an INVALID verdict: one malformed tick must not black-hole
@@ -200,6 +208,16 @@ class CandleAggregator {
     }
 
     for (const tf of tfMap.keys()) this.feedTf(tick, tf, quality);
+  }
+
+  private feedSsiQuote(quote: { symbol: string; price: number; volume?: number | null; eventTime: number }) {
+    if (!Number.isFinite(quote.price) || quote.price <= 0) return;
+    this.feed({ symbol: quote.symbol, price: quote.price, cumVolume: quote.volume ?? 0, cumQuoteVolume: 0, ts: quote.eventTime }, "vn");
+  }
+
+  private feedSsiIndex(index: { code: string; value: number; volume?: number; eventTime: number }) {
+    if (!Number.isFinite(index.value) || index.value <= 0) return;
+    this.feed({ symbol: index.code, price: index.value, cumVolume: index.volume ?? 0, cumQuoteVolume: 0, ts: index.eventTime }, "vn");
   }
 
   private feedTf(tick: Tick, tf: string, quality: string) {

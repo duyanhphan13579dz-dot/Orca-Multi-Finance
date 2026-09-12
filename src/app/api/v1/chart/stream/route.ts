@@ -1,6 +1,7 @@
 import { eventBus } from "@/lib/events";
 import { candleAggregator } from "@/lib/realtime/candles";
 import { ensureBinanceWsStarted } from "@/lib/realtime/binance-ws";
+import { ensureSsiWsStarted } from "@/lib/realtime/ssi-ws";
 import { tfsFor, type ChartAssetType } from "@/lib/chart-const";
 
 export const dynamic = "force-dynamic";
@@ -25,7 +26,8 @@ export async function GET(req: Request) {
     return new Response(JSON.stringify({ success: false, error: { code: "BAD_REQUEST", message: "params không hợp lệ" } }), { status: 400 });
   }
 
-  ensureBinanceWsStarted();
+  if (assetType === "crypto") ensureBinanceWsStarted();
+  else ensureSsiWsStarted();
 
   const encoder = new TextEncoder();
   let unsubscribe: (() => void) | null = null;
@@ -51,7 +53,13 @@ export async function GET(req: Request) {
         const snap = candleAggregator.snapshot(symbol, timeframe);
         send("snapshot", { symbol, timeframe, candle: snap, live: Boolean(snap), note: snap ? undefined : "chờ tick đầu tiên / stream đang kết nối" });
       } else {
-        send("snapshot", { symbol, timeframe, candle: null, live: false, note: `${assetType} hiện stream qua REST refresh — nến mới cập nhật khi poll cycle chạy` });
+        unsubscribe = candleAggregator.subscribe(symbol, timeframe, { crypto: false });
+        offFns = [
+          eventBus.on(`candle.updated:${symbol}:${timeframe}`, (p) => send("chart.candle.updated", { ...(p as Record<string, unknown>), source: "ssi-websocket" })),
+          eventBus.on(`candle.closed:${symbol}:${timeframe}`, (p) => send("chart.candle.closed", { ...(p as Record<string, unknown>), source: "ssi-websocket" })),
+        ];
+        const snap = candleAggregator.snapshot(symbol, timeframe);
+        send("snapshot", { symbol, timeframe, candle: snap, live: Boolean(snap), source: "ssi-websocket", note: snap ? "SSI WS live candle" : "đang chờ SSI WS quote/index" });
       }
 
       heartbeat = setInterval(() => {
