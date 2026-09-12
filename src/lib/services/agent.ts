@@ -118,12 +118,16 @@ function lastStickyIntent(history: AgentHistoryTurn[]): Intent | null {
 
 function resolveIntent(question: string, history: AgentHistoryTurn[]): Intent {
   const direct = detectIntent(question);
-  if (direct.kind !== "general" && direct.kind !== "market") return direct;
+  // A clear subject in the current question always wins over conversation memory.
+  // In particular, market/news questions must not inherit a previous wealth or
+  // personal-finance topic merely because they are short.
+  if (direct.kind !== "general") {
+    if (direct.kind === "market" || direct.kind === "news") return direct;
+    return direct;
+  }
   const sticky = lastStickyIntent(history);
   if (!sticky) return direct;
-  const stickyTopic = intentTopic(sticky);
-  if (direct.kind !== "general" && !sameTopicFamily(stickyTopic, intentTopic(direct)) && !isFollowUpCue(question)) return direct;
-  if (isFollowUpCue(question) || direct.kind === "general") return sticky;
+  if (isFollowUpCue(question)) return sticky;
   return direct;
 }
 
@@ -172,12 +176,14 @@ function parseMoneyHints(q: string): Record<string, number | null> {
   return out;
 }
 
-const SYS_BASE = `Bạn là chuyên viên của ORCA Financial.
-- CHỈ dùng số liệu trong STRUCTURED CONTEXT (gồm user_inputs/plan). Không dùng giá cũ từ model.
-- Phân biệt FACT / INTERPRETATION / SCENARIO. Thiếu dữ liệu thì nói rõ.
-- Văn phong tự nhiên, đủ ý; không nhãn máy móc.
+const SYS_BASE = `Bạn là chuyên viên của ORCA Financial, trả lời đúng câu hỏi hiện tại trước tiên.
+- Mở đầu bằng câu trả lời trực tiếp cho CÂU HỎI HIỆN TẠI; không mở đầu bằng câu hỏi cũ hoặc chủ đề cũ.
+- Chỉ dùng số liệu trong STRUCTURED CONTEXT (gồm user_inputs/plan). Không dùng giá cũ từ model.
+- Phân biệt FACT (dữ kiện), INTERPRETATION (nhận định) và SCENARIO (kịch bản). Ghi rõ khi dữ liệu thiếu hoặc không chắc chắn.
+- Văn phong tự nhiên, đúng ngữ nghĩa, đủ ý; không nhãn máy móc và không lặp lại nguyên văn context.
+- Lịch sử chỉ là ngữ cảnh tham khảo. Chỉ dùng lượt cũ khi câu hỏi hiện tại có dấu hiệu hỏi tiếp như “còn”, “vậy”, “thế”, “nó”, “mã đó”; nếu chủ đề hiện tại rõ ràng thì bỏ qua lịch sử trái chủ đề.
 - Tài chính cá nhân/gia sản: không dòng nguồn hay disclaimer dài.
-- Đa chủ đề: giữ đúng slot chủ đề đang hỏi; không trộn ràng buộc chủ đề khác trừ khi user liên kết rõ.`;
+- Không tự bịa dữ liệu, nguồn, thời điểm, giá hoặc khuyến nghị chắc chắn.`;
 
 const SYS_STOCK = `${SYS_BASE}
 

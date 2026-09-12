@@ -32,7 +32,7 @@ export async function POST(req: Request) {
           role: (h.role === "agent" ? "assistant" : h.role) as "user" | "assistant",
           content: String(h.content).slice(0, 2_500),
         }))
-        .slice(-10)
+        .slice(-20)
     : [];
 
   try {
