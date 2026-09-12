@@ -5,7 +5,7 @@ import * as binance from "../providers/binance";
 import { getYahooChart, yahooSymbolForPair, yahooIntervalFor } from "../providers/yahoo";
 import { getVnOhlcv, vnstockConfigured } from "./stocks";
 import * as vndirect from "../providers/vndirect";
-import { getSsiIntradayOhlc } from "../providers/ssi-market-catalog";
+import { getSsiIntradayOhlc, getSsiIndexHistory } from "../providers/ssi-market-catalog";
 import { ssiFcConfigured } from "../providers/ssi-fcdata";
 import { validateBars, detectGaps, logQualityEvent } from "../quality";
 import { aggregateCandles, binanceInterval, TF_MS, tfsFor, type ChartAssetType, type ChartCandle } from "../chart-const";
@@ -212,11 +212,39 @@ async function stockCandles(symbol: string, tf: string, limit: number): Promise<
     }
   }
 
+  if (vndirect.isVnIndexSymbol(symbol) && ssiFcConfigured()) {
+    try {
+      const bars = await getSsiIndexHistory(ssiChartSymbol(symbol), { pageSize: Math.min(dayLimit, 2000) });
+      if (bars.length >= 5) {
+        let candles: ChartCandle[] = bars.map((bar) => ({ ...bar, volume: bar.volume ?? 0 }));
+        if (tf === "1w") candles = aggregateCandles(candles, TF_MS["1w"]);
+        if (tf === "1M") candles = aggregateCandles(candles, TF_MS["1M"]);
+        return { candles: candles.slice(-limit), source: "ssi-fcdata-daily-index", note: `SSI DailyIndex ${ssiChartSymbol(symbol)} · cùng nguồn với chỉ số hiện tại` };
+      }
+    } catch {
+      /* fall through to legacy provider only when SSI history is unavailable */
+    }
+  }
+
   if (vndirect.isVnIndexSymbol(symbol)) {
     const bars = await vndirect.getVndIndexOhlcv(symbol, dayLimit);
     let candles = bars.map(toCandle);
     if (tf === "1w") candles = aggregateCandles(candles, TF_MS["1w"]).slice(-limit);
     if (tf === "1M") candles = aggregateCandles(candles, TF_MS["1M"]).slice(-limit);
+    // VNDIRECT historical index levels can be stale relative to the live quote.
+    // Calibrate the full fallback series to the same current index level so the
+    // headline quote and the chart cannot show two different scales.
+    try {
+      const current = (await vndirect.getVndIndices()).items.find((item) => item.code === symbol);
+      const lastClose = candles.at(-1)?.close;
+      if (current?.value && lastClose && Math.abs(current.value - lastClose) / lastClose > 0.02) {
+        const ratio = current.value / lastClose;
+        candles = candles.map((c) => ({ ...c, open: c.open * ratio, high: c.high * ratio, low: c.low * ratio, close: c.close * ratio }));
+        return { candles: candles.slice(-limit), source: "vndirect-index-calibrated", note: `VNDirect lịch sử đã căn chỉnh theo quote hiện tại ${current.value.toLocaleString("vi-VN")} để đồng bộ chỉ số và chart` };
+      }
+    } catch {
+      /* return raw fallback if quote calibration is unavailable */
+    }
     return { candles: candles.slice(-limit), source: "vndirect-index-fallback", note: "SSI chưa trả OHLC lịch sử chỉ số; fallback VNDirect OHLCV ngày" };
   }
 
@@ -286,7 +314,7 @@ async function commodityCandles(symbol: string, tf: string, limit: number): Prom
   return {
     candles,
     source: `yahoo-finance (${ySym})`,
-    note: "Chuỗi OHLC futures/spot Yahoo — tham chiếu biến động quốc tế, có thể khác giá VietnamBiz (VND/nội địa).",
+    note: "Chu���i OHLC futures/spot Yahoo — tham chiếu biến động quốc tế, có thể khác giá VietnamBiz (VND/nội địa).",
   };
 }
 
@@ -310,8 +338,8 @@ export async function getChartHistory(args: ChartArgs): Promise<{ data: ChartMar
                 ? await commodityCandles(symbol, tf, limit)
                 : await stockCandles(symbol, tf, limit);
 
-        const q = validateBars(raw.candles as OhlcvBar[]);
-        if (q.status !== "VALID") void logQualityEvent("chart-engine", `${args.assetType}:${symbol}:${tf}`, q);
+          const q = validateBars(raw.candles as OhlcvBar[]);
+          if (q.status !== "VALID") void logQualityEvent("chart-engine", `${args.assetType}:${symbol}:${tf}`, q);
         if (q.status === "INVALID") throw new Error("invalid candle series");
         const gap = detectGaps(q.cleaned, TF_MS[tf]);
         const suspect = (q.status === "SUSPECT" ? 1 : 0) + (gap ? 1 : 0);
