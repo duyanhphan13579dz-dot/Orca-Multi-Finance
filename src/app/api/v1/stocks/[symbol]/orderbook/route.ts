@@ -4,6 +4,7 @@ import { ssiFcConfigured } from "@/lib/providers/ssi-fcdata";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
+export const maxDuration = 8;
 
 /**
  * Order book + match tape.

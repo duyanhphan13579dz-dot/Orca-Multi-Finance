@@ -199,7 +199,9 @@ export async function getVnOrderBook(
     // 2) Wait for first depth tick / last-session snapshot from SSI
     //    Outside session SSI often still pushes last X on SwitchChannel.
     if (!ob) {
-      const waitMs = inSession ? 1_500 : 2_500;
+        // Keep the first request bounded: SSE continues receiving later ticks,
+        // while a slow SSI handshake must not block the Vercel response.
+        const waitMs = inSession ? 850 : 1_200;
       try {
         if (typeof ssiWs.waitForOrderBook === "function") {
           ob = await ssiWs.waitForOrderBook(sym, waitMs);

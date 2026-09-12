@@ -37,7 +37,9 @@ function fmtTime(t: string | null, eventTime: number): string {
 export function OrderBookPanel({ symbol, compact = false }: { symbol: string; compact?: boolean }) {
   const { res, data: restData, meta: restMeta, isLoading } = useApi<VnOrderBook>(
     symbol ? `/api/v1/stocks/${symbol}/orderbook` : null,
-    { refreshInterval: 1_000 },
+    // SSE is primary. REST is only a resilient snapshot fallback; avoid
+    // invoking a serverless function once per second while SSI is connecting.
+    { refreshInterval: 10_000, timeoutMs: 7_000 },
   );
 
   const [live, setLive] = useState<VnOrderBook | null>(null);
@@ -106,21 +108,25 @@ export function OrderBookPanel({ symbol, compact = false }: { symbol: string; co
       es.onerror = () => {
         if (!closed) setSseState("error");
       };
-      es.onmessage = (ev) => {
+      const applyBookEvent = (ev: Event) => {
         try {
-          const payload = JSON.parse(ev.data) as Partial<VnOrderBook>;
-          mergeBook(payload);
+          const raw = JSON.parse((ev as MessageEvent).data) as
+            | Partial<VnOrderBook>
+            | { book?: Partial<VnOrderBook> | null; orderBook?: Partial<VnOrderBook> | null };
+          const payload = ("orderBook" in raw ? raw.orderBook : "book" in raw ? raw.book : raw) as
+            | Partial<VnOrderBook>
+            | null
+            | undefined;
+          if (payload) mergeBook(payload);
         } catch {
           /* ignore */
         }
       };
+      es.addEventListener("snapshot", applyBookEvent);
+      es.addEventListener("orderbook", applyBookEvent);
+      es.onmessage = applyBookEvent;
       es.addEventListener("book", (ev) => {
-        try {
-          const payload = JSON.parse((ev as MessageEvent).data) as Partial<VnOrderBook>;
-          mergeBook(payload);
-        } catch {
-          /* ignore */
-        }
+        applyBookEvent(ev);
       });
       es.addEventListener("trade", (ev) => {
         try {

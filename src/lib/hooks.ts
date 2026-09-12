@@ -15,9 +15,9 @@ import { getSettingsSnapshot, resolveRefresh } from "./settings";
 
 const FETCH_TIMEOUT_MS = 22_000;
 
-const fetcher = async <T>(url: string): Promise<ApiResponse<T>> => {
+const fetcher = async <T>(url: string, timeoutMs = FETCH_TIMEOUT_MS): Promise<ApiResponse<T>> => {
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS);
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
     const res = await fetch(url, {
       headers: { Accept: "application/json" },
@@ -44,7 +44,7 @@ function usePageVisible(): boolean {
   return visible;
 }
 
-export function useApi<T>(url: string | null, opts?: { refreshInterval?: number }) {
+export function useApi<T>(url: string | null, opts?: { refreshInterval?: number; timeoutMs?: number }) {
   const rt = getSettingsSnapshot().realtime;
   const visible = usePageVisible();
 
@@ -52,18 +52,22 @@ export function useApi<T>(url: string | null, opts?: { refreshInterval?: number 
   // Pause polling in background tabs — big win on mobile battery & server load
   const refreshInterval = visible && rt.liveUpdates ? baseRefresh : 0;
 
-  const { data, error, isLoading, isValidating, mutate } = useSWR<ApiResponse<T>>(url, fetcher<T>, {
-    refreshInterval,
-    revalidateOnFocus: rt.backgroundRefresh,
-    revalidateOnReconnect: rt.autoReconnect,
-    focusThrottleInterval: rt.lowDataMode ? 60_000 : 30_000,
-    shouldRetryOnError: rt.autoReconnect,
-    errorRetryInterval: rt.lowDataMode ? 60_000 : 15_000,
-    errorRetryCount: rt.autoReconnect ? 3 : 0,
-    keepPreviousData: true,
-    dedupingInterval: rt.lowDataMode ? 20_000 : 6_000,
-    suspense: false,
-  });
+  const { data, error, isLoading, isValidating, mutate } = useSWR<ApiResponse<T>>(
+    url,
+    (key: string) => fetcher<T>(key, opts?.timeoutMs ?? FETCH_TIMEOUT_MS),
+    {
+      refreshInterval,
+      revalidateOnFocus: rt.backgroundRefresh,
+      revalidateOnReconnect: rt.autoReconnect,
+      focusThrottleInterval: rt.lowDataMode ? 60_000 : 30_000,
+      shouldRetryOnError: rt.autoReconnect,
+      errorRetryInterval: rt.lowDataMode ? 60_000 : 15_000,
+      errorRetryCount: rt.autoReconnect ? 3 : 0,
+      keepPreviousData: true,
+      dedupingInterval: rt.lowDataMode ? 20_000 : 6_000,
+      suspense: false,
+    },
+  );
 
   return {
     res: data ?? null,

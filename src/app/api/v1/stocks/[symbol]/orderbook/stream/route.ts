@@ -5,6 +5,7 @@ import { getVnOrderBook } from "@/lib/services/stock-orderbook";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
+export const maxDuration = 15;
 
 /**
  * SSE — live order book + trades (push, không poll).
@@ -48,7 +49,7 @@ export async function GET(_req: Request, ctx: { params: Promise<{ symbol: string
       const send = (event: string, data: unknown) => {
         if (closed) return;
         try {
-          controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
+          controller.enqueue(encoder.encode(`retry: 5000\nevent: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
         } catch {
           /* closed */
         }
