@@ -439,7 +439,21 @@ async function buildMarket(): Promise<Built> {
   return { narrative: `${p.headline}.\n\n${p.body.join("\n\n")}`, contract, sectionsUsed: ["market-snapshot", "pulse-engine"], symbols: [], freshnesses: Object.values(snap.meta.sections ?? {}), persona: "stock_analyst" };
 }
 
-export async function answerQuestion(question: string, prefs: AgentPrefs = {}, history: AgentHistoryTurn[] = []): Promise<{ result: AgentAnswer; meta: Meta }> {
+  function responseQuality(text: string, intent: Intent, depth: AgentPrefs["depth"]): { ok: boolean; reason?: string } {
+    const normalized = text.trim();
+    const wordCount = normalized.split(/\s+/).filter(Boolean).length;
+    const minimum = depth === "concise" ? 45 : depth === "deep" ? 120 : 75;
+    if (wordCount < minimum) return { ok: false, reason: `Câu trả lời quá ngắn (${wordCount} từ, cần ít nhất ${minimum}).` };
+    if (intent.kind === "vn-market" && /\b(?:BTC|ETH|USDT|crypto|forex|EUR\/USD|vàng SJC)\b/i.test(normalized)) {
+      return { ok: false, reason: "Câu trả lời bị trộn domain ngoài chứng khoán Việt Nam." };
+    }
+    if (intent.kind === "vn-market" && !/(VN-?Index|VN30|HNX|UPCoM|độ rộng|thanh khoản|ngành|dòng tiền|kịch bản|rủi ro)/i.test(normalized)) {
+      return { ok: false, reason: "Thiếu các trục phân tích thị trường Việt Nam." };
+    }
+    return { ok: true };
+  }
+
+  export async function answerQuestion(question: string, prefs: AgentPrefs = {}, history: AgentHistoryTurn[] = []): Promise<{ result: AgentAnswer; meta: Meta }> {
   const intent = resolveIntent(question, history);
   const topicMemory = buildTopicMemory(history);
   const memoryBlock = formatTopicMemory(topicMemory);
@@ -486,11 +500,18 @@ export async function answerQuestion(question: string, prefs: AgentPrefs = {}, h
   const canLlm = llmConfigured() && !(built.unavailable && built.sectionsUsed.length === 0);
   if (canLlm) {
     const role = intent.kind === "compare" || intent.kind === "market" || intent.kind === "wealth" ? "reasoning" : "analysis";
-    const styleVi = prefs.style === "technical" ? "súc tích, nhấn chỉ báo" : prefs.style === "brief" ? "rất ngắn (3-5 câu)" : "chuyên sâu, mạch lạc";
-    const memLine = memoryBlock ? `\n\nBỘ NHỚ ĐA CHỦ ĐỀ:\n${memoryBlock}` : "";
-    const user = built.persona === "personal_finance" || built.persona === "wealth"
-      ? `CÂU HỎI HIỆN TẠI: ${question}${memLine}\n\nSTRUCTURED CONTEXT:\n${JSON.stringify(built.contract, null, 1).slice(0, 11_000)}\n\nActive topic: ${intent.kind}. Trả lời ĐỦ Ý theo khung (dải % lớp tài sản hoặc lịch chi cụ thể, giả định, bước triển khai). Không 3 câu sáo. Không disclaimer.`
-      : `CÂU HỎI: ${question}${memLine}\n\nSTRUCTURED CONTEXT:\n${JSON.stringify(built.contract, null, 1).slice(0, 11_000)}\n\nPhong cách: ${styleVi}. Active: ${intent.kind}.`;
+  const styleVi = prefs.style === "technical" ? "phân tích kỹ thuật sâu, giải thích tín hiệu và giới hạn dữ liệu" : prefs.style === "brief" ? "cô đọng nhưng vẫn đủ luận điểm chính" : "chuyên sâu, mạch lạc, có lập luận và kết luận rõ";
+  const depthInstruction = prefs.depth === "concise" ? "Tối thiểu 5 đoạn ngắn, không lan man." : prefs.depth === "deep" ? "Phân tích sâu 10–14 đoạn có tiêu đề, bao gồm dữ kiện, diễn giải, nguyên nhân, kịch bản và rủi ro." : "Phân tích đầy đủ 7–10 đoạn có tiêu đề, không trả lời dưới 450 từ nếu dữ liệu cho phép.";
+  const contractByIntent: Record<string, string> = {
+    "vn-market": "Bắt buộc: ## Kết luận phiên; ## Chỉ số chính; ## Độ rộng và thanh khoản; ## Nhóm ngành/dòng tiền; ## Kỹ thuật; ## Kịch bản; ## Rủi ro và dữ liệu cần theo dõi.",
+    "vn-stock": "Bắt buộc: ## Luận điểm; ## Hoạt động kinh doanh; ## Tài chính; ## Định giá hoặc giới hạn định giá; ## Catalyst; ## Rủi ro; ## Điều cần theo dõi.",
+    wealth: "Bắt buộc: ## Giả định; ## Phân bổ tham chiếu; ## Đánh đổi; ## Kế hoạch triển khai; ## Stress case; ## Dữ liệu còn thiếu.",
+    personal_finance: "Bắt buộc: ## Tóm tắt; ## Phân bổ ngân sách; ## Việc làm ngay; ## Rủi ro; ## Câu hỏi cần bổ sung.",
+  };
+  const scopeRule = intent.kind === "vn-market" ? "Chỉ được nói về chứng khoán Việt Nam (VN-Index, VN30, HNX, UPCoM, ngành và mã Việt Nam). Tuyệt đối không chèn BTC, crypto, forex, vàng hay thị trường quốc tế." : "Không mở rộng sang domain tài sản khác nếu câu hỏi không yêu cầu.";
+  const memLine = memoryBlock ? `\n\nBỘ NHỚ ĐA CHỦ ĐỀ (chỉ dùng nếu liên quan trực tiếp):\n${memoryBlock}` : "";
+  const user = `${built.persona === "personal_finance" || built.persona === "wealth" ? "CÂU HỎI HIỆN TẠI" : "CÂU HỎI"}: ${question}${memLine}\n\nSTRUCTURED CONTEXT (nguồn sự thật duy nhất):\n${JSON.stringify(built.contract, null, 1).slice(0, 20_000)}\n\nActive topic: ${intent.kind}. ${scopeRule}\n${contractByIntent[intent.kind] ?? "Tự chọn cấu trúc phù hợp với câu hỏi, nhưng phải có kết luận trực tiếp và giải thích nguyên nhân."}\n${depthInstruction}\nPhong cách: ${styleVi}. Phân biệt rõ Dữ kiện / Nhận định / Kịch bản. Nếu thiếu số liệu lịch sử, nói thẳng thay vì suy đoán. Không lặp lại JSON context và không trả lời 3 câu sáo rỗng.`;
+
     const tagged = history.filter((h) => h.content?.trim());
     const sameTopic = tagged.filter((h) => h.role !== "user" || detectIntent(h.content).kind === intent.kind || detectIntent(h.content).kind === "general");
     const chatHistory = (sameTopic.length >= 2 ? sameTopic : tagged).slice(-8).map((h) => ({ role: (h.role === "user" ? "user" : "assistant") as "user" | "assistant", content: h.content.trim().slice(0, 2_500) }));
@@ -517,11 +538,15 @@ export async function answerQuestion(question: string, prefs: AgentPrefs = {}, h
     const first = primary ?? secondary;
     const selectedBackend = primary ? primaryBackend : secondaryBackend;
     const selectedModel = modelForBackend(selectedBackend);
-    if (first) {
-      const use = await validateMaybeRepair(first, user, factNums, role, sys, selectedBackend, selectedModel);
-      if (use.text) { finalAnswer = use.text; mode = "llm"; model = first.model; outputValidation = use.validation; }
-      else outputValidation = use.validation;
-    }
+  if (first) {
+  const quality = responseQuality(first.text, intent, prefs.depth);
+  const use = quality.ok
+    ? await validateMaybeRepair(first, user, factNums, role, sys, selectedBackend, selectedModel)
+    : await repairResponseQuality(first, user, factNums, role, sys, selectedBackend, selectedModel, quality.reason ?? "Thiếu chiều sâu");
+  if (use.text) { finalAnswer = use.text; mode = "llm"; model = first.model; outputValidation = use.validation; }
+  else outputValidation = use.validation;
+  }
+
   }
 
   if (built.persona === "stock_analyst") {
@@ -538,7 +563,22 @@ export async function answerQuestion(question: string, prefs: AgentPrefs = {}, h
   return { result: { answer: finalAnswer, mode, intent: intent.kind, persona: built.persona, model, confidence, dataQuality: qualityToLabel(meta.qualityStatus), dataFreshness, context: { sectionsUsed: built.sectionsUsed, symbols: built.symbols } }, meta };
 }
 
-async function validateMaybeRepair(first: LlmResult, user: string, facts: Set<number>, role: "reasoning" | "analysis", sys: string, backend: "openrouter" | "groq", modelOverride: string): Promise<{ text: string | null; model: string; validation: Meta["outputValidation"] }> {
+  async function repairResponseQuality(first: LlmResult, user: string, facts: Set<number>, role: "reasoning" | "analysis", sys: string, backend: "openrouter" | "groq", modelOverride: string, reason: string): Promise<{ text: string | null; model: string; validation: Meta["outputValidation"] }> {
+    const repaired = await llmChat(role, {
+      system: `${sys}\nQUALITY GATE FAILED: ${reason}\nHãy viết lại toàn bộ câu trả lời có chiều sâu, mở đầu bằng kết luận trực tiếp, dùng heading Markdown, lập luận theo dữ liệu context, bao gồm nguyên nhân, kịch bản, rủi ro và dữ liệu cần theo dõi. Không thêm domain ngoài câu hỏi. Không được bịa số.`,
+      user,
+      temperature: 0.22,
+      maxTokens: 2200,
+      modelOverride,
+      backend,
+    });
+    if (!repaired) return { text: null, model: first.model, validation: { validated: false, unsupportedClaims: 0, recovered: "deterministic-quality-fallback" } };
+    const val = validateOutput(repaired.text, facts);
+    if (!val.ok) return { text: null, model: first.model, validation: { validated: false, unsupportedClaims: val.unsupported.length, recovered: "deterministic-quality-fallback" } };
+    return { text: repaired.text, model: repaired.model, validation: { validated: true, unsupportedClaims: 0, recovered: "quality-regenerated" } };
+  }
+
+  async function validateMaybeRepair(first: LlmResult, user: string, facts: Set<number>, role: "reasoning" | "analysis", sys: string, backend: "openrouter" | "groq", modelOverride: string): Promise<{ text: string | null; model: string; validation: Meta["outputValidation"] }> {
   let val = validateOutput(first.text, facts);
   if (val.ok) return { text: first.text, model: first.model, validation: { validated: true, unsupportedClaims: 0 } };
   const regen = await llmChat(role, { system: `${sys}\nSTRICT: chỉ dùng số trong context. Sai trước: ${val.unsupported.slice(0, 5).map((u) => u.raw).join(", ")}.`, user, temperature: 0.2, maxTokens: 1100, modelOverride, backend });
