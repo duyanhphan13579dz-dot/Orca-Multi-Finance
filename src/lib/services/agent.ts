@@ -105,7 +105,9 @@ function detectIntent(q: string): Intent {
   for (const t of upper.match(/\b[A-Z]{2,5}\b/g) ?? []) if (KNOWN_CRYPTO.has(t)) return { kind: "crypto", symbol: `${t}USDT` };
   for (const t of upper.match(/\b[A-Z]{3}\b/g) ?? []) if (VN_TICKERS.includes(t)) return { kind: "vn-stock", symbol: t };
   for (const [re, key] of COMMODITY_WORDS) if (re.test(q)) return { kind: "commodity", query: key };
-  if (/thị trường|market|tổng quan|hôm nay|tình hình|đánh giá chung|bức tranh/i.test(q)) return { kind: "market" };
+  // "Thị trường" không kèm tài sản cụ thể luôn mặc định là chứng khoán Việt Nam.
+  // Các câu hỏi crypto/forex đã được nhận diện ở phía trên và vẫn giữ đúng phạm vi riêng.
+  if (/thị trường|market|tổng quan|hôm nay|tình hình|đánh giá chung|bức tranh/i.test(q)) return { kind: "vn-market", requestedDate: requestedDate(q) };
   if (/tin tức|news|sự kiện/i.test(q)) return { kind: "news" };
   return { kind: "general" };
 }
@@ -453,7 +455,7 @@ export async function answerQuestion(question: string, prefs: AgentPrefs = {}, h
   else if (intent.kind === "vn-stock") built = await buildVn(intent.symbol, deep);
   else if (intent.kind === "vn-market") built = await buildVnMarket(intent.requestedDate);
   else if (intent.kind === "market" || intent.kind === "news" || intent.kind === "general") {
-    built = await buildMarket();
+    built = intent.kind === "market" ? await buildVnMarket(null) : await buildMarket();
     if (intent.kind === "news" && built.contract.news_top) {
       const tops = (built.contract as { news_top?: { title: string; source: string }[] }).news_top ?? [];
       built = { ...built, narrative: tops.length ? tops.map((a, i) => `${i + 1}. ${a.title} — ${a.source}`).join("\n") : "Chưa có tin phù hợp." };
