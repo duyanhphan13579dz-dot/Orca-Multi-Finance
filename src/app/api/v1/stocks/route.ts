@@ -35,7 +35,7 @@ export async function GET(req: Request) {
       {
         indices: market.indices,
         quotes: market.quotes,
-        universe: market.universe,
+        universeSize: market.universeSize,
         sessionDate: market.sessionDate,
         session,
         count: market.quotes.length,
