@@ -310,10 +310,10 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
       <div className="flex flex-wrap items-center gap-2 border-b border-border-subtle px-3 py-2">
         <span className="text-[13px] font-medium text-text-primary">{title ?? symbol}</span>
         {meta?.source && (
-          <span className="text-[10px] uppercase tracking-wider text-text-muted">{meta.source}</span>
+          <span className="text-[10px] uppercase tracking-wider text-text-muted" title={meta.note ?? undefined}>{meta.source}</span>
         )}
         {data?.candles?.length ? (
-          <span className="text-[10px] text-text-muted">{data.candles.length} nến</span>
+          <span className="text-[10px] text-text-muted">{data.candles.length} nến · {new Date(data.candles[data.candles.length - 1].time).toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh", hour: "2-digit", minute: "2-digit", day: "2-digit", month: "2-digit" })}</span>
         ) : null}
         <div className="seg ml-auto">
           {tfs.map((x) => (
