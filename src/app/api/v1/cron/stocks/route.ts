@@ -16,7 +16,7 @@ export async function GET() {
     sessionDate: market.sessionDate,
     quotes: market.quotes.length,
     indices: market.indices.length,
-    universe: market.universe.length,
+    universe: market.universeSize,
     durationMs: Date.now() - t0,
     source: market.meta.source,
   });
