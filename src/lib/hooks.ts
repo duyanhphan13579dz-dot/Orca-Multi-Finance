@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useSyncExternalStore } from "react";
 import useSWR from "swr";
 import type { ApiResponse } from "./types";
 import { getSettingsSnapshot, resolveRefresh } from "./settings";
@@ -32,16 +32,37 @@ const fetcher = async <T>(url: string, timeoutMs = FETCH_TIMEOUT_MS): Promise<Ap
   }
 };
 
-/** Shared: pause interval polling while the document is hidden */
+/** Shared: one visibility listener for every API hook on the page. */
+let pageVisible = true;
+const visibilityListeners = new Set<() => void>();
+
+function syncPageVisibility() {
+  pageVisible = document.visibilityState === "visible";
+  visibilityListeners.forEach((listener) => listener());
+}
+
+function subscribePageVisibility(listener: () => void) {
+  if (visibilityListeners.size === 0) {
+    pageVisible = document.visibilityState === "visible";
+    document.addEventListener("visibilitychange", syncPageVisibility);
+  }
+  visibilityListeners.add(listener);
+  return () => {
+    visibilityListeners.delete(listener);
+    if (visibilityListeners.size === 0) document.removeEventListener("visibilitychange", syncPageVisibility);
+  };
+}
+
+function getPageVisibility() {
+  return pageVisible;
+}
+
+function getServerPageVisibility() {
+  return true;
+}
+
 function usePageVisible(): boolean {
-  const [visible, setVisible] = useState(true);
-  useEffect(() => {
-    const sync = () => setVisible(document.visibilityState === "visible");
-    sync();
-    document.addEventListener("visibilitychange", sync);
-    return () => document.removeEventListener("visibilitychange", sync);
-  }, []);
-  return visible;
+  return useSyncExternalStore(subscribePageVisibility, getPageVisibility, getServerPageVisibility);
 }
 
 export function useApi<T>(url: string | null, opts?: { refreshInterval?: number; timeoutMs?: number }) {
