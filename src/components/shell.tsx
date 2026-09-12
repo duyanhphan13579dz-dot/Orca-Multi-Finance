@@ -248,8 +248,27 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
 /* --------------------------------- pieces --------------------------------- */
 
+function useIdleApiUrl(url: string): string | null {
+  const [ready, setReady] = useState(false);
+
+  useEffect(() => {
+    const start = () => setReady(true);
+    let idleId: number | undefined;
+    let timeoutId: number | undefined;
+    if (typeof window.requestIdleCallback === "function") idleId = window.requestIdleCallback(start, { timeout: 1200 });
+    else timeoutId = window.setTimeout(start, 500);
+    return () => {
+      if (idleId !== undefined) window.cancelIdleCallback(idleId);
+      if (timeoutId !== undefined) window.clearTimeout(timeoutId);
+    };
+  }, []);
+
+  return ready ? url : null;
+}
+
 function MarketChip() {
-  const { meta } = useApi<Record<string, unknown>>("/api/v1/market/snapshot", { refreshInterval: 20_000 });
+  const apiUrl = useIdleApiUrl("/api/v1/market/snapshot");
+  const { meta } = useApi<Record<string, unknown>>(apiUrl, { refreshInterval: 20_000 });
   return (
     <Link
       href="/system"
@@ -284,7 +303,8 @@ function NotificationsBell() {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const enabled = settings.notifications.marketNews;
-  const { data } = useApi<{ articles: NewsArticle[] }>(enabled ? "/api/v1/news?limit=5" : null, { refreshInterval: 60_000 });
+  const apiUrl = useIdleApiUrl(enabled ? "/api/v1/news?limit=5" : "");
+  const { data } = useApi<{ articles: NewsArticle[] }>(enabled && apiUrl ? apiUrl : null, { refreshInterval: 60_000 });
 
   useEffect(() => {
     const onDoc = (e: MouseEvent) => {
