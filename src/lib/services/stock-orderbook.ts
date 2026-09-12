@@ -1,4 +1,6 @@
 import "server-only";
+import { sql } from "drizzle-orm";
+import { db, databaseConfigured } from "@/db";
 import { cached, peekStale } from "../cache";
 import { buildMeta } from "../freshness";
 import { ssiFcConfigured } from "../providers/ssi-fcdata";
@@ -62,6 +64,22 @@ function isVnSessionWindow(d = new Date()): boolean {
 
 const LIVE_MAX_AGE_MS = 20_000;
 const LAST_SESSION_MAX_AGE_MS = 72 * 60 * 60_000; // 72h
+let snapshotTablePromise: Promise<boolean> | null = null;
+
+async function ensureSnapshotTable(): Promise<boolean> {
+  if (!databaseConfigured()) return false;
+  if (!snapshotTablePromise) {
+    snapshotTablePromise = db
+      .execute(sql`CREATE TABLE IF NOT EXISTS orca_orderbook_snapshots (
+        symbol text PRIMARY KEY,
+        payload jsonb NOT NULL,
+        updated_at timestamptz NOT NULL DEFAULT now()
+      )`)
+      .then(() => true)
+      .catch(() => false);
+  }
+  return snapshotTablePromise;
+}
 
 function cacheKey(sym: string) {
   return `vn:orderbook:last:${sym}`;
@@ -86,6 +104,19 @@ async function rememberLastBook(sym: string, book: VnOrderBook): Promise<void> {
   } catch {
     /* non-fatal */
   }
+  try {
+    if (await ensureSnapshotTable()) {
+      await db.execute(sql`
+        INSERT INTO orca_orderbook_snapshots (symbol, payload, updated_at)
+        VALUES (${sym}, ${JSON.stringify(snapshot)}::jsonb, now())
+        ON CONFLICT (symbol) DO UPDATE SET
+          payload = EXCLUDED.payload,
+          updated_at = EXCLUDED.updated_at
+      `);
+    }
+  } catch {
+    /* best-effort persistence; memory/Redis remain available */
+  }
 }
 
 async function recallLastBook(sym: string): Promise<VnOrderBook | null> {
@@ -103,6 +134,23 @@ async function recallLastBook(sym: string): Promise<VnOrderBook | null> {
     });
     if (r.value && (r.value.bids?.length || r.value.asks?.length)) {
       return { ...r.value, fromLastSession: true };
+    }
+  } catch {
+    /* miss */
+  }
+  try {
+    if (await ensureSnapshotTable()) {
+      const result = await db.execute(sql`
+        SELECT payload
+        FROM orca_orderbook_snapshots
+        WHERE symbol = ${sym}
+          AND updated_at >= now() - interval '72 hours'
+        LIMIT 1
+      `);
+      const row = (result as unknown as { rows?: Array<{ payload?: unknown }> }).rows?.[0];
+      if (row?.payload && typeof row.payload === "object") {
+        return { ...(row.payload as VnOrderBook), fromLastSession: true };
+      }
     }
   } catch {
     /* miss */
