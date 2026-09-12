@@ -148,6 +148,59 @@ export interface CommodityRow extends Quote {
   sourceRecords: { source: string; price: number; timestamp: string | null; url?: string | null }[];
 }
 
+/* ----------------------------- Market Bulletin ----------------------------- */
+
+export interface BulletinOverview {
+  vnIndex: IndexQuote | null;
+  vn30: IndexQuote | null;
+  hnx: IndexQuote | null;
+  advancers: number;
+  decliners: number;
+  unchanged: number;
+}
+
+export interface BulletinFlow {
+  foreignNetValue: number | null;
+  totalValueTraded: number | null;
+  previousSessionValue: number | null;
+  etfNet: number | null;
+}
+
+export interface BulletinTopMover {
+  symbol: string;
+  changePercent: number | null;
+  change: number | null;
+  price: number | null;
+  volume: number | null;
+}
+
+export interface BulletinSectors {
+  topGainers: BulletinTopMover[];
+  topLosers: BulletinTopMover[];
+  limitUpCount: number;
+  limitDownCount: number;
+  volumeLeaders: BulletinTopMover[];
+}
+
+export interface BulletinTechnical {
+  marketMomentum: string;
+  trendAssessment: string;
+  liquidityStatus: string;
+  keySupport: number | null;
+  keyResistance: number | null;
+  tradingRecommendation: string;
+}
+
+export interface MarketBulletin {
+  sessionTime: string;
+  updateTime: string;
+  overview: BulletinOverview;
+  flow: BulletinFlow;
+  sectors: BulletinSectors;
+  technical: BulletinTechnical;
+  sessionHint: string;
+}
+
 /* --------------------------------- Provider -------------------------------- */
 
 export interface ProviderStatus {
