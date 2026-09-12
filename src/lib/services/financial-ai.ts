@@ -335,38 +335,32 @@ function tryParseStructured(text: string): FinancialAiAnalysis["structured"] {
 }
 
 const SYS_ANALYSIS_JSON_HINT =
-  'Cuối cùng thêm block:\n```json\n{"healthSummary":"...","trendSummary":"...","strengths":["..."],"risks":["..."],"watchpoints":["..."],"outlook":"...","chartInsights":["..."]}\n```';
+  'Cuối cùng (sau phần viết tay) thêm block:\n```json\n{"healthSummary":"...","trendSummary":"...","strengths":["..."],"risks":["..."],"watchpoints":["..."],"outlook":"...","chartInsights":["..."]}\n```';
 
 const SYS_ANALYSIS =
-  `Bạn là chuyên gia phân tích BCTC + ĐỌC BIỂU ĐỒ số liệu doanh nghiệp niêm yết Việt Nam (ORCA).
-Model: OpenRouter role=report (qwen/qwen3-235b-a22b:free khi đã cấu hình AI_MODEL_REPORT).
-Nguồn DUY NHẤT: JSON context.
+  `Bạn là chuyên viên phân tích tài chính tại sàn Việt Nam, đang nói chuyện với nhà đầu tư cá nhân qua app ORCA.
+Giọng văn: tự nhiên như đồng nghiệp giải thích — rõ ràng, thẳng, có nhịp; tránh liệt kê máy móc, tránh giọng robot ("Dựa trên dữ liệu...", "Theo phân tích...").
+Có thể dùng câu chuyển tiếp ngắn: "Nhìn sang dòng tiền thì...", "Điểm đáng chú ý là...".
 
-BẮT BUỘC:
-- Chỉ dùng số trong context (kể cả chartSeries). Không bịa DT/LN/ROE/điểm.
-- Tiếng Việt, súc tích, 6–10 đoạn ngắn hoặc bullet.
-- Không khuyến nghị mua/bán tuyệt đối.
-- Đơn vị: tỷ/triệu VND khi trích số lớn.
+Nguồn DUY NHẤT: JSON context (BCTC + chartSeries + health + ngành). Không bịa số, không bịa kỳ. Số lớn nói kiểu "khoảng X tỷ".
 
-CẤU TRÚC:
-1) Sức khỏe: điểm tổng + 1–2 trụ cột nổi bật
-2) Đọc biểu đồ DT vs LNST (chartSeries.revenueVsNetIncome): xu hướng, đỉnh/đáy, độ lệch LN so với DT
-3) Đọc biểu đồ biên (chartSeries.margins) và dòng tiền (chartSeries.cashflow): CFO vs LN, FCF âm/dương
-4) Ngành: so với trendScore nếu có
-5) Điểm mạnh (3 bullet)
-6) Rủi ro & theo dõi (3–4 bullet)
-7) Outlook 1–2 câu
-8) chartInsights: 3–5 câu ngắn mô tả trực quan biểu đồ (caption dưới chart)
+ƯU TIÊN XU HƯỚNG (trend-first):
+1) Mở bằng 2–3 câu nhận định xu hướng lõi: doanh thu / LNST đang tăng, đi ngang hay suy — nêu kỳ đầu→cuối trong chartSeries, tốc độ thô nếu thấy rõ.
+2) Đọc chart như đang chỉ vào màn hình: DT vs LNST lệch nhau chỗ nào; biên gộp/ròng nở hay co; CFO có "đi cùng" LN không; FCF âm liên tục thì nói thẳng.
+3) Gắn sức khỏe (điểm tổng, đòn bẩy, thanh khoản) vào câu chuyện xu hướng — vì sao xu hướng đó bền hoặc mong manh.
+4) Ngành (sectorTrend) chỉ khi có số: cổ phiếu đang mạnh/yếu hơn mặt bằng ngành thế nào.
+5) 2–3 điểm mạnh và 2–3 rủi ro viết thành câu đủ ý, không chỉ keyword.
+6) Kết bằng outlook ngắn, thận trọng, không kêu gọi mua/bán.
+
+Độ dài: khoảng 350–550 chữ phần tự luận. Bullet chỉ khi thật sự giúp đọc nhanh.
+chartInsights: 3–5 câu caption ngắn, mỗi câu một quan sát biểu đồ (không lặp lại nguyên đoạn tự luận).
 
 ` + SYS_ANALYSIS_JSON_HINT;
 
-const SYS_FORECAST = `Bạn là chuyên gia dự báo doanh thu ngắn hạn từ chuỗi BCTC quý VN.
-Chỉ giải thích kịch bản dựa trên số HISTORY + FORECAST_ENGINE đã tính sẵn trong context.
-Không đổi số forecast engine. Tiếng Việt, 4–6 câu:
-- Cơ sở tăng trưởng QoQ/YoY đã dùng
-- Kịch bản base/bull/bear nghĩa là gì
-- Rủi ro làm lệch dự báo
-Không khuyến nghị mua/bán.`;
+const SYS_FORECAST = `Bạn là chuyên viên giải thích dự báo doanh thu cho NĐT cá nhân (ORCA).
+Chỉ bàn trên HISTORY + FORECAST_ENGINE trong context — không sửa số engine.
+Giọng tự nhiên, 4–6 câu: vì sao chọn tốc độ tăng trưởng đó; base/bull/bear khác nhau thế nào bằng lời thường; rủi ro nào dễ làm lệch dự báo.
+Không kêu gọi mua/bán. Không mở đầu bằng "Dựa trên mô hình...".`;
 
 export async function analyzeFinancialHealthAi(
   symbolRaw: string,
@@ -420,12 +414,12 @@ export async function analyzeFinancialHealthAi(
     };
   }
 
-  const user = `Phân tích sức khỏe, xu hướng và ĐỌC BIỂU ĐỒ (chartSeries) cho ${symbol}.\nDùng OpenRouter model role=report (AI_MODEL_REPORT / qwen).\n\nCONTEXT:\n${JSON.stringify(ctx)}`;
+  const user = `Viết nhận định xu hướng và sức khỏe cho ${symbol} như đang giải thích cho đồng nghiệp. Ưu tiên đọc chartSeries (DT–LN, biên, dòng tiền), rồi mới điểm số. Cuối cùng block JSON.\n\nCONTEXT:\n${JSON.stringify(ctx)}`;
 
   let llm = await llmChat("report", {
     system: SYS_ANALYSIS,
     user,
-    temperature: 0.28,
+    temperature: 0.42,
     maxTokens: 1600,
     timeoutMs: 55_000,
   });
@@ -434,7 +428,7 @@ export async function analyzeFinancialHealthAi(
     llm = await llmChat("analysis", {
       system: SYS_ANALYSIS,
       user,
-      temperature: 0.28,
+      temperature: 0.42,
       maxTokens: 1600,
       timeoutMs: 55_000,
     });
@@ -448,9 +442,9 @@ export async function analyzeFinancialHealthAi(
         system: `${SYS_ANALYSIS}\nSTRICT REPAIR: chỉ số trong CONTEXT. Claim lỗi: ${val.unsupported
           .slice(0, 6)
           .map((u) => u.raw)
-          .join(", ")}.`,
+          .join(", ")}. Vẫn giữ giọng tự nhiên.`,
         user,
-        temperature: 0.15,
+        temperature: 0.25,
         maxTokens: 1400,
         timeoutMs: 50_000,
       });
@@ -609,8 +603,8 @@ export async function forecastRevenueAi(
   if (llmConfigured()) {
     const llm = await llmChat("report", {
       system: SYS_FORECAST,
-      user: `Giải thích dự báo doanh thu ${symbol}:\n${JSON.stringify(engineCtx)}`,
-      temperature: 0.25,
+      user: `Giải thích ngắn, tự nhiên dự báo doanh thu ${symbol} (số engine đã có sẵn):\n${JSON.stringify(engineCtx)}`,
+      temperature: 0.4,
       maxTokens: 700,
       timeoutMs: 40_000,
     });
