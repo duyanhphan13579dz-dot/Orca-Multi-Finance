@@ -6,7 +6,8 @@ import { getSsiAccessToken, invalidateSsiToken, ssiFcConfigured } from "../provi
 /**
  * SSI FastConnect DataHub streaming — uses same credentials as REST (SSI_API_KEY / SSI_FC_*).
  *
- * Order book: X / X-QUOTE (BidPrice1–10 / AskPrice1–10).
+ * Order book: DATA/quote.<symbol> (bids/asks arrays). Legacy X/X-QUOTE is
+ * still accepted by the parser for deployments that explicitly use it.
  * forceEnable(): orderbook API can open WS even when SSI_WS_DISABLED=true (Vercel one-shot).
  * Reconnect: fast first hops, urgent on watchSymbol, session-aware silent/backoff.
  */
@@ -40,7 +41,7 @@ export interface SsiOrderBook {
   ref: number | null;
   session: string | null;
   eventTime: number;
-  source: "X" | "X-QUOTE" | "X-TRADE";
+  source: "X" | "X-QUOTE" | "X-TRADE" | "DATA";
 }
 
 export interface SsiTrade {
@@ -250,21 +251,23 @@ class SsiMarketWsEngine {
   watchSymbol(symbol: string): () => void {
     const s = symbol.toUpperCase().replace(/[^A-Z0-9]/g, "");
     if (!s) return () => {};
-    const u1 = this.subscribe(`X:${s}`);
-    const u2 = this.subscribe(`B:${s}`);
+    const u1 = this.subscribe(`quote.${s}`);
+    const u2 = this.subscribe(`trade.${s}`);
+    const u3 = this.subscribe(`market.${s}`);
     if (this.state !== "open" && this.state !== "connecting") {
       this.reconnectUrgent("watchSymbol");
     }
     return () => {
       u1();
       u2();
+      u3();
     };
   }
 
   watchIndex(code: string): () => void {
     const c = code.toUpperCase().replace(/[^A-Z0-9]/g, "");
     if (!c) return () => {};
-    return this.subscribe(`MI:${c}`);
+    return this.subscribe(`quote.${c}`);
   }
 
   ensureCoreIndices() {
@@ -423,7 +426,9 @@ class SsiMarketWsEngine {
       if (gen !== this.connectGen) return;
 
       const base = hubBase().replace(/^http/, "ws");
-      const url = `${base}/Hubs/DataHub?access_token=${encodeURIComponent(token)}`;
+      const url = process.env.SSI_WS_PROTOCOL === "signalr"
+        ? `${base}/Hubs/DataHub?access_token=${encodeURIComponent(token)}`
+        : `${base}?access_token=${encodeURIComponent(token)}`;
       const ws = new WSImpl(url);
       this.ws = ws;
 
@@ -442,10 +447,16 @@ class SsiMarketWsEngine {
 
       ws.onopen = () => {
         if (gen !== this.connectGen) return;
-        try {
-          ws.send(`${JSON.stringify({ protocol: "json", version: 1 })}${RS}`);
-        } catch (e) {
-          this.failAndReconnect(e instanceof Error ? e.message : "handshake send failed");
+        // SSI's current market-data API uses plain JSON SUBSCRIBE messages.
+        // Set SSI_WS_PROTOCOL=signalr only for legacy DataHub tenants.
+        if (process.env.SSI_WS_PROTOCOL === "signalr") {
+          try {
+            ws.send(`${JSON.stringify({ protocol: "json", version: 1 })}${RS}`);
+          } catch (e) {
+            this.failAndReconnect(e instanceof Error ? e.message : "handshake send failed");
+          }
+        } else {
+          this.onHandshakeOk();
         }
       };
 
@@ -616,6 +627,17 @@ class SsiMarketWsEngine {
 
   private sendSubscribe(channels: string[]) {
     if (!this.ws || this.state !== "open" || !channels.length) return;
+    if (process.env.SSI_WS_PROTOCOL !== "signalr") {
+      const topics = channels.filter((topic) => !this.subscribedSent.has(topic));
+      if (!topics.length) return;
+      try {
+        this.ws.send(JSON.stringify({ method: "SUBSCRIBE", channel: "DATA", topics }));
+        for (const topic of topics) this.subscribedSent.add(topic);
+      } catch {
+        /* ignore */
+      }
+      return;
+    }
     for (const ch of channels) {
       if (this.subscribedSent.has(ch)) continue;
       this.invocationId += 1;
@@ -654,6 +676,32 @@ class SsiMarketWsEngine {
     const topic = String(obj.Topic ?? obj.topic ?? obj.Channel ?? obj.channel ?? "");
     const content = (obj.Content ?? obj.content ?? obj.Data ?? obj.data ?? obj) as unknown;
 
+    // Current SSI DATA messages carry the symbol directly as `s` and do not
+    // wrap the payload in SignalR's Receive/Content envelope.
+    if (obj.s != null || obj.bids != null || obj.asks != null) {
+      this.ingestQuoteOrBook(topic || "quote", obj);
+      return;
+    }
+    if (obj.p != null && obj.q != null) {
+      this.ingestTrade(topic || "trade", obj);
+      return;
+    }
+    if (obj.ce != null || obj.fl != null || obj.ref != null) {
+      this.ingestQuoteOrBook(topic || "market", obj);
+      return;
+    }
+    if (content && typeof content === "object" && !Array.isArray(content)) {
+      const nested = content as Record<string, unknown>;
+      if (nested.s != null || nested.bids != null || nested.asks != null) {
+        this.ingestQuoteOrBook(topic || "quote", nested);
+        return;
+      }
+      if (nested.p != null && nested.q != null) {
+        this.ingestTrade(topic || "trade", nested);
+        return;
+      }
+    }
+
     if (topic.startsWith("X:") || topic.startsWith("X-QUOTE") || topic.includes("QUOTE")) {
       this.ingestQuoteOrBook(topic, content);
       return;
@@ -677,7 +725,7 @@ class SsiMarketWsEngine {
     for (const row of rows) {
       if (!row || typeof row !== "object") continue;
       const r = row as Record<string, unknown>;
-      const symbol = String(r.Symbol ?? r.symbol ?? r.StockSymbol ?? r.Code ?? "")
+      const symbol = String(r.s ?? r.Symbol ?? r.symbol ?? r.StockSymbol ?? r.Code ?? "")
         .toUpperCase()
         .replace(/[^A-Z0-9]/g, "");
       if (!symbol) continue;
@@ -702,6 +750,22 @@ class SsiMarketWsEngine {
 
       const bids: SsiOrderBookLevel[] = [];
       const asks: SsiOrderBookLevel[] = [];
+      if (Array.isArray(r.bids)) {
+        for (const level of r.bids) {
+          if (!Array.isArray(level)) continue;
+          const price = num(level[0]);
+          const volume = num(level[1]);
+          if (price != null && price > 0) bids.push({ price, volume: volume ?? 0 });
+        }
+      }
+      if (Array.isArray(r.asks)) {
+        for (const level of r.asks) {
+          if (!Array.isArray(level)) continue;
+          const price = num(level[0]);
+          const volume = num(level[1]);
+          if (price != null && price > 0) asks.push({ price, volume: volume ?? 0 });
+        }
+      }
       for (let i = 1; i <= 10; i++) {
         const bp = num(r[`BidPrice${i}`] ?? r[`bidPrice${i}`]);
         const bv = num(r[`BidVol${i}`] ?? r[`BidVolume${i}`] ?? r[`bidVol${i}`]);
@@ -727,7 +791,7 @@ class SsiMarketWsEngine {
           ref,
           session,
           eventTime: now,
-          source: topic.includes("QUOTE") ? "X-QUOTE" : "X",
+          source: topic.startsWith("quote") || topic === "market" ? "DATA" : topic.includes("QUOTE") ? "X-QUOTE" : "X",
         };
         this.orderBooks.set(symbol, book);
         eventBus.emit(`ssi:orderbook:${symbol}`, book);
@@ -766,16 +830,16 @@ class SsiMarketWsEngine {
     for (const row of rows) {
       if (!row || typeof row !== "object") continue;
       const r = row as Record<string, unknown>;
-      const symbol = String(r.Symbol ?? r.symbol ?? r.StockSymbol ?? "")
+      const symbol = String(r.s ?? r.Symbol ?? r.symbol ?? r.StockSymbol ?? "")
         .toUpperCase()
         .replace(/[^A-Z0-9]/g, "");
       if (!symbol) continue;
-      const price = num(r.Price ?? r.price ?? r.MatchPrice ?? r.LastPrice);
-      const volume = num(r.Volume ?? r.volume ?? r.MatchQtty ?? r.Qtty) ?? 0;
+      const price = num(r.p ?? r.Price ?? r.price ?? r.MatchPrice ?? r.LastPrice);
+      const volume = num(r.q ?? r.Volume ?? r.volume ?? r.MatchQtty ?? r.Qtty) ?? 0;
       if (price == null) continue;
       const change = num(r.Change ?? r.change);
       const changePercent = num(r.ChangePercent ?? r.changePercent);
-      const sideRaw = String(r.Side ?? r.side ?? r.BuySell ?? "").toLowerCase();
+      const sideRaw = String(r.si ?? r.Side ?? r.side ?? r.BuySell ?? "").toLowerCase();
       const side: SsiTrade["side"] =
         sideRaw === "b" || sideRaw === "buy" || sideRaw === "bid"
           ? "buy"
