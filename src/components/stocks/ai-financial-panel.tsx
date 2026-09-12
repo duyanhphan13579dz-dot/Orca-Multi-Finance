@@ -13,6 +13,7 @@ interface AiAnalysisPayload {
     risks: string[];
     watchpoints: string[];
     outlook: string;
+    chartInsights?: string[];
   } | null;
   model: string | null;
   latencyMs: number | null;
@@ -116,7 +117,7 @@ export function AiFinancialPanel({ symbol }: { symbol: string }) {
             disabled={loading || !symbol}
             className="rounded-md bg-accent/15 px-2.5 py-1 text-[11px] font-medium text-accent hover:bg-accent/25 disabled:opacity-50"
           >
-            {loading ? "Đang phân tích…" : data ? "Phân tích lại" : "AI phân tích"}
+            {loading ? "Đang phân tích…" : data ? "Phân tích lại" : "AI phân tích + đọc chart"}
           </button>
           <button
             type="button"
@@ -131,14 +132,15 @@ export function AiFinancialPanel({ symbol }: { symbol: string }) {
     >
       {!data && !fc && !err && !loading && !loadingFc && (
         <p className="text-[12px] text-ink-3">
-          Dữ liệu lấy từ snapshot <strong className="text-ink-2">Báo cáo tài chính</strong>. LLM qua{" "}
-          <strong className="text-ink-2">OpenRouter</strong> (<code className="text-ink-2">OPENROUTER_API_KEY</code>{" "}
-          + <code className="text-ink-2">OPENROUTER_MODEL</code> / <code className="text-ink-2">AI_MODEL_REPORT</code>
-          ). Kiểm tra model đang resolve tại <code className="text-ink-2">/api/v1/system/llm</code>.
+          Dữ liệu + chuỗi biểu đồ từ snapshot <strong className="text-ink-2">Báo cáo tài chính</strong>. LLM
+          OpenRouter role <code className="text-ink-2">report</code> →{" "}
+          <code className="text-ink-2">qwen/qwen3-235b-a22b:free</code> (AI_MODEL_REPORT). Reasoning sâu:{" "}
+          <code className="text-ink-2">openai/gpt-oss-120b</code>. Kiểm tra{" "}
+          <code className="text-ink-2">/api/v1/system/llm</code>.
         </p>
       )}
       {(loading || loadingFc) && (
-        <p className="text-[12px] text-ink-3">Đang xử lý qua OpenRouter / engine…</p>
+        <p className="text-[12px] text-ink-3">Đang gọi OpenRouter (qwen report)…</p>
       )}
       {err && <p className="text-[12px] text-warn/90">{err}</p>}
 
@@ -188,9 +190,29 @@ export function AiFinancialPanel({ symbol }: { symbol: string }) {
               {data.structured.outlook}
             </p>
           )}
+          {data.structured?.chartInsights && data.structured.chartInsights.length > 0 && (
+            <div>
+              <div className="mb-1 text-[11px] font-medium text-ink-3">AI đọc biểu đồ</div>
+              <ul className="space-y-0.5 text-[12px] text-ink-2">
+                {data.structured.chartInsights.map((s, i) => (
+                  <li key={i}>• {s}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {data.structured && data.structured.watchpoints.length > 0 && (
+            <div>
+              <div className="mb-1 text-[11px] font-medium text-ink-3">Theo dõi</div>
+              <ul className="space-y-0.5 text-[12px] text-ink-2">
+                {data.structured.watchpoints.map((s, i) => (
+                  <li key={i}>• {s}</li>
+                ))}
+              </ul>
+            </div>
+          )}
           <p className="text-[10px] text-ink-3">
             {data.usedLlm
-              ? `LLM · ${data.model ?? "—"} · ${data.latencyMs ?? "—"}ms`
+              ? `OpenRouter · ${data.model ?? "—"} · ${data.latencyMs ?? "—"}ms`
               : "Engine deterministic"}{" "}
             · {data.sourceNote}
           </p>
