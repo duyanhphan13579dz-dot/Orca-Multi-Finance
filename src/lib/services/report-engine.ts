@@ -19,7 +19,7 @@ import type { FreshnessStatus, Meta } from "../types";
  * LLM never invents figures; scenarios carry explicit probability logic.
  */
 
-export type DailyReportType = "morning_brief" | "market_summary" | "strategy";
+export type DailyReportType = "morning_brief" | "intraday_brief" | "market_summary" | "strategy";
 
 export interface ReportScenario {
   label: "Base" | "Bull" | "Bear";
@@ -129,6 +129,65 @@ function buildScenarios(ctx: DailyCtx): ReportScenario[] {
 }
 
 /* ------------------------------- composers -------------------------------- */
+
+function composeIntraday(ctx: DailyCtx): { sections: DailyReport["sections"]; assumptions: string[] } {
+  const { snap } = ctx;
+  const index = snap.indices?.[0];
+  const tone = snap.pulse.score > 0.15 ? "up" : snap.pulse.score < -0.15 ? "down" : "neutral";
+  const sections: DailyReport["sections"] = [
+    {
+      heading: "Tóm tắt điều hành giữa phiên",
+      tone,
+      paragraphs: [
+        `${snap.pulse.headline}. Tại thời điểm nghỉ trưa, thị trường cần được đọc qua tương quan giữa điểm số, độ rộng và thanh khoản thay vì chỉ nhìn biến động VN-Index.`,
+        index ? `VN-Index đang ở ${index.value.toLocaleString("vi-VN")} điểm (${pct(index.changePercent)}). Trạng thái phiên: ${snap.vnSession.labelVi}.` : "Chưa có dữ liệu VN-Index hợp lệ để định lượng điểm số; hệ thống không suy diễn số liệu khi nguồn chưa khả dụng.",
+      ],
+    },
+    {
+      heading: "Diễn biến chỉ số và chất lượng độ rộng",
+      tone: "neutral",
+      paragraphs: [
+        ...(snap.indices ?? []).slice(0, 4).map((i) => `${i.code}: ${i.value.toLocaleString("vi-VN")} điểm (${pct(i.changePercent)}).`),
+        "Độ rộng là bộ lọc quan trọng cho phiên chiều: chỉ số tăng nhưng số mã dẫn dắt thu hẹp cho thấy lực kéo tập trung; chỉ số đi ngang cùng độ rộng cải thiện thường là tín hiệu tích lũy lành mạnh hơn.",
+      ],
+    },
+    {
+      heading: "Dòng tiền, thanh khoản và nhóm dẫn dắt",
+      tone: "neutral",
+      paragraphs: [
+        `Risk-appetite composite đang ở mức ${snap.pulse.score >= 0 ? "+" : ""}${snap.pulse.score.toFixed(2)} trên thang -1..+1. ${snap.pulse.drivers.map((d) => `${d.label}: ${d.value}`).join("; ")}.`,
+        "Buổi chiều cần kiểm tra thanh khoản có tiếp tục mở rộng cùng hướng với chỉ số hay không; nếu giá tăng nhưng dòng tiền suy yếu, ưu tiên coi đó là nhịp hồi kỹ thuật và tránh đuổi giá.",
+      ],
+    },
+    {
+      heading: "Nhận định kỹ thuật và nhận xét thị trường",
+      tone,
+      paragraphs: [
+        snap.pulse.body[0] ?? "Động lượng hiện chưa đủ mạnh để xác nhận một xu hướng mới.",
+        snap.pulse.body[1] ?? "Cần chờ phản ứng tại các vùng hỗ trợ/kháng cự gần nhất và sự xác nhận của thanh khoản.",
+        "Quan điểm giữa phiên: duy trì kỷ luật theo tín hiệu xác nhận, phân biệt rõ cổ phiếu mạnh thật sự với các mã chỉ tăng do cung cầu ngắn hạn.",
+      ],
+    },
+    {
+      heading: "Kịch bản phần còn lại của phiên",
+      tone: "neutral",
+      paragraphs: [
+        "Kịch bản cơ sở: thị trường dao động phân hóa, dòng tiền tiếp tục chọn lọc và chỉ số cần giữ nền buổi sáng để tránh áp lực bán cuối phiên.",
+        "Kịch bản tích cực: độ rộng mở rộng, thanh khoản tăng hợp lý và nhóm vốn hóa lớn cùng xác nhận sẽ nâng xác suất kéo chỉ số về vùng cao trong ngày.",
+        "Kịch bản rủi ro: mất nền buổi sáng kèm bán lan tỏa; khi đó ưu tiên giảm giao dịch theo cảm xúc và chờ dữ liệu đóng cửa xác nhận.",
+      ],
+    },
+    {
+      heading: "Hành động và rủi ro cần theo dõi",
+      tone: "neutral",
+      paragraphs: [
+        "Hành động nghiên cứu: theo dõi nhóm dẫn dắt có thanh khoản thực, đặt ngưỡng vô hiệu hóa trước khi mở vị thế và không dùng bản tin này thay thế khẩu vị rủi ro cá nhân.",
+        "Rủi ro chính: dữ liệu giữa phiên có thể thay đổi nhanh, độ trễ nguồn cung cấp và biến động bất ngờ từ tin doanh nghiệp/vĩ mô. Không có dữ liệu đủ tin cậy thì không kết luận định lượng.",
+      ],
+    },
+  ];
+  return { sections, assumptions: assumptionsNote(ctx) };
+}
 
 function composeMorning(ctx: DailyCtx): { sections: DailyReport["sections"]; assumptions: string[] } {
   const { snap } = ctx;
@@ -271,7 +330,7 @@ function composeSummary(ctx: DailyCtx): { sections: DailyReport["sections"]; ass
       p.score >= 0.2
         ? "Nếu đà risk-appetite duy trì, phiên kế tiếp cần xác nhận ở thanh khoản buổi sáng: muốn mở rộng tiếp, độ rộng phải đi kèm. Bất kỳ nhịp tăng nhưng breadth thu hẹp đều báo nguồn cung trên đè mạnh ở nhóm cụ thể."
         : p.score <= -0.2
-          ? "Ưu thế phòng thủ đang tồn tại — phiên kế tiếp chỉ nên đọc là hồi kỹ thuật cho tới khi độ rộng và khối lượng xác nhận lực cầu quay lại. Giữ kỷ luật tỷ trọng thay vì dự đoán đáy."
+          ? "Ưu thế phòng thủ đang tồn tại — phiên kế tiếp chỉ nên đọc là h��i kỹ thuật cho tới khi độ rộng và khối lượng xác nhận lực cầu quay lại. Giữ kỷ luật tỷ trọng thay vì dự đoán đáy."
           : "Thị trường chưa hình thành ưu thế rõ: phiên kế tiếp phù hợp theo dõi rotation ngành và thanh khoản khối lớn hơn là đánh đồng cả chỉ số. Kỳ vọng chọn lọc tiếp tục là chủ đạo.",
       "Nội dung phân tích từ dữ liệu thực tế tại thờ điểm chốt — phục vụ nghiên cứu, không phải khuyến nghị đầu tư.",
     ],
@@ -321,12 +380,14 @@ function assumptionsNote(ctx: DailyCtx): string[] {
 
 const COMPOSERS: Record<DailyReportType, (ctx: DailyCtx) => { sections: DailyReport["sections"]; assumptions: string[] }> = {
   morning_brief: composeMorning,
+  intraday_brief: composeIntraday,
   market_summary: composeSummary,
   strategy: composeStrategy,
 };
 
 const TITLES: Record<DailyReportType, string> = {
   morning_brief: "ORCA Morning Brief",
+  intraday_brief: "ORCA Intraday Market Brief",
   market_summary: "ORCA Daily Market Summary",
   strategy: "ORCA Vietnam Market Strategy",
 };
@@ -340,10 +401,12 @@ export async function generateDailyReport(type: DailyReportType): Promise<{ repo
     title: `${TITLES[type]} — ${ctx.dateVi}`,
     subtitle:
       type === "morning_brief"
-        ? "Chuẩn bị hành trang cho phiên giao dịch — dữ liệu mới nhất tại thờ điểm phát hành"
-        : type === "market_summary"
-          ? "Điều gì thực sự đã xảy ra trên thị trường — giải mã từ dữ liệu"
-          : "Market view · drivers · levels · sector preferences · scenarios",
+        ? "Chuẩn bị hành trang cho phiên giao dịch — dữ liệu mới nhất tại thời điểm phát hành"
+        : type === "intraday_brief"
+          ? "Toàn cảnh giữa phiên — nhận định, kịch bản và điểm cần theo dõi cho buổi chiều"
+          : type === "market_summary"
+            ? "Điều gì thực sự đã xảy ra trên thị trường — giải mã từ dữ liệu"
+            : "Market view · drivers · levels · sector preferences · scenarios",
     generatedAt: new Date().toISOString(),
     sessionState: ctx.sessionState,
     marketDataTimestamp: ctx.meta.sourceTimestamp,

@@ -9,10 +9,11 @@ import type { ApiResponse, MarketBulletin } from "@/lib/types";
 import { Badge, Chg, FreshnessDot, Loading, MetaLine, Panel, Unavailable, fmtCompact, fmtNum } from "@/components/ui";
 import { ArrowDownRight, ArrowUpRight, BookOpenText, FileText, History, Play, Printer, TrendingUp } from "lucide-react";
 
-type Tab = "morning_brief" | "market_summary" | "strategy" | "company";
+type Tab = "morning_brief" | "intraday_brief" | "market_summary" | "strategy" | "company";
 
 const TABS: { id: Tab; label: string; desc: string }[] = [
   { id: "morning_brief", label: "Morning Brief", desc: "Trước giờ mở cửa" },
+  { id: "intraday_brief", label: "Intraday Brief", desc: "Cập nhật giữa phiên" },
   { id: "market_summary", label: "Market Summary", desc: "Sau giờ đóng cửa" },
   { id: "strategy", label: "Vietnam Strategy", desc: "Market view & kịch bản" },
   { id: "company", label: "Company Reports", desc: "On-demand theo mã" },
@@ -41,7 +42,6 @@ export default function ReportCenterPage() {
           </div>
         </div>
       </Panel>
-      <MarketBulletinPanel bulletin={bulletin} meta={bulletinMeta} />
       {tab === "company" ? (
         <StockReportSection />
       ) : (

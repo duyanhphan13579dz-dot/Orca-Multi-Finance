@@ -6,7 +6,7 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-const TYPES = new Set(["morning_brief", "market_summary", "strategy"]);
+const TYPES = new Set(["morning_brief", "intraday_brief", "market_summary", "strategy"]);
 
 /**
  * REPORT CENTER API
@@ -27,7 +27,7 @@ export async function POST(req: Request) {
   ensureSchedulerStarted();
   const body = (await req.json().catch(() => null)) as { type?: DailyReportType } | null;
   const type = body?.type;
-  if (!type || !TYPES.has(type)) return badRequest("type phải là morning_brief | market_summary | strategy");
+  if (!type || !TYPES.has(type)) return badRequest("type phải là morning_brief | intraday_brief | market_summary | strategy");
   try {
     const { report, meta } = await generateDailyReport(type);
     return ok(report, meta);
