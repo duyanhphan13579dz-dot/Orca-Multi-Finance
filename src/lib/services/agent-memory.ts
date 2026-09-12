@@ -6,6 +6,7 @@ export type TopicKey =
   | "crypto"
   | "forex"
   | "vn-stock"
+  | "vn-market"
   | "commodity"
   | "market"
   | "news"
@@ -52,7 +53,7 @@ export function sameTopicFamily(a: TopicKey, b: TopicKey): boolean {
   const family = (k: TopicKey) =>
     k === "personal_finance" || k === "wealth"
       ? "money_life"
-      : k === "crypto" || k === "forex" || k === "vn-stock" || k === "commodity"
+      : k === "crypto" || k === "forex" || k === "vn-stock" || k === "vn-market" || k === "commodity"
         ? "market_asset"
         : k;
   return family(a) === family(b);
