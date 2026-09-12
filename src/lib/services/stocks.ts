@@ -108,6 +108,7 @@ export async function getVnIndices(): Promise<{ items: IndexQuote[]; meta: Meta 
     try {
       const res = await cached("vn:indices:ssi:v1", {
         ttlMs: 20_000,
+        staleMs: 60_000,
         producer: async () => {
           const r = await getSsiIndices(INDEX_PRIORITY);
           if (!r.items.length) throw new Error("ssi empty indices");
@@ -130,6 +131,7 @@ export async function getVnIndices(): Promise<{ items: IndexQuote[]; meta: Meta 
   try {
     const res = await cached("vn:indices:vnd:v1", {
       ttlMs: 30_000,
+      staleMs: 90_000,
       producer: () => vndirect.getVndIndices(),
     });
     return {
@@ -157,6 +159,7 @@ export async function getVnMarketBoard(): Promise<{
     try {
       const res = await cached("vn:market-board:ssi:v2", {
         ttlMs: 15_000,
+        staleMs: 45_000,
         producer: async () => {
           const [board, indices] = await Promise.all([
             getSsiFullBoard(),
@@ -214,6 +217,7 @@ export async function getVnUniverseList(): Promise<{
     try {
       const res = await cached("vn:universe:ssi:v1", {
         ttlMs: 6 * 3_600_000,
+        staleMs: 24 * 3_600_000,
         producer: () => getSsiUniverse(),
       });
       return {
@@ -227,6 +231,7 @@ export async function getVnUniverseList(): Promise<{
   try {
     const res = await cached("vn:universe:vnd:v1", {
       ttlMs: 6 * 3_600_000,
+      staleMs: 24 * 3_600_000,
       producer: () => vndirect.getVndUniverse(),
     });
     const items = res.value.map((s) => ({
@@ -298,6 +303,7 @@ export async function getVnOhlcv(
     try {
       const res = await cached(`vn:ohlcv:ssi:${sym}:${limit}`, {
         ttlMs: 60_000,
+        staleMs: 180_000,
         producer: async () => {
           const bars = await getSsiDailyOhlc(sym);
           if (!bars.length) throw new Error("ssi empty ohlc");
