@@ -22,7 +22,7 @@ import { eventBus } from "../events";
 import { candleAggregator } from "../realtime/candles";
 import { analyzeScalp } from "../engines/scalp";
 import { analyzeSeries } from "../technical";
-import { computeMarkers } from "../services/chart";
+import { computeMarkers, canonicalIndexSymbol, validateIndexCandles } from "../services/chart";
 
 const bar = (t: number, o: number, h: number, l: number, c: number, v = 100): { time: number; open: number; high: number; low: number; close: number; volume: number } => ({ time: t, open: o, high: h, low: l, close: c, volume: v });
 
@@ -46,6 +46,21 @@ test("aggregateCandles: 1h → 4h keeps true OHLC semantics", () => {
   assert.equal(out[0].volume, 100);
   assert.equal(out[1].open, 97);
   assert.equal(out[1].high, 130);
+});
+
+/* ------------------------ Vietnam index normalization ---------------------- */
+
+test("canonical index aliases use one SSI symbol", () => {
+  assert.equal(canonicalIndexSymbol("VN"), "VNINDEX");
+  assert.equal(canonicalIndexSymbol("VN-INDEX"), "VNINDEX");
+  assert.equal(canonicalIndexSymbol("HNX"), "HNXINDEX");
+  assert.equal(canonicalIndexSymbol("UPCOM"), "UPCOMINDEX");
+});
+
+test("index candle validation rejects a wrong VNINDEX scale", () => {
+  const result = validateIndexCandles("VNINDEX", [bar(1, 1790, 1800, 1780, 1795), bar(2, 2200, 2230, 2190, 2222)]);
+  assert.equal(result.valid.length, 1);
+  assert.equal(result.rejected, 1);
 });
 
 /* ---------------------------- validation (§27) ----------------------------- */

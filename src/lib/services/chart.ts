@@ -173,6 +173,32 @@ async function forexCandles(pair: string, tf: string, limit: number): Promise<{ 
   };
 }
 
+export function canonicalIndexSymbol(symbol: string): string | null {
+  const normalized = symbol.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  const aliases: Record<string, string> = {
+    VNINDEX: "VNINDEX", VN: "VNINDEX", VNINDEXV: "VNINDEX",
+    VN30: "VN30", HNX: "HNXINDEX", HNXINDEX: "HNXINDEX", HNX30: "HNX30",
+    UPCOM: "UPCOMINDEX", UPCOMINDEX: "UPCOMINDEX",
+  };
+  return aliases[normalized] ?? null;
+}
+
+const INDEX_LIMITS: Record<string, { min: number; max: number }> = {
+  VNINDEX: { min: 0, max: 2_000 },
+  VN30: { min: 0, max: 3_000 },
+  HNXINDEX: { min: 0, max: 1_000 },
+  HNX30: { min: 0, max: 2_000 },
+  UPCOMINDEX: { min: 0, max: 2_000 },
+};
+
+export function validateIndexCandles(symbol: string, candles: ChartCandle[]): { valid: ChartCandle[]; rejected: number; reason?: string } {
+  const code = canonicalIndexSymbol(symbol);
+  if (!code) return { valid: candles, rejected: 0 };
+  const bounds = INDEX_LIMITS[code];
+  const valid = candles.filter((c) => [c.open, c.high, c.low, c.close].every((v) => Number.isFinite(v) && v >= bounds.min && v <= bounds.max && c.high >= c.low));
+  return { valid, rejected: candles.length - valid.length, reason: valid.length !== candles.length ? `${code}: candle ngoài biên ${bounds.min}-${bounds.max}` : undefined };
+}
+
 function ssiChartSymbol(symbol: string): string {
   const aliases: Record<string, string> = {
     VNINDEX: "VNINDEX",
@@ -199,7 +225,10 @@ async function stockCandles(symbol: string, tf: string, limit: number): Promise<
         pageSize: 1000,
         maxPages: 5,
       });
-      const candles = bars.map(toCandle).slice(-limit);
+      let candles = bars.map(toCandle).slice(-limit);
+      const indexQuality = validateIndexCandles(symbol, candles);
+      if (indexQuality.rejected && indexQuality.valid.length === 0) throw new Error("index_candles_out_of_range");
+      candles = indexQuality.valid;
       if (candles.length) {
         return {
           candles,
@@ -219,7 +248,9 @@ async function stockCandles(symbol: string, tf: string, limit: number): Promise<
         let candles: ChartCandle[] = bars.map((bar) => ({ ...bar, volume: bar.volume ?? 0 }));
         if (tf === "1w") candles = aggregateCandles(candles, TF_MS["1w"]);
         if (tf === "1M") candles = aggregateCandles(candles, TF_MS["1M"]);
-        return { candles: candles.slice(-limit), source: "ssi-fcdata-daily-index", note: `SSI DailyIndex ${ssiChartSymbol(symbol)} · cùng nguồn với chỉ số hiện tại` };
+        const indexQuality = validateIndexCandles(symbol, candles);
+        if (indexQuality.valid.length < Math.max(5, candles.length * 0.8)) throw new Error(indexQuality.reason ?? "index_candles_out_of_range");
+        return { candles: indexQuality.valid.slice(-limit), source: "ssi-fcdata-daily-index", note: `SSI DailyIndex ${ssiChartSymbol(symbol)} · đã loại ${indexQuality.rejected} nến ngoài biên` };
       }
     } catch {
       /* fall through to legacy provider only when SSI history is unavailable */
@@ -245,7 +276,11 @@ async function stockCandles(symbol: string, tf: string, limit: number): Promise<
     } catch {
       /* return raw fallback if quote calibration is unavailable */
     }
-    return { candles: candles.slice(-limit), source: "vndirect-index-fallback", note: "SSI chưa trả OHLC lịch sử chỉ số; fallback VNDirect OHLCV ngày" };
+    const indexQuality = validateIndexCandles(symbol, candles);
+    if (indexQuality.valid.length < Math.max(5, candles.length * 0.8)) {
+      throw new Error(indexQuality.reason ?? "index_fallback_out_of_range");
+    }
+    return { candles: indexQuality.valid.slice(-limit), source: "vndirect-index-fallback", note: `SSI chưa trả OHLC lịch sử chỉ số; đã loại ${indexQuality.rejected} nến ngoài biên` };
   }
 
   const r = await getVnOhlcv(symbol, dayLimit);
