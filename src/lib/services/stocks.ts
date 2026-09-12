@@ -38,7 +38,6 @@ function bootSsiLive() {
   if (!ssiFcConfigured()) return;
   if (process.env.SSI_WS_DISABLED === "true") return;
   try {
-    // REST credentials + All stream data → indices + VN30 live channels
     bootSsiMarketDataPipeline();
   } catch {
     try {
@@ -172,17 +171,10 @@ export async function getVnMarketBoard(): Promise<{
     try {
       const res = await cached("vn:market-board:ssi:v2", {
         ttlMs: 15_000,
-        producer: async () => {
-          const board = await getSsiFullBoard();
-          return board;
-        },
+        producer: async () => getSsiFullBoard(),
       });
       const board = res.value;
-      // overlay live WS ticks when available
-      const quotes = board.quotes.map((q) => {
-        const live = liveQuoteFromWs(q.symbol);
-        return live ?? q;
-      });
+      const quotes = board.quotes.map((q) => liveQuoteFromWs(q.symbol) ?? q);
       let indices = board.indices;
       if (process.env.SSI_WS_DISABLED !== "true") {
         const liveIdx: IndexQuote[] = [];
