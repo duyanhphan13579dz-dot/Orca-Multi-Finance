@@ -2,10 +2,10 @@
 
 import { useMemo, useState } from "react";
 import { useApi } from "@/lib/hooks";
-import type { NewsArticle } from "@/lib/types";
+import type { NewsArticle, MarketBulletin } from "@/lib/types";
 import type { NewsSentimentResult } from "@/lib/services/news-sentiment";
-import { Badge, FreshnessDot, Loading, MetaLine, Panel, Unavailable } from "@/components/ui";
-import { Brain, Newspaper } from "lucide-react";
+import { Badge, Chg, FreshnessDot, Loading, MetaLine, Panel, Unavailable, fmtCompact, fmtNum } from "@/components/ui";
+import { ArrowDownRight, ArrowUpRight, Brain, Newspaper, TrendingUp } from "lucide-react";
 
 const TABS: { key: string; label: string }[] = [
   { key: "", label: "Tất cả" },
@@ -27,6 +27,9 @@ export default function NewsPage() {
     `/api/v1/news/sentiment?limit=40${qs}`,
     { refreshInterval: 3 * 60_000 },
   );
+  const { data: bulletin, meta: bulletinMeta } = useApi<MarketBulletin>("/api/v1/news/bulletin", {
+    refreshInterval: 2 * 60_000,
+  });
 
   const byId = useMemo(() => {
     const m = new Map<string, { score: number; tone: string; label: string }>();
@@ -151,6 +154,8 @@ export default function NewsPage() {
         </Panel>
       )}
 
+      <MarketBulletinPanel bulletin={bulletin} meta={bulletinMeta} />
+
       {isLoading && !data ? (
         <Loading rows={10} />
       ) : !data ? (
@@ -216,5 +221,23 @@ export default function NewsPage() {
         </Panel>
       )}
     </div>
+  );
+}
+
+function MarketBulletinPanel({ bulletin, meta }: { bulletin: MarketBulletin | null; meta: import("@/lib/types").Meta | null }) {
+  if (!bulletin) return <Unavailable title="Bản tin giữa phiên chưa khả dụng" meta={meta} />;
+  const { overview, flow, sectors, technical } = bulletin;
+  const breadthTone = overview.advancers > overview.decliners ? "up" : overview.advancers < overview.decliners ? "down" : "neutral";
+  const index = overview.vnIndex;
+  return (
+    <Panel title={<span className="flex flex-wrap items-center gap-2"><TrendingUp className="size-4 text-accent" /> Cập nhật thị trường giữa phiên (11h30) {meta && <FreshnessDot status={meta.freshness} ageMs={meta.ageMs} />}</span>} right={<Badge tone={breadthTone}>{bulletin.sessionTime}</Badge>}>
+      <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+        <div className="rounded-lg border border-border-subtle bg-surface-elevated p-3"><div className="mb-2 flex items-center justify-between text-[10px] uppercase tracking-wider text-text-muted">VN-Index <Badge tone={index && index.changePercent >= 0 ? "up" : "down"}>{index ? (index.changePercent >= 0 ? "Tăng" : "Giảm") : "—"}</Badge></div><div className="num text-xl font-semibold text-text-primary">{index ? fmtNum(index.value, 2) : "—"}</div><div className="mt-1 text-[12px]"><Chg value={index?.changePercent} /></div><div className="mt-3 flex items-center justify-between text-[11px] text-text-muted"><span>Độ rộng</span><Badge tone={breadthTone}>{overview.advancers}↑ {overview.decliners}↓ {overview.unchanged}—</Badge></div></div>
+        <div className="rounded-lg border border-border-subtle bg-surface-elevated p-3"><div className="mb-2 text-[10px] uppercase tracking-wider text-text-muted">Dòng tiền & thanh khoản</div><div className="flex items-baseline justify-between gap-2"><span className="text-[11px] text-text-muted">GTGD</span><strong className="num text-base text-text-primary">{fmtCompact(flow.totalValueTraded)}</strong></div><div className="mt-2 flex items-baseline justify-between gap-2"><span className="text-[11px] text-text-muted">Khối ngoại</span><span className={`num text-sm ${flow.foreignNetValue != null && flow.foreignNetValue >= 0 ? "text-up" : "text-down"}`}>{flow.foreignNetValue != null ? `${flow.foreignNetValue >= 0 ? "+" : ""}${fmtCompact(flow.foreignNetValue)}` : "—"}</span></div><div className="mt-2 text-[10px] text-text-muted">So phiên trước: {flow.totalValueTraded && flow.previousSessionValue ? `${((flow.totalValueTraded / flow.previousSessionValue - 1) * 100).toFixed(1)}%` : "chưa có dữ liệu"}</div></div>
+        <div className="rounded-lg border border-border-subtle bg-surface-elevated p-3"><div className="mb-2 text-[10px] uppercase tracking-wider text-text-muted">Mã nổi bật</div><div className="grid grid-cols-2 gap-2"><div><div className="mb-1 flex items-center gap-1 text-[10px] text-up"><ArrowUpRight className="size-3" /> Tăng mạnh</div>{sectors.topGainers.slice(0, 3).map((m) => <div key={m.symbol} className="flex justify-between text-[12px]"><span className="font-medium">{m.symbol}</span><Chg value={m.changePercent} /></div>)}</div><div><div className="mb-1 flex items-center gap-1 text-[10px] text-down"><ArrowDownRight className="size-3" /> Giảm mạnh</div>{sectors.topLosers.slice(0, 3).map((m) => <div key={m.symbol} className="flex justify-between text-[12px]"><span className="font-medium">{m.symbol}</span><Chg value={m.changePercent} /></div>)}</div></div></div>
+        <div className="rounded-lg border border-border-subtle bg-surface-elevated p-3"><div className="mb-2 text-[10px] uppercase tracking-wider text-text-muted">Kỹ thuật & hành động</div><div className="text-sm font-semibold text-text-primary">{technical.marketMomentum}</div><div className="mt-1 text-[11px] text-text-muted">Xu hướng: {technical.trendAssessment}</div><div className="mt-2 flex flex-wrap gap-1.5"><Badge tone="accent">Hỗ trợ {technical.keySupport ? fmtNum(technical.keySupport, 2) : "—"}</Badge><Badge tone="warn">Cản {technical.keyResistance ? fmtNum(technical.keyResistance, 2) : "—"}</Badge></div><div className="mt-2 text-[11px] leading-relaxed text-text-secondary">{technical.tradingRecommendation}. Không phải khuyến nghị đầu tư.</div></div>
+      </div>
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-[10px] text-text-muted"><span>Thanh khoản: {technical.liquidityStatus} · VN30: {overview.vn30 ? `${fmtNum(overview.vn30.value, 2)} (${overview.vn30.changePercent >= 0 ? "+" : ""}${overview.vn30.changePercent.toFixed(2)}%)` : "—"}</span><MetaLine meta={meta} /></div>
+    </Panel>
   );
 }
