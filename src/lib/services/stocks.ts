@@ -85,7 +85,6 @@ function liveQuoteFromWs(symbol: string): Quote | null {
 export async function getVnIndices(): Promise<{ items: IndexQuote[]; meta: Meta } | null> {
   bootSsiLive();
 
-  // 1) LIVE WS indices
   if (ssiFcConfigured() && process.env.SSI_WS_DISABLED !== "true") {
     const live: IndexQuote[] = [];
     for (const code of ["VNINDEX", "VN30", "HNX", "HNX30", "UPCOM"]) {
@@ -114,7 +113,6 @@ export async function getVnIndices(): Promise<{ items: IndexQuote[]; meta: Meta 
     }
   }
 
-  // 2) SSI REST DailyIndex
   if (ssiFcConfigured()) {
     try {
       const res = await cached("vn:indices:ssi:v1", {
@@ -122,9 +120,6 @@ export async function getVnIndices(): Promise<{ items: IndexQuote[]; meta: Meta 
         staleMs: 120_000,
         producer: async () => {
           const r = await getSsiIndices();
-          if (!v.items?.length && !(r as { items?: IndexQuote[] }).items?.length) {
-            /* type guard */
-          }
           if (!r.items.length) throw new Error("ssi empty indices");
           return r;
         },
@@ -164,3 +159,337 @@ export async function getVnIndices(): Promise<{ items: IndexQuote[]; meta: Meta 
     return null;
   }
 }
+
+export async function getVnMarketBoard(): Promise<{
+  quotes: Quote[];
+  indices: IndexQuote[];
+  universeSize: number;
+  sessionDate: string;
+  meta: Meta;
+} | null> {
+  bootSsiLive();
+
+  if (ssiFcConfigured()) {
+    try {
+      const res = await cached("vn:market-board:ssi:v2", {
+        ttlMs: 15_000,
+        staleMs: 90_000,
+        producer: async () => getSsiFullBoard(),
+      });
+      const board = res.value;
+      const quotes = board.quotes.map((q) => liveQuoteFromWs(q.symbol) ?? q);
+      let indices = board.indices ?? [];
+      if (process.env.SSI_WS_DISABLED !== "true") {
+        const liveIdx: IndexQuote[] = [];
+        for (const code of ["VNINDEX", "VN30", "HNX", "HNX30", "UPCOM"]) {
+          const idx = ssiWs.getIndex(code, 30_000);
+          if (idx) {
+            liveIdx.push({
+              code: idx.code,
+              name: idx.code,
+              value: idx.value,
+              change: idx.change,
+              changePercent: idx.changePercent,
+              volume: idx.volume,
+              updatedAt: new Date(idx.eventTime).toISOString(),
+            });
+          }
+        }
+        if (liveIdx.length >= 2) indices = sortIndices(liveIdx);
+      }
+      return {
+        quotes,
+        indices: sortIndices(indices),
+        universeSize: board.universeSize ?? quotes.length,
+        sessionDate: board.sessionDate ?? new Date().toISOString().slice(0, 10),
+        meta: buildMeta({
+          source: "ssi-fcdata",
+          sourceTimestampMs: board.sourceTs ?? Date.now(),
+          cached: res.cached,
+          note: "Bảng giá — SSI FastConnect (WS overlay khi có)",
+          slas: { liveSlaMs: 15_000, freshSlaMs: 60_000, delayedSlaMs: 300_000 },
+        }),
+      };
+    } catch {
+      /* fallback */
+    }
+  }
+
+  try {
+    const res = await cached("vn:market-board:vnd:v1", {
+      ttlMs: 30_000,
+      staleMs: 120_000,
+      producer: () => vndirect.getVndMarketBoard(),
+    });
+    return {
+      quotes: res.value.quotes,
+      indices: sortIndices(res.value.indices ?? []),
+      universeSize: res.value.quotes.length,
+      sessionDate: new Date().toISOString().slice(0, 10),
+      meta: buildMeta({
+        source: "vndirect",
+        sourceTimestampMs: res.value.sourceTs ?? Date.now(),
+        cached: res.cached,
+        note: ssiFcConfigured() ? "Board fallback VNDirect" : "Board VNDirect",
+        slas: { liveSlaMs: 30_000, freshSlaMs: 120_000, delayedSlaMs: 600_000 },
+      }),
+    };
+  } catch {
+    return null;
+  }
+}
+
+export async function getVnUniverseList(): Promise<
+  { symbols: string[]; meta: Meta } | null
+> {
+  bootSsiLive();
+  if (ssiFcConfigured()) {
+    try {
+      const res = await cached("vn:universe:ssi:v1", {
+        ttlMs: 3600_000,
+        staleMs: 7200_000,
+        producer: async () => {
+          const u = await getSsiUniverse();
+          if (!u.length) throw new Error("ssi empty universe");
+          return u;
+        },
+      });
+      const symbols = res.value.map((x) => (typeof x === "string" ? x : (x as { symbol?: string }).symbol ?? "")).filter(Boolean);
+      return {
+        symbols,
+        meta: buildMeta({
+          source: "ssi-fcdata",
+          sourceTimestampMs: Date.now(),
+          cached: res.cached,
+          note: "Universe — SSI",
+        }),
+      };
+    } catch {
+      /* fallback */
+    }
+  }
+  try {
+    const res = await cached("vn:universe:vnd:v1", {
+      ttlMs: 3600_000,
+      producer: () => vndirect.getVndUniverse(),
+    });
+    return {
+      symbols: res.value,
+      meta: buildMeta({
+        source: "vndirect",
+        sourceTimestampMs: Date.now(),
+        cached: res.cached,
+        note: "Universe — VNDirect",
+      }),
+    };
+  } catch {
+    return null;
+  }
+}
+
+export async function getVnQuotes(symbols: string[]): Promise<{ quotes: Quote[]; meta: Meta } | null> {
+  const list = [...new Set(symbols.map((s) => s.toUpperCase()).filter(Boolean))].slice(0, 80);
+  if (!list.length) return { quotes: [], meta: buildMeta({ source: "none", sourceTimestampMs: Date.now() }) };
+  bootSsiLive();
+
+  const out: Quote[] = [];
+  const missing: string[] = [];
+  for (const s of list) {
+    const live = liveQuoteFromWs(s);
+    if (live) out.push(live);
+    else missing.push(s);
+  }
+
+  if (missing.length && ssiFcConfigured()) {
+    try {
+      const r = await getSsiQuotes(missing);
+      out.push(...r.quotes);
+    } catch {
+      /* fallback below */
+    }
+  }
+
+  const have = new Set(out.map((q) => q.symbol));
+  const still = missing.filter((s) => !have.has(s));
+  if (still.length) {
+    try {
+      for (const s of still) {
+        const r = await vndirect.getVndQuote(s);
+        if (r?.quote) out.push(r.quote);
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
+  return {
+    quotes: out,
+    meta: buildMeta({
+      source: ssiFcConfigured() ? "ssi-fcdata" : "vndirect",
+      sourceTimestampMs: Date.now(),
+      note: `Quotes ${out.length}/${list.length}`,
+    }),
+  };
+}
+
+export async function getVnOhlcv(
+  symbol: string,
+  limit = 250,
+): Promise<{ bars: OhlcvBar[]; meta: Meta } | null> {
+  const sym = symbol.toUpperCase();
+  bootSsiLive();
+
+  if (ssiFcConfigured()) {
+    try {
+      const res = await cached(`vn:ohlcv:ssi:${sym}:${limit}`, {
+        ttlMs: 120_000,
+        staleMs: 600_000,
+        producer: async () => {
+          const r = await getSsiDailyOhlc(sym, Math.max(limit, 30));
+          if (!r.bars.length) throw new Error("ssi empty ohlc");
+          return r;
+        },
+      });
+      const bars = res.value.bars.slice(-limit);
+      const v = validateBars(bars);
+      if (!v.ok) logQualityEvent("ohlcv", sym, v.reason);
+      return {
+        bars,
+        meta: buildMeta({
+          source: "ssi-fcdata",
+          sourceTimestampMs: res.value.sourceTs ?? Date.now(),
+          cached: res.cached,
+          note: "OHLCV — SSI FastConnect",
+          slas: { liveSlaMs: 60_000, freshSlaMs: 300_000, delayedSlaMs: 3_600_000 },
+        }),
+      };
+    } catch {
+      /* fallback */
+    }
+  }
+
+  try {
+    const res = await cached(`vn:ohlcv:vnd:${sym}:${limit}`, {
+      ttlMs: 180_000,
+      producer: () => vndirect.getVndOhlcv(sym, limit),
+    });
+    return {
+      bars: res.value.bars,
+      meta: buildMeta({
+        source: "vndirect",
+        sourceTimestampMs: res.value.sourceTs ?? Date.now(),
+        cached: res.cached,
+        note: ssiFcConfigured() ? "OHLCV fallback VNDirect" : "OHLCV VNDirect",
+      }),
+    };
+  } catch {
+    return null;
+  }
+}
+
+export interface VnStockDetail {
+  symbol: string;
+  quote: Quote | null;
+  bars: OhlcvBar[];
+  technical: TechnicalSnapshot | null;
+  patterns: CandlePattern[];
+  financials: {
+    income: Record<string, unknown>[] | null;
+    balance: Record<string, unknown>[] | null;
+    cashflow: Record<string, unknown>[] | null;
+    ratios: Record<string, unknown>[] | null;
+  };
+  financialHealth: FinancialHealthResult | null;
+  financialMeta: FinancialPackageMeta | null;
+  financialGrowth: GrowthSnapshot | null;
+  financialTtm: NormalizedPeriod | null;
+  notes: string[];
+}
+
+export async function getVnStockDetail(symbol: string): Promise<{ detail: VnStockDetail; meta: Meta } | null> {
+  const sym = symbol.toUpperCase();
+  bootSsiLive();
+  ssiWs.watchSymbol(sym);
+
+  const failed: string[] = [];
+  const notes: string[] = [];
+
+  let quote: Quote | null = null;
+  let quoteSource = "";
+  try {
+    const q = await getVnQuotes([sym]);
+    if (q?.quotes[0]) {
+      quote = q.quotes[0];
+      quoteSource = q.meta.source;
+    } else failed.push("quote");
+  } catch {
+    failed.push("quote");
+  }
+
+  let bars: OhlcvBar[] = [];
+  let ohlcvSource = "";
+  try {
+    const o = await getVnOhlcv(sym, 180);
+    if (o?.bars.length) {
+      bars = o.bars;
+      ohlcvSource = o.meta.source;
+    } else failed.push("ohlcv");
+  } catch {
+    failed.push("ohlcv");
+  }
+
+  let technical: TechnicalSnapshot | null = null;
+  let patterns: CandlePattern[] = [];
+  if (bars.length >= 20) {
+    try {
+      technical = analyzeSeries(bars);
+      patterns = detectPatterns(bars);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  let fin: Awaited<ReturnType<typeof getFinancialsForSymbol>> | null = null;
+  try {
+    fin = await getFinancialsForSymbol(sym);
+  } catch {
+    failed.push("financials");
+  }
+  if (!fin?.financials.income && !fin?.financials.balance) failed.push("financials");
+
+  if (failed.length) notes.push(`Thiếu: ${[...new Set(failed)].join(", ")}`);
+
+  const detail: VnStockDetail = {
+    symbol: sym,
+    quote,
+    bars,
+    technical,
+    patterns,
+    financials: fin?.financials ?? { income: null, balance: null, cashflow: null, ratios: null },
+    financialHealth: fin?.health ?? null,
+    financialMeta: fin?.packageMeta ?? null,
+    financialGrowth: fin?.growth ?? null,
+    financialTtm: fin?.ttm ?? null,
+    notes,
+  };
+
+  const meta = buildMeta({
+    source:
+      [quoteSource, ohlcvSource, fin?.packageMeta?.primarySource].filter(Boolean).join("+") ||
+      (ssiFcConfigured() ? "ssi-fcdata" : "vndirect"),
+    sourceTimestampMs: quote?.updatedAt
+      ? Date.parse(
+          quote.updatedAt.includes("/") ? quote.updatedAt.split("/").reverse().join("-") : quote.updatedAt,
+        )
+      : bars.length
+        ? bars[bars.length - 1].time
+        : Date.now(),
+    degraded: failed.length > 0,
+    partial: failed.length > 0,
+    note: notes[0],
+  });
+  return { detail, meta };
+}
+
+/** Re-export order book helpers (canonical module: stock-orderbook.ts). */
+export { getVnOrderBook, type VnOrderBook } from "./stock-orderbook";
