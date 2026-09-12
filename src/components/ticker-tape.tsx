@@ -1,14 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { useApi } from "@/lib/hooks";
 import type { MarketSnapshot } from "@/lib/services/market";
 
 const INDEX_PRIORITY = ["VNINDEX", "VN30", "HNX", "UPCOM", "HNX30", "VN100"];
 
 /** Realtime ticker — VN indices + crypto + FX majors, CSS marquee. */
-export function TickerTape() {
+export const TickerTape = memo(function TickerTape() {
   const { data } = useApi<MarketSnapshot>("/api/v1/market/snapshot", { refreshInterval: 45_000 });
   const trackRef = useRef<HTMLDivElement>(null);
   const [paused, setPaused] = useState(false);
@@ -34,7 +34,8 @@ export function TickerTape() {
     return () => io.disconnect();
   }, []);
 
-  const items: { key: string; label: string; href: string; price: number; chg: number | null; digits: number }[] = [];
+  const items = useMemo(() => {
+    const result: { key: string; label: string; href: string; price: number; chg: number | null; digits: number }[] = [];
 
   if (data?.indices?.length) {
     const sorted = [...data.indices].sort((a, b) => {
@@ -43,7 +44,7 @@ export function TickerTape() {
       return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
     });
     for (const i of sorted.slice(0, narrow ? 4 : 6)) {
-      items.push({
+      result.push({
         key: `idx-${i.code}`,
         label: i.code === "VNINDEX" ? "VN-Index" : i.code,
         href: "/stocks",
@@ -55,7 +56,7 @@ export function TickerTape() {
   }
   if (data?.crypto) {
     for (const c of data.crypto.top.slice(0, narrow ? 6 : 14)) {
-      items.push({
+      result.push({
         key: `c-${c.symbol}`,
         label: c.baseAsset,
         href: `/crypto/${c.symbol}`,
@@ -67,7 +68,7 @@ export function TickerTape() {
   }
   if (data?.forex) {
     for (const f of data.forex.rows.filter((r) => r.group === "major").slice(0, narrow ? 3 : 5)) {
-      items.push({
+      result.push({
         key: `f-${f.pair}`,
         label: f.symbol,
         href: `/forex/${f.pair}`,
@@ -79,7 +80,7 @@ export function TickerTape() {
   }
   if (data?.commodities) {
     for (const c of data.commodities.filter((x) => ["XAUUSD", "CL"].includes(x.symbol))) {
-      items.push({
+      result.push({
         key: `cm-${c.symbol}`,
         label: c.symbol === "XAUUSD" ? "GOLD" : c.symbol,
         href: "/commodities",
@@ -89,6 +90,9 @@ export function TickerTape() {
       });
     }
   }
+
+    return result;
+  }, [data, narrow]);
 
   if (!items.length) {
     return (
@@ -131,4 +135,4 @@ export function TickerTape() {
       <div className="pointer-events-none absolute inset-y-0 right-0 w-8 bg-gradient-to-l from-canvas-2 to-transparent sm:w-10" />
     </div>
   );
-}
+});
