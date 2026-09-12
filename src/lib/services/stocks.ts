@@ -10,11 +10,11 @@ import {
   getSsiFullBoard,
   getSsiIndices,
   getSsiQuotes,
-  getSsiUniverse,
   ssiFcConfigured,
 } from "../providers/ssi-fcdata";
 import { ensureSsiWsStarted, ssiWs } from "../realtime/ssi-ws";
 import { bootSsiMarketDataPipeline } from "../realtime/ssi-market-boot";
+import { getCanonicalSecurityMaster, toCanonicalUniverse } from "../vn/security-master";
 import { validateBars, logQualityEvent } from "../quality";
 import { analyzeSeries, detectPatterns } from "../technical";
 import type { CandlePattern, IndexQuote, Meta, OhlcvBar, Quote, TechnicalSnapshot } from "../types";
@@ -210,42 +210,34 @@ export async function getVnMarketBoard(): Promise<{
 }
 
 export async function getVnUniverseList(): Promise<{
-  items: { symbol: string; name: string | null; exchange: string | null; industry: string | null }[];
+  items: { symbol: string; name: string | null; exchange: string | null; industry: string | null; sources?: string[]; conflicts?: string[] }[];
   meta: Meta;
 } | null> {
-  if (ssiFcConfigured()) {
+  try {
+    const records = await getCanonicalSecurityMaster();
+    return {
+      items: toCanonicalUniverse(records),
+      meta: buildMeta({
+        source: "ssi-vndirect-canonical",
+        sourceTimestampMs: Date.now(),
+        note: `Canonical master: ${records.length} mã, merge SSI ưu tiên tên/sàn và VNDIRECT bổ sung ngành`,
+      }),
+    };
+  } catch {
+    // Preserve the old provider fallback if both security-master sources are unavailable.
     try {
-      const res = await cached("vn:universe:ssi:v1", {
+      const res = await cached("vn:universe:vnd:fallback:v1", {
         ttlMs: 6 * 3_600_000,
         staleMs: 24 * 3_600_000,
-        producer: () => getSsiUniverse(),
+        producer: () => vndirect.getVndUniverse(),
       });
       return {
         items: res.value,
-        meta: buildMeta({ source: "ssi-fcdata", sourceTimestampMs: Date.now(), cached: res.cached }),
+        meta: buildMeta({ source: "vndirect", sourceTimestampMs: Date.now(), cached: res.cached, note: "Canonical master unavailable; provider fallback" }),
       };
     } catch {
-      /* fallthrough */
+      return null;
     }
-  }
-  try {
-    const res = await cached("vn:universe:vnd:v1", {
-      ttlMs: 6 * 3_600_000,
-      staleMs: 24 * 3_600_000,
-      producer: () => vndirect.getVndUniverse(),
-    });
-    const items = res.value.map((s) => ({
-      symbol: typeof s === "string" ? s : String((s as { symbol?: string }).symbol ?? ""),
-      name: null as string | null,
-      exchange: null as string | null,
-      industry: null as string | null,
-    }));
-    return {
-      items,
-      meta: buildMeta({ source: "vndirect", sourceTimestampMs: Date.now(), cached: res.cached }),
-    };
-  } catch {
-    return null;
   }
 }
 
