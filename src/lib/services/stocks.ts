@@ -55,7 +55,7 @@ export function vnstockConfigured(): boolean {
 export function vnPrimaryProvider(): "ssi-fcdata" | "vndirect" {
   // SSI là primary cho market data (chỉ số, bảng giá, quote, OHLCV, universe).
   // Financial statements giữ VNDirect làm primary — xem providers-registry.ts.
-  return ssiFcConfigured() ? "ssi-fcdata" : "vndirect";
+  return require("./financial").vnProviderLayout().market.primary === "ssi-fcdata" ? "ssi-fcdata" : "vndirect";
 }
 
 function liveQuoteFromWs(symbol: string): Quote | null {

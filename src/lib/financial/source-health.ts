@@ -1,6 +1,14 @@
 import "server-only";
 import { listFinancialProviders } from "./providers-registry";
 import { getFinancialMonitorSnapshot } from "./monitor";
+import { vnProviderLayout } from "./index";
+
+export interface MarketSourceHealthRow {
+  provider: "ssi-fcdata" | "vndirect";
+  configured: boolean;
+  role: "primary" | "fallback";
+  status: "healthy" | "degraded" | "down" | "not_configured";
+}
 
 export interface SourceHealthRow {
   id: string;
@@ -58,5 +66,31 @@ export function getFinancialSourceHealth(): FinancialSourceHealthReport {
     sources: rows.sort((a, b) => a.priority - b.priority),
     overall,
     monitor: snap.metrics,
+  };
+}
+
+export interface MarketSourceHealth {
+  layout: ReturnType<typeof vnProviderLayout>["market"];
+  rows: MarketSourceHealthRow[];
+}
+
+export function getMarketSourceHealth(): MarketSourceHealth {
+  const layout = vnProviderLayout().market;
+  return {
+    layout,
+    rows: [
+      {
+        provider: "ssi-fcdata",
+        configured: layout.primary === "ssi-fcdata",
+        role: layout.primary === "ssi-fcdata" ? ("primary" as const) : ("fallback" as const),
+        status: layout.primary === "ssi-fcdata" ? "healthy" : "not_configured",
+      },
+      {
+        provider: "vndirect",
+        configured: true,
+        role: layout.primary === "vndirect" ? ("primary" as const) : (layout.fallback ? ("fallback" as const) : ("fallback" as const)),
+        status: layout.primary === "vndirect" ? "healthy" : "healthy",
+      },
+    ],
   };
 }

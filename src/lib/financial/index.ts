@@ -1,4 +1,18 @@
-/** Financial Report Data Reliability Layer — public surface. */
+/**
+ * Vietnam market + financial provider layout.
+ *
+ * - Market data (indices, board, quotes, OHLCV, universe): SSI Flashconnect primary,
+ *   VNDirect fallback when SSI_API_KEY / SSI_API_SECRET (or SSI_FC_CONSUMER_*) is absent or unreachable.
+ * - Financial statements (BCTC / analysis): VNDirect stays primary and only — SSI is never a
+ *   financial provider here (see src/lib/financial/providers-registry.ts).
+ */
+export function vnProviderLayout() {
+  const ssiLive = require("./providers/ssi-fcdata").ssiFcConfigured();
+  return {
+    market: { primary: ssiLive ? "ssi-fcdata" : "vndirect", fallback: ssiLive ? "vndirect" : null },
+    financial: { primary: "vndirect", fallback: null },
+  } as const;
+}
 
 export { getFinancialPackage, getFinancialsForSymbol } from "./service";
 export { listFinancialProviders } from "./providers-registry";
@@ -6,7 +20,7 @@ export { runSourceRouter } from "./provider";
 export type { FinancialProvider, RouterOutcome } from "./provider";
 export { decideFallback, applyFallbackToMeta } from "./fallback";
 export type { FallbackDecision, FallbackLevel } from "./fallback";
-export { getFinancialSourceHealth } from "./source-health";
+export { getFinancialSourceHealth, getMarketSourceHealth } from "./source-health";
 export { getFinancialMonitorSnapshot } from "./monitor";
 export {
   scoreFinancialQuality,
