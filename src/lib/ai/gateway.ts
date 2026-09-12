@@ -15,6 +15,7 @@ import { httpJson } from "../http";
  */
 
 export type LlmRole = "reasoning" | "analysis" | "classification" | "report";
+export type LlmBackend = "openrouter" | "groq";
 
 export interface LlmResult {
   text: string;
@@ -57,11 +58,26 @@ export function modelFor(role: LlmRole): string {
   return firstDefined(env.openrouterModel, env.aiModel, env.groqModel) ?? "qwen/qwen3-32b";
 }
 
-function resolveProvider(model: string): {
+function resolveProvider(model: string, backend?: LlmBackend): {
   baseUrl: string;
   apiKey: string | undefined;
   provider: LlmResult["provider"];
 } {
+  if (backend === "groq") {
+    return {
+      baseUrl: (env.groqBaseUrl ?? "https://api.groq.com/openai/v1").replace(/\/$/, ""),
+      apiKey: env.groqApiKey,
+      provider: "groq",
+    };
+  }
+  if (backend === "openrouter") {
+    return {
+      baseUrl: "https://openrouter.ai/api/v1",
+      apiKey: env.openrouterApiKey,
+      provider: "openrouter",
+    };
+  }
+
   // Explicit AI_BASE_URL wins
   if (env.aiBaseUrl?.trim()) {
     const base = env.aiBaseUrl.replace(/\/$/, "");
@@ -140,13 +156,14 @@ interface ChatOptions {
   maxTokens?: number;
   timeoutMs?: number;
   modelOverride?: string;
+  backend?: LlmBackend;
 }
 
 type ChatResponse = { choices?: { message?: { content?: string } }[] };
 
 export async function llmChat(role: LlmRole, opts: ChatOptions): Promise<LlmResult | null> {
   const model = opts.modelOverride?.trim() || modelFor(role);
-  const { baseUrl, apiKey, provider } = resolveProvider(model);
+  const { baseUrl, apiKey, provider } = resolveProvider(model, opts.backend);
   if (!apiKey) return null;
 
   const t0 = performance.now();

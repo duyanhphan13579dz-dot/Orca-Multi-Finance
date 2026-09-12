@@ -23,6 +23,7 @@ import {
 } from "./agent-memory";
 
 type Intent =
+  | { kind: "vn-market"; requestedDate: string | null }
   | { kind: "crypto"; symbol: string }
   | { kind: "forex"; pair: string }
   | { kind: "vn-stock"; symbol: string }
@@ -74,9 +75,20 @@ interface Built {
   persona: Persona;
 }
 
+function requestedDate(q: string): string | null {
+  const match = q.match(/\b(?:ngày\s*)?(\d{1,2})[\/-](\d{1,2})(?:[\/-](\d{2,4}))?\b/i);
+  return match ? match[0] : null;
+}
+
+function isVietnamMarketQuestion(q: string): boolean {
+  return /chứng khoán\s*(việt nam|vn)?|thị trường\s*(việt nam|vn)|vn-?index|vn30|hnx-?index|upcom|phiên giao dịch|phiên hôm nay|phiên\s+\d{1,2}[\/-]\d{1,2}|sàn\s+(hose|hnx|upcom)/i.test(q);
+}
+
 function detectIntent(q: string): Intent {
   const upper = q.toUpperCase();
   if (WEALTH_RE.test(q)) return { kind: "wealth" };
+  if (PF_RE.test(q)) return { kind: "personal_finance" };
+  if (isVietnamMarketQuestion(q)) return { kind: "vn-market", requestedDate: requestedDate(q) };
   if (PF_RE.test(q)) return { kind: "personal_finance" };
   if (/so sánh|compare|\bvs\b|\bversus\b/i.test(q)) {
     const tokens = upper.match(/\b[A-Z]{2,10}\b/g) ?? [];
@@ -187,7 +199,8 @@ const SYS_BASE = `Bạn là chuyên viên của ORCA Financial, trả lời đú
 
 const SYS_STOCK = `${SYS_BASE}
 
-Vai trò: Chuyên gia phân tích cổ phiếu VN. Luận điểm → bằng chứng → rủi ro → theo dõi. Không khuyến nghị mua/bán tuyệt đối.`;
+Vai trò: Chuyên gia phân tích cổ phiếu VN. Luận điểm → bằng chứng → rủi ro → theo dõi. Không khuyến nghị mua/bán tuyệt đối.
+Nếu scope là vn-market, tuyệt đối chỉ phân tích chứng khoán Việt Nam. Không nhắc BTC, crypto, forex hoặc tài sản khác trừ khi câu hỏi yêu cầu trực tiếp. Với câu hỏi đánh giá một phiên, phải trả lời theo thứ tự: kết luận phiên; VN-Index/VN30/HNX/UPCoM; độ rộng và thanh khoản nếu có; nhóm ngành/dòng tiền; kỹ thuật; kịch bản và rủi ro. Nếu hỏi ngày lịch sử nhưng engine chỉ có dữ liệu hiện tại, nói rõ dữ liệu lịch sử chưa có và không thay bằng dữ liệu của ngày khác.`;
 
 const SYS_PF = `${SYS_BASE}
 
@@ -387,6 +400,36 @@ async function buildVn(symbol: string, deep: boolean): Promise<Built> {
   return { narrative: lines.filter(Boolean).join("\n\n"), contract: c as unknown as Record<string, unknown>, sectionsUsed: ["vn-stock", "market-state-engine"], symbols: [symbol], freshnesses: [analysis.meta.freshness], persona: "stock_analyst" };
 }
 
+async function buildVnMarket(requestedDate: string | null): Promise<Built> {
+  const snap = await buildMarketSnapshot();
+  const indices = snap.snapshot.indices?.map((index) => ({
+    code: index.code,
+    name: index.name,
+    value: index.value,
+    change: index.change,
+    change_percent: index.changePercent,
+    volume: index.volume,
+    updated_at: index.updatedAt,
+  })) ?? null;
+  const historicalUnavailable = Boolean(requestedDate);
+  const contract = {
+    question_target: "Đánh giá thị trường chứng khoán Việt Nam",
+    market_scope: "vietnam_equities",
+    requested_date: requestedDate,
+    requested_session: requestedDate ? "historical_session" : snap.snapshot.vnSession.state,
+    data_available: !historicalUnavailable && Boolean(indices?.length),
+    data_missing: historicalUnavailable ? ["historical_session_snapshot_for_requested_date"] : indices?.length ? [] : ["vietnam_indices"],
+    facts: { indices, vn_session: snap.snapshot.vnSession, session_hint: snap.snapshot.vnSessionHint },
+    interpretations: { pulse: snap.snapshot.pulse, news: snap.snapshot.news?.slice(0, 5).map((item) => ({ title: item.title, source: item.source })) ?? [] },
+    data_meta: { source: snap.meta.source, freshness: snap.meta.freshness, sections: { vn_stocks: snap.meta.sections?.vn_stocks }, fetched_at: new Date().toISOString(), notes: snap.meta.note },
+  };
+  const indexText = indices?.length ? indices.map((i) => `${i.name ?? i.code}: ${i.value ?? "—"} (${i.change_percent ?? "—"}%)`).join("; ") : "Chưa có chỉ số Việt Nam khả dụng.";
+  const narrative = historicalUnavailable
+    ? `Yêu cầu đánh giá phiên ${requestedDate}. Data Engine hiện chỉ trả snapshot hiện tại, chưa có dữ liệu lưu trữ đúng phiên này; không dùng dữ liệu crypto hay phiên khác để thay thế.`
+    : `Snapshot chứng khoán Việt Nam: ${indexText}.\n\n${snap.snapshot.vnSessionHint}`;
+  return { narrative, contract, sectionsUsed: ["vn-market", "vn-indices", "session-engine"], symbols: indices?.map((i) => i.code).filter(Boolean) as string[] ?? [], freshnesses: [snap.meta.sections?.vn_stocks ?? "UNAVAILABLE"], unavailable: historicalUnavailable || !indices?.length, persona: "stock_analyst" };
+}
+
 async function buildMarket(): Promise<Built> {
   const snap = await buildMarketSnapshot();
   const p = snap.snapshot.pulse;
@@ -408,6 +451,7 @@ export async function answerQuestion(question: string, prefs: AgentPrefs = {}, h
   else if (intent.kind === "forex") built = await buildForex(intent.pair);
   else if (intent.kind === "commodity") built = await buildCommodity(intent.query);
   else if (intent.kind === "vn-stock") built = await buildVn(intent.symbol, deep);
+  else if (intent.kind === "vn-market") built = await buildVnMarket(intent.requestedDate);
   else if (intent.kind === "market" || intent.kind === "news" || intent.kind === "general") {
     built = await buildMarket();
     if (intent.kind === "news" && built.contract.news_top) {
@@ -435,7 +479,9 @@ export async function answerQuestion(question: string, prefs: AgentPrefs = {}, h
   for (const n of collectUserNumbers(question)) factNums.add(n);
   for (const h of history) if (h.role === "user") for (const n of collectUserNumbers(h.content)) factNums.add(n);
 
-  const canLlm = llmConfigured() && !(built.unavailable && built.persona === "stock_analyst");
+  // Có thể gọi LLM khi snapshot có cấu trúc nhưng thiếu dữ liệu lịch sử; chỉ fallback
+  // deterministic khi data engine hoàn toàn không tạo được context để tránh hallucination.
+  const canLlm = llmConfigured() && !(built.unavailable && built.sectionsUsed.length === 0);
   if (canLlm) {
     const role = intent.kind === "compare" || intent.kind === "market" || intent.kind === "wealth" ? "reasoning" : "analysis";
     const styleVi = prefs.style === "technical" ? "súc tích, nhấn chỉ báo" : prefs.style === "brief" ? "rất ngắn (3-5 câu)" : "chuyên sâu, mạch lạc";
@@ -446,9 +492,31 @@ export async function answerQuestion(question: string, prefs: AgentPrefs = {}, h
     const tagged = history.filter((h) => h.content?.trim());
     const sameTopic = tagged.filter((h) => h.role !== "user" || detectIntent(h.content).kind === intent.kind || detectIntent(h.content).kind === "general");
     const chatHistory = (sameTopic.length >= 2 ? sameTopic : tagged).slice(-8).map((h) => ({ role: (h.role === "user" ? "user" : "assistant") as "user" | "assistant", content: h.content.trim().slice(0, 2_500) }));
-    const first = await llmChat(role, { system: sys, user, history: chatHistory, temperature: 0.35, maxTokens: prefs.depth === "deep" ? 1400 : 1100, modelOverride: "openai/gpt-oss-120b" });
+    // Sub-orchestrator: Data Engine is the only source of facts. Both LLMs receive
+    // the same structured context; the specialist response is selected by intent.
+    const primaryBackend = intent.kind === "vn-market" || intent.kind === "vn-stock" || intent.kind === "wealth" || intent.kind === "compare" ? "openrouter" : "groq";
+    const secondaryBackend = primaryBackend === "openrouter" ? "groq" : "openrouter";
+    const modelForBackend = (backend: "openrouter" | "groq") => backend === "openrouter"
+      ? env.openrouterModel ?? env.aiModelReport ?? "openai/gpt-oss-120b"
+      : env.groqModel ?? "openai/gpt-oss-120b";
+    const llmOptions = (backend: "openrouter" | "groq") => ({
+      system: sys,
+      user,
+      history: chatHistory,
+      temperature: 0.35,
+      maxTokens: prefs.depth === "deep" ? 1400 : 1100,
+      modelOverride: modelForBackend(backend),
+      backend,
+    });
+    const [primary, secondary] = await Promise.all([
+      llmChat(role, llmOptions(primaryBackend)),
+      llmChat(role, llmOptions(secondaryBackend)),
+    ]);
+    const first = primary ?? secondary;
+    const selectedBackend = primary ? primaryBackend : secondaryBackend;
+    const selectedModel = modelForBackend(selectedBackend);
     if (first) {
-      const use = await validateMaybeRepair(first, user, factNums, role, sys);
+      const use = await validateMaybeRepair(first, user, factNums, role, sys, selectedBackend, selectedModel);
       if (use.text) { finalAnswer = use.text; mode = "llm"; model = first.model; outputValidation = use.validation; }
       else outputValidation = use.validation;
     }
@@ -468,10 +536,10 @@ export async function answerQuestion(question: string, prefs: AgentPrefs = {}, h
   return { result: { answer: finalAnswer, mode, intent: intent.kind, persona: built.persona, model, confidence, dataQuality: qualityToLabel(meta.qualityStatus), dataFreshness, context: { sectionsUsed: built.sectionsUsed, symbols: built.symbols } }, meta };
 }
 
-async function validateMaybeRepair(first: LlmResult, user: string, facts: Set<number>, role: "reasoning" | "analysis", sys: string): Promise<{ text: string | null; model: string; validation: Meta["outputValidation"] }> {
+async function validateMaybeRepair(first: LlmResult, user: string, facts: Set<number>, role: "reasoning" | "analysis", sys: string, backend: "openrouter" | "groq", modelOverride: string): Promise<{ text: string | null; model: string; validation: Meta["outputValidation"] }> {
   let val = validateOutput(first.text, facts);
   if (val.ok) return { text: first.text, model: first.model, validation: { validated: true, unsupportedClaims: 0 } };
-  const regen = await llmChat(role, { system: `${sys}\nSTRICT: chỉ dùng số trong context. Sai trước: ${val.unsupported.slice(0, 5).map((u) => u.raw).join(", ")}.`, user, temperature: 0.2, maxTokens: 1100, modelOverride: "openai/gpt-oss-120b" });
+  const regen = await llmChat(role, { system: `${sys}\nSTRICT: chỉ dùng số trong context. Sai trước: ${val.unsupported.slice(0, 5).map((u) => u.raw).join(", ")}.`, user, temperature: 0.2, maxTokens: 1100, modelOverride, backend });
   if (!regen) return { text: null, model: first.model, validation: { validated: false, unsupportedClaims: val.unsupported.length, recovered: "deterministic" } };
   val = validateOutput(regen.text, facts);
   if (val.ok) return { text: regen.text, model: first.model, validation: { validated: true, unsupportedClaims: 0, recovered: "regenerated" } };
