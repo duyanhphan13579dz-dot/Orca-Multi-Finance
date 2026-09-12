@@ -492,15 +492,31 @@ export async function answerQuestion(question: string, prefs: AgentPrefs = {}, h
     const tagged = history.filter((h) => h.content?.trim());
     const sameTopic = tagged.filter((h) => h.role !== "user" || detectIntent(h.content).kind === intent.kind || detectIntent(h.content).kind === "general");
     const chatHistory = (sameTopic.length >= 2 ? sameTopic : tagged).slice(-8).map((h) => ({ role: (h.role === "user" ? "user" : "assistant") as "user" | "assistant", content: h.content.trim().slice(0, 2_500) }));
-    // Sub-orchestrator: Data Engine is the only source of facts; provider choice follows the intent.
-    // OpenRouter handles enterprise/stock analysis, while Groq handles market Q&A and general finance dialogue.
-    const backend = intent.kind === "vn-stock" || intent.kind === "wealth" || intent.kind === "compare" ? "openrouter" : "groq";
-    const modelOverride = backend === "openrouter"
+    // Sub-orchestrator: Data Engine is the only source of facts. Both LLMs receive
+    // the same structured context; the specialist response is selected by intent.
+    const primaryBackend = intent.kind === "vn-market" || intent.kind === "vn-stock" || intent.kind === "wealth" || intent.kind === "compare" ? "openrouter" : "groq";
+    const secondaryBackend = primaryBackend === "openrouter" ? "groq" : "openrouter";
+    const modelForBackend = (backend: "openrouter" | "groq") => backend === "openrouter"
       ? env.openrouterModel ?? env.aiModelReport ?? "openai/gpt-oss-120b"
       : env.groqModel ?? "openai/gpt-oss-120b";
-    const first = await llmChat(role, { system: sys, user, history: chatHistory, temperature: 0.35, maxTokens: prefs.depth === "deep" ? 1400 : 1100, modelOverride, backend });
+    const llmOptions = (backend: "openrouter" | "groq") => ({
+      system: sys,
+      user,
+      history: chatHistory,
+      temperature: 0.35,
+      maxTokens: prefs.depth === "deep" ? 1400 : 1100,
+      modelOverride: modelForBackend(backend),
+      backend,
+    });
+    const [primary, secondary] = await Promise.all([
+      llmChat(role, llmOptions(primaryBackend)),
+      llmChat(role, llmOptions(secondaryBackend)),
+    ]);
+    const first = primary ?? secondary;
+    const selectedBackend = primary ? primaryBackend : secondaryBackend;
+    const selectedModel = modelForBackend(selectedBackend);
     if (first) {
-      const use = await validateMaybeRepair(first, user, factNums, role, sys, backend, modelOverride);
+      const use = await validateMaybeRepair(first, user, factNums, role, sys, selectedBackend, selectedModel);
       if (use.text) { finalAnswer = use.text; mode = "llm"; model = first.model; outputValidation = use.validation; }
       else outputValidation = use.validation;
     }
