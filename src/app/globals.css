@@ -319,6 +319,22 @@ html[data-lowdata="true"] .ticker-track {
 
 /* --------------------------- mobile performance --------------------------- */
 
+/* ------------------------- compact page composition ------------------------ */
+main > :first-child { max-width: 1440px; margin-inline: auto; }
+main > :first-child > .mb-6 { margin-bottom: 1rem; }
+main > :first-child .gap-6 { gap: 1rem; }
+main > :first-child .gap-5 { gap: .875rem; }
+main > :first-child .space-y-6 > :not([hidden]) ~ :not([hidden]) { margin-top: 1rem; }
+main > :first-child .space-y-5 > :not([hidden]) ~ :not([hidden]) { margin-top: .875rem; }
+main > :first-child .min-h-\[280px\] { min-height: 220px; }
+main > :first-child .min-h-\[240px\] { min-height: 190px; }
+
+@media (min-width: 768px) {
+  main > :first-child > .grid { align-items: start; }
+  main > :first-child .py-8 { padding-block: 1.25rem; }
+  main > :first-child .py-10 { padding-block: 1.5rem; }
+}
+
 @media (max-width: 767px) {
   /* Cheaper scrollbar chrome */
   *::-webkit-scrollbar { width: 4px; height: 4px; }
@@ -336,13 +352,22 @@ html[data-lowdata="true"] .ticker-track {
     animation: none;
   }
 
-  /* Tighter panel headers on small screens */
-  .panel > header {
-    padding-left: 12px;
-    padding-right: 12px;
-    padding-top: 8px;
-    padding-bottom: 8px;
+  /* Tighter panel headers and page rhythm on small screens */
+  .panel > header, .panel > .panel-header {
+    min-height: 42px;
+    padding: 7px 10px;
   }
+  .panel-body { padding-inline: 10px; padding-bottom: 10px; }
+  main > :first-child > .mb-5 { margin-bottom: .75rem; }
+  main > :first-child .gap-4 { gap: .75rem; }
+  main > :first-child .gap-3 { gap: .625rem; }
+  main > :first-child .space-y-4 > :not([hidden]) ~ :not([hidden]) { margin-top: .75rem; }
+  main > :first-child .p-6 { padding: 1rem; }
+  main > :first-child .p-5 { padding: .875rem; }
+  main > :first-child .py-8 { padding-block: 1rem; }
+  main > :first-child .py-10 { padding-block: 1.25rem; }
+  .panel-metric { padding: 8px; }
+  .panel-metric-value { font-size: 14px; }
 
   /* Avoid accidental text selection lag on long lists */
   .row-hover {
