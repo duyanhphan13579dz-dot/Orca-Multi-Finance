@@ -139,12 +139,13 @@ interface ChatOptions {
   temperature?: number;
   maxTokens?: number;
   timeoutMs?: number;
+  modelOverride?: string;
 }
 
 type ChatResponse = { choices?: { message?: { content?: string } }[] };
 
 export async function llmChat(role: LlmRole, opts: ChatOptions): Promise<LlmResult | null> {
-  const model = modelFor(role);
+  const model = opts.modelOverride?.trim() || modelFor(role);
   const { baseUrl, apiKey, provider } = resolveProvider(model);
   if (!apiKey) return null;
 
