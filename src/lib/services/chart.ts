@@ -173,23 +173,28 @@ async function forexCandles(pair: string, tf: string, limit: number): Promise<{ 
   };
 }
 
+function ssiChartSymbol(symbol: string): string {
+  const aliases: Record<string, string> = {
+    VNINDEX: "VNINDEX",
+    VN30: "VN30",
+    HNXINDEX: "HNXINDEX",
+    HNX30: "HNX30",
+    UPCOM: "UPCOM",
+    UPCOMINDEX: "UPCOMINDEX",
+  };
+  return aliases[symbol] ?? symbol;
+}
+
 async function stockCandles(symbol: string, tf: string, limit: number): Promise<{ candles: ChartCandle[]; source: string; note?: string }> {
   const intradayRes: Record<string, number> = { "1m": 1, "3m": 3, "5m": 5, "15m": 15, "30m": 30, "1h": 60 };
   const dayLimit =
     tf === "1d" ? Math.min(limit, 1500) : tf === "1w" ? Math.min(limit * 8, 2000) : Math.min(limit * 30, 2500);
 
-  if (vndirect.isVnIndexSymbol(symbol)) {
-    const bars = await vndirect.getVndIndexOhlcv(symbol, dayLimit);
-    let candles = bars.map(toCandle);
-    if (tf === "1w") candles = aggregateCandles(candles, TF_MS["1w"]).slice(-limit);
-    if (tf === "1M") candles = aggregateCandles(candles, TF_MS["1M"]).slice(-limit);
-    return { candles: candles.slice(-limit), source: "vndirect-index", note: "Chuỗi chỉ số VN (OHLCV ngày)" };
-  }
-
-  // SSI IntradayOhlc for intraday timeframes
+  // SSI is the canonical intraday source for both equities and supported VN indices.
+  // The same Asia/Ho_Chi_Minh timestamps then feed the identical chart pipeline.
   if (intradayRes[tf] && ssiFcConfigured()) {
     try {
-      const bars = await getSsiIntradayOhlc(symbol, {
+      const bars = await getSsiIntradayOhlc(ssiChartSymbol(symbol), {
         resolution: intradayRes[tf],
         pageSize: 1000,
         maxPages: 5,
@@ -199,12 +204,20 @@ async function stockCandles(symbol: string, tf: string, limit: number): Promise<
         return {
           candles,
           source: "ssi-fcdata-intraday",
-          note: `SSI IntradayOhlc ${tf}`,
+          note: `SSI IntradayOhlc ${ssiChartSymbol(symbol)} · timezone Asia/Ho_Chi_Minh · resolution ${intradayRes[tf]}m`,
         };
       }
     } catch {
-      /* fall through to daily */
+      /* fall through to daily source */
     }
+  }
+
+  if (vndirect.isVnIndexSymbol(symbol)) {
+    const bars = await vndirect.getVndIndexOhlcv(symbol, dayLimit);
+    let candles = bars.map(toCandle);
+    if (tf === "1w") candles = aggregateCandles(candles, TF_MS["1w"]).slice(-limit);
+    if (tf === "1M") candles = aggregateCandles(candles, TF_MS["1M"]).slice(-limit);
+    return { candles: candles.slice(-limit), source: "vndirect-index-fallback", note: "SSI chưa trả OHLC lịch sử chỉ số; fallback VNDirect OHLCV ngày" };
   }
 
   const r = await getVnOhlcv(symbol, dayLimit);
