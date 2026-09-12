@@ -87,8 +87,8 @@ export async function getVnIndices(): Promise<{ items: IndexQuote[]; meta: Meta 
         code: idx.code,
         name: idx.code,
         value: idx.value,
-        change: idx.change,
-        changePercent: idx.changePercent,
+        change: idx.change ?? 0,
+        changePercent: idx.changePercent ?? 0,
         volume: idx.volume,
         updatedAt: new Date(idx.eventTime).toISOString(),
       });
