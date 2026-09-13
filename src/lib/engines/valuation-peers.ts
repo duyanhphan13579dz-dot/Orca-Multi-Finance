@@ -6,8 +6,9 @@ import { computeFinancialHealth } from "./fundamental";
 import { buildPhase1Valuation, inputsFromHealthAnchors } from "./valuation-phase1";
 import { calcPFCF } from "./valuation-phase2";
 import type { PeerMetricRow } from "./valuation-phase2";
+import { cached } from "../cache";
 
-const MAX_PEERS = 6;
+const MAX_PEERS = 4; // latency budget: 4 peers enough for median
 
 /** Same-sector symbols excluding self, capped for latency. */
 export function listSectorPeerSymbols(symbol: string, limit = MAX_PEERS): string[] {
@@ -18,15 +19,19 @@ export function listSectorPeerSymbols(symbol: string, limit = MAX_PEERS): string
   return entry.symbols.filter((s) => s !== sym).slice(0, limit);
 }
 
-async function metricForSymbol(symbol: string): Promise<PeerMetricRow | null> {
+async function metricForSymbol(
+  symbol: string,
+  priceHint?: number,
+): Promise<PeerMetricRow | null> {
   try {
-    const [quotes, fin] = await Promise.all([
-      getVnQuotes([symbol]),
-      getFinancialsForSymbol(symbol).catch(() => null),
-    ]);
-    const price = quotes?.quotes?.[0]?.price ?? 0;
+    let price = priceHint ?? 0;
+    if (!price || price <= 0) {
+      const quotes = await getVnQuotes([symbol]);
+      price = quotes?.quotes?.[0]?.price ?? 0;
+    }
     if (!price || price <= 0) return null;
 
+    const fin = await getFinancialsForSymbol(symbol).catch(() => null);
     const income = (fin?.financials?.income ?? []) as Record<string, unknown>[];
     const balance = (fin?.financials?.balance ?? []) as Record<string, unknown>[];
     const cashflow = (fin?.financials?.cashflow ?? []) as Record<string, unknown>[];
@@ -68,7 +73,7 @@ async function metricForSymbol(symbol: string): Promise<PeerMetricRow | null> {
   }
 }
 
-/** Build peer rows for sector comparison. Soft-fail per peer. */
+/** Build peer rows for sector comparison. Soft-fail per peer. Cached 5 min. */
 export async function collectPeerMetrics(
   symbol: string,
   limit = MAX_PEERS,
@@ -77,7 +82,23 @@ export async function collectPeerMetrics(
   const symbols = listSectorPeerSymbols(symbol, limit);
   if (!symbols.length) return { sector, peers: [] };
 
-  const settled = await Promise.all(symbols.map((s) => metricForSymbol(s)));
-  const peers = settled.filter((p): p is PeerMetricRow => p != null);
-  return { sector, peers };
+  const cacheKey = `val:peers:${sector}:${symbols.join(",")}`;
+  const res = await cached(cacheKey, {
+    ttlMs: 5 * 60_000,
+    staleMs: 15 * 60_000,
+    producer: async () => {
+      // One batch quote call instead of N sequential quote fetches
+      const batch = await getVnQuotes(symbols).catch(() => null);
+      const priceBySym = new Map(
+        (batch?.quotes ?? []).map((q) => [q.symbol.toUpperCase(), q.price] as const),
+      );
+
+      const settled = await Promise.all(
+        symbols.map((s) => metricForSymbol(s, priceBySym.get(s))),
+      );
+      return settled.filter((p): p is PeerMetricRow => p != null);
+    },
+  });
+
+  return { sector, peers: res.value };
 }
