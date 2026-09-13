@@ -81,7 +81,11 @@ export default function StockOverviewPage({ params }: { params: Promise<{ symbol
             </Panel>
           )}
           <div className="mt-3">
-            <TradingViewChartWidget code={data.symbol} title={`${data.symbol} — chart tham chiếu`} />
+            <TradingViewChartWidget
+              code={data.symbol}
+              exchange={data.exchange}
+              title={`${data.symbol} — chart tham chiếu`}
+            />
           </div>
         </div>
         <div className="min-w-0">

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 
 const SYMBOL_MAP: Record<string, string> = {
   VNINDEX: "HOSE:VNINDEX",
@@ -12,13 +12,38 @@ const SYMBOL_MAP: Record<string, string> = {
   UPCOMINDEX: "HNX:UPCOMINDEX",
 };
 
-function tradingViewSymbol(code: string): string {
+function tradingViewSymbol(code: string, exchange?: string | null): string {
   const normalized = code.toUpperCase().replace(/[^A-Z0-9]/g, "");
-  return SYMBOL_MAP[normalized] ?? `HOSE:${normalized}`;
+  if (SYMBOL_MAP[normalized]) return SYMBOL_MAP[normalized];
+
+  const market = exchange?.toUpperCase().replace(/[^A-Z]/g, "");
+  const prefix = market === "HNX" || market === "UPCOM" ? market : "HOSE";
+  return `${prefix}:${normalized}`;
 }
 
-export function TradingViewChartWidget({ code, title }: { code: string; title?: string }) {
-  const symbol = useMemo(() => tradingViewSymbol(code), [code]);
+export function TradingViewChartWidget({
+  code,
+  exchange,
+  title,
+}: {
+  code: string;
+  exchange?: string | null;
+  title?: string;
+}) {
+  const symbol = useMemo(() => tradingViewSymbol(code, exchange), [code, exchange]);
+  const preferenceKey = useMemo(() => `orca:tradingview-widget:${symbol}:visible`, [symbol]);
+  const [visible, setVisible] = useState(() =>
+    typeof window === "undefined" ? true : window.localStorage.getItem(preferenceKey) !== "false",
+  );
+
+  const toggleVisible = () => {
+    setVisible((current) => {
+      const next = !current;
+      window.localStorage.setItem(preferenceKey, String(next));
+      return next;
+    });
+  };
+
   const src = useMemo(() => {
     const params = new URLSearchParams({
       symbol,
@@ -43,23 +68,36 @@ export function TradingViewChartWidget({ code, title }: { code: string; title?: 
       <header className="flex flex-wrap items-center justify-between gap-2 border-b border-border-subtle px-3.5 py-2.5">
         <div>
           <h2 className="text-[13px] font-semibold text-text-primary">TradingView tham chiếu</h2>
-          <p className="mt-0.5 text-[10.5px] text-text-muted">{title ?? symbol} · dữ liệu và chart do TradingView cung cấp</p>
+          <p className="mt-0.5 text-[10.5px] text-text-muted">{title ?? symbol} · {symbol} · dữ liệu và chart do TradingView cung cấp</p>
         </div>
-        <span className="rounded-md border border-border-subtle bg-surface-elevated px-2 py-1 text-[10px] font-medium text-text-muted">External widget</span>
+        <button
+          type="button"
+          onClick={toggleVisible}
+          className="rounded-md border border-border-subtle bg-surface-elevated px-2.5 py-1.5 text-[10.5px] font-medium text-text-secondary transition hover:border-accent-primary hover:text-text-primary"
+          aria-expanded={visible}
+        >
+          {visible ? "Ẩn chart" : "Hiện chart"}
+        </button>
       </header>
-      <div className="relative h-[430px] w-full bg-[#0b1220]">
-        <iframe
-          title={`TradingView chart ${symbol}`}
-          src={src}
-          className="absolute inset-0 h-full w-full border-0"
-          loading="lazy"
-          referrerPolicy="origin"
-          allow="fullscreen"
-        />
-      </div>
-      <footer className="border-t border-border-subtle px-3.5 py-2 text-[10px] leading-relaxed text-text-muted">
-        Chart tham chiếu độc lập. Dữ liệu này không được lưu, chuẩn hóa hoặc dùng làm nguồn cho API/analytics của Orca.
-      </footer>
+      {visible ? (
+        <>
+          <div className="relative h-[430px] w-full bg-[#0b1220]">
+            <iframe
+              title={`TradingView chart ${symbol}`}
+              src={src}
+              className="absolute inset-0 h-full w-full border-0"
+              loading="lazy"
+              referrerPolicy="origin"
+              allow="fullscreen"
+            />
+          </div>
+          <footer className="border-t border-border-subtle px-3.5 py-2 text-[10px] leading-relaxed text-text-muted">
+            Chart tham chiếu độc lập. Dữ liệu này không được lưu, chuẩn hóa hoặc dùng làm nguồn cho API/analytics của Orca.
+          </footer>
+        </>
+      ) : (
+        <div className="px-3.5 py-3 text-[11px] text-text-muted">Chart đang được ẩn trên thiết bị này cho mã {code.toUpperCase()}.</div>
+      )}
     </section>
   );
 }
