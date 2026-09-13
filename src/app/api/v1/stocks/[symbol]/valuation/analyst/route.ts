@@ -48,9 +48,9 @@ export async function GET(
       computeFinancialHealth({ income, balance, cashflow }, { symbol });
 
     const capexFromGroup =
-      typeof health.groups.cashflow?.ocfTtm === "number" &&
-      typeof health.groups.cashflow?.fcfTtm === "number"
-        ? health.groups.cashflow.ocfTtm - health.groups.cashflow.fcfTtm
+      typeof health?.groups?.cashflow?.ocfTtm === "number" &&
+      typeof health?.groups?.cashflow?.fcfTtm === "number"
+        ? (health.groups!.cashflow!.ocfTtm as number) - (health.groups!.cashflow!.fcfTtm as number)
         : null;
 
     let valuation = computeValuation({
@@ -106,12 +106,12 @@ export async function GET(
         snapshot: phase6.snapshot,
         headline: {
           price: valuation.price,
-          fairValue: phase6.snapshot.fairValue.blended,
-          upsidePct: phase6.snapshot.fairValue.upsidePct,
-          status: phase6.snapshot.fairValue.status,
-          score: phase6.snapshot.score.value,
-          grade: phase6.snapshot.score.grade,
-          gaps: phase6.snapshot.gaps,
+          fairValue: phase6.snapshot?.fairValue?.blended ?? null,
+          upsidePct: phase6.snapshot?.fairValue?.upsidePct ?? null,
+          status: phase6.snapshot?.fairValue?.status ?? null,
+          score: phase6.snapshot?.score?.value ?? null,
+          grade: phase6.snapshot?.score?.grade ?? null,
+          gaps: phase6.snapshot?.gaps ?? [],
         },
         valuationEngineVersion: phase6.valuationEngineVersion,
         engineVersion: valuation.valuationEngineVersion,
