@@ -273,8 +273,10 @@ function MarketChip() {
 
 function Clock() {
   const { settings } = useSettings();
-  const [now, setNow] = useState(() => new Date());
+  // Keep the server and first client render deterministic; the live time starts after hydration.
+  const [now, setNow] = useState<Date | null>(null);
   useEffect(() => {
+    setNow(new Date());
     const t = setInterval(() => setNow(new Date()), 1000);
     return () => clearInterval(t);
   }, []);
