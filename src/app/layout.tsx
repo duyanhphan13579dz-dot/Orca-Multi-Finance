@@ -28,14 +28,10 @@ export const viewport: Viewport = {
   viewportFit: "cover",
 };
 
-/** Apply persisted theme before first paint (no flash). */
-const themeInit = `(function(){try{var raw=localStorage.getItem('orca.settings.v1');var s=raw?JSON.parse(raw):null;var m=(s&&s.appearance&&s.appearance.mode)||'navy';var r=m==='system'?(matchMedia('(prefers-color-scheme: light)').matches?'light':'navy'):m;document.documentElement.dataset.theme=r;document.documentElement.dataset.density=(s&&s.appearance&&s.appearance.density)||'normal';document.documentElement.dataset.lowdata=String(!!(s&&s.realtime&&s.realtime.lowDataMode));var fs={sm:'14px',md:'15px',lg:'16px'}[(s&&s.appearance&&s.appearance.fontSize)||'md'];document.documentElement.style.setProperty('--app-font',fs);}catch(e){document.documentElement.dataset.theme='navy';}})();`;
-
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="vi" data-theme="navy" suppressHydrationWarning className="h-full">
       <body className="h-full overflow-hidden">
-        <script dangerouslySetInnerHTML={{ __html: themeInit }} />
         <SettingsProvider>
           <AppShell>{children}</AppShell>
         </SettingsProvider>
