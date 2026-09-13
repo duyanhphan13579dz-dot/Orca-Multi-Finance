@@ -2,17 +2,19 @@ import { ok, badRequest, fail } from "@/lib/envelope";
 import { getVnStockDetail } from "@/lib/services/stocks";
 import { computeFinancialHealth } from "@/lib/engines/fundamental";
 import { computeValuation } from "@/lib/engines/valuation";
+import { collectPeerMetrics } from "@/lib/engines/valuation-peers";
+import { sectorOf } from "@/lib/vn/master";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 /**
  * GET /api/v1/stocks/:symbol/valuation
- * Phase 1 Valuation Engine — multiples + EV from verified financial anchors.
- * Does not invent numbers; incomplete metrics are null with status notes.
+ * Phase 1+2 Valuation Engine.
+ * Query: ?peers=0 to skip peer fetch (faster).
  */
 export async function GET(
-  _req: Request,
+  req: Request,
   ctx: { params: Promise<{ symbol: string }> },
 ) {
   try {
@@ -21,6 +23,9 @@ export async function GET(
     if (!symbol || !/^[A-Z0-9]{3}$/.test(symbol)) {
       return badRequest("symbol phải là mã 3 ký tự (ví dụ FPT, VCB)");
     }
+
+    const url = new URL(req.url);
+    const wantPeers = url.searchParams.get("peers") !== "0";
 
     const pack = await getVnStockDetail(symbol);
     if (!pack) {
@@ -36,7 +41,46 @@ export async function GET(
     const health =
       detail.financialHealth ??
       computeFinancialHealth({ income, balance, cashflow }, { symbol });
-    const valuation = computeValuation({ price, health });
+
+    const capexFromGroup =
+      typeof health.groups.cashflow?.ocfTtm === "number" &&
+      typeof health.groups.cashflow?.fcfTtm === "number"
+        ? health.groups.cashflow.ocfTtm - health.groups.cashflow.fcfTtm
+        : null;
+
+    let valuation = computeValuation({
+      price,
+      health,
+      capexTtm: capexFromGroup,
+    });
+
+    if (wantPeers) {
+      try {
+        const { sector, peers } = await collectPeerMetrics(symbol, 6);
+        valuation = computeValuation({
+          price,
+          health,
+          capexTtm: capexFromGroup,
+          peerComparison: {
+            symbol,
+            sector: sector || sectorOf(symbol),
+            subject: {
+              symbol,
+              pe: valuation.multiples.pe,
+              pb: valuation.multiples.pb,
+              ps: valuation.multiples.ps,
+              evEbitda: valuation.multiples.evEbitda,
+              pfcf: valuation.multiples.pfcf,
+              dividendYield: valuation.multiples.dividendYield,
+              marketCap: valuation.marketCap,
+            },
+            peers,
+          },
+        });
+      } catch (e) {
+        console.warn("[valuation] peers skipped", e);
+      }
+    }
 
     return ok(
       {
@@ -46,6 +90,9 @@ export async function GET(
         enterpriseValue: valuation.enterpriseValue,
         multiples: valuation.multiples,
         phase1: valuation.phase1 ?? null,
+        phase2: valuation.phase2 ?? null,
+        historical: valuation.historical ?? null,
+        peerComparison: valuation.peers ?? null,
         fairValues: {
           dcfBase: valuation.dcf?.find((s) => s.label === "Base")?.intrinsicPerShare ?? null,
           dcf: valuation.dcf,
@@ -68,6 +115,7 @@ export async function GET(
                 })),
               }
             : null,
+          fcfDefinition: valuation.phase2?.cashFlow.fcfDefinition ?? null,
         },
         notes: valuation.notes,
         sources: valuation.phase1?.sources ?? [],
