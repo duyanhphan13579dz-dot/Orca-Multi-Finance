@@ -69,13 +69,14 @@
 }
 
 html {
+  height: 100%;
   overflow-x: clip;
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
-  scroll-behavior: auto;
 }
 
-html, body {
+html,
+body {
   background: var(--color-background-primary);
   color: var(--color-text-primary);
   font-family: var(--font-sans);
@@ -84,10 +85,10 @@ html, body {
 }
 
 body {
+  height: 100%;
   min-height: 100dvh;
-  overflow-x: clip;
-  -webkit-overflow-scrolling: touch;
-  overscroll-behavior-y: none;
+  margin: 0;
+  overflow: hidden; /* scroll only inside .page-scroll */
 }
 
 .num {
@@ -100,27 +101,24 @@ body {
   background: var(--color-surface-primary);
   border-radius: 12px;
   overflow: hidden;
-  content-visibility: auto;
-  contain-intrinsic-size: auto 120px;
 }
 
-/* —— Scroll containers (mượt, GPU, không bounce) —— */
+/* Primary vertical scroller — must have bounded height from flex ancestors */
 .page-scroll {
+  flex: 1 1 0%;
   min-height: 0;
-  flex: 1 1 auto;
   overflow-y: auto;
   overflow-x: hidden;
-  overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
-  scroll-behavior: auto;
+  overscroll-behavior-y: contain;
   scrollbar-gutter: stable;
-  transform: translateZ(0);
-  backface-visibility: hidden;
-  will-change: scroll-position;
-  contain: layout style paint;
 }
-.page-scroll::-webkit-scrollbar { width: 8px; }
-.page-scroll::-webkit-scrollbar-track { background: transparent; }
+.page-scroll::-webkit-scrollbar {
+  width: 8px;
+}
+.page-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
 .page-scroll::-webkit-scrollbar-thumb {
   background: color-mix(in srgb, var(--color-border-default) 80%, transparent);
   border-radius: 999px;
@@ -136,18 +134,16 @@ body {
   -webkit-overflow-scrolling: touch;
   scrollbar-width: none;
   -ms-overflow-style: none;
-  scroll-snap-type: x proximity;
-  transform: translateZ(0);
 }
-.stock-tabs-scroll::-webkit-scrollbar { display: none; }
-.stock-tabs-scroll > * { scroll-snap-align: start; flex-shrink: 0; }
+.stock-tabs-scroll::-webkit-scrollbar {
+  display: none;
+}
+.stock-tabs-scroll > * {
+  flex-shrink: 0;
+}
 
 .stock-page-body {
   min-width: 0;
-  min-height: 0;
-  overflow-x: clip;
-  display: flex;
-  flex-direction: column;
 }
 .stock-page-body .break-words,
 .stock-page-body .whitespace-pre-wrap {
@@ -160,11 +156,8 @@ body {
   overflow-x: hidden;
   overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
-  scroll-behavior: smooth;
   scroll-padding-bottom: 12px;
-  will-change: scroll-position;
   scrollbar-gutter: stable;
-  transform: translateZ(0);
 }
 
 .table-scroll {
@@ -172,45 +165,32 @@ body {
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior-x: contain;
-  transform: translateZ(0);
-}
-
-.stock-content-scroll {
-  min-height: 0;
-  flex: 1 1 auto;
-  overflow-y: auto;
-  overflow-x: hidden;
-  overscroll-behavior: contain;
-  -webkit-overflow-scrolling: touch;
-  scroll-behavior: auto;
-  scrollbar-gutter: stable;
-  transform: translateZ(0);
-  will-change: scroll-position;
-  contain: layout style;
 }
 
 * {
   scrollbar-width: thin;
   scrollbar-color: var(--color-border-default) transparent;
 }
-*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
 *::-webkit-scrollbar-thumb {
   background: color-mix(in srgb, var(--color-border-default) 75%, transparent);
   border-radius: 999px;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .page-scroll, .chat-scroll, .stock-tabs-scroll, .stock-content-scroll {
+  .page-scroll,
+  .chat-scroll {
     scroll-behavior: auto;
-    will-change: auto;
   }
 }
 
 @media (pointer: coarse) {
-  button, a, [role="button"] { touch-action: manipulation; }
-}
-
-.stock-page-body > * {
-  content-visibility: auto;
-  contain-intrinsic-size: auto 200px;
+  button,
+  a,
+  [role="button"] {
+    touch-action: manipulation;
+  }
 }
