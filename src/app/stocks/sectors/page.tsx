@@ -78,7 +78,7 @@ export default function SectorTrendPage() {
   }
 
   return (
-    <div className="space-y-3">
+    <div className="stock-workspace">
       <Panel title="Phân tích xu hướng ngành">
         <div className="mb-3 flex flex-wrap items-center gap-3 text-[12px] text-ink-3">
           {data.sessionDate && (
@@ -156,7 +156,7 @@ export default function SectorTrendPage() {
         }
       >
         <div className="overflow-x-auto">
-          <table className="w-full text-[11px]">
+          <table className="stock-table">
             <thead>
               <tr className="border-b border-line text-left text-ink-3">
                 <th className="py-1.5 pr-2 font-medium">Ngành</th>

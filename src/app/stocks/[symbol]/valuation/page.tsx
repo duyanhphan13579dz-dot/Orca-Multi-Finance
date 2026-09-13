@@ -18,7 +18,7 @@ export default function StockValuationPage({
   }
 
   return (
-    <div className="flex flex-col gap-5">
+    <div className="stock-workspace">
       <ValuationPanel symbol={symbol} showAnalyst />
     </div>
   );

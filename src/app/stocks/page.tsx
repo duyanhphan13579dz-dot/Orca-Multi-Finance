@@ -40,9 +40,9 @@ export default function VnMarketCenterPage() {
   if (isLoading && !res) return <Loading rows={12} />;
 
   return (
-    <div className="mx-auto flex w-full max-w-[1440px] flex-col gap-4">
+    <div className="stock-workspace">
       <Panel pad={false}>
-        <div className="flex flex-wrap items-center gap-2 p-3 pb-2 sm:p-4 sm:pb-3">
+        <div className="stock-hero flex flex-wrap items-center gap-2">
           <h1 className="flex items-center gap-2 text-base font-semibold sm:text-lg">
             <CandlestickChart className="size-5 shrink-0 text-accent-primary" />
             Trung tâm thị trường VN
@@ -167,16 +167,16 @@ export default function VnMarketCenterPage() {
             </div>
 
             <div className="table-scroll hidden max-h-[min(60vh,560px)] md:block">
-              <table className="w-full text-left text-[12px]">
+              <table className="stock-table text-left">
                 <thead className="sticky top-0 z-10 bg-background-secondary text-[10px] uppercase tracking-wider text-text-muted">
                   <tr>
-                    <th className="py-2 pl-1">Mã</th>
-                    <th className="py-2 text-right">Giá</th>
-                    <th className="py-2 text-right">%</th>
-                    <th className="hidden py-2 text-right lg:table-cell">TC</th>
-                    <th className="py-2 text-right">KL</th>
+                    <th className="pl-1 text-left">Mã</th>
+                    <th className="text-right">Giá</th>
+                    <th className="text-right">%</th>
+                    <th className="hidden text-right lg:table-cell">TC</th>
+                    <th className="text-right">KL</th>
                     <th className="hidden py-2 text-right sm:table-cell">GT</th>
-                    <th className="py-2 pr-3.5 text-right" />
+                    <th className="pr-3.5 text-right" />
                   </tr>
                 </thead>
                 <tbody>

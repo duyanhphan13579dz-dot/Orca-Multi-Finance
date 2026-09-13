@@ -52,7 +52,7 @@ export default function StockOverviewPage({ params }: { params: Promise<{ symbol
   const q = data.quote;
 
   return (
-    <div className="space-y-3">
+    <div className="stock-workspace">
       <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(280px,380px)]">
         <div className="min-w-0">
           {q || data.bars.length > 0 ? (

@@ -196,7 +196,7 @@ export default function StockFinancialsPage({ params }: { params: Promise<{ symb
   const orderedKeys = [...preferred, ...rest].slice(0, 28);
 
   return (
-    <div className="space-y-3">
+    <div className="stock-workspace">
       {/* Ưu tiên: bảng báo cáo tài chính lên đầu */}
       <Panel
         title="Bảng báo cáo tài chính"
@@ -236,12 +236,12 @@ export default function StockFinancialsPage({ params }: { params: Promise<{ symb
           <p className="text-[12px] text-ink-3">Bảng này chưa có dữ liệu từ {sourceLabel}.</p>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-[11px]">
+            <table className="stock-table">
               <thead>
                 <tr className="border-b border-line text-left text-ink-3">
-                  <th className="sticky left-0 bg-bg-2 py-1.5 pr-3 font-medium">Chỉ tiêu</th>
+                  <th className="sticky left-0 bg-bg-2 pr-3 text-left font-medium">Chỉ tiêu</th>
                   {rows.slice(0, 8).map((r, i) => (
-                    <th key={i} className="num py-1.5 pl-2 text-right font-medium">
+                    <th key={i} className="num pl-2 text-right font-medium">
                       {periodHeader(r as Record<string, unknown>)}
                     </th>
                   ))}
@@ -249,7 +249,7 @@ export default function StockFinancialsPage({ params }: { params: Promise<{ symb
               </thead>
               <tbody>
                 {orderedKeys.map((k) => (
-                  <tr key={k} className="border-b border-line/40">
+                  <tr key={k} className="border-t border-line/40">
                     <td
                       className="sticky left-0 max-w-64 truncate bg-bg-2 py-1.5 pr-3 text-ink-2"
                       title={METRIC_VI[k] ?? k}

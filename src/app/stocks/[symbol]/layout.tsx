@@ -35,9 +35,9 @@ export default function StockSymbolLayout({
   const q = data?.quote;
 
   return (
-    <div className="stock-page-body space-y-3">
+    <div className="stock-workspace stock-page-body">
       <Panel pad={false} className="sticky top-0 z-20 overflow-visible shadow-sm shadow-black/20">
-        <div className="flex flex-col gap-2 p-3 sm:p-4 md:flex-row md:items-end md:justify-between">
+        <div className="stock-hero flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
               <h1 className="text-lg font-semibold tracking-tight sm:text-xl">{symbol}</h1>
@@ -65,7 +65,7 @@ export default function StockSymbolLayout({
             )}
           </div>
 
-          <div className="grid grid-cols-3 gap-2 text-right sm:gap-3 md:grid-cols-3 lg:grid-cols-6">
+          <div className="grid grid-cols-3 gap-2.5 text-right sm:gap-3 md:grid-cols-3 lg:grid-cols-6">
             <Stat label="Khối lượng" value={fmtCompact(q?.volume)} />
             <Stat label="Giá trị" value={fmtCompact(q?.quoteVolume)} />
             <Stat

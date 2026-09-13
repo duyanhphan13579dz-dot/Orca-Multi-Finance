@@ -114,7 +114,7 @@ export default function StockFundamentalsPage({
   const valuation = metrics?.valuation ?? empty;
 
   return (
-    <div className="space-y-3">
+    <div className="stock-workspace">
       <div className="stock-tabs-scroll -mx-0.5 border-b border-line pb-1">
         {TABS.map((t) => (
           <button
@@ -158,7 +158,7 @@ export default function StockFundamentalsPage({
       )}
 
       {tab === "valuation" && (
-        <div className="space-y-3">
+        <div className="stock-workspace">
           <Panel title="Định giá nhanh (multiples)">
             <MetricGrid items={valuation} />
           </Panel>
