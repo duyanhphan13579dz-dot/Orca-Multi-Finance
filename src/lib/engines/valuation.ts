@@ -1,5 +1,6 @@
 import "server-only";
 import type { FinancialHealthResult } from "./fundamental";
+import { getIndustryProfile } from "../financial/industry-profiles";
 import {
   buildPhase1Valuation,
   inputsFromHealthAnchors,
@@ -13,12 +14,17 @@ import {
 } from "./valuation-phase2";
 import {
   buildPhase3Valuation,
-  VALUATION_ENGINE_VERSION_PHASE3,
   type Phase3ValuationResult,
   type FairValueAggregate,
   type SensitivityMatrix,
   type DcfResult,
 } from "./valuation-phase3";
+import {
+  buildPhase4Valuation,
+  VALUATION_ENGINE_VERSION_PHASE4,
+  type Phase4ValuationResult,
+  type SotPSegment,
+} from "./valuation-phase4";
 
 /** @deprecated legacy shape kept for intelligence consumers */
 export interface DcfScenario {
@@ -52,6 +58,7 @@ export interface ValuationResult {
   phase1?: Phase1ValuationResult;
   phase2?: Phase2ValuationResult;
   phase3?: Phase3ValuationResult;
+  phase4?: Phase4ValuationResult;
   historical?: HistoricalSummary | null;
   peers?: Phase2ValuationResult["peers"];
   dcf: DcfScenario[] | null;
@@ -74,6 +81,49 @@ function mapLegacyDcf(results: DcfResult[]): DcfScenario[] {
       intrinsicPerShare: d.fairPrice ?? 0,
       marginOfSafetyPct: d.upsidePct ?? 0,
     }));
+}
+
+function blendWithPhase4(
+  base: FairValueAggregate,
+  phase4: Phase4ValuationResult,
+): FairValueAggregate {
+  const extra: { key: string; price: number; weight: number }[] = [];
+  if (phase4.methodPrices.residualIncome != null) {
+    extra.push({ key: "ri", price: phase4.methodPrices.residualIncome, weight: 0.12 });
+  }
+  if (phase4.methodPrices.ddm != null) {
+    extra.push({ key: "ddm", price: phase4.methodPrices.ddm, weight: 0.1 });
+  }
+  if (phase4.methodPrices.nav != null) {
+    extra.push({ key: "nav", price: phase4.methodPrices.nav, weight: 0.1 });
+  }
+  if (phase4.methodPrices.sotp != null) {
+    extra.push({ key: "sotp", price: phase4.methodPrices.sotp, weight: 0.08 });
+  }
+  if (!extra.length || base.blendedFairValue == null) return base;
+
+  const baseWeight = Math.max(0.5, 1 - extra.reduce((s, e) => s + e.weight, 0));
+  let sumW = baseWeight;
+  let sum = base.blendedFairValue * baseWeight;
+  for (const e of extra) {
+    sumW += e.weight;
+    sum += e.price * e.weight;
+  }
+  const blended = Math.round(sum / sumW);
+  const upside =
+    base.currentPrice != null && base.currentPrice > 0
+      ? Number((((blended / base.currentPrice) - 1) * 100).toFixed(1))
+      : base.upsidePct;
+
+  return {
+    ...base,
+    blendedFairValue: blended,
+    upsidePct: upside,
+    notes: [
+      ...base.notes,
+      `Phase4 blend: +${extra.map((e) => e.key).join(",")} → FV ${blended}`,
+    ],
+  };
 }
 
 export function computeValuation(input: {
@@ -101,6 +151,10 @@ export function computeValuation(input: {
   fairPb?: number | null;
   fairEvEbitda?: number | null;
   fairPfcf?: number | null;
+  symbol?: string;
+  sotpSegments?: SotPSegment[];
+  fairValueAdjustments?: number | null;
+  holdingDiscount?: number | null;
 }): ValuationResult {
   const { price, health } = input;
   const a = health.anchors;
@@ -208,6 +262,32 @@ export function computeValuation(input: {
   });
   notes.push(...phase3.notes);
 
+  const industryProfileId = input.symbol ? getIndustryProfile(input.symbol).id : null;
+  const ke =
+    phase3.costOfCapital.costOfEquity.value ??
+    phase3.costOfCapital.wacc.value ??
+    0.12;
+
+  const phase4 = buildPhase4Valuation({
+    currentPrice: price > 0 ? price : null,
+    shares: a.shares,
+    bookEquity: a.equity,
+    netIncomeTtm: a.netProfit,
+    costOfEquity: ke,
+    totalAssets: null,
+    totalLiabilities: null,
+    dividendsAnnual: input.dividendsAnnual ?? null,
+    dividendYield: dividendYield,
+    industryProfileId,
+    sotpSegments: input.sotpSegments,
+    netDebt,
+    fairValueAdjustments: input.fairValueAdjustments ?? null,
+    holdingDiscount: input.holdingDiscount ?? null,
+  });
+  notes.push(...phase4.notes);
+
+  const fairValue = blendWithPhase4(phase3.fairValue, phase4);
+
   const dcfLegacy = mapLegacyDcf(phase3.dcf);
   const dcf = dcfLegacy.length ? dcfLegacy : null;
 
@@ -219,7 +299,7 @@ export function computeValuation(input: {
     very_low: "low" as const,
   };
   const confidence =
-    confMap[phase3.fairValue.confidence] ??
+    confMap[fairValue.confidence] ??
     (pe != null && pb != null && dcf != null
       ? "high"
       : pe != null || pb != null || evEbitda != null || pfcf != null
@@ -248,15 +328,16 @@ export function computeValuation(input: {
     phase1,
     phase2,
     phase3,
+    phase4,
     historical: phase2.historical,
     peers: phase2.peers,
     dcf,
-    fairValue: phase3.fairValue,
+    fairValue,
     sensitivity: phase3.sensitivity,
     confidence,
     dataQuality: phase1.dataQuality,
     notes,
-    valuationEngineVersion: VALUATION_ENGINE_VERSION_PHASE3,
+    valuationEngineVersion: VALUATION_ENGINE_VERSION_PHASE4,
   };
 }
 
@@ -276,8 +357,15 @@ export {
   aggregateFairValue,
   calcWacc,
   calcCostOfEquity,
-  VALUATION_ENGINE_VERSION_PHASE3 as VALUATION_ENGINE_VERSION,
 } from "./valuation-phase3";
+export {
+  buildPhase4Valuation,
+  runResidualIncome,
+  runDdm,
+  runNav,
+  runSotp,
+  VALUATION_ENGINE_VERSION_PHASE4 as VALUATION_ENGINE_VERSION,
+} from "./valuation-phase4";
 export type { Phase1ValuationResult, ValuationInputs, MetricCell } from "./valuation-phase1";
 export type {
   Phase2ValuationResult,
@@ -292,3 +380,11 @@ export type {
   DcfResult,
   ValuationStatus,
 } from "./valuation-phase3";
+export type {
+  Phase4ValuationResult,
+  ResidualIncomeResult,
+  DdmResult,
+  NavResult,
+  SotPResult,
+  SotPSegment,
+} from "./valuation-phase4";

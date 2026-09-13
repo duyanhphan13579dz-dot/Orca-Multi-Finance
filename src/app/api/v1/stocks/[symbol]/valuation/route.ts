@@ -10,7 +10,7 @@ export const runtime = "nodejs";
 
 /**
  * GET /api/v1/stocks/:symbol/valuation
- * Phase 1–3 Valuation Engine (multiples, cash-flow, DCF, sensitivity, fair value).
+ * Phase 1–4 Valuation Engine.
  * Query: ?peers=0 to skip peer fetch.
  */
 export async function GET(
@@ -52,6 +52,7 @@ export async function GET(
       price,
       health,
       capexTtm: capexFromGroup,
+      symbol,
     });
 
     if (wantPeers) {
@@ -61,6 +62,7 @@ export async function GET(
           price,
           health,
           capexTtm: capexFromGroup,
+          symbol,
           peerComparison: {
             symbol,
             sector: sector || sectorOf(symbol),
@@ -83,6 +85,7 @@ export async function GET(
     }
 
     const fv = valuation.fairValue;
+    const p4 = valuation.phase4;
 
     return ok(
       {
@@ -94,6 +97,7 @@ export async function GET(
         phase1: valuation.phase1 ?? null,
         phase2: valuation.phase2 ?? null,
         phase3: valuation.phase3 ?? null,
+        phase4: p4 ?? null,
         historical: valuation.historical ?? null,
         peerComparison: valuation.peers ?? null,
         fairValues: {
@@ -105,6 +109,10 @@ export async function GET(
           pbBased: fv?.methods.pbBased ?? null,
           evEbitdaBased: fv?.methods.evEbitdaBased ?? null,
           pfcfBased: fv?.methods.pfcfBased ?? null,
+          residualIncome: p4?.methodPrices.residualIncome ?? null,
+          ddm: p4?.methodPrices.ddm ?? null,
+          nav: p4?.methodPrices.nav ?? null,
+          sotp: p4?.methodPrices.sotp ?? null,
           weightsUsed: fv?.weightsUsed ?? null,
           dcf: valuation.dcf,
         },
@@ -126,6 +134,15 @@ export async function GET(
           })),
           costOfCapital: valuation.phase3?.costOfCapital ?? null,
           fcfDefinition: valuation.phase2?.cashFlow.fcfDefinition ?? null,
+          residualIncome: p4?.residualIncome
+            ? {
+                status: p4.residualIncome.status,
+                costOfEquity: p4.residualIncome.costOfEquity,
+              }
+            : null,
+          ddm: p4?.ddm
+            ? { model: p4.ddm.model, status: p4.ddm.status, growthStable: p4.ddm.growthStable }
+            : null,
         },
         notes: valuation.notes,
         sources: valuation.phase1?.sources ?? [],
