@@ -4,13 +4,16 @@ import { computeFinancialHealth } from "@/lib/engines/fundamental";
 import { computeValuation } from "@/lib/engines/valuation";
 import { collectPeerMetrics } from "@/lib/engines/valuation-peers";
 import { sectorOf } from "@/lib/vn/master";
+import { getVndOutstandingShares } from "@/lib/providers/vndirect-company";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 /**
  * GET /api/v1/stocks/:symbol/valuation
- * Phase 1–5 Valuation Engine.
+ * Phase 1–6 Valuation Engine.
+ * Giá: SSI (primary) → VNDirect fallback (qua getVnStockDetail).
+ * Số CP lưu hành: VNDirect ratios (OUTSTANDING_SHARES) ưu tiên, fallback BCTC.
  * Query: ?peers=0 to skip peer fetch.
  */
 export async function GET(
@@ -34,13 +37,41 @@ export async function GET(
     const { detail, meta } = pack;
 
     const price = detail.quote?.price ?? detail.bars?.at(-1)?.close ?? 0;
+    const priceSource =
+      meta.source?.includes("ssi") ? "ssi-fcdata" : meta.source?.includes("vndirect") ? "vndirect" : meta.source || "unknown";
+
     const income = (detail.financials?.income ?? []) as Record<string, unknown>[];
     const balance = (detail.financials?.balance ?? []) as Record<string, unknown>[];
     const cashflow = (detail.financials?.cashflow ?? []) as Record<string, unknown>[];
 
-    const health =
+    let health =
       detail.financialHealth ??
       computeFinancialHealth({ income, balance, cashflow }, { symbol });
+
+    let sharesOutstanding: number | null = health.anchors?.shares ?? null;
+    let sharesSource: string | null = sharesOutstanding != null ? "financial-statements" : null;
+    let sharesReportDate: string | null = null;
+    try {
+      const vndShares = await getVndOutstandingShares(symbol);
+      if (vndShares?.shares && vndShares.shares > 0) {
+        sharesOutstanding = vndShares.shares;
+        sharesSource = vndShares.source;
+        sharesReportDate = vndShares.reportDate;
+        health = {
+          ...health,
+          anchors: {
+            ...health.anchors,
+            shares: vndShares.shares,
+            epsTtm:
+              health.anchors.netProfit != null && vndShares.shares > 0
+                ? health.anchors.netProfit / vndShares.shares
+                : health.anchors.epsTtm,
+          },
+        };
+      }
+    } catch (e) {
+      console.warn("[valuation] vnd shares skipped", e);
+    }
 
     const capexFromGroup =
       typeof health?.groups?.cashflow?.ocfTtm === "number" &&
@@ -92,6 +123,10 @@ export async function GET(
       {
         symbol,
         currentPrice: valuation.price,
+        priceSource,
+        sharesOutstanding,
+        sharesSource,
+        sharesReportDate,
         marketCap: valuation.marketCap,
         enterpriseValue: valuation.enterpriseValue,
         multiples: valuation.multiples,
