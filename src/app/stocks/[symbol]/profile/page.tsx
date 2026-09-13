@@ -178,14 +178,14 @@ export default function StockProfilePage({ params }: { params: Promise<{ symbol:
       <div className="grid gap-3 md:grid-cols-2">
         <Panel title="Catalyst tăng trưởng">
           {data.catalysts.length ? (
-            <ul className="text-[12px]">{data.catalysts.map((c, i) => <li key={i}>· {c}</li>)}</ul>
+            <ul className="text-[12px]">{data.catalysts.map((c, i) => <li key={i}>· {typeof c === "string" ? c : c.text}</li>)}</ul>
           ) : (
             <p className="text-[12px] text-ink-3">Chưa có catalyst đã xác thực từ nguồn dữ liệu.</p>
           )}
         </Panel>
         <Panel title="Yếu tố rủi ro">
           {data.risks.length ? (
-            <ul className="text-[12px]">{data.risks.map((c, i) => <li key={i}>· {c}</li>)}</ul>
+            <ul className="text-[12px]">{data.risks.map((c, i) => <li key={i}>· {typeof c === "string" ? c : c.text}</li>)}</ul>
           ) : (
             <p className="text-[12px] text-ink-3">Chưa có danh sách rủi ro đã xác thực từ nguồn dữ liệu.</p>
           )}
@@ -197,19 +197,19 @@ export default function StockProfilePage({ params }: { params: Promise<{ symbol:
           <div className="grid gap-2 md:grid-cols-2 text-[12px]">
             <div>
               <strong>S</strong>
-              <ul>{data.swot.strengths.map((x, i) => <li key={i}>· {x}</li>)}</ul>
+              <ul>{data.swot.strengths.map((x, i) => <li key={i}>· {typeof x === "string" ? x : x.text}</li>)}</ul>
             </div>
             <div>
               <strong>W</strong>
-              <ul>{data.swot.weaknesses.map((x, i) => <li key={i}>· {x}</li>)}</ul>
+              <ul>{data.swot.weaknesses.map((x, i) => <li key={i}>· {typeof x === "string" ? x : x.text}</li>)}</ul>
             </div>
             <div>
               <strong>O</strong>
-              <ul>{data.swot.opportunities.map((x, i) => <li key={i}>· {x}</li>)}</ul>
+              <ul>{data.swot.opportunities.map((x, i) => <li key={i}>· {typeof x === "string" ? x : x.text}</li>)}</ul>
             </div>
             <div>
               <strong>T</strong>
-              <ul>{data.swot.threats.map((x, i) => <li key={i}>· {x}</li>)}</ul>
+              <ul>{data.swot.threats.map((x, i) => <li key={i}>· {typeof x === "string" ? x : x.text}</li>)}</ul>
             </div>
           </div>
         ) : (
