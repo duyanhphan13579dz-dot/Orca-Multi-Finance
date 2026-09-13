@@ -91,7 +91,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const mainML = collapsed ? "lg:ml-[52px]" : "lg:ml-[192px]";
 
   return (
-    <div className="flex min-h-dvh overflow-x-hidden">
+    <div className="flex h-dvh max-h-dvh overflow-hidden">
       <aside
         className={`fixed inset-y-0 left-0 z-40 hidden flex-col border-r border-border-subtle bg-background-secondary transition-[width] duration-200 lg:flex ${sidebarW}`}
         aria-label="Điều hướng chính"
@@ -229,7 +229,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           <div className="mb-2.5 md:hidden">
             <GlobalSearch />
           </div>
-          <div className="page-scroll">{children}</div>
+          <div className="page-scroll min-h-0 flex-1">{children}</div>
         </main>
         <footer className="border-t border-border-subtle px-3 py-2 text-[10px] leading-relaxed text-text-muted sm:px-4 sm:py-2.5 sm:text-[10.5px] pb-[max(8px,env(safe-area-inset-bottom))]">
           <span className="sm:hidden">ORCA · nghiên cứu — không phải khuyến nghị · LIVE/FRESH/DELAYED/STALE</span>
