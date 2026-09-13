@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useApi } from "@/lib/hooks";
 import type { VnStockDetail } from "@/lib/services/stocks";
 import { AddToWatchlist } from "@/components/watchlist-button";
@@ -11,7 +11,7 @@ export default function StockSymbolLayout({
   children,
   params,
 }: {
-  children: React.ReactNode;
+  children: ReactNode;
   params: Promise<{ symbol: string }>;
 }) {
   const [symbol, setSymbol] = useState("");
