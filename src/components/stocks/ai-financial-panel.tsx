@@ -133,10 +133,9 @@ export function AiFinancialPanel({ symbol }: { symbol: string }) {
       {!data && !fc && !err && !loading && !loadingFc && (
         <p className="text-[12px] text-ink-3">
           Dữ liệu + chuỗi biểu đồ từ snapshot <strong className="text-ink-2">Báo cáo tài chính</strong>. LLM
-          OpenRouter role <code className="text-ink-2">report</code> →{" "}
-          <code className="text-ink-2">qwen/qwen3-235b-a22b:free</code> (AI_MODEL_REPORT). Reasoning sâu:{" "}
-          <code className="text-ink-2">openai/gpt-oss-120b</code>. Kiểm tra{" "}
-          <code className="text-ink-2">/api/v1/system/llm</code>.
+          OpenRouter role <code className="text-ink-2">report</code> — model do{" "}
+          <code className="text-ink-2">AI_MODEL_REPORT</code> quyết định (rỗng thì dùng default toàn hệ
+          thống). Model đang chạy thật xem tại <code className="text-ink-2">/api/v1/system/llm</code>.
         </p>
       )}
       {(loading || loadingFc) && (

@@ -1,5 +1,5 @@
 import "server-only";
-import { env } from "../env";
+import { DEFAULT_LLM_MODEL, env } from "../env";
 import { httpJson } from "../http";
 
 /**
@@ -34,12 +34,11 @@ function firstDefined(...vals: (string | undefined)[]): string | undefined {
   return undefined;
 }
 
-/** Chọn model theo role — bám biến Vercel của user */
+/** Chọn model theo role — bám biến Vercel của user (mọi biến đọc qua src/lib/env.ts). */
 export function modelFor(role: LlmRole): string {
   if (role === "reasoning") {
     return (
-      firstDefined(env.aiModelReasoning, process.env.AI_MODEL_REASONING, env.openrouterModel, env.aiModel) ??
-      "qwen/qwen3-32b"
+      firstDefined(env.aiModelReasoning, env.openrouterModel, env.aiModel) ?? DEFAULT_LLM_MODEL
     );
   }
   if (role === "report" || role === "analysis") {
@@ -47,15 +46,13 @@ export function modelFor(role: LlmRole): string {
       firstDefined(
         env.aiModelReport,
         env.aiModelAnalysis,
-        process.env.AI_MODEL_REPORT,
-        process.env.AI_MODEL_ANALYSIS,
         env.openrouterModel,
         env.aiModel,
-      ) ?? "qwen/qwen3-32b"
+      ) ?? DEFAULT_LLM_MODEL
     );
   }
   // classification → model nhẹ / default OpenRouter
-  return firstDefined(env.openrouterModel, env.aiModel, env.groqModel) ?? "qwen/qwen3-32b";
+  return firstDefined(env.openrouterModel, env.aiModel, env.groqModel) ?? DEFAULT_LLM_MODEL;
 }
 
 function resolveProvider(model: string, backend?: LlmBackend): {
@@ -141,7 +138,7 @@ export function llmRegistryInfo() {
       AI_MODEL_REPORT: Boolean(env.aiModelReport),
       AI_MODEL_ANALYSIS: Boolean(env.aiModelAnalysis),
       GROQ_API_KEY: Boolean(env.groqApiKey),
-      AI_PROVIDER_KEY: Boolean(process.env.AI_PROVIDER_KEY?.trim()),
+      AI_PROVIDER_KEY: Boolean(env.aiProviderKeyRaw),
     },
     /** Model OpenRouter mặc định đang resolve (không phải secret) */
     openrouterModelResolved: env.openrouterModel ?? env.aiModel ?? null,
@@ -188,8 +185,8 @@ export async function llmChat(role: LlmRole, opts: ChatOptions): Promise<LlmResu
   };
   // OpenRouter khuyến nghị HTTP-Referer + X-Title
   if (provider === "openrouter") {
-    headers["HTTP-Referer"] = process.env.VERCEL_URL
-      ? `https://${process.env.VERCEL_URL}`
+    headers["HTTP-Referer"] = env.vercelUrl
+      ? `https://${env.vercelUrl}`
       : "https://orca-multi-finance.vercel.app";
     headers["X-Title"] = "Orca Multi Finance";
   }

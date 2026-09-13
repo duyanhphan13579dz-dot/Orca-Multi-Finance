@@ -2,11 +2,11 @@ import "server-only";
 import { httpJson } from "../http";
 import type { IndexQuote, OhlcvBar, Quote } from "../types";
 import { ProviderError } from "./binance";
+import { env } from "../env";
 
 export const VNDIRECT = "vndirect";
 
-const base = () =>
-  (process.env.VNDIRECT_BASE_URL ?? "https://api-finfo.vndirect.com.vn").replace(/\/$/, "");
+const base = () => env.vndirectBaseUrl;
 
 const num = (v: unknown): number | null => {
   const n = Number(v);

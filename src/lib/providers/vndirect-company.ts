@@ -1,9 +1,9 @@
 import "server-only";
 import { httpJson } from "../http";
+import { env } from "../env";
 
 const VND = "vndirect";
-const base = () =>
-  (process.env.VNDIRECT_BASE_URL ?? "https://api-finfo.vndirect.com.vn").replace(/\/$/, "");
+const base = () => env.vndirectBaseUrl;
 
 export interface VndCompanyProfile {
   code: string;

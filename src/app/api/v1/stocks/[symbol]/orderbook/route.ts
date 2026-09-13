@@ -1,3 +1,4 @@
+import { env } from "@/lib/env";
 import { ok, unavailable, badRequest } from "@/lib/envelope";
 import { getVnOrderBook } from "@/lib/services/stock-orderbook";
 import { ssiFcConfigured } from "@/lib/providers/ssi-fcdata";
@@ -27,7 +28,7 @@ export async function GET(_req: Request, ctx: { params: Promise<{ symbol: string
   // Still attempt getVnOrderBook when WS disabled — may serve Redis/memory last-session snapshot
   const r = await getVnOrderBook(symbol);
   if (!r) {
-    const wsOff = process.env.SSI_WS_DISABLED === "true";
+    const wsOff = env.ssiWsDisabled;
     return unavailable(
       "ssi-ws",
       wsOff

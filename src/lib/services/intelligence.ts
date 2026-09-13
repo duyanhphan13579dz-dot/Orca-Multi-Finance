@@ -10,6 +10,7 @@ import { detectMarketState, STATE_VI, type MarketStateResult } from "../engines/
 import { analyzeScalp, analyzeScalpMulti, type ScalpSignal } from "../engines/scalp";
 import { computeFinancialHealth, type FinancialHealthResult } from "../engines/fundamental";
 import { computeValuation, type ValuationResult } from "../engines/valuation";
+import { detectPatterns } from "../technical";
 import { validateBars, logQualityEvent, qualityToLabel } from "../quality";
 import { llmChat, llmConfigured, modelFor } from "../ai/gateway";
 import { collectFactNumbers, validateOutput } from "../ai/validate";
@@ -63,6 +64,9 @@ export async function buildStockAnalysis(symbol: string): Promise<{
   const price = detail.quote?.price ?? detail.technical?.last ?? detail.bars[detail.bars.length - 1]?.close ?? 0;
   const valuation = price > 0 ? computeValuation({ price, health }) : null;
   const news = await getNews({ symbol: sym, limit: 5 });
+  const bars20 = detail.bars.slice(-20);
+  const avgVolume20 = bars20.length ? bars20.reduce((a, b) => a + (b.volume ?? 0), 0) / bars20.length : null;
+  const patterns = detectPatterns(detail.bars);
 
   const contract: StockAnalysisContract = {
     asset: { symbol: sym, asset_type: "stock" },
@@ -74,8 +78,23 @@ export async function buildStockAnalysis(symbol: string): Promise<{
           low: detail.quote.low,
           volume: detail.quote.volume,
           value: detail.quote.quoteVolume,
+          avg_volume_20: avgVolume20,
         }
-      : null,
+      : detail.bars.length
+        ? (() => {
+            const last = detail.bars[detail.bars.length - 1];
+            const prev = detail.bars[detail.bars.length - 2] ?? last;
+            return {
+              price: last.close,
+              change_percent: prev.close ? ((last.close - prev.close) / prev.close) * 100 : null,
+              high: last.high,
+              low: last.low,
+              volume: last.volume,
+              value: null,
+              avg_volume_20: avgVolume20,
+            };
+          })()
+        : null,
     technical_state: detail.technical
       ? {
           rsi14: detail.technical.rsi14,
@@ -87,6 +106,7 @@ export async function buildStockAnalysis(symbol: string): Promise<{
           support: detail.technical.support,
           resistance: detail.technical.resistance,
           signals: detail.technical.signals,
+          patterns,
         }
       : null,
     market_state: marketState ? { ...marketState, labelVi: STATE_VI[marketState.state] } : null,

@@ -1,3 +1,4 @@
+import { env } from "@/lib/env";
 import { ok } from "@/lib/envelope";
 import { buildMeta } from "@/lib/freshness";
 import { ssiWs, ensureSsiWsStarted } from "@/lib/realtime/ssi-ws";
@@ -9,7 +10,7 @@ export const runtime = "nodejs";
 
 /** GET /api/v1/system/ssi-ws — trạng thái DataHub streaming (All api data + All stream data) */
 export async function GET() {
-  if (ssiFcConfigured() && process.env.SSI_WS_DISABLED !== "true") {
+  if (ssiFcConfigured() && !env.ssiWsDisabled) {
     bootSsiMarketDataPipeline();
   }
   const stats = ssiWs.getStats();

@@ -3,8 +3,9 @@ import { httpJson } from "../../http";
 import { classifyFiling, periodLabelFromFiscal } from "./classify";
 import { discoverFromSscPortal } from "./ssc-portal";
 import type { FilingDiscoveryResult, FilingSourceChannel, OfficialFiling } from "./types";
+import { env } from "../../env";
 
-const BASE = (process.env.VNDIRECT_BASE_URL ?? "https://api-finfo.vndirect.com.vn").replace(/\/$/, "");
+const BASE = env.vndirectBaseUrl;
 
 function filingId(ticker: string, channel: string, fiscalDate: string | null, kind: string, idx: number): string {
   return `${ticker}:${channel}:${fiscalDate ?? "na"}:${kind}:${idx}`;
@@ -161,14 +162,10 @@ async function discoverOfficialPortals(symbol: string): Promise<{
 }> {
   const channels: FilingSourceChannel[] = [];
   const filings: OfficialFiling[] = [];
-  const portals: { env: string; channel: FilingSourceChannel }[] = [
-    { env: "SSC_IDS_BASE_URL", channel: "ssc_ids" },
-    { env: "HOSE_DISCLOSURE_URL", channel: "hose_disclosure" },
-    { env: "HNX_DISCLOSURE_URL", channel: "hnx_disclosure" },
-    { env: "COMPANY_IR_BASE_URL", channel: "company_ir" },
-  ];
+  // URLs đã được đọc tập trung trong src/lib/env.ts (env.officialPortals).
+  const portals = env.officialPortals as { channel: FilingSourceChannel; url: string | undefined }[];
   for (const p of portals) {
-    const base = process.env[p.env]?.trim();
+    const base = p.url;
     if (!base) continue;
     channels.push(p.channel);
     try {

@@ -105,7 +105,7 @@ Data contract per analysis: `{asset, market_data, technical_state, market_state,
 
 ## 8. Security
 
-- API keys chỉ đọc qua `src/lib/env.ts` (module `server-only`), không biến `NEXT_PUBLIC_*`.
+- **Mọi** biến môi trường chỉ được đọc qua `src/lib/env.ts` (module `server-only`) — không module nào chạm `process.env` trực tiếp; default/trim/parse boolean nằm đúng một chỗ. Ngoại lệ duy nhất: shim `ensureSsiEnvAliases()` trong `providers/ssi-credentials.ts` mirror alias `SSI_FC_*` cho code ngoài repo. Không có biến `NEXT_PUBLIC_*`.
 - Auth: scrypt password hash, JWT HS256 trong httpOnly cookie (`/api/v1/auth/*`), audit logs.
 - Input validation ở mọi route (symbol regex, cặp FX 6 ký tự, giới hạn length/limit).
 - Không trả internal stack trace: error envelope `{ code, message }` ngắn gọn.

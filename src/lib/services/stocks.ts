@@ -14,6 +14,7 @@ import {
 } from "../providers/ssi-fcdata";
 import { ensureSsiWsStarted, ssiWs } from "../realtime/ssi-ws";
 import { bootSsiMarketDataPipeline } from "../realtime/ssi-market-boot";
+import { env } from "../env";
 import { getCanonicalSecurityMaster, toCanonicalUniverse } from "../vn/security-master";
 import { validateBars, logQualityEvent } from "../quality";
 import { analyzeSeries, detectPatterns } from "../technical";
@@ -31,7 +32,7 @@ function sortIndices(items: IndexQuote[]): IndexQuote[] {
 
 function bootSsiLive() {
   if (!ssiFcConfigured()) return;
-  if (process.env.SSI_WS_DISABLED === "true") return;
+  if (env.ssiWsDisabled) return;
   try {
     bootSsiMarketDataPipeline();
   } catch {
@@ -81,7 +82,7 @@ function liveQuoteFromWs(symbol: string): Quote | null {
 
 export async function getVnIndices(): Promise<{ items: IndexQuote[]; meta: Meta } | null> {
   bootSsiLive();
-  if (ssiFcConfigured() && process.env.SSI_WS_DISABLED !== "true") {
+  if (ssiFcConfigured() && !env.ssiWsDisabled) {
     const live: IndexQuote[] = [];
     for (const code of INDEX_PRIORITY) {
       const idx = ssiWs.getIndex(code, 30_000);
@@ -248,7 +249,7 @@ export async function getVnQuotes(symbols: string[]): Promise<{ quotes: Quote[];
   if (!symbols.length) return null;
   bootSsiLive();
   const uniq = [...new Set(symbols.map((s) => s.toUpperCase()).filter(Boolean))].slice(0, 40);
-  if (ssiFcConfigured() && process.env.SSI_WS_DISABLED !== "true") {
+  if (ssiFcConfigured() && !env.ssiWsDisabled) {
     for (const s of uniq) ssiWs.watchSymbol(s);
   }
   const out: Quote[] = [];

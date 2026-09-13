@@ -1,4 +1,5 @@
 import "server-only";
+import { env } from "../env";
 
 /**
  * REPORT SCHEDULER — timezone-aware (Asia/Ho_Chi_Minh), config-driven.
@@ -36,11 +37,11 @@ class Scheduler {
 
   private async loadCfg(): Promise<ScheduleCfg> {
     return {
-      autoDaily: (process.env.REPORT_AUTO_DAILY ?? "true") !== "false",
-      morningTime: process.env.REPORT_MORNING_TIME ?? "08:15",
-      summaryTime: process.env.REPORT_SUMMARY_TIME ?? "15:45",
-      autoCommodities: (process.env.COMMODITIES_AUTO_DAILY ?? "true") !== "false",
-      commoditiesTime: process.env.COMMODITIES_REFRESH_TIME ?? "07:30",
+      autoDaily: env.reportAutoDaily,
+      morningTime: env.reportMorningTime,
+      summaryTime: env.reportSummaryTime,
+      autoCommodities: env.commoditiesAutoDaily,
+      commoditiesTime: env.commoditiesRefreshTime,
     };
   }
 

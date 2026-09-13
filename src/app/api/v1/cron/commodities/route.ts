@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { refreshCommodityMarket } from "@/lib/services/commodities";
 import { buildMeta } from "@/lib/freshness";
+import { env, isProd } from "@/lib/env";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -12,9 +13,9 @@ export const maxDuration = 60;
  * Vercel Cron sends Authorization: Bearer <CRON_SECRET> when configured.
  */
 function authorized(req: Request): boolean {
-  const secret = process.env.CRON_SECRET?.trim();
+  const secret = env.cronSecret;
   if (!secret) {
-    return process.env.NODE_ENV !== "production";
+    return !isProd;
   }
   const auth = req.headers.get("authorization") ?? "";
   if (auth === `Bearer ${secret}`) return true;

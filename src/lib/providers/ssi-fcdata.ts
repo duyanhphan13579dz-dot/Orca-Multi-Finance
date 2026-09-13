@@ -3,6 +3,7 @@ import { httpJson } from "../http";
 import { ssiConsumerId, ssiConsumerSecret, ssiCredentialsConfigured } from "./ssi-credentials";
 import type { IndexQuote, OhlcvBar, Quote } from "../types";
 import { ProviderError } from "./binance";
+import { env } from "../env";
 
 /**
  * SSI FastConnect Data (FC Data) — full market REST adapter.
@@ -15,12 +16,11 @@ import { ProviderError } from "./binance";
 
 export const SSI_FCDATA = "ssi-fcdata";
 
-const DEFAULT_BASE = "https://fc-data.ssi.com.vn";
 const MARKETS = ["HOSE", "HNX", "UPCOM"] as const;
 const CORE_INDICES = ["VNINDEX", "VN30", "HNX", "HNX30", "UPCOM", "VN100"] as const;
 
 function baseUrl(): string {
-  return (process.env.SSI_FC_DATA_BASE_URL ?? DEFAULT_BASE).replace(/\/$/, "");
+  return env.ssiFcDataBaseUrl;
 }
 
 /** True when SSI_API_KEY+SSI_API_SECRET or SSI_FC_CONSUMER_ID+SECRET are set. */
