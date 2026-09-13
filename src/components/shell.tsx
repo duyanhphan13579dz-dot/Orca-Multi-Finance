@@ -1,1 +1,1 @@
-PLACEHOLDER_WILL_FAIL
+see /home/workdir/artifacts/shell.tsx
