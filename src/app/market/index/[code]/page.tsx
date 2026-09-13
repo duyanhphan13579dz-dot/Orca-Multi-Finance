@@ -7,6 +7,7 @@ import { useSettings } from "@/lib/settings";
 import type { IndexDetail } from "@/lib/services/market-intel";
 import { Badge, Chg, fmtCompact, fmtNum, FreshnessDot, Loading, MetaLine, Panel, Unavailable } from "@/components/ui";
 import { OrcaChart } from "@/components/orca-chart";
+import { TradingViewChartWidget } from "@/components/tradingview-chart-widget";
 import { Activity, ArrowLeft, ArrowLeftRight, Gauge, Layers, TrendingDown, TrendingUp } from "lucide-react";
 
 export default function IndexDetailPage({ params }: { params: Promise<{ code: string }> }) {
@@ -56,6 +57,7 @@ export default function IndexDetailPage({ params }: { params: Promise<{ code: st
       </Panel>
 
       <OrcaChart symbol={data.code} assetType="stock" defaultTimeframe="1d" height={400} title={`${data.name} — biểu đồ`} />
+      <TradingViewChartWidget code={data.code} title={`${data.name} — chart tham chiếu`} />
 
       <div className="grid grid-cols-12 gap-3">
         <Panel className="col-span-12 lg:col-span-4" title={<span className="flex items-center gap-2"><Gauge className="size-4 text-accent-primary" /> Áp lực mua / bán</span>}>
