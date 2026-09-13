@@ -21,10 +21,14 @@ import {
 } from "./valuation-phase3";
 import {
   buildPhase4Valuation,
-  VALUATION_ENGINE_VERSION_PHASE4,
   type Phase4ValuationResult,
   type SotPSegment,
 } from "./valuation-phase4";
+import {
+  buildPhase5Valuation,
+  VALUATION_ENGINE_VERSION_PHASE5,
+  type Phase5ValuationResult,
+} from "./valuation-phase5";
 
 /** @deprecated legacy shape kept for intelligence consumers */
 export interface DcfScenario {
@@ -59,6 +63,7 @@ export interface ValuationResult {
   phase2?: Phase2ValuationResult;
   phase3?: Phase3ValuationResult;
   phase4?: Phase4ValuationResult;
+  phase5?: Phase5ValuationResult;
   historical?: HistoricalSummary | null;
   peers?: Phase2ValuationResult["peers"];
   dcf: DcfScenario[] | null;
@@ -286,7 +291,25 @@ export function computeValuation(input: {
   });
   notes.push(...phase4.notes);
 
-  const fairValue = blendWithPhase4(phase3.fairValue, phase4);
+  let fairValue = blendWithPhase4(phase3.fairValue, phase4);
+
+  const phase5 = buildPhase5Valuation({
+    currentPrice: price > 0 ? price : null,
+    dataQuality: phase1.dataQuality,
+    profileId: industryProfileId,
+    phase3Fair: fairValue,
+    phase4,
+  });
+  notes.push(...phase5.notes);
+
+  if (phase5.finalFairValue != null) {
+    fairValue = {
+      ...fairValue,
+      blendedFairValue: phase5.finalFairValue,
+      upsidePct: phase5.score.upsidePct,
+      valuationStatus: phase5.valuationStatus,
+    };
+  }
 
   const dcfLegacy = mapLegacyDcf(phase3.dcf);
   const dcf = dcfLegacy.length ? dcfLegacy : null;
@@ -329,6 +352,7 @@ export function computeValuation(input: {
     phase2,
     phase3,
     phase4,
+    phase5,
     historical: phase2.historical,
     peers: phase2.peers,
     dcf,
@@ -337,7 +361,7 @@ export function computeValuation(input: {
     confidence,
     dataQuality: phase1.dataQuality,
     notes,
-    valuationEngineVersion: VALUATION_ENGINE_VERSION_PHASE4,
+    valuationEngineVersion: VALUATION_ENGINE_VERSION_PHASE5,
   };
 }
 
@@ -364,8 +388,14 @@ export {
   runDdm,
   runNav,
   runSotp,
-  VALUATION_ENGINE_VERSION_PHASE4 as VALUATION_ENGINE_VERSION,
 } from "./valuation-phase4";
+export {
+  buildPhase5Valuation,
+  computeValuationScore,
+  blendByIndustry,
+  getIndustryMethodWeights,
+  VALUATION_ENGINE_VERSION_PHASE5 as VALUATION_ENGINE_VERSION,
+} from "./valuation-phase5";
 export type { Phase1ValuationResult, ValuationInputs, MetricCell } from "./valuation-phase1";
 export type {
   Phase2ValuationResult,
@@ -388,3 +418,10 @@ export type {
   SotPResult,
   SotPSegment,
 } from "./valuation-phase4";
+export type {
+  Phase5ValuationResult,
+  ValuationScoreResult,
+  ConfidenceBands,
+  IndustryMethodWeights,
+  ScoreGrade,
+} from "./valuation-phase5";
