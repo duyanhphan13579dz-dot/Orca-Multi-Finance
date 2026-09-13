@@ -28,7 +28,7 @@ export async function GET(req: Request) {
     if (!market) {
       return unavailable(
         "vn-market",
-        "Chưa kéo được toàn bộ thị trường VN — VNDirect/VNStock tạm không phản hồi.",
+        "Chưa kéo được toàn bộ thị trường VN — VNDirect/SSI tạm không phản hồi.",
       );
     }
     return ok(
@@ -69,7 +69,7 @@ export async function GET(req: Request) {
       count: quotes?.quotes?.length ?? 0,
     },
     {
-      source: meta?.source ?? "vnstock|vndirect",
+      source: meta?.source ?? "vndirect",
       sourceTimestampMs: meta?.sourceTimestamp ? Date.parse(meta.sourceTimestamp) : null,
       cached: meta?.cached,
       stale: meta?.stale,

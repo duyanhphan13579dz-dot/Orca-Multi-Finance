@@ -1,7 +1,6 @@
 import "server-only";
 import type { FinancialProvider } from "./provider";
 import { fetchVndirectFinancials } from "./vndirect-fs";
-import { ssiFcConfigured } from "../providers/ssi-fcdata";
 
 /**
  * Financial Provider Layout
@@ -23,13 +22,13 @@ export interface VnProviderLayout {
 }
 
 export function vnProviderLayout(): VnProviderLayout {
-  // SSI FastConnect là primary cho data thị trường (chỉ số, bảng giá, quote, OHLCV, universe).
-  // SSI là NEVER registered in `listFinancialProviders()` — financial statements primary vẫn là VNDIRECT.
-  const ssiLive = ssiFcConfigured();
+  // VNDirect is the primary source for daily/history market data.
+  // SSI remains the realtime overlay/fallback for quote ticks and orderbook only.
+  // SSI is NEVER registered in `listFinancialProviders()` — financial statements remain VNDirect primary.
   return {
     market: {
-      primary: ssiLive ? "ssi-fcdata" : "vndirect",
-      fallback: ssiLive ? "vndirect" : "vndirect",
+      primary: "vndirect",
+      fallback: "ssi-fcdata",
     },
     financial: {
       primary: "vndirect",
