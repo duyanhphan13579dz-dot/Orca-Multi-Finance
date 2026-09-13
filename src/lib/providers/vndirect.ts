@@ -238,6 +238,7 @@ export function vndIndexCode(code: string): string {
   const c = code.toUpperCase();
   if (c === "VNINDEX" || c === "VN-INDEX") return "VNINDEX";
   if (c === "HNXINDEX" || c === "HNX-INDEX") return "HNX";
+  if (c === "UPCOMINDEX" || c === "UPCOM-INDEX") return "UPCOM";
   return c;
 }
 

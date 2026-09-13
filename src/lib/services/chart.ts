@@ -185,7 +185,7 @@ export function canonicalIndexSymbol(symbol: string): string | null {
   const normalized = symbol.toUpperCase().replace(/[^A-Z0-9]/g, "");
   const aliases: Record<string, string> = {
     VNINDEX: "VNINDEX", VN: "VNINDEX", VNINDEXV: "VNINDEX",
-    VN30: "VN30", HNX: "HNXINDEX", HNXINDEX: "HNXINDEX", HNX30: "HNX30",
+    VN30: "VN30", VN100: "VN100", HNX: "HNXINDEX", HNXINDEX: "HNXINDEX", HNX30: "HNX30",
     UPCOM: "UPCOMINDEX", UPCOMINDEX: "UPCOMINDEX",
   };
   return aliases[normalized] ?? null;

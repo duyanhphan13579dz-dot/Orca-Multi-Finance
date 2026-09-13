@@ -21,7 +21,7 @@ export default function IndexDetailPage({ params }: { params: Promise<{ code: st
 
   const q = data.quote;
   return (
-    <div className="space-y-3">
+    <div className="stock-workspace stock-page-body">
       <Link href="/" className="inline-flex items-center gap-1 text-[11.5px] text-text-muted hover:text-accent-primary">
         <ArrowLeft className="size-3.5" /> Market Command Center
       </Link>
