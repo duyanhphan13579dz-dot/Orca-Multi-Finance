@@ -5,11 +5,11 @@ import { SettingsProvider } from "@/lib/settings";
 
 export const metadata: Metadata = {
   title: {
-    default: "ORCA Financial — Intelligent Investment Platform",
+    default: "ORCA Financial — Nền tảng đầu tư thông minh",
     template: "%s | ORCA Financial",
   },
   description:
-    "Real-time, event-driven, multi-asset financial intelligence platform — VN stocks (VNStock), crypto (Binance), forex (Biquote), commodities (Vietnambiz/Simplize), news, reports and an AI research agent.",
+    "Nền tảng phân tích tài chính thời gian thực — Cổ phiếu Việt Nam, tiền mã hóa, ngoại hối, hàng hóa, tin tức, báo cáo và trợ lý AI nghiên cứu.",
   icons: { icon: "/icon.png" },
   appleWebApp: {
     capable: true,

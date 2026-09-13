@@ -17,7 +17,10 @@ export function StockTabs({ symbol }: { symbol: string }) {
   const base = `/stocks/${symbol}`;
 
   return (
-    <nav className="flex flex-wrap gap-1 border-b border-line px-2 pt-1">
+    <nav
+      className="stock-tabs-scroll border-b border-line px-2 pt-1"
+      aria-label="Tab cổ phiếu"
+    >
       {TABS.map((t) => {
         const href = `${base}${t.href}`;
         const active =
