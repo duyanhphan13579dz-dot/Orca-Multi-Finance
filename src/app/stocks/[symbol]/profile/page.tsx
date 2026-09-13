@@ -74,7 +74,7 @@ export default function StockProfilePage({ params }: { params: Promise<{ symbol:
   const profileMeta = res.meta;
 
   return (
-    <main className="flex flex-col gap-3">
+    <main className="flex flex-col gap-5">
       <section className="panel panel-elevated overflow-hidden">
         <div className="border-b border-line/70 bg-gradient-to-br from-accent/10 via-transparent to-transparent p-4 sm:p-5">
           <div className="flex flex-col justify-between gap-5 lg:flex-row lg:items-start">
