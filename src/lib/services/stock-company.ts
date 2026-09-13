@@ -3,17 +3,17 @@ import { cached } from "../cache";
 import { buildMeta } from "../freshness";
 import { getVndCompanyProfile, getVndShareholders, type VndCompanyProfile, type VndShareholder } from "../providers/vndirect-company";
 import type { Meta } from "../types";
+import { getOrGenerateCompanyIntelligence, resolveValueChain, type CompanyIntelligence } from "./company-intelligence";
 
 export interface StockCompanyPackage {
   symbol: string;
   profile: VndCompanyProfile | null;
   shareholders: VndShareholder[];
-  /** Placeholder slots — filled when richer sources (SSI) arrive */
   board: { name: string; role: string }[];
-  valueChain: { input: string[]; process: string[]; output: string[] } | null;
-  catalysts: string[];
-  risks: string[];
-  swot: { strengths: string[]; weaknesses: string[]; opportunities: string[]; threats: string[] } | null;
+  valueChain: CompanyIntelligence["valueChain"];
+  catalysts: CompanyIntelligence["catalysts"];
+  risks: CompanyIntelligence["risks"];
+  swot: CompanyIntelligence["swot"] | null;
   notes: string[];
 }
 
@@ -32,20 +32,23 @@ export async function getStockCompanyPackage(symbol: string): Promise<{ data: St
       },
     });
 
+    const intelligence = await getOrGenerateCompanyIntelligence(sym);
+    const industry = res.value.profile?.vnSummary ?? null;
     const notes: string[] = [];
     if (!res.value.profile) notes.push("Chưa lấy được hồ sơ doanh nghiệp từ VNDirect.");
     if (!res.value.shareholders.length) notes.push("Chưa có danh sách cổ đông lớn.");
-    notes.push("HĐQT, chuỗi giá trị, SWOT, catalyst: sẽ bổ sung khi kết nối SSI / nguồn IR chính thức.");
+    if (!intelligence) notes.push("Chưa đủ BCTC hoặc tin tức để dựng phân tích doanh nghiệp.");
+    else notes.push(...intelligence.notes);
 
     const data: StockCompanyPackage = {
       symbol: sym,
       profile: res.value.profile,
       shareholders: res.value.shareholders,
       board: [],
-      valueChain: null,
-      catalysts: [],
-      risks: [],
-      swot: null,
+      valueChain: resolveValueChain(industry),
+      catalysts: intelligence?.catalysts ?? [],
+      risks: intelligence?.risks ?? [],
+      swot: intelligence?.swot ?? null,
       notes,
     };
 
