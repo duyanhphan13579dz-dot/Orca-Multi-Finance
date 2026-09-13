@@ -273,20 +273,27 @@ function MarketChip() {
 
 function Clock() {
   const { settings } = useSettings();
-  // Keep the server and first client render deterministic; the live time starts after hydration.
+  const [mounted, setMounted] = useState(false);
   const [now, setNow] = useState<Date | null>(null);
-  useEffect(() => {
-    setNow(new Date());
-    const t = setInterval(() => setNow(new Date()), 1000);
-    return () => clearInterval(t);
-  }, []);
   const tz = settings.profile.timezone || "Asia/Ho_Chi_Minh";
+
+  useEffect(() => {
+    setMounted(true);
+    setNow(new Date());
+    const timer = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+
   return (
     <div className="num hidden items-center gap-1.5 text-[12px] text-text-secondary xl:flex" title={`Múi giờ: ${tz}`}>
-      <span className="text-text-muted">{tz === "Asia/Ho_Chi_Minh" ? "VN" : tz.split("/").pop()}</span>
-      <span suppressHydrationWarning>
-        {now ? now.toLocaleTimeString("vi-VN", { timeZone: tz, hour12: false }) : "--:--:--"}
-      </span>
+      {mounted ? (
+        <>
+          <span className="text-text-muted">{tz === "Asia/Ho_Chi_Minh" ? "VN" : tz.split("/").pop()}</span>
+          <span>{now?.toLocaleTimeString("vi-VN", { timeZone: tz, hour12: false }) ?? "--:--:--"}</span>
+        </>
+      ) : (
+        <span suppressHydrationWarning>--:--:--</span>
+      )}
     </div>
   );
 }
