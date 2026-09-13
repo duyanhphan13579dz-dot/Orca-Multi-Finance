@@ -30,7 +30,6 @@ import {
   type Phase5ValuationResult,
 } from "./valuation-phase5";
 
-/** @deprecated legacy shape kept for intelligence consumers */
 export interface DcfScenario {
   label: "Bear" | "Base" | "Bull";
   growthY1to5: number;
@@ -106,7 +105,6 @@ function blendWithPhase4(
     extra.push({ key: "sotp", price: phase4.methodPrices.sotp, weight: 0.08 });
   }
   if (!extra.length || base.blendedFairValue == null) return base;
-
   const baseWeight = Math.max(0.5, 1 - extra.reduce((s, e) => s + e.weight, 0));
   let sumW = baseWeight;
   let sum = base.blendedFairValue * baseWeight;
@@ -119,15 +117,11 @@ function blendWithPhase4(
     base.currentPrice != null && base.currentPrice > 0
       ? Number((((blended / base.currentPrice) - 1) * 100).toFixed(1))
       : base.upsidePct;
-
   return {
     ...base,
     blendedFairValue: blended,
     upsidePct: upside,
-    notes: [
-      ...base.notes,
-      `Phase4 blend: +${extra.map((e) => e.key).join(",")} → FV ${blended}`,
-    ],
+    notes: [...base.notes, `Phase4 blend: +${extra.map((e) => e.key).join(",")} → FV ${blended}`],
   };
 }
 
@@ -269,9 +263,7 @@ export function computeValuation(input: {
 
   const industryProfileId = input.symbol ? getIndustryProfile(input.symbol).id : null;
   const ke =
-    phase3.costOfCapital.costOfEquity.value ??
-    phase3.costOfCapital.wacc.value ??
-    0.12;
+    phase3.costOfCapital.costOfEquity.value ?? phase3.costOfCapital.wacc.value ?? 0.12;
 
   const phase4 = buildPhase4Valuation({
     currentPrice: price > 0 ? price : null,
@@ -279,8 +271,6 @@ export function computeValuation(input: {
     bookEquity: a.equity,
     netIncomeTtm: a.netProfit,
     costOfEquity: ke,
-    totalAssets: null,
-    totalLiabilities: null,
     dividendsAnnual: input.dividendsAnnual ?? null,
     dividendYield: dividendYield,
     industryProfileId,
