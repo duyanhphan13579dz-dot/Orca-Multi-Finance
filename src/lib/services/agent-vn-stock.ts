@@ -167,19 +167,19 @@ async function buildVn(symbol: string, deep: boolean): Promise<Built> {
 
   {
     const parts: string[] = ["## Sức khỏe tài chính"];
-    if (fh?.scores?.overall != null) {
-      const s = fh.scores;
+    const overallScore = fh?.scores?.overall;
+    if (overallScore != null && Number.isFinite(overallScore)) {
+      const s = fh!.scores!;
       parts.push(
-        `Financial Health: **${s.overall}/100**` +
-          (fh.coverage != null ? ` (coverage ${(fh.coverage * 100).toFixed(0)}%)` : "") +
+        `Financial Health: **${overallScore}/100**` +
+          (fh!.coverage != null ? ` (coverage ${(fh!.coverage * 100).toFixed(0)}%)` : "") +
           ".",
       );
       parts.push(
         `Chi tiết: Profitability ${s.profitability ?? "—"} · Liquidity ${s.liquidity ?? "—"} · Leverage ${s.leverage ?? "—"} · Cashflow ${s.cashflow ?? "—"} · Efficiency ${s.efficiency ?? "—"}.`,
       );
-      const overall = s.overall;
-      if (overall >= 70) parts.push("Doanh nghiệp có nền tảng tài chính **vững** theo engine định lượng.");
-      else if (overall >= 45) parts.push("Sức khỏe tài chính **trung bình** — cần theo dõi thêm đòn bẩy và dòng tiền.");
+      if (overallScore >= 70) parts.push("Doanh nghiệp có nền tảng tài chính **vững** theo engine định lượng.");
+      else if (overallScore >= 45) parts.push("Sức khỏe tài chính **trung bình** — cần theo dõi thêm đòn bẩy và dòng tiền.");
       else parts.push("Sức khỏe tài chính **yếu** theo engine — rủi ro cơ bản cao hơn.");
     } else {
       parts.push("Chưa đủ BCTC chuẩn hóa để chấm điểm sức khỏe tài chính.");
@@ -198,7 +198,7 @@ async function buildVn(symbol: string, deep: boolean): Promise<Built> {
           ".",
       );
     } else {
-      parts.push("Chưa đủ dữ liệu để tính multiples định giá (P/E, P/B…)." );
+      parts.push("Chưa đủ dữ liệu để tính multiples định giá (P/E, P/B…).");
     }
     sections.push(parts.join("\n"));
   }
