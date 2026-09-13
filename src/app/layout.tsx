@@ -33,8 +33,8 @@ const themeInit = `(function(){try{var raw=localStorage.getItem('orca.settings.v
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="vi" data-theme="navy" suppressHydrationWarning>
-      <body className="min-h-dvh">
+    <html lang="vi" data-theme="navy" suppressHydrationWarning className="h-full">
+      <body className="h-full overflow-hidden">
         <script dangerouslySetInnerHTML={{ __html: themeInit }} />
         <SettingsProvider>
           <AppShell>{children}</AppShell>
