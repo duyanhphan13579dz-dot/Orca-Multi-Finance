@@ -36,54 +36,103 @@ export default function StockSymbolLayout({
 
   return (
     <div className="stock-page-body space-y-3">
-      <Panel pad={false}>
-        <div className="flex flex-col gap-2 p-4 md:flex-row md:items-end md:justify-between">
-          <div>
+      <Panel pad={false} className="sticky top-0 z-20 overflow-visible shadow-sm shadow-black/20">
+        <div className="flex flex-col gap-2 p-3 sm:p-4 md:flex-row md:items-end md:justify-between">
+          <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
-              <h1 className="text-xl font-semibold">{symbol}</h1>
+              <h1 className="text-lg font-semibold tracking-tight sm:text-xl">{symbol}</h1>
+              {data?.quote?.name || data?.profile?.shortName ? (
+                <span className="max-w-[12rem] truncate text-[11px] text-text-muted sm:max-w-[18rem] sm:text-[12px]">
+                  {(data as { profile?: { shortName?: string }; quote?: { name?: string } })?.profile?.shortName ??
+                    data?.quote?.name}
+                </span>
+              ) : null}
               <FreshnessDot status={meta?.freshness} ageMs={meta?.ageMs} />
               <AddToWatchlist assetType="stock" symbol={symbol} />
             </div>
             {q ? (
-              <div className="num mt-1 flex items-baseline gap-3">
-                <span className="text-[28px] font-semibold">{fmtNum(q.price, 2)}</span>
-                <Chg value={q.changePercent} className="text-[14px]" />
+              <div className="num mt-1 flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
+                <span className="text-[26px] font-semibold leading-none sm:text-[28px]">{fmtNum(q.price, 2)}</span>
+                <Chg value={q.changePercent} className="text-[13px] sm:text-[14px]" />
+                {q.change != null && (
+                  <span className={`text-[12px] ${q.change >= 0 ? "text-up" : "text-down"}`}>
+                    {q.change >= 0 ? "+" : ""}
+                    {fmtNum(q.change, 2)}
+                  </span>
+                )}
               </div>
             ) : (
-              <p className="mt-1 text-[12px] text-ink-3">Giá phiên tạm chưa có — xem các tab bên dưới.</p>
+              <p className="mt-1 text-[12px] text-text-muted">Giá phiên tạm chưa có — xem các tab bên dưới.</p>
             )}
           </div>
-          <div className="grid grid-cols-3 gap-3 text-right">
-            <div>
-              <div className="text-[10px] uppercase text-ink-3">Khối lượng</div>
-              <div className="num text-[13px]">{fmtCompact(q?.volume)}</div>
-            </div>
-            <div>
-              <div className="text-[10px] uppercase text-ink-3">Giá trị</div>
-              <div className="num text-[13px]">{fmtCompact(q?.quoteVolume)}</div>
-            </div>
-            <div>
-              <div className="text-[10px] uppercase text-ink-3">Cập nhật</div>
-              <div className="num text-[13px]">
-                {q?.updatedAt
+
+          <div className="grid grid-cols-3 gap-2 text-right sm:gap-3 md:grid-cols-3 lg:grid-cols-6">
+            <Stat label="Khối lượng" value={fmtCompact(q?.volume)} />
+            <Stat label="Giá trị" value={fmtCompact(q?.quoteVolume)} />
+            <Stat
+              label="Cập nhật"
+              value={
+                q?.updatedAt
                   ? new Date(q.updatedAt).toLocaleTimeString("vi-VN", {
                       timeZone: "Asia/Ho_Chi_Minh",
                       hour: "2-digit",
                       minute: "2-digit",
                     })
-                  : "—"}
-              </div>
-            </div>
+                  : "—"
+              }
+            />
+            <Stat label="TC" value={q?.referencePrice != null ? fmtNum(q.referencePrice, 2) : "—"} className="hidden lg:block" />
+            <Stat label="Trần" value={q?.ceilingPrice != null ? fmtNum(q.ceilingPrice, 2) : "—"} className="hidden lg:block" />
+            <Stat label="Sàn" value={q?.floorPrice != null ? fmtNum(q.floorPrice, 2) : "—"} className="hidden lg:block" />
           </div>
         </div>
+
+        {/* Mobile: trần/sàn/TC strip */}
+        {(q?.referencePrice != null || q?.ceilingPrice != null || q?.floorPrice != null) && (
+          <div className="flex gap-3 border-t border-border-subtle px-3 py-1.5 text-[11px] text-text-muted lg:hidden">
+            {q?.referencePrice != null && (
+              <span>
+                TC <span className="num text-text-secondary">{fmtNum(q.referencePrice, 2)}</span>
+              </span>
+            )}
+            {q?.ceilingPrice != null && (
+              <span>
+                Trần <span className="num text-text-secondary">{fmtNum(q.ceilingPrice, 2)}</span>
+              </span>
+            )}
+            {q?.floorPrice != null && (
+              <span>
+                Sàn <span className="num text-text-secondary">{fmtNum(q.floorPrice, 2)}</span>
+              </span>
+            )}
+          </div>
+        )}
+
         {meta && (
-          <div className="border-t border-line px-4 py-2">
+          <div className="hidden border-t border-border-subtle px-4 py-1.5 sm:block">
             <MetaLine meta={meta} />
           </div>
         )}
         <StockTabs symbol={symbol} />
       </Panel>
       {children}
+    </div>
+  );
+}
+
+function Stat({
+  label,
+  value,
+  className = "",
+}: {
+  label: string;
+  value: string;
+  className?: string;
+}) {
+  return (
+    <div className={className}>
+      <div className="text-[9px] uppercase tracking-wide text-text-muted sm:text-[10px]">{label}</div>
+      <div className="num text-[12px] text-text-primary sm:text-[13px]">{value}</div>
     </div>
   );
 }
