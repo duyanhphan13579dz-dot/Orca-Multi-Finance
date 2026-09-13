@@ -284,7 +284,9 @@ function Clock() {
   return (
     <div className="num hidden items-center gap-1.5 text-[12px] text-text-secondary xl:flex" title={`Múi giờ: ${tz}`}>
       <span className="text-text-muted">{tz === "Asia/Ho_Chi_Minh" ? "VN" : tz.split("/").pop()}</span>
-      {now ? now.toLocaleTimeString("vi-VN", { timeZone: tz, hour12: false }) : "--:--:--"}
+      <span suppressHydrationWarning>
+        {now ? now.toLocaleTimeString("vi-VN", { timeZone: tz, hour12: false }) : "--:--:--"}
+      </span>
     </div>
   );
 }
