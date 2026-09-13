@@ -94,7 +94,7 @@ export default function AgentPage() {
   }
 
   const messagesRef = useRef(messages);
-  messagesRef.current = messages;
+  useEffect(() => { messagesRef.current = messages; }, [messages]);
 
   useEffect(() => {
     const el = listRef.current;

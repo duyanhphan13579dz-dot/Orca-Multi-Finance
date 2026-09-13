@@ -50,7 +50,7 @@ export default function JournalPage() {
   const [form, setForm] = useState({ symbol: "", entry: "", exit: "", stopLoss: "", takeProfit: "", size: "", leverage: "", strategy: "", emotion: "", notes: "", side: "long" as "long" | "short", assetType: "crypto" as Trade["assetType"] });
   const [showForm, setShowForm] = useState(false);
 
-  useEffect(() => setTrades(load()), []);
+  useEffect(() => { const id = window.setTimeout(() => setTrades(load()), 0); return () => window.clearTimeout(id); }, []);
   const persist = (t: Trade[]) => {
     setTrades(t);
     localStorage.setItem(KEY, JSON.stringify(t));

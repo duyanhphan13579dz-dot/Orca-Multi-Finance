@@ -94,7 +94,7 @@ export function ForexDetailPage({ pair }: { pair: string }) {
           <OrcaChart
             symbol={pair}
             assetType="forex"
-            defaultTimeframe="15m"
+            defaultTimeframe="1d"
             height={chartH}
             title={`${data.base}/${data.quote}`}
           />

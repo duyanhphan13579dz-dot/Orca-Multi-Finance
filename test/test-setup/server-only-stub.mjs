@@ -1,1 +1,2 @@
-export default {};
+const serverOnlyStub = {};
+export default serverOnlyStub;

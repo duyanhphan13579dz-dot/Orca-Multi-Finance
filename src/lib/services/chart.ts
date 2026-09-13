@@ -2,11 +2,10 @@ import "server-only";
 import { cached } from "../cache";
 import { buildMeta } from "../freshness";
 import * as binance from "../providers/binance";
-import { getYahooChart, yahooSymbolForPair, yahooIntervalFor } from "../providers/yahoo";
-import { getVnOhlcv, vnstockConfigured } from "./stocks";
+import { getFrankfurterSeries } from "../providers/forex";
+import { getYahooChart, yahooIntervalFor } from "../providers/yahoo";
+import { getVnOhlcv } from "./stocks";
 import * as vndirect from "../providers/vndirect";
-import { getSsiIntradayOhlc, getSsiIndexHistory } from "../providers/ssi-market-catalog";
-import { ssiFcConfigured } from "../providers/ssi-fcdata";
 import { validateBars, detectGaps, logQualityEvent } from "../quality";
 import { aggregateCandles, binanceInterval, TF_MS, tfsFor, type ChartAssetType, type ChartCandle } from "../chart-const";
 import { ema, rsi, macd, sma, supportResistance } from "../technical";
@@ -161,15 +160,24 @@ async function cryptoCandles(symbol: string, tf: string, limit: number): Promise
 }
 
 async function forexCandles(pair: string, tf: string, limit: number): Promise<{ candles: ChartCandle[]; source: string; note?: string }> {
-  const cfg = yahooIntervalFor(tf);
-  if (!cfg) throw new Error("unsupported forex timeframe");
-  const y = await getYahooChart(yahooSymbolForPair(pair), cfg.interval, cfg.range);
-  let candles = y.candles;
-  if (cfg.aggregate4h) candles = aggregateCandles(candles, TF_MS["4h"]);
+  const base = pair.slice(0, 3);
+  const quote = pair.slice(3, 6);
+  const days = tf === "1M" ? 3650 : tf === "1w" ? 1825 : 730;
+  const direct = await getFrankfurterSeries(base, quote, days);
+  let candles: ChartCandle[] = direct.map((x) => ({
+    time: Date.parse(`${x.date}T00:00:00Z`),
+    open: x.rate,
+    high: x.rate,
+    low: x.rate,
+    close: x.rate,
+    volume: 0,
+  }));
+  if (tf === "1w") candles = aggregateCandles(candles, TF_MS["1w"]);
+  if (tf === "1M") candles = aggregateCandles(candles, TF_MS["1M"]);
   return {
     candles: candles.slice(-limit),
-    source: "yahoo-fx (public candles)",
-    note: "Biquote chưa cấu hình — historical candles từ public data provider được phê duyệt; giá realtime vẫn qua forex engine",
+    source: "frankfurter-ecb (free, no key)",
+    note: "Chart FX dùng tỷ giá tham chiếu ECB/Frankfurter miễn phí, không cần API key; không phải dữ liệu intraday.",
   };
 }
 
@@ -199,65 +207,9 @@ export function validateIndexCandles(symbol: string, candles: ChartCandle[]): { 
   return { valid, rejected: candles.length - valid.length, reason: valid.length !== candles.length ? `${code}: candle ngoài biên ${bounds.min}-${bounds.max}` : undefined };
 }
 
-function ssiChartSymbol(symbol: string): string {
-  const aliases: Record<string, string> = {
-    VNINDEX: "VNINDEX",
-    VN30: "VN30",
-    HNXINDEX: "HNXINDEX",
-    HNX30: "HNX30",
-    UPCOM: "UPCOM",
-    UPCOMINDEX: "UPCOMINDEX",
-  };
-  return aliases[symbol] ?? symbol;
-}
-
 async function stockCandles(symbol: string, tf: string, limit: number): Promise<{ candles: ChartCandle[]; source: string; note?: string }> {
-  const intradayRes: Record<string, number> = { "1m": 1, "3m": 3, "5m": 5, "15m": 15, "30m": 30, "1h": 60 };
   const dayLimit =
     tf === "1d" ? Math.min(limit, 1500) : tf === "1w" ? Math.min(limit * 8, 2000) : Math.min(limit * 30, 2500);
-
-  // SSI is the canonical intraday source for both equities and supported VN indices.
-  // The same Asia/Ho_Chi_Minh timestamps then feed the identical chart pipeline.
-  if (intradayRes[tf] && ssiFcConfigured()) {
-    try {
-      const bars = await getSsiIntradayOhlc(ssiChartSymbol(symbol), {
-        resolution: intradayRes[tf],
-        pageSize: 1000,
-        maxPages: 5,
-      });
-      let candles = bars.map(toCandle).slice(-limit);
-      const indexQuality = validateIndexCandles(symbol, candles);
-      if (indexQuality.rejected && indexQuality.valid.length === 0) throw new Error("index_candles_out_of_range");
-      candles = indexQuality.valid;
-      if (candles.length) {
-        return {
-          candles,
-          source: "ssi-fcdata-intraday",
-          note: `SSI IntradayOhlc ${ssiChartSymbol(symbol)} · timezone Asia/Ho_Chi_Minh · resolution ${intradayRes[tf]}m`,
-        };
-      }
-    } catch {
-      /* fall through to daily source */
-    }
-  }
-
-  if (vndirect.isVnIndexSymbol(symbol) && ssiFcConfigured()) {
-    try {
-      const bars = await getSsiIndexHistory(ssiChartSymbol(symbol), { pageSize: Math.min(dayLimit, 2000) });
-      if (bars.length >= 5) {
-        const realBars = bars.filter((bar) => !bar.synthetic);
-        if (realBars.length < Math.max(5, bars.length * 0.8)) throw new Error("ssi_daily_index_missing_real_ohlc");
-        let candles: ChartCandle[] = realBars.map((bar) => ({ time: bar.time, open: bar.open, high: bar.high, low: bar.low, close: bar.close, volume: bar.volume ?? 0 }));
-        if (tf === "1w") candles = aggregateCandles(candles, TF_MS["1w"]);
-        if (tf === "1M") candles = aggregateCandles(candles, TF_MS["1M"]);
-        const indexQuality = validateIndexCandles(symbol, candles);
-        if (indexQuality.valid.length < Math.max(5, candles.length * 0.8)) throw new Error(indexQuality.reason ?? "index_candles_out_of_range");
-        return { candles: indexQuality.valid.slice(-limit), source: "ssi-fcdata-daily-index", note: `SSI DailyIndex ${ssiChartSymbol(symbol)} · đã loại ${indexQuality.rejected} nến ngoài biên` };
-      }
-    } catch {
-      /* fall through to legacy provider only when SSI history is unavailable */
-    }
-  }
 
   if (vndirect.isVnIndexSymbol(symbol)) {
     const bars = await vndirect.getVndIndexOhlcv(symbol, dayLimit);
@@ -268,7 +220,7 @@ async function stockCandles(symbol: string, tf: string, limit: number): Promise<
     if (indexQuality.valid.length < Math.max(5, candles.length * 0.8)) {
       throw new Error(indexQuality.reason ?? "index_fallback_out_of_range");
     }
-    return { candles: indexQuality.valid.slice(-limit), source: "vndirect-index-fallback", note: `SSI chưa trả OHLC lịch sử chỉ số; đã loại ${indexQuality.rejected} nến ngoài biên` };
+    return { candles: indexQuality.valid.slice(-limit), source: "vndirect-index-ohlcv", note: `VNDirect index OHLCV · đã loại ${indexQuality.rejected} nến ngoài biên` };
   }
 
   const r = await getVnOhlcv(symbol, dayLimit);
@@ -276,7 +228,7 @@ async function stockCandles(symbol: string, tf: string, limit: number): Promise<
   let candles = r.bars.map(toCandle);
   if (tf === "1w") candles = aggregateCandles(candles, TF_MS["1w"]).slice(-limit);
   if (tf === "1M") candles = aggregateCandles(candles, TF_MS["1M"]).slice(-limit);
-  return { candles: candles.slice(-limit), source: r.meta.source, note: r.meta.note };
+  return { candles: candles.slice(-limit), source: "vndirect-stock-ohlcv", note: r.meta.note };
 }
 
 function yahooCommoditySymbol(symbol: string): string | null {

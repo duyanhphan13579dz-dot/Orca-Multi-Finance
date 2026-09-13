@@ -48,11 +48,11 @@ export function CommodityLineChart({ options, height = 320 }: Props) {
 
   useEffect(() => {
     if (!options.length) {
-      setChartSymbol("");
+      window.setTimeout(() => setChartSymbol(""), 0);
       return;
     }
     if (!options.some((o) => o.chartSymbol === chartSymbol)) {
-      setChartSymbol(options[0].chartSymbol);
+      window.setTimeout(() => setChartSymbol(options[0].chartSymbol), 0);
     }
   }, [options, chartSymbol]);
 
@@ -66,9 +66,9 @@ export function CommodityLineChart({ options, height = 320 }: Props) {
 
   const hostRef = useRef<HTMLDivElement>(null);
   // Opaque handles — avoid LW Charts generic contravariance on setData
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+   
   const chartRef = useRef<any>(null);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+   
   const seriesRef = useRef<any>(null);
 
   useEffect(() => {

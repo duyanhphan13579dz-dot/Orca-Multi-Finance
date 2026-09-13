@@ -128,6 +128,7 @@ export function NotificationsTab() {
 export function DataRealtimeTab() {
   const { settings, update } = useSettings();
   const r = settings.realtime;
+  const [clockMs] = useState(() => Date.now());
   const { data } = useApi<{ providers: ProviderStatus[]; serverTime: string }>("/api/v1/system/providers", { refreshInterval: 10_000 });
 
   return (
@@ -154,7 +155,7 @@ export function DataRealtimeTab() {
                     </Badge>
                   </td>
                   <td className="num py-1.5 text-right text-text-secondary">{p.avgLatencyMs != null ? `${p.avgLatencyMs}ms` : "—"}</td>
-                  <td className="num py-1.5 text-right text-text-secondary">{p.lastSuccessAt ? formatAge(Date.now() - Date.parse(p.lastSuccessAt)) : "—"}</td>
+                  <td className="num py-1.5 text-right text-text-secondary">{p.lastSuccessAt ? formatAge(clockMs - Date.parse(p.lastSuccessAt)) : "—"}</td>
                   <td className={`py-1.5 text-right ${p.circuit === "open" ? "text-negative" : p.circuit === "half-open" ? "text-warning" : "text-positive"}`}>{p.circuit}</td>
                 </tr>
               ))}
@@ -164,7 +165,7 @@ export function DataRealtimeTab() {
             </tbody>
           </table>
         </div>
-        {data?.serverTime && <p className="text-[10.5px] text-text-muted">Cập nhật {formatAge(Date.now() - Date.parse(data.serverTime))} · làm mới tự động mỗi 10s</p>}
+        {data?.serverTime && <p className="text-[10.5px] text-text-muted">Cập nhật {formatAge(clockMs - Date.parse(data.serverTime))} · làm mới tự động mỗi 10s</p>}
       </Section>
 
       <Section title="Tuỳ chọn Realtime" desc="Backend luôn giữ quyền rate-limit/backoff — cấu hình này chỉ nằm trong ngưỡng an toàn.">

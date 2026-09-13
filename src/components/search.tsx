@@ -107,7 +107,7 @@ export function GlobalSearch() {
     return () => window.removeEventListener("keydown", handler);
   }, []);
 
-  useEffect(() => setSel(0), [items.length]);
+  useEffect(() => { const id = window.setTimeout(() => setSel(0), 0); return () => window.clearTimeout(id); }, [items.length]);
 
   const go = (item?: Item) => {
     const target = item ?? items[sel] ?? null;

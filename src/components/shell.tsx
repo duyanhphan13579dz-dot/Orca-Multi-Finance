@@ -55,20 +55,6 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
 
-  useEffect(() => {
-    setCollapsed(localStorage.getItem(SB_KEY) === "1");
-    const onKey = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "b") {
-        e.preventDefault();
-        toggle();
-      }
-      if (e.key === "Escape") setMobileOpen(false);
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
   const toggle = () => {
     setCollapsed((c) => {
       localStorage.setItem(SB_KEY, c ? "0" : "1");
@@ -76,7 +62,20 @@ export function AppShell({ children }: { children: ReactNode }) {
     });
   };
 
-  useEffect(() => setMobileOpen(false), [pathname]);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "b") {
+        e.preventDefault();
+        toggle();
+      }
+      if (e.key === "Escape") setMobileOpen(false);
+    };
+    const id = window.setTimeout(() => setCollapsed(localStorage.getItem(SB_KEY) === "1"), 0);
+    window.addEventListener("keydown", onKey);
+    return () => { window.clearTimeout(id); window.removeEventListener("keydown", onKey); };
+  }, []);
+
+  useEffect(() => { const id = window.setTimeout(() => setMobileOpen(false), 0); return () => window.clearTimeout(id); }, [pathname]);
 
   useEffect(() => {
     if (!mobileOpen) return;
@@ -274,9 +273,8 @@ function MarketChip() {
 
 function Clock() {
   const { settings } = useSettings();
-  const [now, setNow] = useState<Date | null>(null);
+  const [now, setNow] = useState(() => new Date());
   useEffect(() => {
-    setNow(new Date());
     const t = setInterval(() => setNow(new Date()), 1000);
     return () => clearInterval(t);
   }, []);
@@ -293,6 +291,7 @@ function NotificationsBell() {
   const router = useRouter();
   const { settings } = useSettings();
   const [open, setOpen] = useState(false);
+  const [clockMs] = useState(() => Date.now());
   const ref = useRef<HTMLDivElement>(null);
   const enabled = settings.notifications.marketNews;
   const apiUrl = useIdleApiUrl(enabled ? "/api/v1/news?limit=5" : "");
@@ -306,7 +305,7 @@ function NotificationsBell() {
     return () => document.removeEventListener("mousedown", onDoc);
   }, []);
 
-  const fresh = (data?.articles ?? []).filter((a) => Date.now() - Date.parse(a.publishedAt) < 30 * 60_000).length;
+  const fresh = (data?.articles ?? []).filter((a) => Date.parse(a.publishedAt) > clockMs - 30 * 60_000).length;
   return (
     <div className="relative" ref={ref}>
       <button
@@ -366,6 +365,7 @@ function UserMenu() {
   const router = useRouter();
   const { settings } = useSettings();
   const [open, setOpen] = useState(false);
+  const [clockMs] = useState(() => Date.now());
   const ref = useRef<HTMLDivElement>(null);
   const { data: me, mutate } = useApi<{ user: { email: string; name: string | null } }>("/api/v1/auth/me");
 

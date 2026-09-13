@@ -1,7 +1,6 @@
 import { eventBus } from "@/lib/events";
 import { candleAggregator } from "@/lib/realtime/candles";
 import { ensureBinanceWsStarted } from "@/lib/realtime/binance-ws";
-import { ensureSsiWsStarted } from "@/lib/realtime/ssi-ws";
 import { tfsFor, type ChartAssetType } from "@/lib/chart-const";
 
 export const dynamic = "force-dynamic";
@@ -27,7 +26,7 @@ export async function GET(req: Request) {
   }
 
   if (assetType === "crypto") ensureBinanceWsStarted();
-  else ensureSsiWsStarted();
+  // Stocks and forex use their historical HTTP providers; only crypto has a live chart stream.
 
   const encoder = new TextEncoder();
   let unsubscribe: (() => void) | null = null;
@@ -52,14 +51,10 @@ export async function GET(req: Request) {
         ];
         const snap = candleAggregator.snapshot(symbol, timeframe);
         send("snapshot", { symbol, timeframe, candle: snap, live: Boolean(snap), note: snap ? undefined : "chờ tick đầu tiên / stream đang kết nối" });
+      } else if (assetType === "stock") {
+        send("snapshot", { symbol, timeframe, candle: null, live: false, source: "vndirect-http", note: "VNDirect chart history dùng HTTP; không có websocket chart công khai." });
       } else {
-        unsubscribe = candleAggregator.subscribe(symbol, timeframe, { crypto: false });
-        offFns = [
-          eventBus.on(`candle.updated:${symbol}:${timeframe}`, (p) => send("chart.candle.updated", { ...(p as Record<string, unknown>), source: "ssi-websocket" })),
-          eventBus.on(`candle.closed:${symbol}:${timeframe}`, (p) => send("chart.candle.closed", { ...(p as Record<string, unknown>), source: "ssi-websocket" })),
-        ];
-        const snap = candleAggregator.snapshot(symbol, timeframe);
-        send("snapshot", { symbol, timeframe, candle: snap, live: Boolean(snap), source: "ssi-websocket", note: snap ? "SSI WS live candle" : "đang chờ SSI WS quote/index" });
+        send("snapshot", { symbol, timeframe, candle: null, live: false, source: "frankfurter-http", note: "Frankfurter/ECB chart history dùng HTTP; không có websocket FX công khai." });
       }
 
       heartbeat = setInterval(() => {

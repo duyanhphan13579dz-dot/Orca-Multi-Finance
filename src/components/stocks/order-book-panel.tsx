@@ -47,7 +47,7 @@ export function OrderBookPanel({ symbol, compact = false }: { symbol: string; co
 
   const mergeBook = useCallback(
     (partial: Partial<VnOrderBook> & { symbol?: string }) => {
-      setLive((prev) => {
+      window.setTimeout(() => setLive((prev) => {
         const base = prev ?? restData ?? null;
         if (!base && !partial.bids && !partial.asks) return prev;
         const next: VnOrderBook = {
@@ -76,7 +76,7 @@ export function OrderBookPanel({ symbol, compact = false }: { symbol: string; co
           next.imbalance = tot > 0 ? (next.bidTotal - next.askTotal) / tot : null;
         }
         return next;
-      });
+      }), 0);
     },
     [restData, symbol],
   );
@@ -84,12 +84,12 @@ export function OrderBookPanel({ symbol, compact = false }: { symbol: string; co
   // Sync REST payload into live state
   useEffect(() => {
     if (restData) {
-      setLive((prev) => {
-        if (!prev) return restData;
-        // Prefer fresher eventTime
-        if ((restData.eventTime ?? 0) >= (prev.eventTime ?? 0)) return restData;
-        return prev;
-      });
+      window.setTimeout(() => setLive((prev) => {
+          if (!prev) return restData;
+          // Prefer fresher eventTime
+          if ((restData.eventTime ?? 0) >= (prev.eventTime ?? 0)) return restData;
+          return prev;
+        }), 0);
     }
   }, [restData]);
 
@@ -100,7 +100,7 @@ export function OrderBookPanel({ symbol, compact = false }: { symbol: string; co
     let closed = false;
     const url = `/api/v1/stocks/${symbol}/orderbook/stream`;
     try {
-      setSseState("connecting");
+      window.setTimeout(() => setSseState("connecting"), 0);
       es = new EventSource(url);
       es.onopen = () => {
         if (!closed) setSseState("open");
@@ -152,7 +152,7 @@ export function OrderBookPanel({ symbol, compact = false }: { symbol: string; co
         }
       });
     } catch {
-      setSseState("off");
+      window.setTimeout(() => setSseState("off"), 0);
     }
     return () => {
       closed = true;
@@ -162,7 +162,8 @@ export function OrderBookPanel({ symbol, compact = false }: { symbol: string; co
   }, [symbol, mergeBook]);
 
   const data = live ?? restData;
-  const ageMs = data?.eventTime != null ? Date.now() - data.eventTime : restMeta?.ageMs;
+  const [clockMs] = useState(() => Date.now());
+  const ageMs = data?.eventTime != null ? clockMs - data.eventTime : restMeta?.ageMs;
   const freshness: FreshnessStatus =
     sseState === "open" && data && !data.fromLastSession
       ? "LIVE"

@@ -57,7 +57,7 @@ export function OrcaChart(props: ChartProps) {
 
     // Already in view on mount (detail pages) → load immediately
     if (typeof IntersectionObserver === "undefined") {
-      setReady(true);
+      window.setTimeout(() => setReady(true), 0);
       return;
     }
 

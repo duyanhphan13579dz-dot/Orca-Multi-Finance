@@ -107,13 +107,13 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
   const loadSeqRef = useRef(0);
   const dataRef = useRef<ChartMarketData | null>(null);
   const extraLevelsRef = useRef(extraLevels);
-  extraLevelsRef.current = extraLevels;
+  useEffect(() => { extraLevelsRef.current = extraLevels; }, [extraLevels]);
 
   const limit = historyLimit(assetType, tf);
   const { data, meta, isLoading } = useApi<ChartMarketData>(
     `/api/v1/chart/history?symbol=${encodeURIComponent(symbol)}&assetType=${assetType}&timeframe=${tf}&limit=${limit}`,
   );
-  dataRef.current = data ?? null;
+  useEffect(() => { dataRef.current = data ?? null; }, [data]);
 
   const readout = useMemo(() => {
     const ind = data?.indicators;
@@ -225,7 +225,7 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
       /* keep page alive if series fails */
     }
     // intentionally omit prefs.chartType — kind switches use setKind only
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [data, prefs.volume, prefs.indicators, extraLevels, engineReady]);
 
   const setKind = (kind: ChartKind) => {

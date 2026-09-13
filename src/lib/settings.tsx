@@ -212,7 +212,7 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
       /* corrupted storage */
     }
     applyToDom();
-    setHydrated(true);
+    window.setTimeout(() => setHydrated(true), 0);
 
     void (async () => {
       try {
