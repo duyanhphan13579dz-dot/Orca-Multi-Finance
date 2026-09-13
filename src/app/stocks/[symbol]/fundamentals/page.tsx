@@ -69,7 +69,25 @@ export default function StockFundamentalsPage({
 
   const metrics = useMemo(() => {
     if (!data) return null;
-    return buildSnapshotMetrics(data);
+    const closes = (data.bars ?? [])
+      .map((b) => b.close)
+      .filter((c): c is number => typeof c === "number");
+    return buildSnapshotMetrics({
+      income: (data.financials?.income ?? []) as Record<string, unknown>[],
+      balance: (data.financials?.balance ?? []) as Record<string, unknown>[],
+      cashflow: (data.financials?.cashflow ?? []) as Record<string, unknown>[],
+      price: data.quote?.price ?? null,
+      closes,
+      shares: data.financialHealth?.anchors?.shares ?? null,
+      growthYoy: (data.financialGrowth?.yoy ?? []).map((g) => ({
+        metric: g.metric,
+        changePct: g.changePct,
+      })),
+      growthQoq: (data.financialGrowth?.qoq ?? []).map((g) => ({
+        metric: g.metric,
+        changePct: g.changePct,
+      })),
+    });
   }, [data]);
 
   if (!symbol || (isLoading && !res)) {
@@ -85,13 +103,15 @@ export default function StockFundamentalsPage({
     );
   }
 
-  const groups = metrics?.groups ?? {
-    operating: [] as MetricCell[],
-    investment: [] as MetricCell[],
-    health: [] as MetricCell[],
-    cashflow: [] as MetricCell[],
-    valuation: [] as MetricCell[],
-  };
+  const empty: MetricCell[] = [];
+  const operating = metrics?.operating ?? empty;
+  const investment = metrics?.investment ?? empty;
+  const health = [
+    ...(metrics?.debtPillars ?? empty),
+    ...(metrics?.healthExtra ?? empty),
+  ];
+  const cashflow = metrics?.cashflow ?? empty;
+  const valuation = metrics?.valuation ?? empty;
 
   return (
     <div className="space-y-3">
@@ -114,32 +134,32 @@ export default function StockFundamentalsPage({
 
       {tab === "operating" && (
         <Panel title="Hiệu suất kinh doanh">
-          <MetricGrid items={groups.operating} />
+          <MetricGrid items={operating} />
         </Panel>
       )}
 
       {tab === "investment" && (
         <Panel title="Hiệu suất đầu tư & sinh lời">
-          <MetricGrid items={groups.investment} />
+          <MetricGrid items={investment} />
         </Panel>
       )}
 
       {tab === "health" && (
         <Panel title="Sức khỏe tài chính">
-          <MetricGrid items={groups.health} />
+          <MetricGrid items={health} />
         </Panel>
       )}
 
       {tab === "cashflow" && (
         <Panel title="Dòng tiền">
-          <MetricGrid items={groups.cashflow} />
+          <MetricGrid items={cashflow} />
         </Panel>
       )}
 
       {tab === "valuation" && (
         <div className="space-y-3">
           <Panel title="Định giá nhanh (multiples)">
-            <MetricGrid items={groups.valuation} />
+            <MetricGrid items={valuation} />
           </Panel>
           <ValuationPanel symbol={symbol} showAnalyst={false} />
         </div>
