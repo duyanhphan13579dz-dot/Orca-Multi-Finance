@@ -10,8 +10,8 @@ export const runtime = "nodejs";
 
 /**
  * GET /api/v1/stocks/:symbol/valuation
- * Phase 1+2 Valuation Engine.
- * Query: ?peers=0 to skip peer fetch (faster).
+ * Phase 1–3 Valuation Engine (multiples, cash-flow, DCF, sensitivity, fair value).
+ * Query: ?peers=0 to skip peer fetch.
  */
 export async function GET(
   req: Request,
@@ -82,6 +82,8 @@ export async function GET(
       }
     }
 
+    const fv = valuation.fairValue;
+
     return ok(
       {
         symbol,
@@ -91,30 +93,38 @@ export async function GET(
         multiples: valuation.multiples,
         phase1: valuation.phase1 ?? null,
         phase2: valuation.phase2 ?? null,
+        phase3: valuation.phase3 ?? null,
         historical: valuation.historical ?? null,
         peerComparison: valuation.peers ?? null,
         fairValues: {
-          dcfBase: valuation.dcf?.find((s) => s.label === "Base")?.intrinsicPerShare ?? null,
+          blended: fv?.blendedFairValue ?? null,
+          dcfBase: fv?.methods.dcfBase ?? null,
+          dcfBear: fv?.methods.dcfBear ?? null,
+          dcfBull: fv?.methods.dcfBull ?? null,
+          peBased: fv?.methods.peBased ?? null,
+          pbBased: fv?.methods.pbBased ?? null,
+          evEbitdaBased: fv?.methods.evEbitdaBased ?? null,
+          pfcfBased: fv?.methods.pfcfBased ?? null,
+          weightsUsed: fv?.weightsUsed ?? null,
           dcf: valuation.dcf,
         },
+        sensitivity: valuation.sensitivity ?? null,
         valuationScore: null,
-        valuationStatus: null,
-        upsideDownside:
-          valuation.dcf?.find((s) => s.label === "Base")?.marginOfSafetyPct ?? null,
+        valuationStatus: fv?.valuationStatus ?? null,
+        upsideDownside: fv?.upsidePct ?? null,
         confidence: valuation.confidence,
+        valuationConfidence: fv?.confidence ?? null,
         dataQuality: valuation.dataQuality,
         assumptions: {
-          dcf: valuation.dcf
-            ? {
-                method: "two-stage-fcf",
-                scenarios: valuation.dcf.map((s) => ({
-                  label: s.label,
-                  growthY1to5: s.growthY1to5,
-                  terminalGrowth: s.terminalGrowth,
-                  discountRate: s.discountRate,
-                })),
-              }
-            : null,
+          dcf: valuation.phase3?.dcf.map((d) => ({
+            label: d.label,
+            growthY1toN: d.assumptions.growthY1toN,
+            terminalGrowth: d.assumptions.terminalGrowth,
+            discountRate: d.assumptions.discountRate,
+            cashFlowType: d.assumptions.cashFlowType,
+            status: d.status,
+          })),
+          costOfCapital: valuation.phase3?.costOfCapital ?? null,
           fcfDefinition: valuation.phase2?.cashFlow.fcfDefinition ?? null,
         },
         notes: valuation.notes,

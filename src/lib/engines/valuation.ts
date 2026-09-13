@@ -7,12 +7,20 @@ import {
 } from "./valuation-phase1";
 import {
   buildPhase2Valuation,
-  VALUATION_ENGINE_VERSION_PHASE2,
   type Phase2ValuationResult,
   type PeerMetricRow,
   type HistoricalSummary,
 } from "./valuation-phase2";
+import {
+  buildPhase3Valuation,
+  VALUATION_ENGINE_VERSION_PHASE3,
+  type Phase3ValuationResult,
+  type FairValueAggregate,
+  type SensitivityMatrix,
+  type DcfResult,
+} from "./valuation-phase3";
 
+/** @deprecated legacy shape kept for intelligence consumers */
 export interface DcfScenario {
   label: "Bear" | "Base" | "Bull";
   growthY1to5: number;
@@ -43,13 +51,29 @@ export interface ValuationResult {
   };
   phase1?: Phase1ValuationResult;
   phase2?: Phase2ValuationResult;
+  phase3?: Phase3ValuationResult;
   historical?: HistoricalSummary | null;
   peers?: Phase2ValuationResult["peers"];
   dcf: DcfScenario[] | null;
+  fairValue?: FairValueAggregate | null;
+  sensitivity?: SensitivityMatrix | null;
   confidence: "high" | "medium" | "low";
   dataQuality: number | null;
   notes: string[];
   valuationEngineVersion: string;
+}
+
+function mapLegacyDcf(results: DcfResult[]): DcfScenario[] {
+  return results
+    .filter((d) => d.label === "Bear" || d.label === "Base" || d.label === "Bull")
+    .map((d) => ({
+      label: d.label as "Bear" | "Base" | "Bull",
+      growthY1to5: d.assumptions.growthY1toN,
+      terminalGrowth: d.assumptions.terminalGrowth,
+      discountRate: d.assumptions.discountRate,
+      intrinsicPerShare: d.fairPrice ?? 0,
+      marginOfSafetyPct: d.upsidePct ?? 0,
+    }));
 }
 
 export function computeValuation(input: {
@@ -69,6 +93,14 @@ export function computeValuation(input: {
     subject: PeerMetricRow;
     peers: PeerMetricRow[];
   };
+  riskFreeRate?: number | null;
+  beta?: number | null;
+  equityRiskPremium?: number | null;
+  costOfDebt?: number | null;
+  fairPe?: number | null;
+  fairPb?: number | null;
+  fairEvEbitda?: number | null;
+  fairPfcf?: number | null;
 }): ValuationResult {
   const { price, health } = input;
   const a = health.anchors;
@@ -140,45 +172,59 @@ export function computeValuation(input: {
       ? input.dividendsAnnual / marketCap
       : null;
 
-  let dcf: DcfScenario[] | null = null;
-  if (a.fcfTtm != null && a.fcfTtm > 0 && a.shares != null && a.shares > 0) {
-    const scenarios: Omit<DcfScenario, "intrinsicPerShare" | "marginOfSafetyPct">[] = [
-      { label: "Bear", growthY1to5: 0.02, terminalGrowth: 0.01, discountRate: 0.14 },
-      { label: "Base", growthY1to5: 0.08, terminalGrowth: 0.02, discountRate: 0.12 },
-      { label: "Bull", growthY1to5: 0.15, terminalGrowth: 0.025, discountRate: 0.105 },
-    ];
-    dcf = scenarios.map((s) => {
-      const fcf0 = a.fcfTtm as number;
-      let pv = 0;
-      let fcf = fcf0;
-      for (let y = 1; y <= 5; y++) {
-        fcf = fcf * (1 + s.growthY1to5);
-        pv += fcf / (1 + s.discountRate) ** y;
-      }
-      const g = Math.min(s.terminalGrowth, s.discountRate - 0.01);
-      const tv = (fcf * (1 + g)) / (s.discountRate - g);
-      pv += tv / (1 + s.discountRate) ** 5;
-      const perShare = pv / (a.shares as number);
-      return {
-        ...s,
-        terminalGrowth: g,
-        intrinsicPerShare: Math.round(perShare),
-        marginOfSafetyPct: Number(((perShare / price - 1) * 100).toFixed(1)),
-      };
-    });
-    notes.push(
-      "DCF two-stage: FCF hiện tại → 5 năm growth → terminal. Scenario thay đổi growth & discount rate; đây là ước lượng định lượng, không phải giá mục tiêu cam kết.",
-    );
-  } else {
-    notes.push("Thiếu FCF dương hoặc số lượng cổ phiếu — không đủ cơ sở chạy DCF.");
-  }
+  const peerMed = phase2.peers?.industry;
+  const hist = phase2.historical;
+  const fairPe = input.fairPe ?? peerMed?.peMedian ?? hist?.pe.median3y ?? null;
+  const fairPb = input.fairPb ?? peerMed?.pbMedian ?? hist?.pb.median3y ?? null;
+  const fairEvEbitda =
+    input.fairEvEbitda ?? peerMed?.evEbitdaMedian ?? hist?.evEbitda.median3y ?? null;
+  const fairPfcf = input.fairPfcf ?? peerMed?.pfcfMedian ?? null;
 
-  const confidence: ValuationResult["confidence"] =
-    pe != null && pb != null && dcf != null
+  const netDebt = a.totalDebt != null ? a.totalDebt - (a.cash ?? 0) : null;
+  const bvps =
+    a.equity != null && a.shares != null && a.shares > 0 ? a.equity / a.shares : null;
+
+  const phase3 = buildPhase3Valuation({
+    currentPrice: price > 0 ? price : null,
+    shares: a.shares,
+    baseFcf: a.fcfTtm,
+    netDebt,
+    marketCap,
+    totalDebt: a.totalDebt,
+    riskFreeRate: input.riskFreeRate ?? 0.03,
+    beta: input.beta ?? 1,
+    equityRiskPremium: input.equityRiskPremium ?? 0.08,
+    costOfDebt: input.costOfDebt ?? null,
+    taxRate: input.taxRate ?? 0.2,
+    fairPe,
+    fairPb,
+    fairEvEbitda,
+    fairPfcf,
+    epsTtm: a.epsTtm,
+    bvps,
+    ebitdaTtm: a.ebitdaTtm,
+    fcfTtm: a.fcfTtm,
+    dataQuality: phase1.dataQuality,
+  });
+  notes.push(...phase3.notes);
+
+  const dcfLegacy = mapLegacyDcf(phase3.dcf);
+  const dcf = dcfLegacy.length ? dcfLegacy : null;
+
+  const confMap = {
+    very_high: "high" as const,
+    high: "high" as const,
+    medium: "medium" as const,
+    low: "low" as const,
+    very_low: "low" as const,
+  };
+  const confidence =
+    confMap[phase3.fairValue.confidence] ??
+    (pe != null && pb != null && dcf != null
       ? "high"
       : pe != null || pb != null || evEbitda != null || pfcf != null
         ? "medium"
-        : "low";
+        : "low");
 
   return {
     price,
@@ -201,13 +247,16 @@ export function computeValuation(input: {
     },
     phase1,
     phase2,
+    phase3,
     historical: phase2.historical,
     peers: phase2.peers,
     dcf,
+    fairValue: phase3.fairValue,
+    sensitivity: phase3.sensitivity,
     confidence,
     dataQuality: phase1.dataQuality,
     notes,
-    valuationEngineVersion: VALUATION_ENGINE_VERSION_PHASE2,
+    valuationEngineVersion: VALUATION_ENGINE_VERSION_PHASE3,
   };
 }
 
@@ -219,8 +268,16 @@ export {
   calcFCFF,
   calcFCFE,
   calcPFCF,
-  VALUATION_ENGINE_VERSION_PHASE2 as VALUATION_ENGINE_VERSION,
 } from "./valuation-phase2";
+export {
+  buildPhase3Valuation,
+  runDcf,
+  buildSensitivityMatrix,
+  aggregateFairValue,
+  calcWacc,
+  calcCostOfEquity,
+  VALUATION_ENGINE_VERSION_PHASE3 as VALUATION_ENGINE_VERSION,
+} from "./valuation-phase3";
 export type { Phase1ValuationResult, ValuationInputs, MetricCell } from "./valuation-phase1";
 export type {
   Phase2ValuationResult,
@@ -228,3 +285,10 @@ export type {
   PeerComparisonResult,
   HistoricalSummary,
 } from "./valuation-phase2";
+export type {
+  Phase3ValuationResult,
+  FairValueAggregate,
+  SensitivityMatrix,
+  DcfResult,
+  ValuationStatus,
+} from "./valuation-phase3";
