@@ -41,10 +41,9 @@ export default function StockSymbolLayout({
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
               <h1 className="text-lg font-semibold tracking-tight sm:text-xl">{symbol}</h1>
-              {data?.quote?.name || data?.profile?.shortName ? (
+              {q?.name ? (
                 <span className="max-w-[12rem] truncate text-[11px] text-text-muted sm:max-w-[18rem] sm:text-[12px]">
-                  {(data as { profile?: { shortName?: string }; quote?: { name?: string } })?.profile?.shortName ??
-                    data?.quote?.name}
+                  {q.name}
                 </span>
               ) : null}
               <FreshnessDot status={meta?.freshness} ageMs={meta?.ageMs} />
@@ -81,15 +80,26 @@ export default function StockSymbolLayout({
                   : "—"
               }
             />
-            <Stat label="TC" value={q?.referencePrice != null ? fmtNum(q.referencePrice, 2) : "—"} className="hidden lg:block" />
-            <Stat label="Trần" value={q?.ceilingPrice != null ? fmtNum(q.ceilingPrice, 2) : "—"} className="hidden lg:block" />
-            <Stat label="Sàn" value={q?.floorPrice != null ? fmtNum(q.floorPrice, 2) : "—"} className="hidden lg:block" />
+            <Stat
+              label="TC"
+              value={q?.referencePrice != null ? fmtNum(q.referencePrice, 2) : "—"}
+              className="hidden lg:block"
+            />
+            <Stat
+              label="Trần"
+              value={q?.ceilingPrice != null ? fmtNum(q.ceilingPrice, 2) : "—"}
+              className="hidden lg:block"
+            />
+            <Stat
+              label="Sàn"
+              value={q?.floorPrice != null ? fmtNum(q.floorPrice, 2) : "—"}
+              className="hidden lg:block"
+            />
           </div>
         </div>
 
-        {/* Mobile: trần/sàn/TC strip */}
         {(q?.referencePrice != null || q?.ceilingPrice != null || q?.floorPrice != null) && (
-          <div className="flex gap-3 border-t border-border-subtle px-3 py-1.5 text-[11px] text-text-muted lg:hidden">
+          <div className="flex flex-wrap gap-x-3 gap-y-1 border-t border-border-subtle px-3 py-1.5 text-[11px] text-text-muted lg:hidden">
             {q?.referencePrice != null && (
               <span>
                 TC <span className="num text-text-secondary">{fmtNum(q.referencePrice, 2)}</span>
