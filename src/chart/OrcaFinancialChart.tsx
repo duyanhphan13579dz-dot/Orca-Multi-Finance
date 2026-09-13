@@ -315,32 +315,39 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
         {data?.candles?.length ? (
           <span className="text-[10px] text-text-muted">{data.candles.length} nến · {new Date(data.candles[data.candles.length - 1].time).toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh", hour: "2-digit", minute: "2-digit", day: "2-digit", month: "2-digit" })}</span>
         ) : null}
-        <div className="seg ml-auto">
-          {tfs.map((x) => (
-            <button key={x} data-active={tf === x} onClick={() => setTf(x)} type="button">
-              {TF_LABEL[x] ?? x}
-            </button>
-          ))}
+        <div className="chart-control-group ml-auto">
+          <span className="chart-control-label">Khung thời gian</span>
+          <div className="seg" role="group" aria-label="Khung thời gian biểu đồ">
+            {tfs.map((x) => (
+              <button key={x} data-active={tf === x} onClick={() => setTf(x)} type="button" aria-pressed={tf === x}>
+                {TF_LABEL[x] ?? x}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 
-      <div className="flex flex-col gap-1.5 border-b border-border-subtle px-3 py-1.5 sm:flex-row sm:flex-wrap sm:items-center">
-        <div className="seg shrink-0">
-          {CHART_KINDS.map((k) => (
-            <button key={k.id} type="button" data-active={activeKind === k.id} onClick={() => setKind(k.id)}>
-              {k.label}
-            </button>
-          ))}
+      <div className="flex flex-wrap items-end gap-3 border-b border-border-subtle px-3 py-2.5">
+        <div className="chart-control-group">
+          <span className="chart-control-label">Dạng biểu đồ</span>
+          <div className="seg" role="group" aria-label="Dạng biểu đồ">
+            {CHART_KINDS.map((k) => (
+              <button key={k.id} type="button" data-active={activeKind === k.id} onClick={() => setKind(k.id)} aria-pressed={activeKind === k.id}>
+                {k.label}
+              </button>
+            ))}
+          </div>
         </div>
 
-        <div className="hidden h-4 w-px bg-border-subtle sm:block" />
-
-        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
-          <span className="mr-0.5 text-[9.5px] font-semibold uppercase tracking-wider text-text-muted">Overlay</span>
+        <div className="chart-control-group min-w-0 flex-1">
+          <span className="chart-control-label">Chỉ báo</span>
+          <div className="flex min-w-0 flex-wrap items-center gap-1">
+            <span className="mr-0.5 text-[9.5px] font-semibold tracking-wide text-text-muted">Overlay</span>
           {OVERLAY_INDS.map(renderChip)}
-          <span className="mx-1 hidden h-3.5 w-px bg-border-subtle sm:inline-block" />
-          <span className="mr-0.5 text-[9.5px] font-semibold uppercase tracking-wider text-text-muted">Osc</span>
+            <span className="mx-1 hidden h-3.5 w-px bg-border-subtle sm:inline-block" />
+            <span className="mr-0.5 text-[9.5px] font-semibold tracking-wide text-text-muted">Osc</span>
           {OSC_INDS.map(renderChip)}
+          </div>
         </div>
       </div>
 

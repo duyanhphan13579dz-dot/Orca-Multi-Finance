@@ -276,9 +276,12 @@ function Clock() {
   // Keep the server and first client render deterministic; the live time starts after hydration.
   const [now, setNow] = useState<Date | null>(null);
   useEffect(() => {
-    setNow(new Date());
+    const initial = window.setTimeout(() => setNow(new Date()), 0);
     const t = setInterval(() => setNow(new Date()), 1000);
-    return () => clearInterval(t);
+    return () => {
+      window.clearTimeout(initial);
+      clearInterval(t);
+    };
   }, []);
   const tz = settings.profile.timezone || "Asia/Ho_Chi_Minh";
   return (

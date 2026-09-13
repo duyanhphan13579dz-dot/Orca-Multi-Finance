@@ -119,6 +119,75 @@ body {
   font-feature-settings: "tnum" 1;
 }
 
+/* Compact, tactile control groups used by charts and market workspaces. */
+.seg {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.125rem;
+  min-height: 2rem;
+  padding: 0.1875rem;
+  overflow-x: auto;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 0.625rem;
+  background: color-mix(in srgb, var(--color-surface-primary) 82%, transparent);
+  scrollbar-width: none;
+}
+.seg::-webkit-scrollbar {
+  display: none;
+}
+.seg > button {
+  min-height: 1.5rem;
+  padding: 0.25rem 0.625rem;
+  border: 1px solid transparent;
+  border-radius: 0.375rem;
+  color: var(--color-text-muted);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  line-height: 1.2;
+  white-space: nowrap;
+  transition: color 140ms ease, background-color 140ms ease, border-color 140ms ease;
+}
+.seg > button:hover {
+  color: var(--color-text-primary);
+  background: var(--color-surface-elevated);
+}
+.seg > button[data-active="true"] {
+  border-color: color-mix(in srgb, var(--color-accent-primary) 42%, transparent);
+  color: var(--color-text-primary);
+  background: color-mix(in srgb, var(--color-accent-primary) 16%, var(--color-surface-elevated));
+  box-shadow: 0 1px 2px rgb(0 0 0 / 14%);
+}
+.chart-control-group {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0.375rem;
+}
+.chart-control-label {
+  color: var(--color-text-muted);
+  font-size: 0.59375rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+.chart-control-group .seg {
+  width: max-content;
+  max-width: 100%;
+}
+@media (max-width: 640px) {
+  .chart-control-group {
+    flex: 1 1 100%;
+  }
+  .chart-control-group .seg {
+    width: 100%;
+  }
+  .chart-control-group .seg > button {
+    flex: 1 0 auto;
+  }
+}
+
 .panel {
   border: 1px solid var(--color-border-subtle);
   background: var(--color-surface-primary);

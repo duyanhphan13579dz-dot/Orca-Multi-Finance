@@ -171,12 +171,15 @@ export function CommodityLineChart({ options, height = 320 }: Props) {
             </option>
           ))}
         </select>
-        <div className="seg ml-auto">
-          {COMMODITY_TFS.map((x) => (
-            <button key={x} type="button" data-active={tf === x} onClick={() => setTf(x)}>
-              {TF_LABEL[x] ?? x}
-            </button>
-          ))}
+        <div className="chart-control-group ml-auto">
+          <span className="chart-control-label">Khung thời gian</span>
+          <div className="seg" role="group" aria-label="Khung thời gian biểu đồ">
+            {COMMODITY_TFS.map((x) => (
+              <button key={x} type="button" data-active={tf === x} onClick={() => setTf(x)} aria-pressed={tf === x}>
+                {TF_LABEL[x] ?? x}
+              </button>
+            ))}
+          </div>
         </div>
       </header>
       <div className="relative p-2">
