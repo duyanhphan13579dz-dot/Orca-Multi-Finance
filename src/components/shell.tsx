@@ -273,27 +273,23 @@ function MarketChip() {
 
 function Clock() {
   const { settings } = useSettings();
-  const [mounted, setMounted] = useState(false);
-  const [now, setNow] = useState<Date | null>(null);
+  const [timeText, setTimeText] = useState("--:--:--");
   const tz = settings.profile.timezone || "Asia/Ho_Chi_Minh";
+  const zoneLabel = tz === "Asia/Ho_Chi_Minh" ? "VN" : tz.split("/").pop() || tz;
 
   useEffect(() => {
-    setMounted(true);
-    setNow(new Date());
-    const timer = setInterval(() => setNow(new Date()), 1000);
+    const updateTime = () => {
+      setTimeText(new Date().toLocaleTimeString("vi-VN", { timeZone: tz, hour12: false }));
+    };
+    updateTime();
+    const timer = setInterval(updateTime, 1000);
     return () => clearInterval(timer);
-  }, []);
+  }, [tz]);
 
   return (
     <div className="num hidden items-center gap-1.5 text-[12px] text-text-secondary xl:flex" title={`Múi giờ: ${tz}`}>
-      {mounted ? (
-        <>
-          <span className="text-text-muted">{tz === "Asia/Ho_Chi_Minh" ? "VN" : tz.split("/").pop()}</span>
-          <span>{now?.toLocaleTimeString("vi-VN", { timeZone: tz, hour12: false }) ?? "--:--:--"}</span>
-        </>
-      ) : (
-        <span suppressHydrationWarning>--:--:--</span>
-      )}
+      <span className="text-text-muted">{zoneLabel}</span>
+      <span suppressHydrationWarning>{timeText}</span>
     </div>
   );
 }
