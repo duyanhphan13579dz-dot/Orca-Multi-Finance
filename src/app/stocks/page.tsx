@@ -40,7 +40,7 @@ export default function VnMarketCenterPage() {
   if (isLoading && !res) return <Loading rows={12} />;
 
   return (
-    <div className="space-y-3">
+    <div className="mx-auto flex w-full max-w-[1440px] flex-col gap-4">
       <Panel pad={false}>
         <div className="flex flex-wrap items-center gap-2 p-3 pb-2 sm:p-4 sm:pb-3">
           <h1 className="flex items-center gap-2 text-base font-semibold sm:text-lg">
@@ -65,7 +65,7 @@ export default function VnMarketCenterPage() {
           </span>
         </div>
         {data?.indices?.length ? (
-          <div className="grid grid-cols-2 gap-2 px-3 pb-3 sm:px-4 sm:pb-4 md:grid-cols-4">
+          <div className="grid grid-cols-2 gap-2 px-3 pb-3 sm:px-4 sm:pb-4 md:grid-cols-4 xl:gap-3">
             {data.indices.slice(0, 4).map((i, big) => (
               <div
                 key={i.code}
