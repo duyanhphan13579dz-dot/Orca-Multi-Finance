@@ -396,6 +396,14 @@ export {
   getIndustryMethodWeights,
   VALUATION_ENGINE_VERSION_PHASE5 as VALUATION_ENGINE_VERSION,
 } from "./valuation-phase5";
+export {
+  buildPhase6Valuation,
+  buildPhase6ValuationSync,
+  buildAnalystSnapshot,
+  buildDeterministicNarrative,
+  explainValuationWithLlm,
+  VALUATION_ENGINE_VERSION_PHASE6,
+} from "./valuation-phase6";
 export type { Phase1ValuationResult, ValuationInputs, MetricCell } from "./valuation-phase1";
 export type {
   Phase2ValuationResult,
@@ -425,3 +433,8 @@ export type {
   IndustryMethodWeights,
   ScoreGrade,
 } from "./valuation-phase5";
+export type {
+  Phase6ValuationResult,
+  ValuationAnalystSnapshot,
+  AnalystEngineResult,
+} from "./valuation-phase6";
