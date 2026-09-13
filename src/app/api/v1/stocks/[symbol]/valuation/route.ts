@@ -10,7 +10,7 @@ export const runtime = "nodejs";
 
 /**
  * GET /api/v1/stocks/:symbol/valuation
- * Phase 1–4 Valuation Engine.
+ * Phase 1–5 Valuation Engine.
  * Query: ?peers=0 to skip peer fetch.
  */
 export async function GET(
@@ -86,6 +86,7 @@ export async function GET(
 
     const fv = valuation.fairValue;
     const p4 = valuation.phase4;
+    const p5 = valuation.phase5;
 
     return ok(
       {
@@ -98,10 +99,15 @@ export async function GET(
         phase2: valuation.phase2 ?? null,
         phase3: valuation.phase3 ?? null,
         phase4: p4 ?? null,
+        phase5: p5 ?? null,
         historical: valuation.historical ?? null,
         peerComparison: valuation.peers ?? null,
         fairValues: {
-          blended: fv?.blendedFairValue ?? null,
+          blended: p5?.finalFairValue ?? fv?.blendedFairValue ?? null,
+          low: p5?.confidenceBands.low ?? null,
+          base: p5?.confidenceBands.base ?? null,
+          high: p5?.confidenceBands.high ?? null,
+          bandWidthPct: p5?.confidenceBands.bandWidthPct ?? null,
           dcfBase: fv?.methods.dcfBase ?? null,
           dcfBear: fv?.methods.dcfBear ?? null,
           dcfBull: fv?.methods.dcfBull ?? null,
@@ -113,16 +119,22 @@ export async function GET(
           ddm: p4?.methodPrices.ddm ?? null,
           nav: p4?.methodPrices.nav ?? null,
           sotp: p4?.methodPrices.sotp ?? null,
+          industryWeightsApplied: p5?.score.industryBlend.weightsApplied ?? null,
           weightsUsed: fv?.weightsUsed ?? null,
           dcf: valuation.dcf,
         },
         sensitivity: valuation.sensitivity ?? null,
-        valuationScore: null,
-        valuationStatus: fv?.valuationStatus ?? null,
-        upsideDownside: fv?.upsidePct ?? null,
+        valuationScore: p5?.valuationScore ?? null,
+        valuationGrade: p5?.grade ?? null,
+        valuationScoreBreakdown: p5?.score.breakdown ?? null,
+        valuationStatus: p5?.valuationStatus ?? fv?.valuationStatus ?? null,
+        upsideDownside: p5?.score.upsidePct ?? fv?.upsidePct ?? null,
         confidence: valuation.confidence,
         valuationConfidence: fv?.confidence ?? null,
+        confidenceBands: p5?.confidenceBands ?? null,
         dataQuality: valuation.dataQuality,
+        industryProfile: p5?.profileId ?? null,
+        industryMethodWeights: p5?.industryWeights ?? null,
         assumptions: {
           dcf: valuation.phase3?.dcf.map((d) => ({
             label: d.label,
