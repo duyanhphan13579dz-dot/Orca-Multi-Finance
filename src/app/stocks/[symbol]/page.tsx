@@ -36,14 +36,15 @@ export default function StockOverviewPage({ params }: { params: Promise<{ symbol
 
   return (
     <div className="space-y-3">
-      <div className="grid gap-3 xl:grid-cols-[1fr_minmax(320px,420px)]">
+      <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(280px,380px)]">
         <div className="min-w-0">
           {q || data.bars.length > 0 ? (
             <OrcaChart
               symbol={data.symbol}
               assetType="stock"
               defaultTimeframe="1d"
-              height={420}
+              height={320}
+              className="sm:[&_[data-chart]]:min-h-[380px] xl:[&_[data-chart]]:min-h-[420px]"
               title={data.symbol}
               extraLevels={[
                 ...(q?.ceilingPrice != null
@@ -59,7 +60,7 @@ export default function StockOverviewPage({ params }: { params: Promise<{ symbol
             />
           ) : (
             <Panel title="Biểu đồ">
-              <p className="text-[12px] text-ink-3">Chưa có chuỗi giá để vẽ biểu đồ.</p>
+              <p className="text-[12px] text-text-muted">Chưa có chuỗi giá để vẽ biểu đồ.</p>
             </Panel>
           )}
         </div>
@@ -80,10 +81,10 @@ export default function StockOverviewPage({ params }: { params: Promise<{ symbol
       <div className="grid gap-3 md:grid-cols-2">
         <Panel title="Trạng thái cổ phiếu">
           {data.technical ? (
-            <ul className="space-y-1 text-[12px] text-ink-2">
-              <li>
-                Xu hướng:{" "}
-                <strong>
+            <ul className="space-y-1.5 text-[12px] text-text-secondary">
+              <li className="flex justify-between gap-2">
+                <span className="text-text-muted">Xu hướng</span>
+                <strong className="text-text-primary">
                   {String(
                     (data.technical.trend as { label?: string } | null)?.label ??
                       data.technical.trend ??
@@ -91,16 +92,23 @@ export default function StockOverviewPage({ params }: { params: Promise<{ symbol
                   )}
                 </strong>
               </li>
-              <li>RSI(14): {data.technical.rsi14 != null ? data.technical.rsi14.toFixed(1) : "—"}</li>
-              <li>
-                Biến động 30d:{" "}
-                {data.technical.volatility30d != null
-                  ? `${(data.technical.volatility30d * 100).toFixed(1)}%`
-                  : "—"}
+              <li className="flex justify-between gap-2">
+                <span className="text-text-muted">RSI(14)</span>
+                <span className="num">
+                  {data.technical.rsi14 != null ? data.technical.rsi14.toFixed(1) : "—"}
+                </span>
+              </li>
+              <li className="flex justify-between gap-2">
+                <span className="text-text-muted">Biến động 30d</span>
+                <span className="num">
+                  {data.technical.volatility30d != null
+                    ? `${(data.technical.volatility30d * 100).toFixed(1)}%`
+                    : "—"}
+                </span>
               </li>
             </ul>
           ) : (
-            <p className="text-[12px] text-ink-3">Chưa đủ dữ liệu kỹ thuật.</p>
+            <p className="text-[12px] text-text-muted">Chưa đủ dữ liệu kỹ thuật.</p>
           )}
         </Panel>
 
