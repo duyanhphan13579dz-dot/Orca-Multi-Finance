@@ -43,9 +43,9 @@ export async function GET(
       computeFinancialHealth({ income, balance, cashflow }, { symbol });
 
     const capexFromGroup =
-      typeof health.groups.cashflow?.ocfTtm === "number" &&
-      typeof health.groups.cashflow?.fcfTtm === "number"
-        ? health.groups.cashflow.ocfTtm - health.groups.cashflow.fcfTtm
+      typeof health?.groups?.cashflow?.ocfTtm === "number" &&
+      typeof health?.groups?.cashflow?.fcfTtm === "number"
+        ? (health.groups!.cashflow!.ocfTtm as number) - (health.groups!.cashflow!.fcfTtm as number)
         : null;
 
     let valuation = computeValuation({
@@ -104,31 +104,31 @@ export async function GET(
         peerComparison: valuation.peers ?? null,
         fairValues: {
           blended: p5?.finalFairValue ?? fv?.blendedFairValue ?? null,
-          low: p5?.confidenceBands.low ?? null,
-          base: p5?.confidenceBands.base ?? null,
-          high: p5?.confidenceBands.high ?? null,
-          bandWidthPct: p5?.confidenceBands.bandWidthPct ?? null,
-          dcfBase: fv?.methods.dcfBase ?? null,
-          dcfBear: fv?.methods.dcfBear ?? null,
-          dcfBull: fv?.methods.dcfBull ?? null,
-          peBased: fv?.methods.peBased ?? null,
-          pbBased: fv?.methods.pbBased ?? null,
-          evEbitdaBased: fv?.methods.evEbitdaBased ?? null,
-          pfcfBased: fv?.methods.pfcfBased ?? null,
-          residualIncome: p4?.methodPrices.residualIncome ?? null,
-          ddm: p4?.methodPrices.ddm ?? null,
-          nav: p4?.methodPrices.nav ?? null,
-          sotp: p4?.methodPrices.sotp ?? null,
-          industryWeightsApplied: p5?.score.industryBlend.weightsApplied ?? null,
+          low: p5?.confidenceBands?.low ?? null,
+          base: p5?.confidenceBands?.base ?? null,
+          high: p5?.confidenceBands?.high ?? null,
+          bandWidthPct: p5?.confidenceBands?.bandWidthPct ?? null,
+          dcfBase: fv?.methods?.dcfBase ?? null,
+          dcfBear: fv?.methods?.dcfBear ?? null,
+          dcfBull: fv?.methods?.dcfBull ?? null,
+          peBased: fv?.methods?.peBased ?? null,
+          pbBased: fv?.methods?.pbBased ?? null,
+          evEbitdaBased: fv?.methods?.evEbitdaBased ?? null,
+          pfcfBased: fv?.methods?.pfcfBased ?? null,
+          residualIncome: p4?.methodPrices?.residualIncome ?? null,
+          ddm: p4?.methodPrices?.ddm ?? null,
+          nav: p4?.methodPrices?.nav ?? null,
+          sotp: p4?.methodPrices?.sotp ?? null,
+          industryWeightsApplied: p5?.score?.industryBlend?.weightsApplied ?? null,
           weightsUsed: fv?.weightsUsed ?? null,
           dcf: valuation.dcf,
         },
         sensitivity: valuation.sensitivity ?? null,
         valuationScore: p5?.valuationScore ?? null,
         valuationGrade: p5?.grade ?? null,
-        valuationScoreBreakdown: p5?.score.breakdown ?? null,
+        valuationScoreBreakdown: p5?.score?.breakdown ?? null,
         valuationStatus: p5?.valuationStatus ?? fv?.valuationStatus ?? null,
-        upsideDownside: p5?.score.upsidePct ?? fv?.upsidePct ?? null,
+        upsideDownside: p5?.score?.upsidePct ?? fv?.upsidePct ?? null,
         confidence: valuation.confidence,
         valuationConfidence: fv?.confidence ?? null,
         confidenceBands: p5?.confidenceBands ?? null,
@@ -136,7 +136,7 @@ export async function GET(
         industryProfile: p5?.profileId ?? null,
         industryMethodWeights: p5?.industryWeights ?? null,
         assumptions: {
-          dcf: valuation.phase3?.dcf.map((d) => ({
+          dcf: (valuation.phase3?.dcf ?? []).map((d) => ({
             label: d.label,
             growthY1toN: d.assumptions.growthY1toN,
             terminalGrowth: d.assumptions.terminalGrowth,
@@ -145,7 +145,7 @@ export async function GET(
             status: d.status,
           })),
           costOfCapital: valuation.phase3?.costOfCapital ?? null,
-          fcfDefinition: valuation.phase2?.cashFlow.fcfDefinition ?? null,
+          fcfDefinition: valuation.phase2?.cashFlow?.fcfDefinition ?? null,
           residualIncome: p4?.residualIncome
             ? {
                 status: p4.residualIncome.status,
