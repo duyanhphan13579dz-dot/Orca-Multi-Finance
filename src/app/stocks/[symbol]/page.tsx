@@ -12,8 +12,25 @@ import { ValuationPanel } from "@/components/stocks/valuation-panel";
 import { StockStructurePanel } from "@/components/stocks/structure-panel";
 import { OrderBookPanel } from "@/components/stocks/order-book-panel";
 
+function useChartHeight() {
+  const [h, setH] = useState(320);
+  useEffect(() => {
+    const apply = () => {
+      const w = window.innerWidth;
+      if (w >= 1280) setH(420);
+      else if (w >= 640) setH(380);
+      else setH(300);
+    };
+    apply();
+    window.addEventListener("resize", apply);
+    return () => window.removeEventListener("resize", apply);
+  }, []);
+  return h;
+}
+
 export default function StockOverviewPage({ params }: { params: Promise<{ symbol: string }> }) {
   const [symbol, setSymbol] = useState("");
+  const chartH = useChartHeight();
   useEffect(() => {
     params.then((p) => setSymbol(p.symbol.toUpperCase()));
   }, [params]);
@@ -43,8 +60,7 @@ export default function StockOverviewPage({ params }: { params: Promise<{ symbol
               symbol={data.symbol}
               assetType="stock"
               defaultTimeframe="1d"
-              height={320}
-              className="sm:[&_[data-chart]]:min-h-[380px] xl:[&_[data-chart]]:min-h-[420px]"
+              height={chartH}
               title={data.symbol}
               extraLevels={[
                 ...(q?.ceilingPrice != null
