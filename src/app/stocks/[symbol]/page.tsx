@@ -8,6 +8,7 @@ import { OrcaChart } from "@/components/orca-chart";
 import { TechnicalPanel } from "@/components/technical-panel";
 import { TechRecoPanel } from "@/components/stocks/tech-reco-panel";
 import { StockNewsSentiment } from "@/components/stocks/news-sentiment-chip";
+import { ValuationPanel } from "@/components/stocks/valuation-panel";
 import { StockStructurePanel } from "@/components/stocks/structure-panel";
 import { OrderBookPanel } from "@/components/stocks/order-book-panel";
 
@@ -74,6 +75,8 @@ export default function StockOverviewPage({ params }: { params: Promise<{ symbol
 
       {data.technical ? <TechnicalPanel tech={data.technical} patterns={data.patterns} /> : null}
 
+      <ValuationPanel symbol={data.symbol} compact showAnalyst={false} />
+
       <div className="grid gap-3 md:grid-cols-2">
         <Panel title="Trạng thái cổ phiếu">
           {data.technical ? (
@@ -81,7 +84,11 @@ export default function StockOverviewPage({ params }: { params: Promise<{ symbol
               <li>
                 Xu hướng:{" "}
                 <strong>
-                  {String((data.technical.trend as { label?: string } | null)?.label ?? data.technical.trend ?? "—")}
+                  {String(
+                    (data.technical.trend as { label?: string } | null)?.label ??
+                      data.technical.trend ??
+                      "—",
+                  )}
                 </strong>
               </li>
               <li>RSI(14): {data.technical.rsi14 != null ? data.technical.rsi14.toFixed(1) : "—"}</li>
