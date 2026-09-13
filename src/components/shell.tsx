@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ComponentType, type ReactNode } from "react";
 import {
   Bell, Bot, Boxes, CandlestickChart, ChartNoAxesCombined, ChevronsLeft, ChevronsRight, Coins, DollarSign,
   Eye, FlaskConical, GaugeCircle, Globe2, Grid2x2, Home, Landmark, LogOut, Menu, Newspaper, NotebookPen, Settings, X,
@@ -15,7 +15,7 @@ import { useSettings } from "@/lib/settings";
 import { FreshnessDot } from "@/components/ui";
 import type { NewsArticle } from "@/lib/types";
 
-const NAV_SECTIONS: { title: string; items: { href: string; label: string; icon: React.ComponentType<{ className?: string }>; core?: boolean }[] }[] = [
+const NAV_SECTIONS: { title: string; items: { href: string; label: string; icon: ComponentType<{ className?: string }>; core?: boolean }[] }[] = [
   {
     title: "THỊ TRƯỜNG",
     items: [
@@ -50,7 +50,7 @@ const NAV_SECTIONS: { title: string; items: { href: string; label: string; icon:
 
 const SB_KEY = "orca.sidebar.collapsed";
 
-export function AppShell({ children }: { children: React.ReactNode }) {
+export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
