@@ -41,7 +41,6 @@ const SUGGESTED = [
 const MAX_HISTORY = 8;
 
 function renderInline(text: string) {
-  // Simple **bold** support for structured agent answers
   const parts = text.split(/(\*\*[^*]+\*\*)/g);
   return parts.map((part, i) => {
     if (part.startsWith("**") && part.endsWith("**") && part.length > 4) {
@@ -94,13 +93,15 @@ export default function AgentPage() {
     });
   }
 
-  // Keep a ref so history is consistent even before React state flushes
   const messagesRef = useRef(messages);
   messagesRef.current = messages;
 
   useEffect(() => {
-    // After each message update, scroll to the latest content while keeping footer visible
-    bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+    const el = listRef.current;
+    if (!el) return;
+    requestAnimationFrame(() => {
+      el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+    });
   }, [messages, busy]);
 
   async function ask(q: string) {
@@ -108,7 +109,6 @@ export default function AgentPage() {
     if (!question || busy) return;
     setBusy(true);
 
-    // Build history from prior turns (exclude the brand-new user message)
     const prior = messagesRef.current
       .filter((m) => m.text?.trim())
       .slice(-MAX_HISTORY)
@@ -154,15 +154,17 @@ export default function AgentPage() {
     }
   }
 
+  const showSuggestions = messages.length <= 2;
+
   return (
-    /*
-      Chat layout: fill available viewport height under AppShell header.
-      - Header panel fixed size
-      - Message list grows (flex-1) and scrolls independently
-      - Suggestions + input stay pinned at the bottom so full answers remain readable
-        and the chat frame footer/background stays visible.
-    */
-    <div className="mx-auto flex h-[calc(100dvh-7.5rem)] max-h-[calc(100dvh-7.5rem)] w-full max-w-3xl flex-col gap-2 sm:h-[calc(100dvh-6.5rem)] sm:max-h-[calc(100dvh-6.5rem)]">
+    <div
+      className="mx-auto flex w-full max-w-3xl flex-col gap-2"
+      style={{
+        height: "calc(100dvh - 9.5rem)",
+        maxHeight: "calc(100dvh - 9.5rem)",
+        minHeight: 0,
+      }}
+    >
       <Panel pad={false} className="shrink-0">
         <div className="flex items-center justify-between gap-3 p-3 sm:p-4">
           <div className="min-w-0">
@@ -177,21 +179,21 @@ export default function AgentPage() {
         </div>
       </Panel>
 
-      {/* Scrollable message area — takes all remaining height */}
       <div
         ref={listRef}
-        className="panel min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain p-3 sm:p-3.5"
+        className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain rounded-xl border border-line bg-panel p-3 sm:p-3.5"
+        style={{ WebkitOverflowScrolling: "touch" }}
       >
         {messages.map((m, i) => (
           <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
             <div
-              className={`max-w-[min(100%,42rem)] rounded-lg border px-3.5 py-2.5 text-[13px] leading-relaxed ${
+              className={`rounded-lg border px-3.5 py-2.5 text-[13px] leading-relaxed ${
                 m.role === "user"
-                  ? "border-accent/30 bg-accent/10 text-ink"
-                  : "w-full border-line bg-panel-2 text-ink sm:w-auto sm:max-w-[92%]"
+                  ? "max-w-[min(100%,28rem)] border-accent/30 bg-accent/10 text-ink"
+                  : "w-full max-w-full border-line bg-panel-2 text-ink"
               }`}
             >
-              <div className="space-y-1.5 break-words [overflow-wrap:anywhere]">
+              <div className="space-y-1.5 break-words [overflow-wrap:anywhere] [word-break:break-word]">
                 {m.role === "agent" ? renderAnswer(m.text) : m.text}
               </div>
             </div>
@@ -202,31 +204,31 @@ export default function AgentPage() {
             <span className="size-1.5 animate-pulse rounded-full bg-accent" /> Đang phân tích…
           </div>
         )}
-        {/* Anchor so we can scroll to the end while keeping the input bar in view */}
-        <div ref={bottomRef} className="h-1 shrink-0" aria-hidden />
+        <div ref={bottomRef} className="h-3 shrink-0" aria-hidden />
       </div>
 
-      {/* Footer zone: suggestions + composer — always visible */}
-      <div className="flex shrink-0 flex-col gap-2 border-t border-line/60 bg-canvas/80 pt-2 backdrop-blur-sm">
-        <div className="flex flex-wrap gap-1.5">
-          {SUGGESTED.map((s) => (
-            <button
-              key={s}
-              onClick={() => ask(s)}
-              disabled={busy}
-              className="rounded-full border border-line bg-panel px-2.5 py-1 text-[11px] text-ink-2 hover:border-accent/40 hover:text-accent disabled:opacity-50"
-            >
-              {s}
-            </button>
-          ))}
-        </div>
+      <div className="flex shrink-0 flex-col gap-2 rounded-xl border border-line bg-canvas px-2.5 pb-2 pt-2 shadow-[0_-4px_16px_rgba(0,0,0,0.25)]">
+        {showSuggestions && (
+          <div className="flex gap-1.5 overflow-x-auto pb-0.5 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+            {SUGGESTED.map((s) => (
+              <button
+                key={s}
+                onClick={() => ask(s)}
+                disabled={busy}
+                className="shrink-0 rounded-full border border-line bg-panel px-2.5 py-1 text-[11px] text-ink-2 hover:border-accent/40 hover:text-accent disabled:opacity-50"
+              >
+                {s}
+              </button>
+            ))}
+          </div>
+        )}
 
         <form
           onSubmit={(e) => {
             e.preventDefault();
             void ask(input);
           }}
-          className="flex items-center gap-2 pb-1"
+          className="flex items-center gap-2"
         >
           <input
             value={input}
@@ -243,8 +245,8 @@ export default function AgentPage() {
             <CornerDownLeft className="size-4" /> Gửi
           </button>
         </form>
-        <p className="pb-1 text-center text-[10px] text-ink-3">
-          Enter để gửi · tối đa 800 ký tự · ORCA nghiên cứu — không phải khuyến nghị · LIVE/FRESH/DELAYED/STALE
+        <p className="text-center text-[10px] text-ink-3">
+          Enter để gửi · tối đa 800 ký tự · ORCA nghiên cứu — không phải khuyến nghị
         </p>
       </div>
     </div>
