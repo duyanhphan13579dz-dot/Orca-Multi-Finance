@@ -275,9 +275,13 @@ export function ValuationPanel({
   const [showNotes, setShowNotes] = useState(false);
   const [wantLlm, setWantLlm] = useState(false);
 
-  const path = symbol ? `/api/v1/stocks/${symbol}/valuation?peers=1` : null;
+  // compact (overview): peers=0 → nhanh hơn; full tab: peers=1
+  const path = symbol
+    ? `/api/v1/stocks/${symbol}/valuation?peers=${compact ? "0" : "1"}`
+    : null;
   const { res, data, meta, isLoading, error } = useApi<ValuationApi>(path, {
-    refreshInterval: 120_000,
+    refreshInterval: 180_000,
+    timeoutMs: 28_000,
   });
 
   const analystPath =
