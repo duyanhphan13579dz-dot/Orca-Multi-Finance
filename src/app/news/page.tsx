@@ -38,7 +38,7 @@ export default function NewsPage() {
   const agg = sent?.aggregate;
 
   return (
-    <div className="space-y-3">
+    <div className="mx-auto flex w-full max-w-[1280px] flex-col gap-4">
       <Panel pad={false}>
         <div className="flex flex-col gap-2 p-4">
           <h1 className="flex items-center gap-2 text-lg font-semibold">
@@ -49,7 +49,7 @@ export default function NewsPage() {
             Tổng hợp RSS đa nguồn — CafeF, VnExpress, VietnamBiz, CoinTelegraph — gắn mã/ngành và chấm sentiment từ
             tiêu đề/tóm tắt.
           </p>
-          <div className="mt-1 flex flex-wrap gap-1">
+          <div className="mt-1 flex max-w-full gap-1 overflow-x-auto pb-0.5">
             {TABS.map((t) => (
               <button
                 key={t.key}

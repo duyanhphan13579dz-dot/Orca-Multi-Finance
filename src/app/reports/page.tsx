@@ -25,7 +25,7 @@ export default function ReportCenterPage() {
     refreshInterval: 2 * 60_000,
   });
   return (
-    <div className="mx-auto max-w-6xl space-y-3">
+    <div className="mx-auto flex w-full max-w-[1440px] flex-col gap-4">
       <Panel pad={false}>
         <div className="flex flex-wrap items-center gap-3 p-4">
           <OrcaMark size={34} />
@@ -33,7 +33,7 @@ export default function ReportCenterPage() {
             <h1 className="text-lg font-semibold">ORCA Report Center</h1>
             <p className="text-[12px] text-text-muted">Vietnam-first market & financial intelligence — dựng từ dữ liệu đã xác minh, có traceability đầy đủ.</p>
           </div>
-          <div className="ml-auto flex gap-1">
+          <div className="ml-auto flex max-w-full gap-1 overflow-x-auto pb-0.5">
             {TABS.map((t) => (
               <button key={t.id} onClick={() => setTab(t.id)} className={`rounded-md px-3 py-1.5 text-[12px] transition-colors ${tab === t.id ? "bg-accent-primary/15 text-accent-primary" : "text-text-muted hover:text-text-primary"}`}>
                 {t.label}

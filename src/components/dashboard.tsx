@@ -46,7 +46,8 @@ function IntelView({ intel, meta }: { intel: MarketIntel; meta: Meta | null }) {
   const tz = settings.profile.timezone;
 
   return (
-    <div className="space-y-3">
+    <div className="mx-auto flex w-full max-w-[1440px] flex-col gap-4">
+      <div className="grid gap-3 xl:grid-cols-[minmax(0,1.35fr)_minmax(360px,1fr)]">
       <Panel
         pad={false}
         title={
@@ -103,7 +104,6 @@ function IntelView({ intel, meta }: { intel: MarketIntel; meta: Meta | null }) {
           </div>
         )}
       </Panel>
-
       <Panel
         pad={false}
         title={<span className="flex items-center gap-2"><Scale className="size-4 text-accent-primary" /> Đánh giá trạng thái thị trường</span>}
@@ -152,6 +152,7 @@ function IntelView({ intel, meta }: { intel: MarketIntel; meta: Meta | null }) {
           </div>
         </div>
       </Panel>
+      </div>
 
       <Panel
         pad={false}
