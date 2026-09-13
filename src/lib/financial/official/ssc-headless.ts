@@ -1,5 +1,6 @@
 import "server-only";
 import { SSC_BASE, SSC_NEWS_PATH } from "./adf-client";
+import { env } from "../../env";
 import { rowsToFilings, type SscScrapedRow } from "./ssc-scrape";
 import type { OfficialFiling } from "./types";
 
@@ -41,7 +42,7 @@ interface PlaywrightModule {
 }
 
 function headlessEnabled(): boolean {
-  return process.env.SSC_HEADLESS === "1" || process.env.SSC_HEADLESS === "true";
+  return env.sscHeadless;
 }
 
 async function loadPlaywright(): Promise<PlaywrightModule | null> {

@@ -3,6 +3,7 @@ import { httpJson } from "../http";
 import type { NormalizedMetrics, NormalizedPeriod } from "./types";
 import { normalizePeriodMetrics, periodsToStatementTables } from "./statements";
 import { metricKeyFromItemCode, metricProfileForSymbol, type MetricProfile } from "./metric-dictionary";
+import { env } from "../env";
 
 /**
  * DStock / VNDIRECT Financial Collector — PRIMARY BCTC.
@@ -18,7 +19,7 @@ import { metricKeyFromItemCode, metricProfileForSymbol, type MetricProfile } fro
  */
 
 const VND = "vndirect-fs";
-const BASE = (process.env.VNDIRECT_BASE_URL ?? "https://api-finfo.vndirect.com.vn").replace(/\/$/, "");
+const BASE = env.vndirectBaseUrl;
 
 const DSTOCK_HEADERS: Record<string, string> = {
   Accept: "application/json",

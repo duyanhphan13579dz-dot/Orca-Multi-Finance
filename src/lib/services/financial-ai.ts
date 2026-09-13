@@ -133,7 +133,7 @@ function buildContext(
     llmRoute: {
       provider: "openrouter",
       role: "report",
-      preferredModel: "qwen/qwen3-235b-a22b:free",
+      preferredModel: modelFor("report"),
     },
     quote: detail.quote
       ? {

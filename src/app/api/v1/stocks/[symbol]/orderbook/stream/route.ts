@@ -1,3 +1,4 @@
+import { env } from "@/lib/env";
 import { eventBus } from "@/lib/events";
 import { ssiFcConfigured } from "@/lib/providers/ssi-fcdata";
 import { ensureSsiWsStarted, ssiWs } from "@/lib/realtime/ssi-ws";
@@ -23,7 +24,7 @@ export async function GET(_req: Request, ctx: { params: Promise<{ symbol: string
     });
   }
 
-  if (!ssiFcConfigured() || process.env.SSI_WS_DISABLED === "true") {
+  if (!ssiFcConfigured() || env.ssiWsDisabled) {
     return new Response(
       JSON.stringify({
         success: false,

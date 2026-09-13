@@ -1,5 +1,5 @@
 import "server-only";
-import { env } from "../env";
+import { DEFAULT_LLM_MODEL, env } from "../env";
 import { buildMeta, worstFreshness } from "../freshness";
 import { getCryptoDetail } from "./crypto";
 import { getForexDetail, fmtRate } from "./forex";
@@ -7,7 +7,10 @@ import { getCommodityMarket } from "./commodities";
 import { vnstockConfigured } from "./stocks";
 import { getNews } from "./news";
 import { buildMarketSnapshot } from "./market";
+import { buildMarketIntel, summarizeVnMarket } from "./market-intel";
+import { getSectorTrendSnapshot } from "./sector-trend";
 import { buildStockAnalysis, computeConfidence, type Confidence } from "./intelligence";
+import { summarizeStock, type StockContract } from "./stock-summary";
 import { llmChat, llmConfigured, type LlmResult } from "../ai/gateway";
 import { collectFactNumbers, extractNumericClaims, validateOutput } from "../ai/validate";
 import { qualityToLabel } from "../quality";
@@ -395,16 +398,32 @@ async function buildVn(symbol: string, deep: boolean): Promise<Built> {
   const analysis = await buildStockAnalysis(symbol);
   if (!analysis) return { narrative: `Không lấy được dữ liệu ${symbol}.`, contract: { asset: { symbol, asset_type: "stock" }, error: "provider_unavailable" }, sectionsUsed: [], symbols: [symbol], freshnesses: [], unavailable: true, persona: "stock_analyst" };
   const c = analysis.contract;
-  const ms = c.market_state;
-  const fh = c.fundamental_state?.financial_health;
-  const v = c.fundamental_state?.valuation;
-  const lines = [c.market_data ? `${symbol}: giá ${(c.market_data.price as number).toLocaleString("vi-VN")} (${(c.market_data.change_percent as number)?.toFixed(2) ?? "?"}%).` : `${symbol}.`, ms ? `Market state: ${ms.labelVi} — strength ${ms.strength}/100.` : "", fh && fh.scores.overall != null ? `Financial Health: ${fh.scores.overall}/100.` : "", v ? `Định giá: P/E ${v.multiples.pe ?? "—"}x · P/B ${v.multiples.pb ?? "—"}x.` : ""];
-  return { narrative: lines.filter(Boolean).join("\n\n"), contract: c as unknown as Record<string, unknown>, sectionsUsed: ["vn-stock", "market-state-engine"], symbols: [symbol], freshnesses: [analysis.meta.freshness], persona: "stock_analyst" };
+  const summary = summarizeStock(c as unknown as StockContract);
+  return {
+    narrative: summary.lines.join("\n"),
+    contract: { ...c, summary: summary.facts } as unknown as Record<string, unknown>,
+    sectionsUsed: ["vn-stock", "market-state-engine", "technical", "candle-patterns", "fundamental", "valuation"],
+    symbols: [symbol],
+    freshnesses: [analysis.meta.freshness],
+    persona: "stock_analyst",
+  };
 }
 
 async function buildVnMarket(requestedDate: string | null): Promise<Built> {
-  const snap = await buildMarketSnapshot();
-  const indices = snap.snapshot.indices?.map((index) => ({
+  // Gộp snapshot + market intel (độ rộng/thanh khoản/dòng tiền/đóng góp/trạng thái)
+  // + xu hướng ngành để câu trả lời VN-market đầy đủ hơn, vẫn một điểm tổng hợp.
+  const [snapRes, intelRes, sectorRes] = await Promise.allSettled([
+    buildMarketSnapshot(),
+    buildMarketIntel(),
+    getSectorTrendSnapshot(),
+  ]);
+  const snap = snapRes.status === "fulfilled" ? snapRes.value : null;
+  const intel = intelRes.status === "fulfilled" ? intelRes.value.intel : null;
+  const sectorSnap = sectorRes.status === "fulfilled" ? (sectorRes.value?.snapshot ?? null) : null;
+  const sectors = sectorSnap ? { leaders: sectorSnap.leaders, laggards: sectorSnap.laggards } : null;
+
+  const rawIndices = snap?.snapshot.indices ?? intel?.indices ?? null;
+  const indices = rawIndices?.map((index) => ({
     code: index.code,
     name: index.name,
     value: index.value,
@@ -413,23 +432,43 @@ async function buildVnMarket(requestedDate: string | null): Promise<Built> {
     volume: index.volume,
     updated_at: index.updatedAt,
   })) ?? null;
+  const summary = intel ? summarizeVnMarket(intel, sectors) : null;
+
   const historicalUnavailable = Boolean(requestedDate);
+  const vnSession = snap?.snapshot.vnSession ?? intel?.session ?? null;
+  const sessionHint = snap?.snapshot.vnSessionHint ?? intel?.sessionHint ?? null;
   const contract = {
     question_target: "Đánh giá thị trường chứng khoán Việt Nam",
     market_scope: "vietnam_equities",
     requested_date: requestedDate,
-    requested_session: requestedDate ? "historical_session" : snap.snapshot.vnSession.state,
+    requested_session: requestedDate ? "historical_session" : (vnSession?.state ?? null),
     data_available: !historicalUnavailable && Boolean(indices?.length),
-    data_missing: historicalUnavailable ? ["historical_session_snapshot_for_requested_date"] : indices?.length ? [] : ["vietnam_indices"],
-    facts: { indices, vn_session: snap.snapshot.vnSession, session_hint: snap.snapshot.vnSessionHint },
-    interpretations: { pulse: snap.snapshot.pulse, news: snap.snapshot.news?.slice(0, 5).map((item) => ({ title: item.title, source: item.source })) ?? [] },
-    data_meta: { source: snap.meta.source, freshness: snap.meta.freshness, sections: { vn_stocks: snap.meta.sections?.vn_stocks }, fetched_at: new Date().toISOString(), notes: snap.meta.note },
+    data_missing: historicalUnavailable
+      ? ["historical_session_snapshot_for_requested_date"]
+      : indices?.length
+        ? (summary ? [] : ["vn_breadth_liquidity_flow"])
+        : ["vietnam_indices"],
+    facts: { indices, vn_session: vnSession, session_hint: sessionHint, ...(summary ? { vn_detail: summary.facts } : {}) },
+    interpretations: { pulse: snap?.snapshot.pulse ?? null, news: snap?.snapshot.news?.slice(0, 5).map((item) => ({ title: item.title, source: item.source })) ?? [] },
+    data_meta: { source: snap?.meta.source ?? "orca-market-engine", freshness: snap?.meta.freshness ?? "UNAVAILABLE", sections: { vn_stocks: snap?.meta.sections?.vn_stocks }, fetched_at: new Date().toISOString(), notes: snap?.meta.note },
   };
   const indexText = indices?.length ? indices.map((i) => `${i.name ?? i.code}: ${i.value ?? "—"} (${i.change_percent ?? "—"}%)`).join("; ") : "Chưa có chỉ số Việt Nam khả dụng.";
   const narrative = historicalUnavailable
     ? `Yêu cầu đánh giá phiên ${requestedDate}. Data Engine hiện chỉ trả snapshot hiện tại, chưa có dữ liệu lưu trữ đúng phiên này; không dùng dữ liệu crypto hay phiên khác để thay thế.`
-    : `Snapshot chứng khoán Việt Nam: ${indexText}.\n\n${snap.snapshot.vnSessionHint}`;
-  return { narrative, contract, sectionsUsed: ["vn-market", "vn-indices", "session-engine"], symbols: indices?.map((i) => i.code).filter(Boolean) as string[] ?? [], freshnesses: [snap.meta.sections?.vn_stocks ?? "UNAVAILABLE"], unavailable: historicalUnavailable || !indices?.length, persona: "stock_analyst" };
+    : [
+        `Snapshot chứng khoán Việt Nam: ${indexText}.`,
+        ...(summary?.lines ?? []),
+        sessionHint ? `\n${sessionHint}` : "",
+      ].filter(Boolean).join("\n");
+  return {
+    narrative,
+    contract,
+    sectionsUsed: ["vn-market", "vn-indices", "session-engine", "breadth-liquidity", "money-flow", "sectors"],
+    symbols: indices?.map((i) => i.code).filter(Boolean) as string[] ?? [],
+    freshnesses: [snap?.meta.sections?.vn_stocks ?? "UNAVAILABLE"],
+    unavailable: historicalUnavailable || !indices?.length,
+    persona: "stock_analyst",
+  };
 }
 
 async function buildMarket(): Promise<Built> {
@@ -519,9 +558,12 @@ async function buildMarket(): Promise<Built> {
     // the same structured context; the specialist response is selected by intent.
     const primaryBackend = intent.kind === "vn-market" || intent.kind === "vn-stock" || intent.kind === "wealth" || intent.kind === "compare" ? "openrouter" : "groq";
     const secondaryBackend = primaryBackend === "openrouter" ? "groq" : "openrouter";
+    // Default model lấy từ một hằng duy nhất (DEFAULT_LLM_MODEL trong src/lib/env.ts).
+    // Backend OpenRouter tôn trọng cả AI_MODEL thông qua env.aiModel; backend Groq
+    // luôn rơi về DEFAULT_LLM_MODEL vì AI_MODEL có thể là id chỉ OpenRouter mới có.
     const modelForBackend = (backend: "openrouter" | "groq") => backend === "openrouter"
-      ? env.openrouterModel ?? env.aiModelReport ?? "openai/gpt-oss-120b"
-      : env.groqModel ?? "openai/gpt-oss-120b";
+      ? env.openrouterModel ?? env.aiModelReport ?? env.aiModel
+      : env.groqModel ?? DEFAULT_LLM_MODEL;
     const llmOptions = (backend: "openrouter" | "groq") => ({
       system: sys,
       user,

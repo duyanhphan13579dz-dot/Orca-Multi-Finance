@@ -1,4 +1,5 @@
 import "server-only";
+import { env } from "../../env";
 
 /**
  * Oracle ADF session client — SSC CongBoThongTin
@@ -11,15 +12,10 @@ import "server-only";
  * - PPR POST must hit the ;jsessionid= path or ViewState expires.
  */
 
-export const SSC_BASE = (process.env.SSC_PORTAL_URL ?? "https://congbothongtin.ssc.gov.vn").replace(
-  /\/$/,
-  "",
-);
+export const SSC_BASE = env.sscPortalUrl;
 export const SSC_NEWS_PATH = "/faces/NewsSearch";
 
-const UA =
-  process.env.SSC_HTTP_UA ??
-  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+const UA = env.sscHttpUa;
 
 export interface AdfSession {
   cookie: string;

@@ -2,6 +2,7 @@ import "server-only";
 import { httpJson } from "../http";
 import type { IndexQuote, OhlcvBar } from "../types";
 import { ProviderError } from "./binance";
+import { env } from "../env";
 import {
   getSsiAccessToken,
   invalidateSsiToken,
@@ -16,9 +17,8 @@ import {
  * Credentials: SSI_API_KEY + SSI_API_SECRET (đã alias qua ssi-credentials).
  */
 
-const DEFAULT_BASE = "https://fc-data.ssi.com.vn";
 function baseUrl(): string {
-  return (process.env.SSI_FC_DATA_BASE_URL ?? DEFAULT_BASE).replace(/\/$/, "");
+  return env.ssiFcDataBaseUrl;
 }
 
 const num = (v: unknown): number | null => {

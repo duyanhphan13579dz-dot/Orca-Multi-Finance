@@ -7,6 +7,7 @@ import { getVnQuotes, getVnMarketBoard, vnstockConfigured } from "./stocks";
 import * as vndirect from "../providers/vndirect";
 import { getCafefPropFlow } from "../providers/cafef";
 import { computeMarketCondition, computeContributions, type MarketConditionResult, type ContributionRow } from "../engines/market-condition";
+import type { SectorTrendRow } from "./sector-trend";
 import { getVnSession, type VnSessionInfo } from "../vn/sessions";
 import { VN_INDICES, getSecurity } from "../vn/master";
 import type { FreshnessStatus, IndexQuote, Meta, NewsArticle } from "../types";
@@ -60,6 +61,12 @@ export interface MarketIntel {
   crossAsset: CrossAssetItem[];
   condition: MarketConditionResult;
   contributors: { positive: ContributionRow[]; negative: ContributionRow[]; hasWeights: boolean; note: string };
+  highlights?: {
+    topValue: { symbol: string; valueVnd: number; changePercent: number | null }[];
+    limitUp: number;
+    limitDown: number;
+    available: boolean;
+  } | null;
   news: NewsArticle[];
   sections: Record<string, FreshnessStatus>;
   vnDataNote: string | null;
@@ -72,10 +79,11 @@ export async function buildMarketIntel(): Promise<{ intel: MarketIntel; meta: Me
     ttlMs: 15_000,
     staleMs: 20 * 60_000,
     producer: async () => {
-      const [snapRes, crossRes, boardRes, foreignRes, etfRes, propRes] = await Promise.allSettled([
+      const [snapRes, crossRes, boardRes, fullBoardRes, foreignRes, etfRes, propRes] = await Promise.allSettled([
         buildMarketSnapshot(),
         getCrossAsset(),
         getVnQuotes(VN30_BOARD),
+        getVnMarketBoard(),
         vndirect.getVndForeignFlow(),
         vndirect.getVndEtfFlow(),
         (async () => {
@@ -87,9 +95,28 @@ export async function buildMarketIntel(): Promise<{ intel: MarketIntel; meta: Me
       const snap = snapRes.status === "fulfilled" ? snapRes.value : null;
       const cross = crossRes.status === "fulfilled" ? crossRes.value : null;
       const board = boardRes.status === "fulfilled" ? boardRes.value : null;
+      const fullBoard = fullBoardRes.status === "fulfilled" ? fullBoardRes.value : null;
       const foreign = foreignRes.status === "fulfilled" ? foreignRes.value : null;
       const etf = etfRes.status === "fulfilled" ? etfRes.value : null;
       const prop = propRes.status === "fulfilled" ? propRes.value : null;
+
+      /* Board highlights: top GTGD + trần/sàn (chỉ khi có full board). */
+      const same = (a: number, b: number): boolean => Math.abs(a - b) < 1e-9;
+      const topValue = (fullBoard?.quotes ?? [])
+        .filter((q) => (q.quoteVolume ?? 0) > 0)
+        .sort((a, b) => (b.quoteVolume ?? 0) - (a.quoteVolume ?? 0))
+        .slice(0, 5)
+        .map((q) => ({ symbol: q.symbol, valueVnd: q.quoteVolume ?? 0, changePercent: q.changePercent ?? null }));
+      const limitUp = (fullBoard?.quotes ?? []).filter(
+        (q) => q.ceilingPrice != null && q.price > 0 && same(q.price, q.ceilingPrice),
+      ).length;
+      const limitDown = (fullBoard?.quotes ?? []).filter(
+        (q) => q.floorPrice != null && q.price > 0 && same(q.price, q.floorPrice),
+      ).length;
+      const highlights =
+        fullBoard?.quotes?.length
+          ? { topValue, limitUp, limitDown, available: topValue.length > 0 }
+          : null;
 
       const indices = snap?.snapshot.indices ?? null;
       const indicesAvailable = Boolean(indices?.length);
@@ -225,6 +252,7 @@ export async function buildMarketIntel(): Promise<{ intel: MarketIntel; meta: Me
         crossAsset: cross?.items ?? [],
         condition,
         contributors,
+        highlights,
         news: news.slice(0, 12),
         sections,
         vnDataNote: flow.note,
@@ -480,4 +508,130 @@ export async function buildIndexDetail(code: string): Promise<{ detail: IndexDet
       slas: { liveSlaMs: 30_000, freshSlaMs: 120_000, delayedSlaMs: 600_000 },
     }),
   };
+}
+
+/* ============================================================================
+ * VN MARKET SUMMARY — pure (no I/O) builder consumed by the AI agent.
+ *
+ * Turns an already-computed `MarketIntel` (+ optional sector trend) into
+ * (a) structured `facts` that enrich the LLM data-contract, and (b) a set of
+ * deterministic Vietnamese narrative `lines` (liquidity / breadth / money flow /
+ * impactful stocks / sectors / overall condition) so the answer stays rich even
+ * on the no-LLM deterministic path. Every number comes from the engines above —
+ * nothing is invented.
+ * ========================================================================== */
+
+const sumPct = (x: number | null | undefined, d = 2): string =>
+  x == null || !Number.isFinite(x) ? "—" : `${x > 0 ? "+" : ""}${x.toFixed(d)}%`;
+
+/** VND (đồng) → "… tỷ" với dấu nghìn vi-VN. */
+const sumTy = (vnd: number | null | undefined): string =>
+  vnd == null || !Number.isFinite(vnd)
+    ? "—"
+    : `${(vnd / 1e9).toLocaleString("vi-VN", { maximumFractionDigits: 0 })} tỷ`;
+
+export interface VnMarketSummary {
+  /** đưa thẳng vào contract.facts cho LLM */
+  facts: Record<string, unknown>;
+  /** các dòng narrative deterministik */
+  lines: string[];
+}
+
+export function summarizeVnMarket(
+  intel: MarketIntel,
+  sectors?: { leaders: SectorTrendRow[]; laggards: SectorTrendRow[] } | null,
+): VnMarketSummary {
+  const lines: string[] = [];
+
+  if (intel.breadth.available) {
+    const ratio =
+      intel.breadth.advancers + intel.breadth.decliners > 0
+        ? (intel.breadth.advancers / (intel.breadth.advancers + intel.breadth.decliners)).toFixed(2)
+        : "—";
+    lines.push(
+      `Độ rộng: ${intel.breadth.advancers} mã tăng / ${intel.breadth.decliners} mã giảm / ${intel.breadth.unchanged} đứng giá (tỷ lệ tăng/giảm ${ratio}).`,
+    );
+  }
+
+  if (intel.liquidity.available && intel.liquidity.valueTraded != null) {
+    lines.push(`Thanh khoản: giá trị giao dịch ≈ ${sumTy(intel.liquidity.valueTraded)} đồng.`);
+  }
+
+  if (intel.flow.available) {
+    const bits: string[] = [];
+    if (intel.flow.foreignNet != null) bits.push(`khối ngoại ròng ${sumTy(intel.flow.foreignNet)} đồng`);
+    if (intel.flow.propNet != null) bits.push(`tự doanh ròng ${sumTy(intel.flow.propNet)} đồng`);
+    if (intel.flow.etfNet != null) bits.push(`ETF ròng ${sumTy(intel.flow.etfNet)} đồng`);
+    if (bits.length) lines.push(`Dòng tiền: ${bits.join(" · ")}.`);
+  }
+
+  const pos = intel.contributors.positive.slice(0, 5);
+  const neg = intel.contributors.negative.slice(0, 5);
+  const fmtContrib = (c: ContributionRow): string =>
+    `${c.symbol} ${sumPct(c.changePercent)}${c.indexPoints != null ? ` (${c.indexPoints > 0 ? "+" : ""}${c.indexPoints.toFixed(1)}đ)` : ""}`;
+  if (pos.length) lines.push(`Mã nâng đỡ: ${pos.map(fmtContrib).join(", ")}.`);
+  if (neg.length) lines.push(`Mã gây áp lực: ${neg.map(fmtContrib).join(", ")}.`);
+
+  if (sectors && (sectors.leaders.length || sectors.laggards.length)) {
+    const s = (r: SectorTrendRow): string => `${r.sector} ${sumPct(r.avgChangePercent)}`;
+    const bits: string[] = [];
+    if (sectors.leaders.length) bits.push(`dẫn dắt: ${sectors.leaders.slice(0, 3).map(s).join(", ")}`);
+    if (sectors.laggards.length) bits.push(`kém nhất: ${sectors.laggards.slice(0, 3).map(s).join(", ")}`);
+    lines.push(`Ngành — ${bits.join(" · ")}.`);
+  }
+
+  if (intel.highlights?.available) {
+    if (intel.highlights.limitUp > 0 || intel.highlights.limitDown > 0) {
+      lines.push(`Trần/sàn: ${intel.highlights.limitUp} mã trần / ${intel.highlights.limitDown} mã sàn.`);
+    }
+    if (intel.highlights.topValue.length) {
+      lines.push(
+        `Thanh khoản tập trung: ${intel.highlights.topValue.map((t) => `${t.symbol} ${sumTy(t.valueVnd)}${sumPct(t.changePercent) !== "—" ? ` (${sumPct(t.changePercent)})` : ""}`).join(", ")}.`,
+      );
+    }
+  }
+
+  const cond = intel.condition;
+  lines.push(
+    `Nhận định chung: trạng thái ${cond.rating} (điểm ${cond.score}/100, độ tin cậy ${cond.confidence}); tâm lý liên tài sản ${cond.crossAssetState}.`,
+  );
+  if (cond.drivers.length) lines.push(`Động lực: ${cond.drivers.slice(0, 3).join("; ")}.`);
+  if (cond.risks.length) lines.push(`Rủi ro: ${cond.risks.slice(0, 3).join("; ")}.`);
+
+  const facts: Record<string, unknown> = {
+    breadth: intel.breadth.available
+      ? { advancers: intel.breadth.advancers, decliners: intel.breadth.decliners, unchanged: intel.breadth.unchanged, source: intel.breadth.source }
+      : null,
+    liquidity: intel.liquidity.available
+      ? {
+          value_traded_vnd: intel.liquidity.valueTraded,
+          value_traded_ty: intel.liquidity.valueTraded != null ? Number((intel.liquidity.valueTraded / 1e9).toFixed(0)) : null,
+        }
+      : null,
+    money_flow: intel.flow.available
+      ? {
+          foreign_net_vnd: intel.flow.foreignNet,
+          foreign_net_ty: intel.flow.foreignNet != null ? Number((intel.flow.foreignNet / 1e9).toFixed(0)) : null,
+          prop_net_vnd: intel.flow.propNet,
+          etf_net_vnd: intel.flow.etfNet,
+          source: intel.flow.source,
+        }
+      : null,
+    index_contributors: { positive: pos, negative: neg, note: intel.contributors.note },
+    board_highlights: intel.highlights ?? null,
+    sectors: sectors
+      ? { leaders: sectors.leaders.slice(0, 5), laggards: sectors.laggards.slice(0, 5) }
+      : null,
+    market_condition: {
+      rating: cond.rating,
+      score: cond.score,
+      confidence: cond.confidence,
+      cross_asset_state: cond.crossAssetState,
+      drivers: cond.drivers,
+      risks: cond.risks,
+      coverage: cond.coverage,
+    },
+  };
+
+  return { facts, lines };
 }

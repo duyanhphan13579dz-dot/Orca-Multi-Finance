@@ -1,3 +1,4 @@
+import { env } from "../lib/env";
 import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 
@@ -24,9 +25,8 @@ const globalForDb = globalThis as typeof globalThis & {
 };
 
 function requireDatabaseUrl(): string {
-  const url = process.env.DATABASE_URL?.trim();
-  if (!url) throw new Error("DATABASE_URL is required");
-  return url;
+  if (!env.databaseUrl) throw new Error("DATABASE_URL is required");
+  return env.databaseUrl;
 }
 
 /** Real `pg` Pool, created on first use and shared across module instances. */
@@ -47,7 +47,7 @@ export function getDb(): Db {
 
 /** Is a database URL configured? Lets ops endpoints report honestly without throwing. */
 export function databaseConfigured(): boolean {
-  return Boolean(process.env.DATABASE_URL?.trim());
+  return Boolean(env.databaseUrl);
 }
 
 /**

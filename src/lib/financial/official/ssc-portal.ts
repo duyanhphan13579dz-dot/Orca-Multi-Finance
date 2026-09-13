@@ -4,12 +4,11 @@ import { getSscCalendar, type SscCalendarSnapshot, type SscReportKind } from "./
 import { scrapeSscFilings } from "./ssc-scrape";
 import { lookupSscIndex } from "./ssc-listing-index";
 import { headlessScrapeSsc } from "./ssc-headless";
+import { env } from "../../env";
 
-export const SSC_PORTAL_BASE =
-  (process.env.SSC_PORTAL_URL ?? "https://congbothongtin.ssc.gov.vn").replace(/\/$/, "");
+export const SSC_PORTAL_BASE = env.sscPortalUrl;
 
-export const SSC_NEWS_SEARCH_URL =
-  process.env.SSC_NEWS_SEARCH_URL ?? `${SSC_PORTAL_BASE}/faces/NewsSearch`;
+export const SSC_NEWS_SEARCH_URL = env.sscNewsSearchUrl;
 
 export interface SscPortalProbe {
   ok: boolean;
@@ -188,7 +187,7 @@ export async function discoverFromSscPortal(symbol: string): Promise<{
   // 3) Headless (optional)
   const needHeadless =
     !filings.some((f) => f.confidence >= 0.9 && f.sourceChannel === "ssc_ids" && f.filingDate) &&
-    (process.env.SSC_HEADLESS === "1" || process.env.SSC_HEADLESS === "true");
+    env.sscHeadless;
   if (needHeadless) {
     try {
       const hl = await headlessScrapeSsc(symbol, { downloadPdf: true, maxPdfs: 1 });
@@ -200,7 +199,7 @@ export async function discoverFromSscPortal(symbol: string): Promise<{
     } catch (e) {
       notes.push(`Headless error: ${e instanceof Error ? e.message.slice(0, 80) : "err"}`);
     }
-  } else if (process.env.SSC_HEADLESS !== "1" && process.env.SSC_HEADLESS !== "true") {
+  } else if (!env.sscHeadless) {
     notes.push("Headless off — set SSC_HEADLESS=1 + install playwright for full ticker/PDF coverage");
   }
 

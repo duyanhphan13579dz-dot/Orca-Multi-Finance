@@ -1,3 +1,4 @@
+import { env } from "@/lib/env";
 import { ok, unavailable } from "@/lib/envelope";
 import { getVnMarketBoard } from "@/lib/services/stocks";
 import { persistSsiOrderBookSnapshot } from "@/lib/services/stock-orderbook";
@@ -10,7 +11,7 @@ export const maxDuration = 15;
 
 /** Warm full VN market board cache (indices + all quotes + universe). */
 export async function GET(req: Request) {
-  const cronSecret = process.env.CRON_SECRET?.trim();
+  const cronSecret = env.cronSecret;
   if (cronSecret) {
     const auth = req.headers.get("authorization") ?? "";
     const querySecret = new URL(req.url).searchParams.get("secret") ?? "";

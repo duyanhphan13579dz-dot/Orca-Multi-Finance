@@ -1,39 +1,33 @@
 import "server-only";
+import { env } from "../env";
 
 /**
  * SSI FastConnect consumer credentials.
  *
- * Supported env pairs (first non-empty wins):
+ * Resolution now lives in `src/lib/env.ts` (`env.ssiConsumerId` /
+ * `env.ssiConsumerSecret`), which applies the same first-non-empty-wins chain:
  *   1. SSI_FC_CONSUMER_ID / SSI_FC_CONSUMER_SECRET  (canonical)
- *   2. SSI_API_KEY / SSI_API_SECRET                  (Vercel aliases)
+ *   2. SSI_API_KEY / SSI_API_SECRET                 (Vercel aliases)
  *   3. SSI_CONSUMER_ID / SSI_CONSUMER_SECRET
  *
- * Call ensureSsiEnvAliases() early so any code still reading SSI_FC_* works.
+ * This module stays as the thin, import-friendly accessor used by the SSI
+ * adapters, plus `ensureSsiEnvAliases()` for any *external* code that still
+ * reads `SSI_FC_*` straight off `process.env` (nothing inside this repo does).
  */
 
 export function ssiConsumerId(): string {
-  return (
-    process.env.SSI_FC_CONSUMER_ID?.trim() ||
-    process.env.SSI_API_KEY?.trim() ||
-    process.env.SSI_CONSUMER_ID?.trim() ||
-    ""
-  );
+  return env.ssiConsumerId ?? "";
 }
 
 export function ssiConsumerSecret(): string {
-  return (
-    process.env.SSI_FC_CONSUMER_SECRET?.trim() ||
-    process.env.SSI_API_SECRET?.trim() ||
-    process.env.SSI_CONSUMER_SECRET?.trim() ||
-    ""
-  );
+  return env.ssiConsumerSecret ?? "";
 }
 
 export function ssiCredentialsConfigured(): boolean {
-  return Boolean(ssiConsumerId() && ssiConsumerSecret());
+  return env.ssiConfigured;
 }
 
-/** Mirror aliases into SSI_FC_* so legacy process.env readers keep working. */
+/** Mirror resolved aliases into SSI_FC_* so legacy process.env readers keep working. */
 export function ensureSsiEnvAliases(): void {
   const id = ssiConsumerId();
   const secret = ssiConsumerSecret();

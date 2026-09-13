@@ -1,6 +1,7 @@
 import "server-only";
 import { recordFailure, recordSuccess } from "../health";
 import { eventBus } from "../events";
+import { env } from "../env";
 
 /**
  * CENTRALIZED BINANCE WEBSOCKET INGESTION ENGINE (perf-tuned)
@@ -82,13 +83,13 @@ export interface KlineCandle {
   closed: boolean;
 }
 
-const SPOT_URL = process.env.BINANCE_WS_SPOT_URL ?? "wss://stream.binance.com:9443/stream?streams=!ticker@arr";
-const FUT_URL = process.env.BINANCE_WS_FUT_URL ?? "wss://fstream.binance.com/stream?streams=!markPrice@arr";
-const KLINE_WS_URL = process.env.BINANCE_WS_KLINE_URL ?? "wss://stream.binance.com:9443/ws";
+const SPOT_URL = env.binanceWsSpotUrl;
+const FUT_URL = env.binanceWsFutUrl;
+const KLINE_WS_URL = env.binanceWsKlineUrl;
 const SPOT_PROVIDER = "binance-ws:spot";
 const FUT_PROVIDER = "binance-ws:futures";
 const KLINE_PROVIDER = "binance-ws:kline";
-const MAX_KLINE_STREAMS = Number(process.env.BINANCE_WS_MAX_KLINES ?? 48);
+const MAX_KLINE_STREAMS = env.binanceWsMaxKlines;
 
 interface PrivStats {
   state: StreamStats["state"];
@@ -166,7 +167,7 @@ class BinanceRealtimeEngine {
   private emitWindowStart = Date.now();
 
   private enabled(): boolean {
-    return process.env.BINANCE_WS_DISABLED !== "true";
+    return !env.binanceWsDisabled;
   }
 
   requestKline(symbol: string, interval: string): () => void {

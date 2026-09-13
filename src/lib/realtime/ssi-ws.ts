@@ -2,6 +2,7 @@ import "server-only";
 import { recordFailure, recordSuccess } from "../health";
 import { eventBus } from "../events";
 import { getSsiAccessToken, invalidateSsiToken, ssiFcConfigured } from "../providers/ssi-fcdata";
+import { env } from "../env";
 
 /**
  * SSI FastConnect DataHub streaming — uses same credentials as REST (SSI_API_KEY / SSI_FC_*).
@@ -13,7 +14,6 @@ import { getSsiAccessToken, invalidateSsiToken, ssiFcConfigured } from "../provi
  */
 
 const RS = "\x1e";
-const DEFAULT_HUB = "https://fc-datahub.ssi.com.vn/v2.0";
 const PROVIDER = "ssi-ws";
 const MAX_AUTH_FAILS = 5;
 const SILENT_MS = 45_000;
@@ -124,7 +124,7 @@ const num = (v: unknown): number | null => {
 };
 
 function hubBase(): string {
-  return (process.env.SSI_FC_HUB_URL ?? DEFAULT_HUB).replace(/\/$/, "");
+  return env.ssiFcHubUrl;
 }
 
 function classifyFail(msg: string): FailKind {
@@ -230,7 +230,7 @@ class SsiMarketWsEngine {
   private enabled(): boolean {
     if (!ssiFcConfigured()) return false;
     if (this.forceOn) return true;
-    if (process.env.SSI_WS_DISABLED === "true") return false;
+    if (env.ssiWsDisabled) return false;
     return true;
   }
 
@@ -442,7 +442,7 @@ class SsiMarketWsEngine {
       if (gen !== this.connectGen) return;
 
       const base = hubBase().replace(/^http/, "ws");
-      const url = process.env.SSI_WS_PROTOCOL === "signalr"
+      const url = env.ssiWsUseSignalR
         ? `${base}/Hubs/DataHub?access_token=${encodeURIComponent(token)}`
         : `${base}?access_token=${encodeURIComponent(token)}`;
       const ws = new WSImpl(url);
@@ -465,7 +465,7 @@ class SsiMarketWsEngine {
         if (gen !== this.connectGen) return;
         // SSI's current market-data API uses plain JSON SUBSCRIBE messages.
         // Set SSI_WS_PROTOCOL=signalr only for legacy DataHub tenants.
-        if (process.env.SSI_WS_PROTOCOL === "signalr") {
+        if (env.ssiWsUseSignalR) {
           try {
             ws.send(`${JSON.stringify({ protocol: "json", version: 1 })}${RS}`);
           } catch (e) {
@@ -643,7 +643,7 @@ class SsiMarketWsEngine {
 
   private sendSubscribe(channels: string[]) {
     if (!this.ws || this.state !== "open" || !channels.length) return;
-    if (process.env.SSI_WS_PROTOCOL !== "signalr") {
+    if (!env.ssiWsUseSignalR) {
       const topics = channels.filter((topic) => !this.subscribedSent.has(topic));
       if (!topics.length) return;
       try {
@@ -932,7 +932,7 @@ export const ssiWs = getWsEngine();
 
 export function ensureSsiWsStarted() {
   ssiWs.start();
-  if (ssiFcConfigured() && process.env.SSI_WS_DISABLED !== "true") {
+  if (ssiFcConfigured() && !env.ssiWsDisabled) {
     ssiWs.ensureCoreIndices();
   }
 }
