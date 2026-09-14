@@ -132,33 +132,7 @@ function liveQuoteFromWs(symbol: string): Quote | null {
 export async function getVnIndices(): Promise<{ items: IndexQuote[]; meta: Meta } | null> {
   bootVndLive();
   bootSsiLive();
-  if (ssiFcConfigured() && process.env.SSI_WS_DISABLED !== "true") {
-    const live: IndexQuote[] = [];
-    for (const code of INDEX_PRIORITY) {
-      const idx = ssiWs.getIndex(code, 30_000);
-      if (!idx) continue;
-      live.push({
-        code: idx.code,
-        name: idx.code,
-        value: idx.value,
-        change: idx.change ?? 0,
-        changePercent: idx.changePercent ?? 0,
-        volume: idx.volume,
-        updatedAt: new Date(idx.eventTime).toISOString(),
-      });
-    }
-    if (live.length >= 2) {
-      return {
-        items: sortIndices(live),
-        meta: buildMeta({
-          source: "ssi-ws",
-          sourceTimestampMs: Math.max(...live.map((x) => Date.parse(x.updatedAt ?? "") || 0)),
-          note: "Chỉ số LIVE — SSI DataHub",
-        }),
-      };
-    }
-  }
-  // Prefer VNDirect WS indices when available
+  // 1) VNDirect WS primary
   {
     const live: IndexQuote[] = [];
     for (const code of INDEX_PRIORITY) {
@@ -174,13 +148,40 @@ export async function getVnIndices(): Promise<{ items: IndexQuote[]; meta: Meta 
         updatedAt: new Date(idx.eventTime).toISOString(),
       });
     }
-    if (live.length >= 2) {
+    if (live.length >= 1) {
       return {
         items: sortIndices(live),
         meta: buildMeta({
           source: "vndirect-ws",
           sourceTimestampMs: Math.max(...live.map((x) => Date.parse(x.updatedAt ?? "") || 0)),
           note: "Chỉ số LIVE — VNDirect WS",
+        }),
+      };
+    }
+  }
+  // 2) SSI WS fallback
+  if (ssiFcConfigured() && process.env.SSI_WS_DISABLED !== "true") {
+    const live: IndexQuote[] = [];
+    for (const code of INDEX_PRIORITY) {
+      const idx = ssiWs.getIndex(code, 30_000);
+      if (!idx) continue;
+      live.push({
+        code: idx.code,
+        name: idx.code,
+        value: idx.value,
+        change: idx.change ?? 0,
+        changePercent: idx.changePercent ?? 0,
+        volume: idx.volume,
+        updatedAt: new Date(idx.eventTime).toISOString(),
+      });
+    }
+    if (live.length >= 1) {
+      return {
+        items: sortIndices(live),
+        meta: buildMeta({
+          source: "ssi-ws",
+          sourceTimestampMs: Math.max(...live.map((x) => Date.parse(x.updatedAt ?? "") || 0)),
+          note: "Chỉ số LIVE — SSI DataHub (fallback)",
         }),
       };
     }
