@@ -115,7 +115,6 @@ export function mergeSecurityMaster(
       exchange,
       industry,
       securityType: classify(symbol),
-<<<<<<< HEAD
       sources: [ssi ? "ssi" : null, vnd ? "vndirect" : null].filter((x): x is MasterSource => x != null),
       // VNDIRECT là primary — provenance ghi nguồn chính là vndirect nếu có.
       provenance: {
