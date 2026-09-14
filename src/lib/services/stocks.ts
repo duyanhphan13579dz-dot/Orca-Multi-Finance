@@ -44,7 +44,6 @@ function bootSsiLive() {
   }
 }
 
-/** VNDirect WS is market primary — always try to keep it warm. */
 function bootVndLive() {
   if (process.env.VNDIRECT_WS_DISABLED === "true") return;
   try {
@@ -132,7 +131,6 @@ function liveQuoteFromWs(symbol: string): Quote | null {
 export async function getVnIndices(): Promise<{ items: IndexQuote[]; meta: Meta } | null> {
   bootVndLive();
   bootSsiLive();
-  // 1) VNDirect WS primary
   {
     const live: IndexQuote[] = [];
     for (const code of INDEX_PRIORITY) {
@@ -159,7 +157,6 @@ export async function getVnIndices(): Promise<{ items: IndexQuote[]; meta: Meta 
       };
     }
   }
-  // 2) SSI WS fallback
   if (ssiFcConfigured() && process.env.SSI_WS_DISABLED !== "true") {
     const live: IndexQuote[] = [];
     for (const code of INDEX_PRIORITY) {
@@ -189,8 +186,8 @@ export async function getVnIndices(): Promise<{ items: IndexQuote[]; meta: Meta 
   if (ssiFcConfigured()) {
     try {
       const res = await cached("vn:indices:ssi:v1", {
-        ttlMs: 20_000,
-        staleMs: 60_000,
+        ttlMs: 15_000,
+        staleMs: 45_000,
         producer: async () => {
           const r = await getSsiIndices(INDEX_PRIORITY);
           if (!r.items.length) throw new Error("ssi empty indices");
@@ -212,8 +209,8 @@ export async function getVnIndices(): Promise<{ items: IndexQuote[]; meta: Meta 
   }
   try {
     const res = await cached("vn:indices:vnd:v1", {
-      ttlMs: 30_000,
-      staleMs: 90_000,
+      ttlMs: 12_000,
+      staleMs: 60_000,
       producer: () => vndirect.getVndIndices(),
     });
     return {
@@ -293,7 +290,14 @@ export async function getVnMarketBoard(): Promise<{
 }
 
 export async function getVnUniverseList(): Promise<{
-  items: { symbol: string; name: string | null; exchange: string | null; industry: string | null; sources?: string[]; conflicts?: string[] }[];
+  items: {
+    symbol: string;
+    name: string | null;
+    exchange: string | null;
+    industry: string | null;
+    sources?: string[];
+    conflicts?: string[];
+  }[];
   meta: Meta;
 } | null> {
   try {
@@ -303,7 +307,7 @@ export async function getVnUniverseList(): Promise<{
       meta: buildMeta({
         source: "ssi-vndirect-canonical",
         sourceTimestampMs: Date.now(),
-        note: `Canonical master: ${records.length} mã, merge SSI ưu tiên tên/sàn và VNDIRECT bổ sung ngành (VNDIRECT primary)`,
+        note: `Canonical master: ${records.length} mã (VNDIRECT primary)`,
       }),
     };
   } catch {
@@ -315,7 +319,12 @@ export async function getVnUniverseList(): Promise<{
       });
       return {
         items: res.value,
-        meta: buildMeta({ source: "vndirect", sourceTimestampMs: Date.now(), cached: res.cached, note: "Canonical master unavailable; VNDIRECT fallback" }),
+        meta: buildMeta({
+          source: "vndirect",
+          sourceTimestampMs: Date.now(),
+          cached: res.cached,
+          note: "VNDIRECT universe fallback",
+        }),
       };
     } catch {
       return null;
@@ -328,11 +337,7 @@ export async function getVnQuotes(symbols: string[]): Promise<{ quotes: Quote[];
   bootVndLive();
   bootSsiLive();
   const uniq = [
-    ...new Set(
-      symbols
-        .map((s) => s.toUpperCase().replace(/[^A-Z0-9]/g, ""))
-        .filter(Boolean),
-    ),
+    ...new Set(symbols.map((s) => s.toUpperCase().replace(/[^A-Z0-9]/g, "")).filter(Boolean)),
   ].slice(0, 40);
 
   if (process.env.VNDIRECT_WS_DISABLED !== "true") {
@@ -378,10 +383,7 @@ export async function getVnQuotes(symbols: string[]): Promise<{ quotes: Quote[];
   if (!out.length) return null;
   return {
     quotes: out,
-    meta: buildMeta({
-      source,
-      sourceTimestampMs: Date.now(),
-    }),
+    meta: buildMeta({ source, sourceTimestampMs: Date.now() }),
   };
 }
 
@@ -395,11 +397,39 @@ export async function getVnOhlcv(
   const isIndex = vndirect.isVnIndexSymbol(sym);
   if (ssiFcConfigured() && !isIndex) ssiWs.watchSymbol(sym);
 
+  try {
+    const res = await cached(`vn:ohlcv:vnd:${sym}:${limit}`, {
+      ttlMs: 12_000,
+      staleMs: 90_000,
+      producer: async () => {
+        const bars = isIndex
+          ? await vndirect.getVndIndexOhlcv(sym, limit)
+          : await vndirect.getVndOhlcv(sym, limit);
+        if (!bars.length) throw new Error("vnd empty ohlc");
+        return bars;
+      },
+    });
+    const bars = res.value.slice(-limit);
+    const q = validateBars(bars);
+    if (q.status !== "VALID") void logQualityEvent("vndirect", `ohlcv:${sym}`, q);
+    return {
+      bars,
+      meta: buildMeta({
+        source: "vndirect",
+        sourceTimestampMs: Date.now(),
+        cached: res.cached,
+        note: "VNDirect OHLCV",
+      }),
+    };
+  } catch {
+    /* SSI fallback */
+  }
+
   if (ssiFcConfigured()) {
     try {
       const res = await cached(`vn:ohlcv:ssi:${sym}:${limit}`, {
-        ttlMs: 60_000,
-        staleMs: 180_000,
+        ttlMs: 30_000,
+        staleMs: 120_000,
         producer: async () => {
           const bars = await getSsiDailyOhlc(sym);
           if (!bars.length) throw new Error("ssi empty ohlc");
@@ -415,24 +445,14 @@ export async function getVnOhlcv(
           source: "ssi-fcdata",
           sourceTimestampMs: Date.now(),
           cached: res.cached,
-          note: "SSI OHLCV",
+          note: "SSI OHLCV (fallback)",
         }),
       };
     } catch {
-      /* fallback */
+      /* ignore */
     }
   }
-  try {
-    const bars = isIndex
-      ? await vndirect.getVndIndexOhlcv(sym, limit)
-      : await vndirect.getVndOhlcv(sym, limit);
-    return {
-      bars,
-      meta: buildMeta({ source: "vndirect", sourceTimestampMs: Date.now() }),
-    };
-  } catch {
-    return null;
-  }
+  return null;
 }
 
 export interface VnStockDetail {
@@ -527,8 +547,7 @@ export async function getVnStockDetail(
     detail,
     meta: buildMeta({
       source:
-        [quoteSource, ohlcvSource, fin?.packageMeta?.primarySource].filter(Boolean).join("+") ||
-        "vndirect",
+        [quoteSource, ohlcvSource, fin?.packageMeta?.primarySource].filter(Boolean).join("+") || "vndirect",
       sourceTimestampMs: Date.now(),
       degraded: failed.length > 0,
       partial: failed.length > 0,
