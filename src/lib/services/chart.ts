@@ -147,12 +147,12 @@ export function computeIndicators(candles: ChartCandle[]): ChartIndicators | nul
   };
 }
 
-async function cryptoCandles(symbol: string, tf: string, limit: number): Promise<{ candles: ChartCandle[]; source: string; note?: string }> {
+async function cryptoCandles(symbol: string, tf: string, limit: number) {
   const bars = await binance.getKlinesDeep(symbol, binanceInterval(tf), Math.min(limit, 5000));
   return { candles: bars.map(toCandle), source: "binance" };
 }
 
-async function forexCandles(pair: string, tf: string, limit: number): Promise<{ candles: ChartCandle[]; source: string; note?: string }> {
+async function forexCandles(pair: string, tf: string, limit: number) {
   const base = pair.slice(0, 3);
   const quote = pair.slice(3, 6);
   const days = tf === "1M" ? 3650 : tf === "1w" ? 1825 : 730;
@@ -170,7 +170,7 @@ async function forexCandles(pair: string, tf: string, limit: number): Promise<{ 
   return {
     candles: candles.slice(-limit),
     source: "frankfurter-ecb (free, no key)",
-    note: "Chart FX dùng tỷ giá tham chiếu ECB/Frankfurter miễn phí, không cần API key; không phải dữ liệu intraday.",
+    note: "Chart FX dùng tỷ giá tham chiếu ECB/Frankfurter miễn phí",
   };
 }
 
@@ -192,19 +192,25 @@ const INDEX_LIMITS: Record<string, { min: number; max: number }> = {
   UPCOMINDEX: { min: 0, max: 2_000 },
 };
 
-export function validateIndexCandles(symbol: string, candles: ChartCandle[]): { valid: ChartCandle[]; rejected: number; reason?: string } {
+export function validateIndexCandles(symbol: string, candles: ChartCandle[]) {
   const code = canonicalIndexSymbol(symbol);
   if (!code) return { valid: candles, rejected: 0 };
   const bounds = INDEX_LIMITS[code];
-  const valid = candles.filter((c) => [c.open, c.high, c.low, c.close].every((v) => Number.isFinite(v) && v >= bounds.min && v <= bounds.max && c.high >= c.low));
-  return { valid, rejected: candles.length - valid.length, reason: valid.length !== candles.length ? `${code}: candle ngoài biên ${bounds.min}-${bounds.max}` : undefined };
+  const valid = candles.filter((c) =>
+    [c.open, c.high, c.low, c.close].every((v) => Number.isFinite(v) && v >= bounds.min && v <= bounds.max && c.high >= c.low),
+  );
+  return {
+    valid,
+    rejected: candles.length - valid.length,
+    reason: valid.length !== candles.length ? `${code}: candle ngoài biên` : undefined,
+  };
 }
 
-async function stockCandles(symbol: string, tf: string, limit: number): Promise<{ candles: ChartCandle[]; source: string; note?: string }> {
+async function stockCandles(symbol: string, tf: string, limit: number) {
   if (tf === "5m" || tf === "15m" || tf === "1h") {
     const r = await getVnOhlcv(symbol, Math.min(limit, 40));
     if (!r?.bars.length) {
-      return { candles: [], source: "vndirect-live-only", note: "Intraday VN — chờ tick VNDirect/SSI" };
+      return { candles: [] as ChartCandle[], source: "vndirect-live-only", note: "Intraday VN — chờ tick" };
     }
     const last = r.bars[r.bars.length - 1];
     return {
@@ -215,7 +221,7 @@ async function stockCandles(symbol: string, tf: string, limit: number): Promise<
   }
 
   const dayLimit =
-    tf === "1d" ? Math.min(limit, 1500) : tf === "1w" ? Math.min(limit * 8, 2000) : Math.min(limit * 30, 2500);
+    tf === "1d" ? Math.min(limit, 320) : tf === "1w" ? Math.min(limit * 5, 800) : Math.min(limit * 20, 900);
 
   const r = await getVnOhlcv(symbol, dayLimit);
   if (!r) throw new Error("stock_ohlcv_unavailable");
@@ -227,13 +233,21 @@ async function stockCandles(symbol: string, tf: string, limit: number): Promise<
     if (indexQuality.valid.length < Math.max(5, candles.length * 0.8)) {
       throw new Error(indexQuality.reason ?? "index_fallback_out_of_range");
     }
-    return { candles: indexQuality.valid.slice(-limit), source: r.meta.source === "vndirect" ? "vndirect-index-ohlcv" : r.meta.source, note: `${r.meta.note ?? ""} · đã loại ${indexQuality.rejected} nến ngoài biên` };
+    return {
+      candles: indexQuality.valid.slice(-limit),
+      source: r.meta.source === "vndirect" ? "vndirect-index-ohlcv" : r.meta.source,
+      note: r.meta.note,
+    };
   }
 
   let candles = r.bars.map(toCandle);
   if (tf === "1w") candles = aggregateCandles(candles, TF_MS["1w"]).slice(-limit);
   if (tf === "1M") candles = aggregateCandles(candles, TF_MS["1M"]).slice(-limit);
-  return { candles: candles.slice(-limit), source: r.meta.source === "vndirect" ? "vndirect-stock-ohlcv" : r.meta.source, note: r.meta.note };
+  return {
+    candles: candles.slice(-limit),
+    source: r.meta.source === "vndirect" ? "vndirect-stock-ohlcv" : r.meta.source,
+    note: r.meta.note,
+  };
 }
 
 function yahooCommoditySymbol(symbol: string): string | null {
@@ -253,47 +267,37 @@ export function isChartableCommodity(symbol: string): boolean {
   return yahooCommoditySymbol(symbol) != null;
 }
 
-async function commodityCandles(symbol: string, tf: string, limit: number): Promise<{ candles: ChartCandle[]; source: string; note?: string }> {
+async function commodityCandles(symbol: string, tf: string, limit: number) {
   if (symbol === "XAUUSD" || symbol === "GOLD" || symbol === "XAU" || symbol.toUpperCase().includes("VANG")) {
     try {
       const bars = await binance.getKlinesDeep("PAXGUSDT", binanceInterval(tf), Math.min(limit, 3000));
       if (bars.length >= 10) {
-        return {
-          candles: bars.map(toCandle),
-          source: "binance (PAXG ≈ XAU spot)",
-          note: "Vàng thế giới qua PAXG (1:1 gold-ounce, USD)",
-        };
+        return { candles: bars.map(toCandle), source: "binance (PAXG ≈ XAU spot)", note: "Vàng PAXG" };
       }
     } catch {
       /* fall through */
     }
   }
-
   const ySym = yahooCommoditySymbol(symbol);
   if (!ySym) throw new Error("commodity_history_unavailable");
-
   const cfg = yahooIntervalFor(tf === "1w" ? "1w" : tf === "1M" ? "1M" : tf === "4h" ? "4h" : tf === "1h" ? "1h" : "1d");
   if (!cfg) throw new Error("commodity_timeframe_unsupported");
   const y = await getYahooChart(ySym, cfg.interval, cfg.range);
   let candles = (y.candles as ChartCandle[]).slice(-limit);
   if (cfg.aggregate4h) candles = aggregateCandles(candles, 4 * 3_600_000);
   if (candles.length < 5) throw new Error("commodity_history_empty");
-  return {
-    candles,
-    source: `yahoo-finance (${ySym})`,
-    note: "Chuỗi OHLC futures/spot Yahoo",
-  };
+  return { candles, source: `yahoo-finance (${ySym})`, note: "Yahoo futures/spot" };
 }
 
 export async function getChartHistory(args: ChartArgs): Promise<{ data: ChartMarketData; meta: Meta } | null> {
   const symbol = args.symbol.toUpperCase().replace(/[^A-Z0-9]/g, "");
   const tf = args.timeframe;
-  const limit = Math.min(Math.max(args.limit ?? 500, 50), args.assetType === "crypto" ? 5000 : 2000);
+  const limit = Math.min(Math.max(args.limit ?? 280, 40), args.assetType === "crypto" ? 5000 : 400);
   if (!tfsFor(args.assetType).includes(tf)) return null;
 
   try {
     const res = await cached(`chart:${args.assetType}:${symbol}:${tf}:${limit}`, {
-      ttlMs: args.assetType === "crypto" ? 15_000 : args.assetType === "forex" ? 30_000 : 12_000,
+      ttlMs: args.assetType === "crypto" ? 12_000 : args.assetType === "forex" ? 25_000 : 8_000,
       staleMs: 24 * 3_600_000,
       producer: async () => {
         const raw =
@@ -327,9 +331,7 @@ export async function getChartHistory(args: ChartArgs): Promise<{ data: ChartMar
       sourceTimestampMs: last?.time ?? Date.now(),
       cached: res.cached,
       stale: res.stale,
-      note: [note, gaps ? `${gaps} khoảng trống dữ liệu trong chuỗi` : null, suspect ? `quality: SUSPECT flags đã log` : null]
-        .filter(Boolean)
-        .join(" · ") || undefined,
+      note: [note, gaps ? `${gaps} khoảng trống` : null, suspect ? "quality: SUSPECT" : null].filter(Boolean).join(" · ") || undefined,
       slas:
         args.assetType === "crypto"
           ? { liveSlaMs: TF_MS[tf] * 1.5, freshSlaMs: TF_MS[tf] * 4, delayedSlaMs: TF_MS[tf] * 20 }
@@ -337,15 +339,17 @@ export async function getChartHistory(args: ChartArgs): Promise<{ data: ChartMar
     });
     meta.qualityStatus = suspect ? "SUSPECT" : "VALID";
 
-    const data: ChartMarketData = {
-      candles,
-      indicators: computeIndicators(candles),
-      markers: computeMarkers(candles),
-      intervalMs: TF_MS[tf],
-      gaps,
-      suspect,
+    return {
+      data: {
+        candles,
+        indicators: computeIndicators(candles),
+        markers: computeMarkers(candles),
+        intervalMs: TF_MS[tf],
+        gaps,
+        suspect,
+      },
+      meta,
     };
-    return { data, meta };
   } catch {
     return null;
   }
