@@ -3,23 +3,14 @@ import { candleAggregator } from "@/lib/realtime/candles";
 import { ensureBinanceWsStarted } from "@/lib/realtime/binance-ws";
 import { ensureVndirectWsStarted, vndirectWs } from "@/lib/realtime/vndirect-ws";
 import { tfsFor, type ChartAssetType } from "@/lib/chart-const";
-import { getChartHistory } from "@/lib/services/chart";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 /**
- * REALTIME CHART STREAM (SSE) — centralized subscription manager.
- *
- * GET /api/v1/chart/stream?symbol=BTCUSDT&assetType=crypto&timeframe=5m
- * GET /api/v1/chart/stream?symbol=VNM&assetType=stock&timeframe=1d
- *
- * Events: snapshot, chart.candle.updated, chart.candle.closed, heartbeat.
- * Stock path: VNDirect WS (primary) → marketTickRouter → candleAggregator;
- * SSI WS remains fallback inside market-ticks.
- *
- * Critical: seed last history candle so live ticks update the SAME timestamp
- * the chart already rendered (VN history uses T15:00:00+07, not UTC midnight).
+ * REALTIME CHART STREAM (SSE).
+ * Stock: start VNDirect WS first, fast-seed last OHLCV bar (≤600ms race),
+ * then stream ticks. Never block SSE on full history+indicators.
  */
 export async function GET(req: Request) {
   const url = new URL(req.url);
@@ -57,6 +48,7 @@ export async function GET(req: Request) {
   const isIndex = assetType === "stock" && INDEX_CODES.has(symbol);
 
   if (assetType === "stock") {
+    // Keep VNDirect warm BEFORE any await
     ensureVndirectWsStarted();
     if (isIndex) {
       vndirectWs.ensureCoreIndices();
@@ -65,15 +57,33 @@ export async function GET(req: Request) {
       unwatchVnd = vndirectWs.watchSymbol(symbol);
     }
 
-    try {
-      const hist = await getChartHistory({ symbol, assetType: "stock", timeframe, limit: 50 });
-      const last = hist?.data?.candles?.at(-1);
-      if (last && last.time > 0 && last.close > 0) {
-        candleAggregator.seed(symbol, timeframe, last, "vndirect");
-      }
-    } catch {
-      /* history seed is best-effort */
-    }
+    await Promise.race([
+      (async () => {
+        try {
+          const { getVnOhlcv } = await import("@/lib/services/stocks");
+          const r = await getVnOhlcv(symbol, 5);
+          const last = r?.bars?.at(-1);
+          if (last && last.time > 0 && last.close > 0) {
+            candleAggregator.seed(
+              symbol,
+              timeframe,
+              {
+                time: last.time,
+                open: last.open,
+                high: last.high,
+                low: last.low,
+                close: last.close,
+                volume: last.volume,
+              },
+              "vndirect",
+            );
+          }
+        } catch {
+          /* best-effort seed */
+        }
+      })(),
+      new Promise<void>((resolve) => setTimeout(resolve, 600)),
+    ]);
   }
 
   const stream = new ReadableStream({
@@ -119,7 +129,7 @@ export async function GET(req: Request) {
           note: snap
             ? undefined
             : vndDisabled
-              ? "VNDirect WS disabled — fallback SSI/HTTP; chờ tick hoặc history"
+              ? "VNDirect WS disabled — fallback SSI/HTTP"
               : "chờ tick VNDirect/SSI / stream đang kết nối",
         });
       } else {

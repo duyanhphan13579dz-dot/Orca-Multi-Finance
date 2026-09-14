@@ -37,7 +37,7 @@ interface LiveBar extends ChartCandle {
   degraded?: boolean;
 }
 
-const EMIT_THROTTLE_MS = 900;
+const EMIT_THROTTLE_MS = 400;
 const VALIDATE_THROTTLE_MS = 2_000;
 
 function vnSessionDateKey(ts: number): string {
@@ -51,7 +51,6 @@ function vnSessionDateKey(ts: number): string {
   return `${get("year")}-${get("month")}-${get("day")}`;
 }
 
-/** Epoch ms for VN session day bar — matches getVndOhlcv / getVndIndexOhlcv. */
 function vnDayBucket(ts: number): number {
   return Date.parse(`${vnSessionDateKey(ts)}T15:00:00+07:00`);
 }
@@ -136,10 +135,6 @@ class CandleAggregator {
     return bar ? toCandle(bar) : null;
   }
 
-  /**
-   * Align live bar with the last history candle so ticks update the same
-   * timestamp the chart already rendered (avoids hard-snapshot look).
-   */
   seed(symbol: string, tf: string, candle: ChartCandle, source: Tick["source"] = "vndirect"): void {
     const sym = symbol.toUpperCase();
     const key = `${sym}|${tf}`;
@@ -282,7 +277,6 @@ class CandleAggregator {
 
     let bar = this.bars.get(key);
     let bucket = bucketFor(tick.ts, tf, assetClass);
-    // 1w/1M: stick to seeded history bar until stream ends
     if (assetClass === "vn" && (tf === "1w" || tf === "1M") && bar) {
       bucket = bar.bucket;
     }
