@@ -1,6 +1,7 @@
 import "server-only";
 import { eventBus } from "../events";
 import { ensureSsiWsStarted } from "./ssi-ws";
+import { ensureVndirectWsStarted, vndirectWs } from "./vndirect-ws";
 
 export type MarketTickSource = "vndirect" | "ssi-fallback";
 
@@ -48,7 +49,12 @@ class MarketTickRouter {
   }
 
   private attach(sym: string) {
-    // VNDirect is the primary realtime channel when a producer publishes it.
+    // VNDirect WS is primary when enabled; starts producer + watches symbol.
+    ensureVndirectWsStarted();
+    const unwatchVnd = vndirectWs.watchSymbol(sym);
+    const isIndex = ["VNINDEX", "VN30", "HNX", "HNX30", "UPCOM", "VNXALL", "VN100"].includes(sym);
+    if (isIndex) vndirectWs.ensureCoreIndices();
+
     const offVndQuote = eventBus.on(`vndirect:quote:${sym}`, (payload) => {
       const tick = this.fromVndirect(payload as VndirectTick, sym);
       if (!tick) return;
@@ -77,6 +83,7 @@ class MarketTickRouter {
     });
 
     this.offs.set(sym, () => {
+      unwatchVnd();
       offVndQuote();
       offVndIndex();
       offSsiQuote();
