@@ -402,14 +402,13 @@ export async function getVnOhlcv(
       ttlMs: 12_000,
       staleMs: 90_000,
       producer: async () => {
-        if (!isIndex) {
-          try {
-            const { fetchVndDchartHistory } = await import("@/lib/providers/vndirect-dchart");
-            const dchartBars = await fetchVndDchartHistory(sym, "D", limit);
-            if (dchartBars.length >= 5) return dchartBars;
-          } catch {
-            /* fall through to stock_prices */
-          }
+        // dchart: cổ phiếu + chỉ số (VNINDEX/VN30/HNX/UPCOM/…) — cùng nguồn website VNDirect
+        try {
+          const { fetchVndDchartHistory } = await import("@/lib/providers/vndirect-dchart");
+          const dchartBars = await fetchVndDchartHistory(sym, "D", limit);
+          if (dchartBars.length >= 5) return dchartBars;
+        } catch {
+          /* fall through */
         }
         const bars = isIndex
           ? await vndirect.getVndIndexOhlcv(sym, limit)
@@ -427,7 +426,7 @@ export async function getVnOhlcv(
         source: "vndirect",
         sourceTimestampMs: Date.now(),
         cached: res.cached,
-        note: "VNDirect dchart OHLCV",
+        note: isIndex ? "VNDirect dchart index OHLCV" : "VNDirect dchart OHLCV",
       }),
     };
   } catch {
