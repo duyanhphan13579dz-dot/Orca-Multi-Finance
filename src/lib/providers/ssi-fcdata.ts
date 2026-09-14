@@ -5,7 +5,7 @@ import type { IndexQuote, OhlcvBar, Quote } from "../types";
 import { ProviderError } from "./binance";
 
 /**
- * SSI FastConnect Data (FC Data) — full market REST adapter.
+ * SSI FastConnect Data (FC Data) — full market REST adapter (fallback khi VNDIRECT không dùng được).
  * PrivateKey not required (FC Trading only).
  *
  * Credentials (any pair works):
@@ -657,13 +657,13 @@ export async function probeSsiFcdata(): Promise<{
     return {
       configured: false,
       ok: false,
-      message: "SSI_API_KEY / SSI_API_SECRET (hoặc SSI_FC_CONSUMER_*) chưa set",
+      message: "SSI_API_KEY / SSI_API_SECRET (hoặc SSI_FC_CONSUMER_*) chưa set — SSI chỉ fallback",
     };
   }
   const t0 = Date.now();
   try {
     await getSsiAccessToken();
-    return { configured: true, ok: true, message: "SSI AccessToken OK", latencyMs: Date.now() - t0 };
+    return { configured: true, ok: true, message: "SSI AccessToken OK (fallback)", latencyMs: Date.now() - t0 };
   } catch (e) {
     return {
       configured: true,

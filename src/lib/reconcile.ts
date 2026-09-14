@@ -3,7 +3,7 @@ import type { Quote } from "./types";
 import { validateQuote, type QualityResult } from "./quality";
 
 /**
- * DATA RECONCILIATION ENGINE — VNStock (primary) vs VNDirect (validation).
+ * DATA RECONCILIATION ENGINE — VNDIRECT (primary) vs SSI (fallback) vs VNStock (validation).
  *
  * Selection rules (in order):
  *  1. Records that pass quality validation beat flagged records.

@@ -11,6 +11,13 @@ export interface MarketSourceHealthRow {
   status: "healthy" | "degraded" | "down" | "not_configured";
 }
 
+/** Đổi primary/fallback cho market data. Mặc định: vndirect primary, ssi-fcdata fallback nếu có cấu hình. */
+// Không dùng hàm này — VNDIRECT luôn primary, SSI chỉ fallback.
+// Nếu cần runtime-switch provider, thêm endpoint riêng trong src/app/api/v1/system/*
+export function setMarketProviderLayout(_layout: { primary: "vndirect" | "ssi-fcdata"; fallback: "vndirect" | "ssi-fcdata" | null }): void {
+  throw new Error("setMarketProviderLayout không còn hỗ trợ — primary luôn là VNDIRECT");
+}
+
 export interface SourceHealthRow {
   id: string;
   role: string;
@@ -29,7 +36,10 @@ export interface FinancialSourceHealthReport {
   monitor: ReturnType<typeof getFinancialMonitorSnapshot>["metrics"];
 }
 
-/** Snapshot health of registered financial providers + live monitor counters. */
+/**
+ * Snapshot health of registered financial providers + live monitor counters.
+ * VNDIRECT là primary luôn; SSI là fallback khi đã cấu hình.
+ */
 export function getFinancialSourceHealth(): FinancialSourceHealthReport {
   const providers = listFinancialProviders();
   const snap = getFinancialMonitorSnapshot(80);
@@ -77,20 +87,22 @@ export interface MarketSourceHealth {
 
 export function getMarketSourceHealth(): MarketSourceHealth {
   const layout = vnProviderLayout().market;
+  // VNDIRECT luôn primary, SSI chỉ fallback khi có cấu hình.
+  const ssiConfigured = layout.fallback === "ssi-fcdata";
   return {
     layout,
     rows: [
       {
         provider: "ssi-fcdata",
-        configured: ssiFcConfigured(),
+        configured: ssiConfigured,
         role: "fallback",
-        status: ssiFcConfigured() ? "healthy" : "not_configured",
+        status: ssiConfigured ? "healthy" : "not_configured",
       },
       {
         provider: "vndirect",
         configured: true,
-        role: layout.primary === "vndirect" ? ("primary" as const) : (layout.fallback ? ("fallback" as const) : ("fallback" as const)),
-        status: layout.primary === "vndirect" ? "healthy" : "healthy",
+        role: "primary",
+        status: "healthy",
       },
     ],
   };

@@ -100,6 +100,8 @@ export function mergeSecurityMaster(
   return [...bySymbol.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([symbol, rows]) => {
     const ssi = rows.ssi;
     const vnd = rows.vndirect;
+    // VNDIRECT là primary — ưu tiên tên/sàn từ vndirect nếu có, còn không lấy ssi.
+    // SSI chỉ fallback; provenance ghi nguồn chính là vndirect nếu có.
     const companyName = normalizeText(vnd?.name) ?? normalizeText(ssi?.name);
     const exchange = normalizeExchange(vnd?.exchange) ?? normalizeExchange(ssi?.exchange);
     const industry = normalizeIndustry(vnd?.industry) ?? normalizeIndustry(ssi?.industry);
@@ -113,7 +115,9 @@ export function mergeSecurityMaster(
       exchange,
       industry,
       securityType: classify(symbol),
-      sources: [vnd ? "vndirect" : null, ssi ? "ssi" : null].filter((x): x is MasterSource => x != null),
+<<<<<<< HEAD
+      sources: [ssi ? "ssi" : null, vnd ? "vndirect" : null].filter((x): x is MasterSource => x != null),
+      // VNDIRECT là primary — provenance ghi nguồn chính là vndirect nếu có.
       provenance: {
         companyName: vnd?.name ? "vndirect" : ssi?.name ? "ssi" : null,
         exchange: vnd?.exchange ? "vndirect" : ssi?.exchange ? "ssi" : null,
@@ -126,7 +130,7 @@ export function mergeSecurityMaster(
 }
 
 export async function getCanonicalSecurityMaster(): Promise<SecurityMasterRecord[]> {
-  const result = await cached("vn:security-master:vndirect-ssi:v2", {
+  const result = await cached("vn:security-master:vndirect-ssi:v1", {
     ttlMs: 6 * 3_600_000,
     staleMs: 24 * 3_600_000,
     producer: async () => {
@@ -134,6 +138,8 @@ export async function getCanonicalSecurityMaster(): Promise<SecurityMasterRecord
       const vndirectRows = vndirect.status === "fulfilled" ? vndirect.value : [];
       const ssiRows = ssi.status === "fulfilled" ? ssi.value : [];
       if (!ssiRows.length && !vndirectRows.length) throw new Error("No security master source available");
+      // VNDIRECT là primary — ưu tiên tên/sàn từ vndirect nếu có, còn không lấy ssi.
+      // SSI chỉ fallback; khi cả hai đều có, vndirect được ưu tiên hơn.
       return mergeSecurityMaster(ssiRows, vndirectRows);
     },
   });

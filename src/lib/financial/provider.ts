@@ -6,8 +6,8 @@ import type { FinancialSourceMeta, NormalizedPeriod, SourceRole } from "./types"
  * Financial Provider Interface — Source Priority Engine.
  *
  * Providers are tried in ascending priority (1 = highest).
- * VNDIRECT DStock is PRIMARY for financial statements.
- * SSI is not part of this router (Market Data domain only).
+ * VNDIRECT DStock là PRIMARY cho financial statements.
+ * SSI không nằm trong router này (chỉ market data, xem providers-registry.ts).
  */
 
 export interface FinancialProviderResult {

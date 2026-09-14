@@ -1,6 +1,7 @@
 import "server-only";
 import type { FinancialProvider } from "./provider";
 import { fetchVndirectFinancials } from "./vndirect-fs";
+import { ssiFcConfigured } from "../providers/ssi-fcdata";
 
 /**
  * Financial Provider Layout
@@ -12,23 +13,24 @@ import { fetchVndirectFinancials } from "./vndirect-fs";
  */
 export interface VnProviderLayout {
   market: {
-    primary: string;
-    fallback: string | null;
+    primary: "vndirect";
+    fallback: "ssi-fcdata" | "vndirect";
   };
   financial: {
-    primary: string;
-    fallback: string | null;
+    primary: "vndirect";
+    fallback: "vndirect";
   };
 }
 
 export function vnProviderLayout(): VnProviderLayout {
-  // VNDirect is the primary source for daily/history market data.
-  // SSI is a bounded fallback for market data; realtime orderbook remains a separate SSI capability.
-  // SSI is NEVER registered in `listFinancialProviders()` — financial statements remain VNDirect primary.
+  // VNDIRECT là primary cho market data (chỉ số, bảng giá, quote, OHLCV, universe).
+  // SSI FastConnect là fallbackMarket khi đã cấu hình.
+  // Financial statements primary vẫn là VNDIRECT.
+  const ssiLive = ssiFcConfigured();
   return {
     market: {
       primary: "vndirect",
-      fallback: "ssi-fcdata",
+      fallback: ssiLive ? "ssi-fcdata" : "vndirect",
     },
     financial: {
       primary: "vndirect",
@@ -51,12 +53,12 @@ const vndirectProvider: FinancialProvider = {
       sourceId: "vndirect-fs",
       role: "PRIMARY_SOURCE_OF_TRUTH",
       priority: 1,
-      note: "VNDIRECT DStock / api-finfo financial_statements — primary BCTC",
+      note: "VNDIRECT DStock / api-finfo financial_statements — PRIMARY (market + financial)",
     };
   },
 };
 
 export function listFinancialProviders(): FinancialProvider[] {
-  // SSI intentionally omitted — Market Data domain only.
+  // VNDIRECT là primaryMarket và primaryFinancial.
   return [vndirectProvider];
 }
