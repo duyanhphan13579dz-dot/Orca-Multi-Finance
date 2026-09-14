@@ -85,9 +85,9 @@ export async function GET(req: Request, ctx: { params: Promise<{ symbol: string 
       };
 
       unsubs.push(
-        candleAggregator.subscribe(sym, "15m", { crypto: true }),
-        candleAggregator.subscribe(sym, "5m", { crypto: true }),
-        candleAggregator.subscribe(sym, "1m", { crypto: true }),
+        candleAggregator.subscribe(sym, "15m", { assetClass: "crypto" }),
+        candleAggregator.subscribe(sym, "5m", { assetClass: "crypto" }),
+        candleAggregator.subscribe(sym, "1m", { assetClass: "crypto" }),
       );
 
       for (const interval of ["15m", "5m", "1m"] as const) {

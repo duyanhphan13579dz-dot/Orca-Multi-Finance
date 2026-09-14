@@ -3,7 +3,7 @@ import { eventBus } from "../events";
 import { TF_MS, type ChartCandle } from "../chart-const";
 import { validateQuote, logQualityEvent } from "../quality";
 import { binanceWs, KLINE_INTERVALS, type KlineCandle } from "./binance-ws";
-import { ensureSsiWsStarted } from "./ssi-ws";
+import { marketTickRouter } from "./market-ticks";
 
 /**
  * CANDLE AGGREGATION ENGINE — live current-candles from centralized tick/kline feed.
@@ -19,6 +19,14 @@ export interface Tick {
   cumVolume: number;
   cumQuoteVolume: number;
   ts: number;
+  source?: "binance" | "vndirect" | "ssi-fallback";
+  degraded?: boolean;
+}
+
+export type CandleAssetClass = "crypto" | "vn-stock" | "vn-index";
+
+export interface CandleSubscriptionOptions {
+  assetClass: CandleAssetClass;
 }
 
 interface LiveBar extends ChartCandle {
@@ -27,6 +35,8 @@ interface LiveBar extends ChartCandle {
   lastCum: number;
   updates: number;
   lastEmit: number;
+  source?: Tick["source"];
+  degraded?: boolean;
 }
 
 const EMIT_THROTTLE_MS = 900;
@@ -47,7 +57,7 @@ class CandleAggregator {
     return [...this.subs.keys()];
   }
 
-  subscribe(symbol: string, tf: string, opts?: { crypto?: boolean }): () => void {
+  subscribe(symbol: string, tf: string, opts: CandleSubscriptionOptions): () => void {
     const sym = symbol.toUpperCase();
     let tfMap = this.subs.get(sym);
     if (!tfMap) {
@@ -55,13 +65,12 @@ class CandleAggregator {
       this.subs.set(sym, tfMap);
     }
     if (tfMap.size === 0 && !this.tickOffs.has(sym)) {
-      if (opts?.crypto) {
+      if (opts.assetClass === "crypto") {
         this.tickOffs.set(sym, eventBus.on(`tick:${sym}`, (p) => this.feed(p as Tick, "crypto")));
       } else {
-        ensureSsiWsStarted();
-        const indexOff = eventBus.on(`ssi:index:${sym}`, (p) => this.feedSsiIndex(p as { code: string; value: number; volume?: number; eventTime: number }));
-        const quoteOff = eventBus.on(`ssi:quote:${sym}`, (p) => this.feedSsiQuote(p as { symbol: string; price: number; volume?: number | null; eventTime: number }));
-        this.tickOffs.set(sym, () => { indexOff(); quoteOff(); });
+        const offMarket = marketTickRouter.subscribe(sym);
+        const marketOff = eventBus.on(`market-tick:${sym}`, (p) => this.feed(p as Tick, "vn"));
+        this.tickOffs.set(sym, () => { marketOff(); offMarket(); });
       }
     }
     const firstForTf = (tfMap.get(tf) ?? 0) === 0;
@@ -70,7 +79,7 @@ class CandleAggregator {
     let unwantKline: (() => void) | null = null;
     let offKline: (() => void) | null = null;
     const key = `${sym}|${tf}`;
-    if (opts?.crypto && firstForTf && KLINE_INTERVALS.has(tf)) {
+    if (opts.assetClass === "crypto" && firstForTf && KLINE_INTERVALS.has(tf)) {
       this.klineActive.add(key);
       unwantKline = binanceWs.requestKline(sym, tf);
       offKline = eventBus.on(`kline:${sym}:${tf}`, (p) => {
@@ -116,6 +125,8 @@ class CandleAggregator {
           timeframe: tf,
           candle: toCandle(bar),
           quality: "VALID",
+          source: bar.source,
+          degraded: bar.degraded,
         });
       }
       bar = {
@@ -130,6 +141,8 @@ class CandleAggregator {
         lastCum: 0,
         updates: 1,
         lastEmit: 0,
+        source: "binance",
+        degraded: false,
       };
     } else {
       bar.high = Math.max(bar.high, k.high);
@@ -146,6 +159,8 @@ class CandleAggregator {
         timeframe: tf,
         candle: toCandle(bar),
         quality: "VALID",
+        source: bar.source,
+        degraded: bar.degraded,
       });
       this.bars.delete(key);
       return;
@@ -159,6 +174,8 @@ class CandleAggregator {
         timeframe: tf,
         candle: toCandle(bar),
         quality: "VALID",
+        source: bar.source,
+        degraded: bar.degraded,
       });
     }
   }
@@ -207,20 +224,10 @@ class CandleAggregator {
       if (quality === "INVALID") return;
     }
 
-    for (const tf of tfMap.keys()) this.feedTf(tick, tf, quality);
+    for (const tf of tfMap.keys()) this.feedTf(tick, tf, quality, assetClass);
   }
 
-  private feedSsiQuote(quote: { symbol: string; price: number; volume?: number | null; eventTime: number }) {
-    if (!Number.isFinite(quote.price) || quote.price <= 0) return;
-    this.feed({ symbol: quote.symbol, price: quote.price, cumVolume: quote.volume ?? 0, cumQuoteVolume: 0, ts: quote.eventTime }, "vn");
-  }
-
-  private feedSsiIndex(index: { code: string; value: number; volume?: number; eventTime: number }) {
-    if (!Number.isFinite(index.value) || index.value <= 0) return;
-    this.feed({ symbol: index.code, price: index.value, cumVolume: index.volume ?? 0, cumQuoteVolume: 0, ts: index.eventTime }, "vn");
-  }
-
-  private feedTf(tick: Tick, tf: string, quality: string) {
+  private feedTf(tick: Tick, tf: string, quality: string, assetClass: "crypto" | "vn") {
     const tfMs = TF_MS[tf];
     if (!tfMs) return;
     const sym = tick.symbol.toUpperCase();
@@ -238,6 +245,8 @@ class CandleAggregator {
           timeframe: tf,
           candle: closed,
           quality: bar.firstCum >= 0 ? quality : "SUSPECT",
+          source: bar.source,
+          degraded: bar.degraded,
         });
       }
       bar = {
@@ -252,6 +261,8 @@ class CandleAggregator {
         lastCum: tick.cumVolume,
         updates: 1,
         lastEmit: 0,
+        source: tick.source,
+        degraded: tick.degraded ?? assetClass === "vn",
       };
     } else {
       bar.high = Math.max(bar.high, tick.price);
@@ -259,6 +270,8 @@ class CandleAggregator {
       bar.close = tick.price;
       bar.lastCum = tick.cumVolume;
       bar.updates++;
+      bar.source = tick.source;
+      bar.degraded = tick.degraded ?? assetClass === "vn";
     }
     bar.volume = Math.max(0, bar.lastCum - bar.firstCum);
     this.bars.set(key, bar);
@@ -271,6 +284,8 @@ class CandleAggregator {
         timeframe: tf,
         candle: toCandle(bar),
         quality,
+        source: bar.source,
+        degraded: bar.degraded,
       });
     }
   }

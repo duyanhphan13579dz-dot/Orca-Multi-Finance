@@ -44,7 +44,7 @@ export async function GET(req: Request) {
       };
 
       if (assetType === "crypto") {
-        unsubscribe = candleAggregator.subscribe(symbol, timeframe, { crypto: true });
+        unsubscribe = candleAggregator.subscribe(symbol, timeframe, { assetClass: "crypto" });
         offFns = [
           eventBus.on(`candle.updated:${symbol}:${timeframe}`, (p) => send("chart.candle.updated", p)),
           eventBus.on(`candle.closed:${symbol}:${timeframe}`, (p) => send("chart.candle.closed", p)),

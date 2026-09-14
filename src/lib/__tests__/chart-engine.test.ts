@@ -104,14 +104,15 @@ test("validateQuote: extreme deviation → SUSPECT, never silently passed", () =
 
 test("candle aggregator: invalid ticks are dropped, valid ticks emit updates", () => {
   const sym = `T${Math.floor(Math.random() * 1e6)}USDT`;
-  const unsub = candleAggregator.subscribe(sym, "1m");
+  const unsub = candleAggregator.subscribe(sym, "1m", { assetClass: "vn-stock" });
   const events: unknown[] = [];
   const off = eventBus.on(`candle.updated:${sym}:1m`, (p) => events.push(p));
+  const t0 = Date.now();
 
-  eventBus.emit(`tick:${sym}`, { symbol: sym, price: -1, cumVolume: 10, cumQuoteVolume: 10, ts: 1_700_000_000_000 }); // INVALID
+  eventBus.emit(`market-tick:${sym}`, { symbol: sym, price: -1, cumVolume: 10, cumQuoteVolume: 10, ts: t0, source: "ssi-fallback", degraded: true }); // INVALID
   assert.equal(events.length, 0);
 
-  eventBus.emit(`tick:${sym}`, { symbol: sym, price: 100, cumVolume: 10, cumQuoteVolume: 10, ts: 1_700_000_000_100 });
+  eventBus.emit(`market-tick:${sym}`, { symbol: sym, price: 100, cumVolume: 10, cumQuoteVolume: 10, ts: t0 + 100, source: "ssi-fallback", degraded: true });
   assert.equal(events.length, 1);
 
   off();
@@ -120,14 +121,15 @@ test("candle aggregator: invalid ticks are dropped, valid ticks emit updates", (
 
 test("candle aggregator: bucket roll finalizes candle and opens the next (no duplicates)", () => {
   const sym = `R${Math.floor(Math.random() * 1e6)}USDT`;
-  const unsub = candleAggregator.subscribe(sym, "1m");
+  const unsub = candleAggregator.subscribe(sym, "1m", { assetClass: "vn-stock" });
   const closed: { candle: ChartCandle }[] = [];
   const off = eventBus.on(`candle.closed:${sym}:1m`, (p) => closed.push(p as { candle: ChartCandle }));
-  const t0 = 1_700_000_010_000;
+  const t0 = Math.floor(Date.now() / 60_000) * 60_000 + 10_000;
 
-  eventBus.emit(`tick:${sym}`, { symbol: sym, price: 100, cumVolume: 100, cumQuoteVolume: 100, ts: t0 });
-  eventBus.emit(`tick:${sym}`, { symbol: sym, price: 102, cumVolume: 115, cumQuoteVolume: 115, ts: t0 + 25_000 }); // same bucket: +15 volume
-  eventBus.emit(`tick:${sym}`, { symbol: sym, price: 105, cumVolume: 118, cumQuoteVolume: 118, ts: t0 + 61_000 }); // new bucket → close prev
+  const tick = (price: number, cumVolume: number, ts: number) => eventBus.emit(`market-tick:${sym}`, { symbol: sym, price, cumVolume, cumQuoteVolume: cumVolume, ts, source: "ssi-fallback", degraded: true });
+  tick(100, 100, t0);
+  tick(102, 115, t0 + 25_000); // same bucket: +15 volume
+  tick(105, 118, t0 + 61_000); // new bucket → close prev
   assert.equal(closed.length, 1);
   assert.equal(closed[0].candle.open, 100);
   assert.equal(closed[0].candle.close, 102);
@@ -141,20 +143,45 @@ test("candle aggregator: bucket roll finalizes candle and opens the next (no dup
 
 test("subscription dedup: N subscribers share one feed; unsubscribe stops events", () => {
   const sym = `D${Math.floor(Math.random() * 1e6)}USDT`;
-  const u1 = candleAggregator.subscribe(sym, "1m");
-  const u2 = candleAggregator.subscribe(sym, "1m");
+  const u1 = candleAggregator.subscribe(sym, "1m", { assetClass: "vn-stock" });
+  const u2 = candleAggregator.subscribe(sym, "1m", { assetClass: "vn-stock" });
   assert.ok(candleAggregator.hasSubs(sym));
   const events: unknown[] = [];
   const off = eventBus.on(`candle.updated:${sym}:1m`, (p) => events.push(p));
-  eventBus.emit(`tick:${sym}`, { symbol: sym, price: 50, cumVolume: 5, cumQuoteVolume: 5, ts: 1_700_000_100_000 });
+  eventBus.emit(`market-tick:${sym}`, { symbol: sym, price: 50, cumVolume: 5, cumQuoteVolume: 5, ts: Date.now(), source: "ssi-fallback", degraded: true });
   assert.equal(events.length, 1);
   u1();
   assert.ok(candleAggregator.hasSubs(sym)); // still one ref
   u2();
   assert.ok(!candleAggregator.hasSubs(sym)); // feed torn down
-  eventBus.emit(`tick:${sym}`, { symbol: sym, price: 51, cumVolume: 6, cumQuoteVolume: 6, ts: 1_700_000_160_001 });
+  eventBus.emit(`market-tick:${sym}`, { symbol: sym, price: 51, cumVolume: 6, cumQuoteVolume: 6, ts: Date.now() + 60_001, source: "ssi-fallback", degraded: true });
   assert.equal(events.length, 1); // no events after full unsubscribe (timeframe-switch race safety)
   off();
+});
+
+test("market candle subscription consumes provider-neutral market ticks", () => {
+  const sym = `VN${Math.floor(Math.random() * 1e6)}`;
+  const unsub = candleAggregator.subscribe(sym, "1m", { assetClass: "vn-stock" });
+  const events: { candle: ChartCandle; quality: string; source?: string; degraded?: boolean }[] = [];
+  const off = eventBus.on(`candle.updated:${sym}:1m`, (p) => events.push(p as { candle: ChartCandle; quality: string; source?: string; degraded?: boolean }));
+
+  eventBus.emit(`market-tick:${sym}`, {
+    symbol: sym,
+    price: 42,
+    cumVolume: 100,
+    cumQuoteVolume: 4200,
+    ts: Date.now(),
+    source: "ssi-fallback",
+    degraded: true,
+  });
+
+  assert.equal(events.length, 1);
+  assert.equal(events[0].candle.close, 42);
+  assert.equal(events[0].quality, "VALID");
+  assert.equal(events[0].source, "ssi-fallback");
+  assert.equal(events[0].degraded, true);
+  off();
+  unsub();
 });
 
 /* ------------------------------ freshness (§4) ----------------------------- */
@@ -198,10 +225,10 @@ test("analyzeSeries returns finite snapshot on real-shaped data", () => {
   assert.ok(t.support.length >= 0 && t.resistance.length >= 0);
 });
 
-test("computeMarkers: spikes and RSI extremes become structured markers", () => {
+test("computeMarkers: candle chart keeps volume and RSI dots out of structured markers", () => {
   const bars = syntheticRising(140);
   bars[100].volume = 3000; // engineered spike
   const m = computeMarkers(bars);
-  assert.ok(m.some((x) => x.type === "volume-spike" && x.time === bars[100].time));
+  assert.ok(!m.some((x) => x.type === "volume-spike" || x.type === "rsi-extreme"));
   for (const mk of m) assert.ok(Number.isFinite(mk.time) && mk.title.length > 0);
 });
