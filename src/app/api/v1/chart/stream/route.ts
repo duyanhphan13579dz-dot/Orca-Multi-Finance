@@ -9,8 +9,7 @@ export const runtime = "nodejs";
 
 /**
  * REALTIME CHART STREAM (SSE).
- * Stock: start VNDirect WS first, fast-seed last OHLCV bar (≤600ms race),
- * then stream ticks. Never block SSE on full history+indicators.
+ * Seed last OHLCV bar with ≤250ms race so SSE opens fast; VNDirect WS starts first.
  */
 export async function GET(req: Request) {
   const url = new URL(req.url);
@@ -34,21 +33,11 @@ export async function GET(req: Request) {
   let heartbeat: ReturnType<typeof setInterval> | null = null;
 
   const INDEX_CODES = new Set([
-    "VNINDEX",
-    "VN30",
-    "HNX",
-    "HNX30",
-    "UPCOM",
-    "VNXALL",
-    "VN100",
-    "HNXINDEX",
-    "UPCOMINDEX",
-    "VNI",
+    "VNINDEX", "VN30", "HNX", "HNX30", "UPCOM", "VNXALL", "VN100", "HNXINDEX", "UPCOMINDEX", "VNI",
   ]);
   const isIndex = assetType === "stock" && INDEX_CODES.has(symbol);
 
   if (assetType === "stock") {
-    // Keep VNDirect warm BEFORE any await
     ensureVndirectWsStarted();
     if (isIndex) {
       vndirectWs.ensureCoreIndices();
@@ -61,7 +50,7 @@ export async function GET(req: Request) {
       (async () => {
         try {
           const { getVnOhlcv } = await import("@/lib/services/stocks");
-          const r = await getVnOhlcv(symbol, 5);
+          const r = await getVnOhlcv(symbol, 2);
           const last = r?.bars?.at(-1);
           if (last && last.time > 0 && last.close > 0) {
             candleAggregator.seed(
@@ -79,10 +68,10 @@ export async function GET(req: Request) {
             );
           }
         } catch {
-          /* best-effort seed */
+          /* best-effort */
         }
       })(),
-      new Promise<void>((resolve) => setTimeout(resolve, 600)),
+      new Promise<void>((resolve) => setTimeout(resolve, 250)),
     ]);
   }
 
@@ -92,7 +81,7 @@ export async function GET(req: Request) {
         try {
           controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
         } catch {
-          /* stream closed */
+          /* closed */
         }
       };
 
@@ -139,7 +128,7 @@ export async function GET(req: Request) {
           candle: null,
           live: false,
           source: "frankfurter-http",
-          note: "Frankfurter/ECB chart history dùng HTTP; không có websocket FX công khai.",
+          note: "Frankfurter/ECB chart history dùng HTTP",
         });
       }
 
