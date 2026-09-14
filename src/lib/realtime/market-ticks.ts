@@ -1,6 +1,6 @@
 import "server-only";
 import { eventBus } from "../events";
-import { ensureSsiWsStarted } from "./ssi-ws";
+import { ensureSsiWsStarted, ssiWs } from "./ssi-ws";
 import { ensureVndirectWsStarted, vndirectWs } from "./vndirect-ws";
 
 export type MarketTickSource = "vndirect" | "ssi-fallback";
@@ -17,9 +17,34 @@ export interface MarketTick {
 
 type SsiQuote = { symbol: string; price: number; volume?: number | null; value?: number | null; eventTime: number };
 type SsiIndex = { code: string; value: number; volume?: number; eventTime: number };
-type VndirectTick = { symbol?: string; code?: string; price?: number; value?: number; volume?: number; eventTime?: number; ts?: number };
+type VndirectTick = {
+  symbol?: string;
+  code?: string;
+  price?: number;
+  value?: number;
+  volume?: number;
+  eventTime?: number;
+  ts?: number;
+};
 
 const PRIMARY_FRESH_MS = 30_000;
+
+const INDEX_SET = new Set([
+  "VNINDEX",
+  "VN30",
+  "HNX",
+  "HNX30",
+  "UPCOM",
+  "VNXALL",
+  "VN100",
+  "HNXINDEX",
+  "UPCOMINDEX",
+  "VNI",
+]);
+
+function normalizeSym(symbol: string): string {
+  return symbol.toUpperCase().replace(/[^A-Z0-9]/g, "");
+}
 
 class MarketTickRouter {
   private refs = new Map<string, number>();
@@ -27,7 +52,8 @@ class MarketTickRouter {
   private primarySeenAt = new Map<string, number>();
 
   subscribe(symbol: string): () => void {
-    const sym = symbol.toUpperCase();
+    const sym = normalizeSym(symbol);
+    if (!sym) return () => {};
     const count = this.refs.get(sym) ?? 0;
     this.refs.set(sym, count + 1);
     if (count === 0) this.attach(sym);
@@ -49,10 +75,14 @@ class MarketTickRouter {
   }
 
   private attach(sym: string) {
-    // VNDirect WS is primary when enabled; starts producer + watches symbol.
     ensureVndirectWsStarted();
-    const unwatchVnd = vndirectWs.watchSymbol(sym);
-    const isIndex = ["VNINDEX", "VN30", "HNX", "HNX30", "UPCOM", "VNXALL", "VN100"].includes(sym);
+    const isIndex = INDEX_SET.has(sym);
+    const unwatchVnd = isIndex
+      ? (() => {
+          vndirectWs.ensureCoreIndices();
+          return () => {};
+        })()
+      : vndirectWs.watchSymbol(sym);
     if (isIndex) vndirectWs.ensureCoreIndices();
 
     const offVndQuote = eventBus.on(`vndirect:quote:${sym}`, (payload) => {
@@ -68,9 +98,13 @@ class MarketTickRouter {
       this.publish(sym, tick);
     });
 
-    // SSI is deliberately isolated here as fallback; CandleAggregator never
-    // talks to provider-specific channels directly.
     ensureSsiWsStarted();
+    let unwatchSsi: (() => void) | null = null;
+    try {
+      unwatchSsi = ssiWs.watchSymbol?.(sym) ?? null;
+    } catch {
+      unwatchSsi = null;
+    }
     const offSsiQuote = eventBus.on(`ssi:quote:${sym}`, (payload) => {
       const tick = this.fromSsiQuote(payload as SsiQuote, sym);
       if (!tick || this.primaryIsFresh(sym, tick.ts)) return;
@@ -84,6 +118,7 @@ class MarketTickRouter {
 
     this.offs.set(sym, () => {
       unwatchVnd();
+      unwatchSsi?.();
       offVndQuote();
       offVndIndex();
       offSsiQuote();
@@ -101,7 +136,7 @@ class MarketTickRouter {
   }
 
   private fromVndirect(payload: VndirectTick, fallback: string): MarketTick | null {
-    const symbol = String(payload.symbol ?? payload.code ?? fallback).toUpperCase();
+    const symbol = normalizeSym(String(payload.symbol ?? payload.code ?? fallback));
     const price = Number(payload.price ?? payload.value);
     const ts = Number(payload.ts ?? payload.eventTime ?? Date.now());
     if (!symbol || !Number.isFinite(price) || price <= 0 || !Number.isFinite(ts)) return null;
@@ -117,7 +152,7 @@ class MarketTickRouter {
   }
 
   private fromSsiQuote(payload: SsiQuote, fallback: string): MarketTick | null {
-    const symbol = String(payload.symbol ?? fallback).toUpperCase();
+    const symbol = normalizeSym(String(payload.symbol ?? fallback));
     const price = Number(payload.price);
     const ts = Number(payload.eventTime);
     if (!symbol || !Number.isFinite(price) || price <= 0 || !Number.isFinite(ts)) return null;
@@ -133,7 +168,7 @@ class MarketTickRouter {
   }
 
   private fromSsiIndex(payload: SsiIndex, fallback: string): MarketTick | null {
-    const symbol = String(payload.code ?? fallback).toUpperCase();
+    const symbol = normalizeSym(String(payload.code ?? fallback));
     const price = Number(payload.value);
     const ts = Number(payload.eventTime);
     if (!symbol || !Number.isFinite(price) || price <= 0 || !Number.isFinite(ts)) return null;
