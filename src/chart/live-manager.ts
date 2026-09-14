@@ -1,7 +1,5 @@
 /**
- * CHART SUBSCRIPTION MANAGER (client) — one EventSource per (symbol, tf),
- * version tokens to defeat races on rapid timeframe switching, automatic
- * reconnect with gap resync (history refetch after connection restore).
+ * CHART SUBSCRIPTION MANAGER (client) — EventSource + stock live-quote poll.
  */
 import type { ChartCandle } from "@/lib/chart-const";
 import type { LiveState } from "./theme";
@@ -18,8 +16,9 @@ export class ChartLiveManager {
   private everConnected = false;
   private lastEventAt = 0;
   private interval: ReturnType<typeof setInterval> | null = null;
+  private pollTimer: ReturnType<typeof setInterval> | null = null;
+  private lastPrice: number | null = null;
 
-  /** start a new live subscription; returns token (stale responses must check) */
   start(symbol: string, timeframe: string, handlers: LiveHandlers, assetType = "crypto"): number {
     this.stop();
     const tk = ++this.token;
@@ -33,13 +32,14 @@ export class ChartLiveManager {
     const candleHandler = (e: Event, closed: boolean) => {
       if (tk !== this.token) return;
       try {
-        const payload = JSON.parse((e as MessageEvent).data as string) as { candle: ChartCandle };
+        const payload = JSON.parse((e as MessageEvent).data as string) as { candle?: ChartCandle };
         if (payload.candle) {
           this.lastEventAt = Date.now();
+          this.lastPrice = payload.candle.close;
           handlers.onCandle(payload.candle, closed);
         }
       } catch {
-        /* malformed event — drop */
+        /* drop */
       }
     };
     es.addEventListener("chart.candle.updated", (e) => candleHandler(e, false));
@@ -48,9 +48,7 @@ export class ChartLiveManager {
 
     es.onopen = () => {
       if (tk !== this.token) return;
-      if (this.everConnected) {
-        handlers.onResyncNeeded();
-      }
+      if (this.everConnected) handlers.onResyncNeeded();
       this.everConnected = true;
       handlers.onLiveState({ state: "connecting", ageMs: null });
     };
@@ -65,13 +63,76 @@ export class ChartLiveManager {
       }
     };
 
+    if (assetType === "stock") {
+      const poll = async () => {
+        if (tk !== this.token) return;
+        try {
+          const res = await fetch(
+            `/api/v1/chart/live-quote?symbol=${encodeURIComponent(symbol)}&_=${Date.now()}`,
+            { cache: "no-store", headers: { Accept: "application/json" } },
+          );
+          const json = (await res.json()) as {
+            success?: boolean;
+            data?: {
+              price?: number;
+              open?: number | null;
+              high?: number | null;
+              low?: number | null;
+              volume?: number;
+              ts?: number;
+            } | null;
+          };
+          const d = json?.data;
+          if (!d || !d.price || d.price <= 0) return;
+          if (
+            this.lastPrice != null &&
+            Math.abs(d.price - this.lastPrice) < 1e-9 &&
+            this.lastEventAt &&
+            Date.now() - this.lastEventAt < 4_000
+          ) {
+            this.lastEventAt = Date.now();
+            return;
+          }
+          this.lastPrice = d.price;
+          this.lastEventAt = Date.now();
+          const parts = new Intl.DateTimeFormat("en-CA", {
+            timeZone: "Asia/Ho_Chi_Minh",
+            year: "numeric",
+            month: "2-digit",
+            day: "2-digit",
+          }).formatToParts(new Date(d.ts ?? Date.now()));
+          const get = (ty: string) => parts.find((p) => p.type === ty)?.value ?? "00";
+          const dayKey = `${get("year")}-${get("month")}-${get("day")}`;
+          const tfMs =
+            timeframe === "1h" ? 3_600_000 : timeframe === "15m" ? 900_000 : timeframe === "5m" ? 300_000 : 0;
+          const bucket =
+            timeframe === "1d" || timeframe === "1w" || timeframe === "1M"
+              ? Date.parse(`${dayKey}T15:00:00+07:00`)
+              : tfMs
+                ? Math.floor((d.ts ?? Date.now()) / tfMs) * tfMs
+                : Date.parse(`${dayKey}T15:00:00+07:00`);
+          const open = d.open && d.open > 0 ? d.open : d.price;
+          const high = Math.max(d.high && d.high > 0 ? d.high : d.price, d.price);
+          const low = Math.min(d.low && d.low > 0 ? d.low : d.price, d.price);
+          handlers.onCandle(
+            { time: bucket, open, high, low, close: d.price, volume: d.volume ?? 0 },
+            false,
+          );
+        } catch {
+          /* ignore */
+        }
+      };
+      void poll();
+      this.pollTimer = setInterval(poll, 2_500);
+    }
+
     this.interval = setInterval(() => {
       if (tk !== this.token) return;
       const age = this.lastEventAt ? Date.now() - this.lastEventAt : null;
       handlers.onLiveState(
         age == null
           ? { state: this.lastEventAt ? "live" : "connecting", ageMs: null }
-          : age < 6_000
+          : age < 8_000
             ? { state: "live", ageMs: age }
             : { state: "delayed", ageMs: age },
       );
@@ -85,7 +146,10 @@ export class ChartLiveManager {
     this.es = null;
     if (this.interval) clearInterval(this.interval);
     this.interval = null;
+    if (this.pollTimer) clearInterval(this.pollTimer);
+    this.pollTimer = null;
     this.everConnected = false;
     this.lastEventAt = 0;
+    this.lastPrice = null;
   }
 }

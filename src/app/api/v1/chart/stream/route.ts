@@ -7,9 +7,22 @@ import { tfsFor, type ChartAssetType } from "@/lib/chart-const";
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
+const INDEX_CODES = new Set([
+  "VNINDEX", "VN30", "HNX", "HNX30", "UPCOM", "VNXALL", "VN100", "HNXINDEX", "UPCOMINDEX", "VNI",
+]);
+
+const INDEX_ALIASES: Record<string, string[]> = {
+  VNINDEX: ["VNINDEX", "VNI"],
+  VNI: ["VNINDEX", "VNI"],
+  HNX: ["HNX", "HNXINDEX"],
+  HNXINDEX: ["HNX", "HNXINDEX"],
+  UPCOM: ["UPCOM", "UPCOMINDEX"],
+  UPCOMINDEX: ["UPCOM", "UPCOMINDEX"],
+};
+
 /**
  * REALTIME CHART STREAM (SSE).
- * Seed last OHLCV bar with ≤250ms race so SSE opens fast; VNDirect WS starts first.
+ * VN: VNDirect WS + 2s poll (WS cache → REST) so chart is not frozen history.
  */
 export async function GET(req: Request) {
   const url = new URL(req.url);
@@ -31,10 +44,9 @@ export async function GET(req: Request) {
   let unwatchVnd: (() => void) | null = null;
   let offFns: (() => void)[] = [];
   let heartbeat: ReturnType<typeof setInterval> | null = null;
+  let pollTimer: ReturnType<typeof setInterval> | null = null;
+  let lastPollPrice: number | null = null;
 
-  const INDEX_CODES = new Set([
-    "VNINDEX", "VN30", "HNX", "HNX30", "UPCOM", "VNXALL", "VN100", "HNXINDEX", "UPCOMINDEX", "VNI",
-  ]);
   const isIndex = assetType === "stock" && INDEX_CODES.has(symbol);
 
   if (assetType === "stock") {
@@ -75,6 +87,58 @@ export async function GET(req: Request) {
     ]);
   }
 
+  const injectTick = (price: number, ts: number, volume: number, source: "vndirect" | "ssi-fallback") => {
+    if (!Number.isFinite(price) || price <= 0) return;
+    lastPollPrice = price;
+    eventBus.emit(`market-tick:${symbol}`, {
+      symbol,
+      price,
+      cumVolume: Math.max(0, volume),
+      cumQuoteVolume: 0,
+      ts: ts > 0 ? ts : Date.now(),
+      source,
+      degraded: source !== "vndirect",
+    });
+  };
+
+  const resolveLivePrice = async (): Promise<{
+    price: number;
+    ts: number;
+    volume: number;
+    source: "vndirect" | "ssi-fallback";
+  } | null> => {
+    if (isIndex) {
+      const codes = INDEX_ALIASES[symbol] ?? [symbol];
+      for (const c of codes) {
+        const idx = vndirectWs.getIndex(c, 60_000);
+        if (idx && idx.value > 0) {
+          return { price: idx.value, ts: idx.eventTime, volume: idx.volume ?? 0, source: "vndirect" };
+        }
+      }
+    } else {
+      const q = vndirectWs.getQuote(symbol, 60_000);
+      if (q && q.price > 0) {
+        return { price: q.price, ts: q.eventTime, volume: q.volume, source: "vndirect" };
+      }
+    }
+    try {
+      const { getVnQuotes } = await import("@/lib/services/stocks");
+      const r = await getVnQuotes([symbol]);
+      const qq = r?.quotes?.[0];
+      if (qq && qq.price > 0) {
+        return {
+          price: qq.price,
+          ts: qq.updatedAt ? Date.parse(qq.updatedAt) || Date.now() : Date.now(),
+          volume: qq.volume ?? 0,
+          source: "vndirect",
+        };
+      }
+    } catch {
+      /* ignore */
+    }
+    return null;
+  };
+
   const stream = new ReadableStream({
     start(controller) {
       const send = (event: string, data: unknown) => {
@@ -107,19 +171,27 @@ export async function GET(req: Request) {
           eventBus.on(`candle.updated:${symbol}:${timeframe}`, (p) => send("chart.candle.updated", p)),
           eventBus.on(`candle.closed:${symbol}:${timeframe}`, (p) => send("chart.candle.closed", p)),
         ];
+
+        void resolveLivePrice().then((live) => {
+          if (live) injectTick(live.price, live.ts, live.volume, live.source);
+        });
+
+        pollTimer = setInterval(() => {
+          void resolveLivePrice().then((live) => {
+            if (live) injectTick(live.price, live.ts, live.volume, live.source);
+          });
+        }, 2_000);
+        pollTimer.unref?.();
+
         const snap = candleAggregator.snapshot(symbol, timeframe);
         const vndDisabled = process.env.VNDIRECT_WS_DISABLED === "true";
         send("snapshot", {
           symbol,
           timeframe,
           candle: snap,
-          live: Boolean(snap) || !vndDisabled,
-          source: vndDisabled ? "ssi-fallback+http" : "vndirect-ws",
-          note: snap
-            ? undefined
-            : vndDisabled
-              ? "VNDirect WS disabled — fallback SSI/HTTP"
-              : "chờ tick VNDirect/SSI / stream đang kết nối",
+          live: true,
+          source: vndDisabled ? "ssi-fallback+http-poll" : "vndirect-ws+poll",
+          note: snap ? undefined : "đang kết nối VNDirect (WS + poll 2s)",
         });
       } else {
         send("snapshot", {
@@ -138,7 +210,7 @@ export async function GET(req: Request) {
         } catch {
           /* closed */
         }
-      }, 15_000);
+      }, 12_000);
       heartbeat.unref?.();
     },
     cancel() {
@@ -146,6 +218,7 @@ export async function GET(req: Request) {
       unwatchVnd?.();
       for (const f of offFns) f();
       if (heartbeat) clearInterval(heartbeat);
+      if (pollTimer) clearInterval(pollTimer);
     },
   });
 
