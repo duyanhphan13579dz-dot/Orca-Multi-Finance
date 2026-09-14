@@ -236,6 +236,11 @@ class CandleAggregator {
     const bucket = Math.floor(tick.ts / tfMs) * tfMs;
     let bar = this.bars.get(key);
 
+    // A late provider packet must never reopen an already advanced candle.
+    // Keeping the newest bucket authoritative prevents time-travel in the
+    // snapshot and duplicate close events after reconnects.
+    if (bar && bucket < bar.bucket) return;
+
     if (!bar || bar.bucket !== bucket) {
       if (bar) {
         const closed = toCandle(bar);
@@ -268,6 +273,9 @@ class CandleAggregator {
       bar.high = Math.max(bar.high, tick.price);
       bar.low = Math.min(bar.low, tick.price);
       bar.close = tick.price;
+      // Exchanges may reset session cumulative volume after reconnect or at
+      // a new trading session. Rebase instead of pinning the candle at zero.
+      if (tick.cumVolume < bar.lastCum) bar.firstCum = tick.cumVolume;
       bar.lastCum = tick.cumVolume;
       bar.updates++;
       bar.source = tick.source;

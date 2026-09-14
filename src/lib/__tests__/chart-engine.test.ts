@@ -16,10 +16,11 @@ import assert from "node:assert/strict";
 
 import { aggregateCandles, TF_MS, type ChartCandle } from "../chart-const";
 import type { OhlcvBar } from "../types";
-import { validateBars, validateQuote } from "../quality";
+import { detectGaps, validateBars, validateQuote } from "../quality";
 import { computeFreshness } from "../freshness";
 import { eventBus } from "../events";
 import { candleAggregator } from "../realtime/candles";
+import { marketTickRouter } from "../realtime/market-ticks";
 import { analyzeScalp } from "../engines/scalp";
 import { analyzeSeries } from "../technical";
 import { computeMarkers, canonicalIndexSymbol, validateIndexCandles } from "../services/chart";
@@ -98,6 +99,34 @@ test("validateQuote: extreme deviation → SUSPECT, never silently passed", () =
   const q = validateQuote({ price: 100, open: 90, high: 101, low: 89, volume: 1000, changePercent: 47, updatedAt: null }, { assetClass: "crypto" });
   assert.equal(q.status, "SUSPECT");
   assert.ok(q.flags.some((f) => f.check === "extreme_deviation"));
+});
+
+test("validateQuote: future source timestamp is flagged as SUSPECT", () => {
+  const q = validateQuote(
+    { price: 100, open: 99, high: 101, low: 98, volume: 10, changePercent: 1, updatedAt: null },
+    { assetClass: "stock", now: 1_700_000_000_000, sourceTimestampMs: 1_700_000_600_001 },
+  );
+  assert.equal(q.status, "SUSPECT");
+  assert.ok(q.flags.some((f) => f.check === "future_timestamp"));
+});
+
+test("validateBars: empty series and negative volume are rejected", () => {
+  const empty = validateBars([]);
+  assert.equal(empty.status, "INVALID");
+  assert.ok(empty.flags.some((f) => f.check === "empty_series"));
+
+  const negative = validateBars([bar(1_000, 10, 12, 9, 11, -1)]);
+  assert.equal(negative.status, "SUSPECT");
+  assert.equal(negative.cleaned.length, 0);
+  assert.ok(negative.flags.some((f) => f.check === "invalid_bar"));
+});
+
+test("detectGaps: flags a missing interval without flagging normal spacing", () => {
+  const normal = detectGaps([bar(0, 10, 11, 9, 10), bar(60_000, 10, 11, 9, 10), bar(120_000, 10, 11, 9, 10)], 60_000);
+  assert.equal(normal, null);
+  const gap = detectGaps([bar(0, 10, 11, 9, 10), bar(60_000, 10, 11, 9, 10), bar(300_000, 10, 11, 9, 10)], 60_000);
+  assert.equal(gap?.check, "missing_data");
+  assert.equal(gap?.value, 1);
 });
 
 /* -------------------------- candle validation live ------------------------- */
@@ -182,6 +211,66 @@ test("market candle subscription consumes provider-neutral market ticks", () => 
   assert.equal(events[0].degraded, true);
   off();
   unsub();
+});
+
+test("candle aggregator ignores out-of-order ticks from an older bucket", () => {
+  const sym = `OO${Math.floor(Math.random() * 1e6)}`;
+  const unsub = candleAggregator.subscribe(sym, "1m", { assetClass: "vn-stock" });
+  const t0 = Math.floor(Date.now() / 60_000) * 60_000 + 10_000;
+  const emit = (price: number, cumVolume: number, ts: number) => eventBus.emit(`market-tick:${sym}`, {
+    symbol: sym, price, cumVolume, cumQuoteVolume: cumVolume, ts, source: "vndirect", degraded: false,
+  });
+
+  emit(100, 100, t0);
+  emit(105, 110, t0 + 61_000);
+  emit(99, 111, t0 + 30_000); // late tick for the already closed bucket
+
+  const snap = candleAggregator.snapshot(sym, "1m");
+  assert.equal(snap?.open, 105);
+  assert.equal(snap?.close, 105);
+  unsub();
+});
+
+test("candle aggregator resets cumulative volume after provider reset", () => {
+  const sym = `VR${Math.floor(Math.random() * 1e6)}`;
+  const unsub = candleAggregator.subscribe(sym, "1m", { assetClass: "vn-stock" });
+  const t0 = Math.floor(Date.now() / 60_000) * 60_000 + 10_000;
+  const emit = (cumVolume: number, ts: number) => eventBus.emit(`market-tick:${sym}`, {
+    symbol: sym, price: 100, cumVolume, cumQuoteVolume: cumVolume * 100, ts, source: "ssi-fallback", degraded: true,
+  });
+
+  emit(100, t0);
+  emit(120, t0 + 10_000);
+  assert.equal(candleAggregator.snapshot(sym, "1m")?.volume, 20);
+  emit(5, t0 + 20_000); // provider restarted its cumulative counter
+  assert.equal(candleAggregator.snapshot(sym, "1m")?.volume, 0);
+  emit(12, t0 + 30_000);
+  assert.equal(candleAggregator.snapshot(sym, "1m")?.volume, 7);
+  unsub();
+});
+
+test("market tick router prefers VNDirect and falls back to SSI after freshness window", () => {
+  const sym = `PR${Math.floor(Math.random() * 1e6)}`;
+  const routeOff = marketTickRouter.subscribe(sym);
+  const events: { source: string; price: number }[] = [];
+  const off = eventBus.on(`market-tick:${sym}`, (p) => {
+    const tick = p as { source: string; price: number };
+    events.push({ source: tick.source, price: tick.price });
+  });
+  const now = Date.now();
+
+  eventBus.emit(`vndirect:quote:${sym}`, { symbol: sym, price: 100, volume: 10, ts: now });
+  eventBus.emit(`ssi:quote:${sym}`, { symbol: sym, price: 101, volume: 11, eventTime: now + 1_000 });
+  eventBus.emit(`ssi:quote:${sym}`, { symbol: sym, price: 102, volume: 12, eventTime: now + 31_000 });
+
+  assert.deepEqual(events, [
+    { source: "vndirect", price: 100 },
+    { source: "ssi-fallback", price: 102 },
+  ]);
+  off();
+  routeOff();
+  eventBus.emit(`vndirect:quote:${sym}`, { symbol: sym, price: 103, volume: 13, ts: now + 32_000 });
+  assert.equal(events.length, 2);
 });
 
 /* ------------------------------ freshness (§4) ----------------------------- */

@@ -95,7 +95,7 @@ class MarketTickRouter {
 
   private fromVndirect(payload: VndirectTick, fallback: string): MarketTick | null {
     const symbol = String(payload.symbol ?? payload.code ?? fallback).toUpperCase();
-    const price = Number(payload.price);
+    const price = Number(payload.price ?? payload.value);
     const ts = Number(payload.ts ?? payload.eventTime ?? Date.now());
     if (!symbol || !Number.isFinite(price) || price <= 0 || !Number.isFinite(ts)) return null;
     return {
