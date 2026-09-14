@@ -35,7 +35,8 @@ export const TF_MS: Record<string, number> = {
 
 export const CRYPTO_TFS = ["1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "12h", "1d", "1w", "1M"] as const;
 export const FOREX_TFS = ["1d", "1w", "1M"] as const;
-export const STOCK_TFS = ["1d", "1w", "1M"] as const;
+/** Intraday TFs are tick-built from VNDirect/SSI; daily+ align to VN session 15:00+07. */
+export const STOCK_TFS = ["5m", "15m", "1h", "1d", "1w", "1M"] as const;
 
 export function tfsFor(asset: ChartAssetType): readonly string[] {
   if (asset === "crypto") return CRYPTO_TFS;
