@@ -5,7 +5,6 @@ import { useApi } from "@/lib/hooks";
 import type { VnStockDetail } from "@/lib/services/stocks";
 import { Loading, Panel, Unavailable } from "@/components/ui";
 import { OrcaChart } from "@/components/orca-chart";
-import { TradingViewChartWidget } from "@/components/tradingview-chart-widget";
 import { TechnicalPanel } from "@/components/technical-panel";
 import { TechRecoPanel } from "@/components/stocks/tech-reco-panel";
 import { StockNewsSentiment } from "@/components/stocks/news-sentiment-chip";
@@ -80,13 +79,6 @@ export default function StockOverviewPage({ params }: { params: Promise<{ symbol
               <p className="text-[12px] text-text-muted">Chưa có chuỗi giá để vẽ biểu đồ.</p>
             </Panel>
           )}
-          <div className="mt-3">
-            <TradingViewChartWidget
-              code={data.symbol}
-              exchange={data.exchange}
-              title={`${data.symbol} — chart tham chiếu`}
-            />
-          </div>
         </div>
         <div className="min-w-0">
           <OrderBookPanel symbol={data.symbol} compact />

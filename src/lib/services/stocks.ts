@@ -285,7 +285,6 @@ export async function getVnOhlcv(
 
 export interface VnStockDetail {
   symbol: string;
-  exchange: string | null;
   quote: Quote | null;
   bars: OhlcvBar[];
   technical: TechnicalSnapshot | null;
@@ -308,12 +307,6 @@ export async function getVnStockDetail(
 ): Promise<{ detail: VnStockDetail; meta: Meta } | null> {
   const sym = symbol.toUpperCase();
   bootSsiLive();
-  let exchange: string | null = null;
-  try {
-    exchange = (await getCanonicalSecurityMaster()).find((item) => item.symbol === sym)?.exchange ?? null;
-  } catch {
-    /* exchange metadata is optional for the stock detail response */
-  }
   ssiWs.watchSymbol(sym);
   const failed: string[] = [];
   const notes: string[] = [];
@@ -364,7 +357,6 @@ export async function getVnStockDetail(
 
   const detail: VnStockDetail = {
     symbol: sym,
-    exchange,
     quote,
     bars,
     technical,

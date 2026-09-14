@@ -401,6 +401,9 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
           Không có dữ liệu nến
         </div>
       )}
+      <div className="border-t border-border-subtle px-3 py-1.5 text-[9.5px] text-text-muted">
+        Charts powered by <a className="underline hover:text-text-secondary" href="https://www.tradingview.com" target="_blank" rel="noreferrer">TradingView Lightweight Charts</a> · Data by Orca providers
+      </div>
     </div>
   );
 }
