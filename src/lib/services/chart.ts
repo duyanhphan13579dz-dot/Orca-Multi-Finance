@@ -1,1 +1,354 @@
-PLACEHOLDER_AVOID
+import "server-only";
+import { cached } from "../cache";
+import { buildMeta } from "../freshness";
+import * as binance from "../providers/binance";
+import { getFrankfurterSeries } from "../providers/forex";
+import { getYahooChart, yahooIntervalFor } from "../providers/yahoo";
+import { getVnOhlcv } from "./stocks";
+import * as vndirect from "../providers/vndirect";
+import { validateBars, detectGaps, logQualityEvent } from "../quality";
+import { aggregateCandles, binanceInterval, TF_MS, tfsFor, type ChartAssetType, type ChartCandle } from "../chart-const";
+import { ema, rsi, macd, sma, supportResistance } from "../technical";
+import { analyzeScalp } from "../engines/scalp";
+import type { Meta, OhlcvBar, TechnicalSnapshot } from "../types";
+
+export interface IndicatorPoint {
+  time: number;
+  value?: number;
+}
+
+export interface ChartIndicators {
+  ema20: IndicatorPoint[];
+  ema50: IndicatorPoint[];
+  bollinger: { upper: IndicatorPoint[]; mid: IndicatorPoint[]; lower: IndicatorPoint[] } | null;
+  vwap: IndicatorPoint[] | null;
+  rsi: IndicatorPoint[];
+  macd: { macd: IndicatorPoint[]; signal: IndicatorPoint[]; histogram: IndicatorPoint[] } | null;
+  srLevels: { support: number[]; resistance: number[] };
+}
+
+export interface ChartSignalMarker {
+  time: number;
+  type: "buy-signal" | "sell-signal" | "volume-spike" | "rsi-extreme" | "breakout" | "breakdown";
+  position: "aboveBar" | "belowBar" | "inBar";
+  title: string;
+}
+
+export interface ChartMarketData {
+  candles: ChartCandle[];
+  indicators: ChartIndicators | null;
+  markers: ChartSignalMarker[];
+  intervalMs: number;
+  gaps: number;
+  suspect: number;
+}
+
+export function computeMarkers(candles: ChartCandle[]): ChartSignalMarker[] {
+  if (candles.length < 40) return [];
+  const out: ChartSignalMarker[] = [];
+  const scalp = analyzeScalp(candles as OhlcvBar[], { timeframe: "chart" });
+  if (scalp && scalp.direction !== "neutral" && scalp.strength >= 50) {
+    const lastCandle = candles[candles.length - 1];
+    out.push({
+      time: lastCandle.time,
+      type: scalp.direction === "watch-long" ? "buy-signal" : "sell-signal",
+      position: scalp.direction === "watch-long" ? "belowBar" : "aboveBar",
+      title: `${scalp.direction === "watch-long" ? "Watch Long" : "Watch Short"} ${scalp.strength}`,
+    });
+  }
+  return out.sort((a, b) => a.time - b.time).slice(-50);
+}
+
+export interface ChartArgs {
+  symbol: string;
+  assetType: ChartAssetType;
+  timeframe: string;
+  limit?: number;
+}
+
+function toCandle(b: OhlcvBar): ChartCandle {
+  return { time: b.time, open: b.open, high: b.high, low: b.low, close: b.close, volume: b.volume };
+}
+
+function points(times: number[], values: (number | null)[]): IndicatorPoint[] {
+  const step = values.length > 1200 ? Math.ceil(values.length / 1200) : 1;
+  const out: IndicatorPoint[] = [];
+  for (let i = 0; i < times.length; i++) {
+    if (i % step !== 0 && i !== times.length - 1) continue;
+    const v = values[i];
+    if (v == null || !Number.isFinite(v)) continue;
+    out.push({ time: times[i], value: v });
+  }
+  return out;
+}
+
+function bollingerSeries(closes: number[], times: number[], period = 20, mult = 2) {
+  const midArr = sma(closes, period);
+  const upper: IndicatorPoint[] = [];
+  const mid: IndicatorPoint[] = [];
+  const lower: IndicatorPoint[] = [];
+  for (let i = period - 1; i < closes.length; i++) {
+    const mean = midArr[i];
+    if (mean == null) continue;
+    const slice = closes.slice(i - period + 1, i + 1);
+    const variance = slice.reduce((s, x) => s + (x - mean) ** 2, 0) / period;
+    const std = Math.sqrt(variance);
+    mid.push({ time: times[i], value: mean });
+    upper.push({ time: times[i], value: mean + mult * std });
+    lower.push({ time: times[i], value: mean - mult * std });
+  }
+  return { upper, mid, lower };
+}
+
+function vwapSeries(bars: ChartCandle[]): IndicatorPoint[] | null {
+  const out: IndicatorPoint[] = [];
+  let cumPv = 0;
+  let cumV = 0;
+  for (const c of bars) {
+    const typ = (c.high + c.low + c.close) / 3;
+    const v = c.volume ?? 0;
+    if (v > 0) {
+      cumPv += typ * v;
+      cumV += v;
+    }
+    if (cumV > 0) out.push({ time: c.time, value: cumPv / cumV });
+  }
+  return out.length ? out : null;
+}
+
+export function computeIndicators(candles: ChartCandle[]): ChartIndicators | null {
+  if (candles.length < 30) return null;
+  const times = candles.map((c) => c.time);
+  const closes = candles.map((c) => c.close);
+  const ema20 = points(times, ema(closes, 20));
+  const ema50 = points(times, ema(closes, 50));
+  const bb = bollingerSeries(closes, times, 20, 2);
+  const vwap = vwapSeries(candles);
+  const rsiArr = points(times, rsi(closes, 14));
+  const m = macd(closes);
+  const hist = m.line.map((v, i) =>
+    v != null && m.signal[i] != null ? (v as number) - (m.signal[i] as number) : null,
+  );
+  const macdPts = {
+    macd: points(times, m.line),
+    signal: points(times, m.signal),
+    histogram: points(times, hist),
+  };
+  const ohlcv: OhlcvBar[] = candles.map((c) => ({ ...c, volume: c.volume ?? 0 }));
+  const sr = supportResistance(ohlcv, Math.min(120, candles.length));
+  return {
+    ema20,
+    ema50,
+    bollinger: bb.upper.length ? bb : null,
+    vwap,
+    rsi: rsiArr,
+    macd: macdPts.macd.length ? macdPts : null,
+    srLevels: sr,
+  };
+}
+
+async function cryptoCandles(symbol: string, tf: string, limit: number): Promise<{ candles: ChartCandle[]; source: string; note?: string }> {
+  const bars = await binance.getKlinesDeep(symbol, binanceInterval(tf), Math.min(limit, 5000));
+  return { candles: bars.map(toCandle), source: "binance" };
+}
+
+async function forexCandles(pair: string, tf: string, limit: number): Promise<{ candles: ChartCandle[]; source: string; note?: string }> {
+  const base = pair.slice(0, 3);
+  const quote = pair.slice(3, 6);
+  const days = tf === "1M" ? 3650 : tf === "1w" ? 1825 : 730;
+  const direct = await getFrankfurterSeries(base, quote, days);
+  let candles: ChartCandle[] = direct.map((x) => ({
+    time: Date.parse(`${x.date}T00:00:00Z`),
+    open: x.rate,
+    high: x.rate,
+    low: x.rate,
+    close: x.rate,
+    volume: 0,
+  }));
+  if (tf === "1w") candles = aggregateCandles(candles, TF_MS["1w"]);
+  if (tf === "1M") candles = aggregateCandles(candles, TF_MS["1M"]);
+  return {
+    candles: candles.slice(-limit),
+    source: "frankfurter-ecb (free, no key)",
+    note: "Chart FX dùng tỷ giá tham chiếu ECB/Frankfurter miễn phí, không cần API key; không phải dữ liệu intraday.",
+  };
+}
+
+export function canonicalIndexSymbol(symbol: string): string | null {
+  const normalized = symbol.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  const aliases: Record<string, string> = {
+    VNINDEX: "VNINDEX", VN: "VNINDEX", VNINDEXV: "VNINDEX",
+    VN30: "VN30", VN100: "VN100", HNX: "HNXINDEX", HNXINDEX: "HNXINDEX", HNX30: "HNX30",
+    UPCOM: "UPCOMINDEX", UPCOMINDEX: "UPCOMINDEX",
+  };
+  return aliases[normalized] ?? null;
+}
+
+const INDEX_LIMITS: Record<string, { min: number; max: number }> = {
+  VNINDEX: { min: 0, max: 2_000 },
+  VN30: { min: 0, max: 3_000 },
+  HNXINDEX: { min: 0, max: 1_000 },
+  HNX30: { min: 0, max: 2_000 },
+  UPCOMINDEX: { min: 0, max: 2_000 },
+};
+
+export function validateIndexCandles(symbol: string, candles: ChartCandle[]): { valid: ChartCandle[]; rejected: number; reason?: string } {
+  const code = canonicalIndexSymbol(symbol);
+  if (!code) return { valid: candles, rejected: 0 };
+  const bounds = INDEX_LIMITS[code];
+  const valid = candles.filter((c) => [c.open, c.high, c.low, c.close].every((v) => Number.isFinite(v) && v >= bounds.min && v <= bounds.max && c.high >= c.low));
+  return { valid, rejected: candles.length - valid.length, reason: valid.length !== candles.length ? `${code}: candle ngoài biên ${bounds.min}-${bounds.max}` : undefined };
+}
+
+async function stockCandles(symbol: string, tf: string, limit: number): Promise<{ candles: ChartCandle[]; source: string; note?: string }> {
+  if (tf === "5m" || tf === "15m" || tf === "1h") {
+    const r = await getVnOhlcv(symbol, Math.min(limit, 40));
+    if (!r?.bars.length) {
+      return { candles: [], source: "vndirect-live-only", note: "Intraday VN — chờ tick VNDirect/SSI" };
+    }
+    const last = r.bars[r.bars.length - 1];
+    return {
+      candles: [{ time: last.time, open: last.open, high: last.high, low: last.low, close: last.close, volume: last.volume }],
+      source: "vndirect-session-anchor",
+      note: "Intraday VN: neo phiên + live ticks",
+    };
+  }
+
+  const dayLimit =
+    tf === "1d" ? Math.min(limit, 1500) : tf === "1w" ? Math.min(limit * 8, 2000) : Math.min(limit * 30, 2500);
+
+  const r = await getVnOhlcv(symbol, dayLimit);
+  if (!r) throw new Error("stock_ohlcv_unavailable");
+  if (vndirect.isVnIndexSymbol(symbol)) {
+    let candles = r.bars.map(toCandle);
+    if (tf === "1w") candles = aggregateCandles(candles, TF_MS["1w"]).slice(-limit);
+    if (tf === "1M") candles = aggregateCandles(candles, TF_MS["1M"]).slice(-limit);
+    const indexQuality = validateIndexCandles(symbol, candles);
+    if (indexQuality.valid.length < Math.max(5, candles.length * 0.8)) {
+      throw new Error(indexQuality.reason ?? "index_fallback_out_of_range");
+    }
+    return { candles: indexQuality.valid.slice(-limit), source: r.meta.source === "vndirect" ? "vndirect-index-ohlcv" : r.meta.source, note: `${r.meta.note ?? ""} · đã loại ${indexQuality.rejected} nến ngoài biên` };
+  }
+
+  let candles = r.bars.map(toCandle);
+  if (tf === "1w") candles = aggregateCandles(candles, TF_MS["1w"]).slice(-limit);
+  if (tf === "1M") candles = aggregateCandles(candles, TF_MS["1M"]).slice(-limit);
+  return { candles: candles.slice(-limit), source: r.meta.source === "vndirect" ? "vndirect-stock-ohlcv" : r.meta.source, note: r.meta.note };
+}
+
+function yahooCommoditySymbol(symbol: string): string | null {
+  const s = symbol.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  const exact: Record<string, string> = {
+    XAUUSD: "GC=F", GOLD: "GC=F", XAU: "GC=F", XAGUSD: "SI=F", SILVER: "SI=F", XAG: "SI=F",
+    OIL: "CL=F", WTI: "CL=F", CRUDE: "CL=F", BRENT: "BZ=F", NATGAS: "NG=F", NG: "NG=F",
+    COPPER: "HG=F", PLATINUM: "PL=F",
+  };
+  if (exact[s]) return exact[s];
+  if (s.endsWith("=F") || s.includes("=")) return symbol.toUpperCase();
+  return null;
+}
+
+export function isChartableCommodity(symbol: string): boolean {
+  if (symbol === "XAUUSD" || symbol === "GOLD" || symbol === "XAU") return true;
+  return yahooCommoditySymbol(symbol) != null;
+}
+
+async function commodityCandles(symbol: string, tf: string, limit: number): Promise<{ candles: ChartCandle[]; source: string; note?: string }> {
+  if (symbol === "XAUUSD" || symbol === "GOLD" || symbol === "XAU" || symbol.toUpperCase().includes("VANG")) {
+    try {
+      const bars = await binance.getKlinesDeep("PAXGUSDT", binanceInterval(tf), Math.min(limit, 3000));
+      if (bars.length >= 10) {
+        return {
+          candles: bars.map(toCandle),
+          source: "binance (PAXG ≈ XAU spot)",
+          note: "Vàng thế giới qua PAXG (1:1 gold-ounce, USD)",
+        };
+      }
+    } catch {
+      /* fall through */
+    }
+  }
+
+  const ySym = yahooCommoditySymbol(symbol);
+  if (!ySym) throw new Error("commodity_history_unavailable");
+
+  const cfg = yahooIntervalFor(tf === "1w" ? "1w" : tf === "1M" ? "1M" : tf === "4h" ? "4h" : tf === "1h" ? "1h" : "1d");
+  if (!cfg) throw new Error("commodity_timeframe_unsupported");
+  const y = await getYahooChart(ySym, cfg.interval, cfg.range);
+  let candles = (y.candles as ChartCandle[]).slice(-limit);
+  if (cfg.aggregate4h) candles = aggregateCandles(candles, 4 * 3_600_000);
+  if (candles.length < 5) throw new Error("commodity_history_empty");
+  return {
+    candles,
+    source: `yahoo-finance (${ySym})`,
+    note: "Chuỗi OHLC futures/spot Yahoo",
+  };
+}
+
+export async function getChartHistory(args: ChartArgs): Promise<{ data: ChartMarketData; meta: Meta } | null> {
+  const symbol = args.symbol.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  const tf = args.timeframe;
+  const limit = Math.min(Math.max(args.limit ?? 500, 50), args.assetType === "crypto" ? 5000 : 2000);
+  if (!tfsFor(args.assetType).includes(tf)) return null;
+
+  try {
+    const res = await cached(`chart:${args.assetType}:${symbol}:${tf}:${limit}`, {
+      ttlMs: args.assetType === "crypto" ? 15_000 : args.assetType === "forex" ? 30_000 : 12_000,
+      staleMs: 24 * 3_600_000,
+      producer: async () => {
+        const raw =
+          args.assetType === "crypto"
+            ? await cryptoCandles(symbol, tf, limit)
+            : args.assetType === "forex"
+              ? await forexCandles(symbol, tf, limit)
+              : args.assetType === "commodity"
+                ? await commodityCandles(symbol, tf, limit)
+                : await stockCandles(symbol, tf, limit);
+
+        const q = validateBars(raw.candles as OhlcvBar[]);
+        if (q.status !== "VALID") void logQualityEvent("chart-engine", `${args.assetType}:${symbol}:${tf}`, q);
+        if (q.status === "INVALID") throw new Error("invalid candle series");
+        const gap = detectGaps(q.cleaned, TF_MS[tf]);
+        const suspect = (q.status === "SUSPECT" ? 1 : 0) + (gap ? 1 : 0);
+        return {
+          candles: q.cleaned,
+          source: raw.source,
+          note: raw.note,
+          gaps: gap ? Number(gap.value ?? 0) : 0,
+          suspect,
+        };
+      },
+    });
+
+    const { candles, source, note, gaps, suspect } = res.value;
+    const last = candles[candles.length - 1];
+    const meta = buildMeta({
+      source,
+      sourceTimestampMs: last?.time ?? Date.now(),
+      cached: res.cached,
+      stale: res.stale,
+      note: [note, gaps ? `${gaps} khoảng trống dữ liệu trong chuỗi` : null, suspect ? `quality: SUSPECT flags đã log` : null]
+        .filter(Boolean)
+        .join(" · ") || undefined,
+      slas:
+        args.assetType === "crypto"
+          ? { liveSlaMs: TF_MS[tf] * 1.5, freshSlaMs: TF_MS[tf] * 4, delayedSlaMs: TF_MS[tf] * 20 }
+          : { liveSlaMs: TF_MS[tf] * 2, freshSlaMs: TF_MS[tf] * 6, delayedSlaMs: TF_MS[tf] * 48 },
+    });
+    meta.qualityStatus = suspect ? "SUSPECT" : "VALID";
+
+    const data: ChartMarketData = {
+      candles,
+      indicators: computeIndicators(candles),
+      markers: computeMarkers(candles),
+      intervalMs: TF_MS[tf],
+      gaps,
+      suspect,
+    };
+    return { data, meta };
+  } catch {
+    return null;
+  }
+}
+
+export type { TechnicalSnapshot };
