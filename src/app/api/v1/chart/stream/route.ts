@@ -3,6 +3,7 @@ import { candleAggregator } from "@/lib/realtime/candles";
 import { ensureBinanceWsStarted } from "@/lib/realtime/binance-ws";
 import { ensureVndirectWsStarted, vndirectWs } from "@/lib/realtime/vndirect-ws";
 import { tfsFor, type ChartAssetType } from "@/lib/chart-const";
+import { getChartHistory } from "@/lib/services/chart";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -14,11 +15,11 @@ export const runtime = "nodejs";
  * GET /api/v1/chart/stream?symbol=VNM&assetType=stock&timeframe=1d
  *
  * Events: snapshot, chart.candle.updated, chart.candle.closed, heartbeat.
- * One provider feed per symbol regardless of viewer count (subscription
- * dedup enforced by candleAggregator).
- *
  * Stock path: VNDirect WS (primary) → marketTickRouter → candleAggregator;
  * SSI WS remains fallback inside market-ticks.
+ *
+ * Critical: seed last history candle so live ticks update the SAME timestamp
+ * the chart already rendered (VN history uses T15:00:00+07, not UTC midnight).
  */
 export async function GET(req: Request) {
   const url = new URL(req.url);
@@ -41,11 +42,38 @@ export async function GET(req: Request) {
   let offFns: (() => void)[] = [];
   let heartbeat: ReturnType<typeof setInterval> | null = null;
 
+  const INDEX_CODES = new Set([
+    "VNINDEX",
+    "VN30",
+    "HNX",
+    "HNX30",
+    "UPCOM",
+    "VNXALL",
+    "VN100",
+    "HNXINDEX",
+    "UPCOMINDEX",
+    "VNI",
+  ]);
+  const isIndex = assetType === "stock" && INDEX_CODES.has(symbol);
+
   if (assetType === "stock") {
     ensureVndirectWsStarted();
-    unwatchVnd = vndirectWs.watchSymbol(symbol);
-    const isIndex = ["VNINDEX", "VN30", "HNX", "HNX30", "UPCOM", "VNXALL", "VN100"].includes(symbol);
-    if (isIndex) vndirectWs.ensureCoreIndices();
+    if (isIndex) {
+      vndirectWs.ensureCoreIndices();
+      unwatchVnd = null;
+    } else {
+      unwatchVnd = vndirectWs.watchSymbol(symbol);
+    }
+
+    try {
+      const hist = await getChartHistory({ symbol, assetType: "stock", timeframe, limit: 50 });
+      const last = hist?.data?.candles?.at(-1);
+      if (last && last.time > 0 && last.close > 0) {
+        candleAggregator.seed(symbol, timeframe, last, "vndirect");
+      }
+    } catch {
+      /* history seed is best-effort */
+    }
   }
 
   const stream = new ReadableStream({
@@ -73,7 +101,6 @@ export async function GET(req: Request) {
           note: snap ? undefined : "chờ tick đầu tiên / stream đang kết nối",
         });
       } else if (assetType === "stock") {
-        const isIndex = ["VNINDEX", "VN30", "HNX", "HNX30", "UPCOM", "VNXALL", "VN100"].includes(symbol);
         unsubscribe = candleAggregator.subscribe(symbol, timeframe, {
           assetClass: isIndex ? "vn-index" : "vn-stock",
         });
