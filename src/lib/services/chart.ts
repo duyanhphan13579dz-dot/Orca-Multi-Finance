@@ -147,12 +147,18 @@ export function computeIndicators(candles: ChartCandle[]): ChartIndicators | nul
   };
 }
 
-async function cryptoCandles(symbol: string, tf: string, limit: number) {
+type CandleSeriesResult = {
+  candles: ChartCandle[];
+  source: string;
+  note?: string;
+};
+
+async function cryptoCandles(symbol: string, tf: string, limit: number): Promise<CandleSeriesResult> {
   const bars = await binance.getKlinesDeep(symbol, binanceInterval(tf), Math.min(limit, 5000));
   return { candles: bars.map(toCandle), source: "binance" };
 }
 
-async function forexCandles(pair: string, tf: string, limit: number) {
+async function forexCandles(pair: string, tf: string, limit: number): Promise<CandleSeriesResult> {
   const base = pair.slice(0, 3);
   const quote = pair.slice(3, 6);
   const days = tf === "1M" ? 3650 : tf === "1w" ? 1825 : 730;
@@ -206,7 +212,7 @@ export function validateIndexCandles(symbol: string, candles: ChartCandle[]) {
   };
 }
 
-async function stockCandles(symbol: string, tf: string, limit: number) {
+async function stockCandles(symbol: string, tf: string, limit: number): Promise<CandleSeriesResult> {
   if (tf === "5m" || tf === "15m" || tf === "1h") {
     const r = await getVnOhlcv(symbol, Math.min(limit, 40));
     if (!r?.bars.length) {
@@ -267,7 +273,7 @@ export function isChartableCommodity(symbol: string): boolean {
   return yahooCommoditySymbol(symbol) != null;
 }
 
-async function commodityCandles(symbol: string, tf: string, limit: number) {
+async function commodityCandles(symbol: string, tf: string, limit: number): Promise<CandleSeriesResult> {
   if (symbol === "XAUUSD" || symbol === "GOLD" || symbol === "XAU" || symbol.toUpperCase().includes("VANG")) {
     try {
       const bars = await binance.getKlinesDeep("PAXGUSDT", binanceInterval(tf), Math.min(limit, 3000));
