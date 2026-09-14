@@ -7,16 +7,37 @@ const num = (v: unknown): number | null => {
   return Number.isFinite(n) ? n : null;
 };
 
+/** Map app index codes → dchart.vndirect.com.vn symbols */
+const DCHART_SYMBOL_MAP: Record<string, string> = {
+  VNINDEX: "VNINDEX",
+  VNI: "VNINDEX",
+  VN: "VNINDEX",
+  VN30: "VN30",
+  VN100: "VN100",
+  HNX: "HNX",
+  HNXINDEX: "HNX",
+  HNX30: "HNX30",
+  UPCOM: "UPCOM",
+  UPCOMINDEX: "UPCOM",
+  VNXALL: "VNXALL",
+  VNALL: "VNXALL",
+};
+
+export function toDchartSymbol(symbol: string): string {
+  const raw = symbol.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  return DCHART_SYMBOL_MAP[raw] ?? raw;
+}
+
 /**
  * Cùng nguồn biểu đồ https://dchart.vndirect.com.vn — chuẩn nến VNDirect.
- * Ưu tiên dùng cho chart stock để tránh nhảy scale do giá chưa điều chỉnh (split).
+ * Dùng cho **cổ phiếu và chỉ số** (VNINDEX, VN30, HNX, UPCOM, …).
  */
 export async function fetchVndDchartHistory(
   symbol: string,
   resolution: "D" | "1" | "5" | "15" | "30" | "60" = "D",
   bars = 250,
 ): Promise<OhlcvBar[]> {
-  const sym = symbol.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  const sym = toDchartSymbol(symbol);
   const to = Math.floor(Date.now() / 1000);
   const stepSec =
     resolution === "D"
@@ -42,7 +63,7 @@ export async function fetchVndDchartHistory(
     signal: AbortSignal.timeout(8_000),
     cache: "no-store",
   });
-  if (!res.ok) throw new ProviderError(`vndirect dchart HTTP ${res.status}`, "vndirect");
+  if (!res.ok) throw new ProviderError(`vndirect dchart HTTP ${res.status} (${sym})`, "vndirect");
   const data = (await res.json()) as {
     s?: string;
     t?: number[];
@@ -52,7 +73,7 @@ export async function fetchVndDchartHistory(
     c?: number[];
     v?: number[];
   };
-  if (data.s && data.s !== "ok") throw new ProviderError(`vndirect dchart status ${data.s}`, "vndirect");
+  if (data.s && data.s !== "ok") throw new ProviderError(`vndirect dchart status ${data.s} (${sym})`, "vndirect");
   const ts = data.t ?? [];
   const out: OhlcvBar[] = [];
   for (let i = 0; i < ts.length; i++) {
