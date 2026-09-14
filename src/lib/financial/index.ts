@@ -1,17 +1,14 @@
 /**
  * Vietnam market + financial provider layout.
  *
- * - Market data (indices, board, quotes, OHLCV, universe): SSI Flashconnect primary,
- *   VNDirect fallback when SSI_API_KEY / SSI_API_SECRET (or SSI_FC_CONSUMER_*) is absent or unreachable.
+ * - Market data (indices, board, quotes, OHLCV, universe): VNDirect primary,
+ *   SSI Flashconnect fallback only when VNDirect is unavailable.
  * - Financial statements (BCTC / analysis): VNDirect stays primary and only — SSI is never a
  *   financial provider here (see src/lib/financial/providers-registry.ts).
  */
-import { ssiFcConfigured } from "../providers/ssi-fcdata";
-
 export function vnProviderLayout() {
-  const ssiLive = ssiFcConfigured();
   return {
-    market: { primary: ssiLive ? "ssi-fcdata" : "vndirect", fallback: ssiLive ? "vndirect" : null },
+    market: { primary: "vndirect", fallback: "ssi-fcdata" },
     financial: { primary: "vndirect", fallback: null },
   } as const;
 }

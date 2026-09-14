@@ -23,7 +23,7 @@ export interface VnProviderLayout {
 
 export function vnProviderLayout(): VnProviderLayout {
   // VNDirect is the primary source for daily/history market data.
-  // SSI remains the realtime overlay/fallback for quote ticks and orderbook only.
+  // SSI is a bounded fallback for market data; realtime orderbook remains a separate SSI capability.
   // SSI is NEVER registered in `listFinancialProviders()` — financial statements remain VNDirect primary.
   return {
     market: {

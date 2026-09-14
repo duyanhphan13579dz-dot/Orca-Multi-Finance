@@ -100,9 +100,9 @@ export function mergeSecurityMaster(
   return [...bySymbol.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([symbol, rows]) => {
     const ssi = rows.ssi;
     const vnd = rows.vndirect;
-    const companyName = normalizeText(ssi?.name) ?? normalizeText(vnd?.name);
-    const exchange = normalizeExchange(ssi?.exchange) ?? normalizeExchange(vnd?.exchange);
-    const industry = normalizeIndustry(ssi?.industry) ?? normalizeIndustry(vnd?.industry);
+    const companyName = normalizeText(vnd?.name) ?? normalizeText(ssi?.name);
+    const exchange = normalizeExchange(vnd?.exchange) ?? normalizeExchange(ssi?.exchange);
+    const industry = normalizeIndustry(vnd?.industry) ?? normalizeIndustry(ssi?.industry);
     const conflicts: SecurityMasterRecord["conflicts"] = [];
     if (ssi?.name && vnd?.name && normalizedComparable(ssi.name) !== normalizedComparable(vnd.name)) conflicts.push("companyName");
     if (ssi?.exchange && vnd?.exchange && normalizeExchange(ssi.exchange) !== normalizeExchange(vnd.exchange)) conflicts.push("exchange");
@@ -113,11 +113,11 @@ export function mergeSecurityMaster(
       exchange,
       industry,
       securityType: classify(symbol),
-      sources: [ssi ? "ssi" : null, vnd ? "vndirect" : null].filter((x): x is MasterSource => x != null),
+      sources: [vnd ? "vndirect" : null, ssi ? "ssi" : null].filter((x): x is MasterSource => x != null),
       provenance: {
-        companyName: ssi?.name ? "ssi" : vnd?.name ? "vndirect" : null,
-        exchange: ssi?.exchange ? "ssi" : vnd?.exchange ? "vndirect" : null,
-        industry: ssi?.industry ? "ssi" : vnd?.industry ? "vndirect" : null,
+        companyName: vnd?.name ? "vndirect" : ssi?.name ? "ssi" : null,
+        exchange: vnd?.exchange ? "vndirect" : ssi?.exchange ? "ssi" : null,
+        industry: vnd?.industry ? "vndirect" : ssi?.industry ? "ssi" : null,
       },
       conflicts,
       updatedAt,
@@ -126,13 +126,13 @@ export function mergeSecurityMaster(
 }
 
 export async function getCanonicalSecurityMaster(): Promise<SecurityMasterRecord[]> {
-  const result = await cached("vn:security-master:ssi-vndirect:v1", {
+  const result = await cached("vn:security-master:vndirect-ssi:v2", {
     ttlMs: 6 * 3_600_000,
     staleMs: 24 * 3_600_000,
     producer: async () => {
-      const [ssi, vndirect] = await Promise.allSettled([getSsiUniverse(), getVndUniverse()]);
-      const ssiRows = ssi.status === "fulfilled" ? ssi.value : [];
+      const [vndirect, ssi] = await Promise.allSettled([getVndUniverse(), getSsiUniverse()]);
       const vndirectRows = vndirect.status === "fulfilled" ? vndirect.value : [];
+      const ssiRows = ssi.status === "fulfilled" ? ssi.value : [];
       if (!ssiRows.length && !vndirectRows.length) throw new Error("No security master source available");
       return mergeSecurityMaster(ssiRows, vndirectRows);
     },

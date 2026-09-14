@@ -2,6 +2,7 @@ import "server-only";
 import { listFinancialProviders } from "./providers-registry";
 import { getFinancialMonitorSnapshot } from "./monitor";
 import { vnProviderLayout } from "./index";
+import { ssiFcConfigured } from "../providers/ssi-fcdata";
 
 export interface MarketSourceHealthRow {
   provider: "ssi-fcdata" | "vndirect";
@@ -81,9 +82,9 @@ export function getMarketSourceHealth(): MarketSourceHealth {
     rows: [
       {
         provider: "ssi-fcdata",
-        configured: layout.primary === "ssi-fcdata",
-        role: layout.primary === "ssi-fcdata" ? ("primary" as const) : ("fallback" as const),
-        status: layout.primary === "ssi-fcdata" ? "healthy" : "not_configured",
+        configured: ssiFcConfigured(),
+        role: "fallback",
+        status: ssiFcConfigured() ? "healthy" : "not_configured",
       },
       {
         provider: "vndirect",

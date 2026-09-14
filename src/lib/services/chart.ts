@@ -211,24 +211,23 @@ async function stockCandles(symbol: string, tf: string, limit: number): Promise<
   const dayLimit =
     tf === "1d" ? Math.min(limit, 1500) : tf === "1w" ? Math.min(limit * 8, 2000) : Math.min(limit * 30, 2500);
 
+  const r = await getVnOhlcv(symbol, dayLimit);
+  if (!r) throw new Error("stock_ohlcv_unavailable");
   if (vndirect.isVnIndexSymbol(symbol)) {
-    const bars = await vndirect.getVndIndexOhlcv(symbol, dayLimit);
-    let candles = bars.map(toCandle);
+    let candles = r.bars.map(toCandle);
     if (tf === "1w") candles = aggregateCandles(candles, TF_MS["1w"]).slice(-limit);
     if (tf === "1M") candles = aggregateCandles(candles, TF_MS["1M"]).slice(-limit);
     const indexQuality = validateIndexCandles(symbol, candles);
     if (indexQuality.valid.length < Math.max(5, candles.length * 0.8)) {
       throw new Error(indexQuality.reason ?? "index_fallback_out_of_range");
     }
-    return { candles: indexQuality.valid.slice(-limit), source: "vndirect-index-ohlcv", note: `VNDirect index OHLCV · đã loại ${indexQuality.rejected} nến ngoài biên` };
+    return { candles: indexQuality.valid.slice(-limit), source: r.meta.source === "vndirect" ? "vndirect-index-ohlcv" : r.meta.source, note: `${r.meta.note ?? ""} · đã loại ${indexQuality.rejected} nến ngoài biên` };
   }
 
-  const r = await getVnOhlcv(symbol, dayLimit);
-  if (!r) throw new Error("stock_ohlcv_unavailable");
   let candles = r.bars.map(toCandle);
   if (tf === "1w") candles = aggregateCandles(candles, TF_MS["1w"]).slice(-limit);
   if (tf === "1M") candles = aggregateCandles(candles, TF_MS["1M"]).slice(-limit);
-  return { candles: candles.slice(-limit), source: "vndirect-stock-ohlcv", note: r.meta.note };
+  return { candles: candles.slice(-limit), source: r.meta.source === "vndirect" ? "vndirect-stock-ohlcv" : r.meta.source, note: r.meta.note };
 }
 
 function yahooCommoditySymbol(symbol: string): string | null {
