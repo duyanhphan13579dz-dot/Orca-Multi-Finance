@@ -7,10 +7,8 @@ import { marketTickRouter } from "./market-ticks";
 
 /**
  * CANDLE AGGREGATION ENGINE — live current-candles from centralized tick/kline feed.
- * Perf notes:
- *   - validateQuote throttled per symbol (not every tick)
- *   - when kline WS is authoritative for a TF, tick path is skipped for that TF
- *   - emit throttle keeps SSE clients from flooding
+ * VN daily bars align to session close T15:00:00+07 (same as VNDIRECT history).
+ * seed() locks live bar to last history candle so chart is not hard-snapshot.
  */
 
 export interface Tick {
@@ -42,6 +40,29 @@ interface LiveBar extends ChartCandle {
 const EMIT_THROTTLE_MS = 900;
 const VALIDATE_THROTTLE_MS = 2_000;
 
+function vnSessionDateKey(ts: number): string {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Ho_Chi_Minh",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date(ts));
+  const get = (ty: string) => parts.find((p) => p.type === ty)?.value ?? "00";
+  return `${get("year")}-${get("month")}-${get("day")}`;
+}
+
+/** Epoch ms for VN session day bar — matches getVndOhlcv / getVndIndexOhlcv. */
+function vnDayBucket(ts: number): number {
+  return Date.parse(`${vnSessionDateKey(ts)}T15:00:00+07:00`);
+}
+
+function bucketFor(ts: number, tf: string, assetClass: "crypto" | "vn"): number {
+  if (assetClass === "vn" && tf === "1d") return vnDayBucket(ts);
+  const tfMs = TF_MS[tf];
+  if (!tfMs) return ts;
+  return Math.floor(ts / tfMs) * tfMs;
+}
+
 class CandleAggregator {
   private subs = new Map<string, Map<string, number>>();
   private bars = new Map<string, LiveBar>();
@@ -70,7 +91,10 @@ class CandleAggregator {
       } else {
         const offMarket = marketTickRouter.subscribe(sym);
         const marketOff = eventBus.on(`market-tick:${sym}`, (p) => this.feed(p as Tick, "vn"));
-        this.tickOffs.set(sym, () => { marketOff(); offMarket(); });
+        this.tickOffs.set(sym, () => {
+          marketOff();
+          offMarket();
+        });
       }
     }
     const firstForTf = (tfMap.get(tf) ?? 0) === 0;
@@ -110,6 +134,31 @@ class CandleAggregator {
   snapshot(symbol: string, tf: string): ChartCandle | null {
     const bar = this.bars.get(`${symbol.toUpperCase()}|${tf}`);
     return bar ? toCandle(bar) : null;
+  }
+
+  /**
+   * Align live bar with the last history candle so ticks update the same
+   * timestamp the chart already rendered (avoids hard-snapshot look).
+   */
+  seed(symbol: string, tf: string, candle: ChartCandle, source: Tick["source"] = "vndirect"): void {
+    const sym = symbol.toUpperCase();
+    const key = `${sym}|${tf}`;
+    if (this.klineActive.has(key)) return;
+    this.bars.set(key, {
+      bucket: candle.time,
+      time: candle.time,
+      open: candle.open,
+      high: candle.high,
+      low: candle.low,
+      close: candle.close,
+      volume: candle.volume ?? 0,
+      firstCum: 0,
+      lastCum: candle.volume ?? 0,
+      updates: 1,
+      lastEmit: 0,
+      source,
+      degraded: source !== "vndirect",
+    });
   }
 
   private applyKline(sym: string, tf: string, k: KlineCandle) {
@@ -211,9 +260,6 @@ class CandleAggregator {
         { assetClass: assetClass === "vn" ? "stock" : "crypto", staleMs: 5 * 60_000, sourceTimestampMs: tick.ts },
       );
       quality = q.status;
-      // Never cache an INVALID verdict: one malformed tick must not black-hole
-      // every following (valid) tick for the whole throttle window. Valid ticks
-      // are cached so the hot path still skips validation most of the time.
       if (q.status !== "INVALID") this.lastValidated.set(sym, { at: now, status: quality });
       if (q.status === "INVALID") {
         void logQualityEvent("chart-engine", `tick:${tick.symbol}`, q);
@@ -229,16 +275,18 @@ class CandleAggregator {
 
   private feedTf(tick: Tick, tf: string, quality: string, assetClass: "crypto" | "vn") {
     const tfMs = TF_MS[tf];
-    if (!tfMs) return;
+    if (!tfMs && !(assetClass === "vn" && tf === "1d")) return;
     const sym = tick.symbol.toUpperCase();
     const key = `${sym}|${tf}`;
     if (this.klineActive.has(key)) return;
-    const bucket = Math.floor(tick.ts / tfMs) * tfMs;
-    let bar = this.bars.get(key);
 
-    // A late provider packet must never reopen an already advanced candle.
-    // Keeping the newest bucket authoritative prevents time-travel in the
-    // snapshot and duplicate close events after reconnects.
+    let bar = this.bars.get(key);
+    let bucket = bucketFor(tick.ts, tf, assetClass);
+    // 1w/1M: stick to seeded history bar until stream ends
+    if (assetClass === "vn" && (tf === "1w" || tf === "1M") && bar) {
+      bucket = bar.bucket;
+    }
+
     if (bar && bucket < bar.bucket) return;
 
     if (!bar || bar.bucket !== bucket) {
@@ -273,8 +321,6 @@ class CandleAggregator {
       bar.high = Math.max(bar.high, tick.price);
       bar.low = Math.min(bar.low, tick.price);
       bar.close = tick.price;
-      // Exchanges may reset session cumulative volume after reconnect or at
-      // a new trading session. Rebase instead of pinning the candle at zero.
       if (tick.cumVolume < bar.lastCum) bar.firstCum = tick.cumVolume;
       bar.lastCum = tick.cumVolume;
       bar.updates++;
