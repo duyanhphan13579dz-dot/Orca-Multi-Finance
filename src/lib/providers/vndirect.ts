@@ -2,6 +2,7 @@ import "server-only";
 import { httpJson } from "../http";
 import type { IndexQuote, OhlcvBar, Quote } from "../types";
 import { ProviderError } from "./binance";
+import { fetchVndFullUniverse } from "./vndirect-universe";
 
 export const VNDIRECT = "vndirect";
 
@@ -37,16 +38,6 @@ type VndPriceRow = {
   noChange?: number;
   noTrade?: number;
   accumulatedVal?: number;
-};
-
-type VndStockMeta = {
-  code?: string;
-  companyName?: string;
-  companyNameEng?: string;
-  floor?: string;
-  industryName?: string;
-  status?: string;
-  type?: string;
 };
 
 type Page<T> = {
@@ -102,23 +93,17 @@ async function vndGet<T>(path: string, timeoutMs = 6_000): Promise<T> {
   return res.data;
 }
 
+/** Universe đầy đủ (phân trang + mã mới niêm yết) */
 export async function getVndUniverse(): Promise<
   { symbol: string; name: string | null; exchange: string | null; industry: string | null }[]
 > {
-  const payload = await vndGet<Page<VndStockMeta>>("/v4/stocks?q=type:STOCK~status:LISTED&size=3000&page=1", 12_000);
-  const rows = payload.data ?? [];
-  return rows
-    .map((r) => {
-      const symbol = String(r.code ?? "").toUpperCase();
-      if (!symbol) return null;
-      return {
-        symbol,
-        name: r.companyName ?? r.companyNameEng ?? null,
-        exchange: r.floor ?? null,
-        industry: r.industryName ?? null,
-      };
-    })
-    .filter((x): x is NonNullable<typeof x> => x != null);
+  const rows = await fetchVndFullUniverse();
+  return rows.map((r) => ({
+    symbol: r.symbol,
+    name: r.name,
+    exchange: r.exchange,
+    industry: r.industry,
+  }));
 }
 
 let _sessionDateCache: { date: string; until: number } | null = null;
