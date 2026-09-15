@@ -42,6 +42,74 @@ export type VndUniverseItem = {
   status: string | null;
 };
 
+/** Seed IPO / niêm yết 2025–2026 — luôn merge vào universe dù API paginate trễ */
+export const IPO_SEED_2025_2026: VndUniverseItem[] = [
+  {
+    symbol: "TCX",
+    name: "Công ty Cổ phần Chứng khoán Techcombank",
+    exchange: "HOSE",
+    industry: "Chứng khoán",
+    listedDate: "2025-10-21",
+    status: "listed",
+  },
+  {
+    symbol: "VPX",
+    name: "Công ty cổ phần Chứng khoán VPBank",
+    exchange: "HOSE",
+    industry: "Chứng khoán",
+    listedDate: "2025-12-11",
+    status: "listed",
+  },
+  {
+    symbol: "VCK",
+    name: "Công ty Cổ phần Chứng khoán VPS",
+    exchange: "HOSE",
+    industry: "Chứng khoán",
+    listedDate: "2025-12-16",
+    status: "listed",
+  },
+  {
+    symbol: "HPA",
+    name: "CTCP Phát triển Nông nghiệp Hòa Phát",
+    exchange: "HOSE",
+    industry: "Nông nghiệp",
+    listedDate: "2026-02-06",
+    status: "listed",
+  },
+  {
+    symbol: "DMX",
+    name: "Công ty cổ phần Đầu tư Điện Máy Xanh",
+    exchange: "HOSE",
+    industry: "Bán lẻ",
+    listedDate: "2026-08-06",
+    status: "listed",
+  },
+  {
+    symbol: "VPL",
+    name: "Vinpearl",
+    exchange: "HOSE",
+    industry: "Du lịch & Giải trí",
+    listedDate: "2025-05-01",
+    status: "listed",
+  },
+  {
+    symbol: "TAL",
+    name: "Taseco Land",
+    exchange: "HOSE",
+    industry: "Bất động sản",
+    listedDate: "2025-06-01",
+    status: "listed",
+  },
+  {
+    symbol: "CRV",
+    name: "CRV Real Estate",
+    exchange: "HOSE",
+    industry: "Bất động sản",
+    listedDate: "2025-10-01",
+    status: "listed",
+  },
+];
+
 async function vndGet<T>(path: string, timeoutMs = 12_000): Promise<T> {
   const res = await httpJson<T>(`${base()}${path}`, {
     provider: VND,
@@ -57,7 +125,9 @@ async function vndGet<T>(path: string, timeoutMs = 12_000): Promise<T> {
 }
 
 function mapRow(r: VndStockRow): VndUniverseItem | null {
-  const symbol = String(r.code ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+  const symbol = String(r.code ?? "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "");
   if (!symbol || symbol.length < 2) return null;
   const listedDate = String(r.listedDate ?? r.listingDate ?? "").slice(0, 10) || null;
   return {
@@ -70,9 +140,26 @@ function mapRow(r: VndStockRow): VndUniverseItem | null {
   };
 }
 
+/** Lookup 1 mã trực tiếp từ VNDirect `/v4/stocks?q=code:XXX` */
+export async function lookupVndSymbol(symbol: string): Promise<VndUniverseItem | null> {
+  const sym = symbol.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  if (!sym || sym.length < 2 || sym.length > 12) return null;
+  try {
+    const payload = await vndGet<Page<VndStockRow>>(`/v4/stocks?q=code:${sym}&size=5`, 8_000);
+    const row = (payload.data ?? []).find(
+      (r) => String(r.code ?? "").toUpperCase() === sym && String(r.type ?? "STOCK").toUpperCase() === "STOCK",
+    );
+    if (!row) return null;
+    const st = String(row.status ?? "").toLowerCase();
+    if (st.includes("delist")) return null;
+    return mapRow(row);
+  } catch {
+    return null;
+  }
+}
+
 /**
- * Toàn bộ cổ phiếu đang LISTED trên HOSE/HNX/UPCOM từ VNDirect.
- * Phân trang đủ (không chỉ page 1) để bắt mã mới niêm yết.
+ * Toàn bộ cổ phiếu LISTED + seed IPO + mã mới (sort listedDate).
  */
 export async function fetchVndFullUniverse(): Promise<VndUniverseItem[]> {
   const pageSize = 500;
@@ -80,62 +167,111 @@ export async function fetchVndFullUniverse(): Promise<VndUniverseItem[]> {
   let totalPages = 1;
   const bySym = new Map<string, VndUniverseItem>();
 
-  // 1) status:LISTED (primary)
-  while (page <= totalPages && page <= 20) {
-    const payload = await vndGet<Page<VndStockRow>>(
-      `/v4/stocks?q=type:STOCK~status:LISTED&size=${pageSize}&page=${page}&sort=code:asc`,
-      15_000,
-    );
-    const data = payload.data ?? [];
-    totalPages = Math.max(1, Number(payload.totalPages) || 1);
-    for (const r of data) {
-      const item = mapRow(r);
-      if (item) bySym.set(item.symbol, item);
+  // Seed IPO trước
+  for (const s of IPO_SEED_2025_2026) bySym.set(s.symbol, s);
+
+  // 1) status:LISTED — phân trang đủ
+  while (page <= totalPages && page <= 25) {
+    try {
+      const payload = await vndGet<Page<VndStockRow>>(
+        `/v4/stocks?q=type:STOCK~status:LISTED&size=${pageSize}&page=${page}&sort=code:asc`,
+        15_000,
+      );
+      const data = payload.data ?? [];
+      totalPages = Math.max(1, Number(payload.totalPages) || 1);
+      for (const r of data) {
+        const item = mapRow(r);
+        if (item) bySym.set(item.symbol, item);
+      }
+      if (!data.length) break;
+      page += 1;
+    } catch {
+      break;
     }
-    if (!data.length) break;
-    page += 1;
   }
 
-  // 2) Bổ sung mã type:STOCK không filter status (đôi khi mã mới chưa gắn LISTED)
-  //    Chỉ lấy page đầu sort listedDate desc để bắt IPO/niêm yết gần đây
+  // 2) Mã mới theo listedDate (nhiều page)
+  for (let p = 1; p <= 5; p++) {
+    try {
+      const recent = await vndGet<Page<VndStockRow>>(
+        `/v4/stocks?q=type:STOCK&size=200&page=${p}&sort=listedDate:desc`,
+        12_000,
+      );
+      for (const r of recent.data ?? []) {
+        const st = String(r.status ?? "").toLowerCase();
+        if (st.includes("delist")) continue;
+        const item = mapRow(r);
+        if (!item) continue;
+        const prev = bySym.get(item.symbol);
+        if (!prev) bySym.set(item.symbol, item);
+        else if (!prev.listedDate && item.listedDate) {
+          bySym.set(item.symbol, { ...prev, listedDate: item.listedDate, name: item.name ?? prev.name });
+        }
+      }
+      if (!(recent.data ?? []).length) break;
+    } catch {
+      break;
+    }
+  }
+
+  // 3) Bổ sung mã có trong bảng giá phiên gần nhất (đảm bảo TCX/VCK… luôn có)
   try {
-    const recent = await vndGet<Page<VndStockRow>>(
-      `/v4/stocks?q=type:STOCK&size=200&page=1&sort=listedDate:desc`,
-      12_000,
+    const prices = await vndGet<Page<{ code?: string; date?: string }>>(
+      `/v4/stock_prices?q=type:STOCK&size=1&sort=date:desc`,
+      6_000,
     );
-    for (const r of recent.data ?? []) {
-      const st = String(r.status ?? "").toLowerCase();
-      // bỏ delisted
-      if (st.includes("delist")) continue;
-      const item = mapRow(r);
-      if (!item) continue;
-      const prev = bySym.get(item.symbol);
-      if (!prev) {
-        bySym.set(item.symbol, item);
-      } else if (!prev.listedDate && item.listedDate) {
-        bySym.set(item.symbol, { ...prev, listedDate: item.listedDate });
+    const sessionDate = String(prices.data?.[0]?.date ?? "").slice(0, 10);
+    if (sessionDate) {
+      let pp = 1;
+      let tp = 1;
+      while (pp <= tp && pp <= 12) {
+        const board = await vndGet<Page<{ code?: string }>>(
+          `/v4/stock_prices?q=date:${sessionDate}~type:STOCK&size=500&page=${pp}`,
+          12_000,
+        );
+        tp = Math.max(1, Number(board.totalPages) || 1);
+        for (const r of board.data ?? []) {
+          const sym = String(r.code ?? "").toUpperCase();
+          if (!sym || bySym.has(sym)) continue;
+          bySym.set(sym, {
+            symbol: sym,
+            name: null,
+            exchange: null,
+            industry: null,
+            listedDate: null,
+            status: "listed",
+          });
+        }
+        if (!(board.data ?? []).length) break;
+        pp += 1;
       }
     }
   } catch {
     /* non-fatal */
   }
 
+  // 4) Force-resolve seed symbols via code lookup (refresh name/status)
+  await Promise.all(
+    IPO_SEED_2025_2026.map(async (s) => {
+      const live = await lookupVndSymbol(s.symbol);
+      if (live) bySym.set(live.symbol, live);
+    }),
+  );
+
   return [...bySym.values()].sort((a, b) => a.symbol.localeCompare(b.symbol));
 }
 
-/**
- * Cổ phiếu niêm yết trong N ngày gần đây (mặc định 180 ngày).
- */
-export async function fetchVndRecentListings(
-  withinDays = 180,
-): Promise<VndUniverseItem[]> {
+export async function fetchVndRecentListings(withinDays = 365): Promise<VndUniverseItem[]> {
   const all = await fetchVndFullUniverse();
   const cutoff = Date.now() - Math.max(1, withinDays) * 86_400_000;
   return all
     .filter((x) => {
-      if (!x.listedDate) return false;
+      if (!x.listedDate) {
+        // seed không có date vẫn giữ nếu trong IPO_SEED
+        return IPO_SEED_2025_2026.some((s) => s.symbol === x.symbol);
+      }
       const t = Date.parse(`${x.listedDate}T00:00:00+07:00`);
       return Number.isFinite(t) && t >= cutoff;
     })
-    .sort((a, b) => String(b.listedDate).localeCompare(String(a.listedDate)));
+    .sort((a, b) => String(b.listedDate ?? "").localeCompare(String(a.listedDate ?? "")));
 }
