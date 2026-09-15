@@ -66,158 +66,214 @@ const RATING_TONE: Record<string, "up" | "down" | "warn" | "neutral"> = {
 
 const RATING_VI: Record<string, string> = {
   BULLISH: "Tích cực",
-  "MODERATELY BULLISH": "Nghiêng tích cực",
-  NEUTRAL: "Trung tính",
-  MIXED: "Phân hóa",
-  "MODERATELY BEARISH": "Nghiêng tiêu cực",
+  "MODERATELY BULLISH": "Hơi tích cực",
+  NEUTRAL: "Trung lập",
+  MIXED: "Trộn lẫn",
+  "MODERATELY BEARISH": "Hơi tiêu cực",
   BEARISH: "Tiêu cực",
 };
 
 function IntelView({ intel, meta }: { intel: MarketIntel; meta: Meta | null }) {
-  const { settings } = useSettings();
   const c = intel.condition;
-  const tone = RATING_TONE[c.rating] ?? "neutral";
 
   return (
     <div className="space-y-4">
+      {/* Header */}
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
+        <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
-            <h1 className="text-[18px] font-semibold tracking-tight text-text-primary">Market Intelligence</h1>
+            <h1 className="text-lg font-semibold tracking-tight text-text-primary">Market Intelligence</h1>
             <Badge tone={intel.session.trading ? "up" : "neutral"}>{intel.session.labelVi}</Badge>
-            {meta && <FreshnessDot status={meta.freshness} />}
+            {meta && <FreshnessDot status={meta.freshness} ageMs={meta.ageMs} />}
           </div>
-          <p className="mt-1 text-[12px] text-text-muted">{intel.sessionHint}</p>
+          <p className="mt-0.5 text-[12px] text-text-secondary">{intel.sessionHint}</p>
+          {intel.vnDataNote && <p className="mt-1 text-[11px] text-text-muted">{intel.vnDataNote}</p>}
         </div>
-        {intel.indicesAvailable ? (
-          <div className="flex flex-wrap gap-2">
-            {intel.indices!.slice(0, 4).map((i) => (
-              <Link
-                key={i.code}
-                href={`/market/index/${i.code}`}
-                className="rounded-lg border border-border-subtle bg-surface-elevated px-2.5 py-1.5 hover:border-border-default"
-              >
-                <div className="text-[10px] uppercase tracking-wider text-text-muted">{i.code}</div>
-                <div className="flex items-baseline gap-1.5">
-                  <span className="num text-[14px] font-semibold text-text-primary">{fmtNum(i.value, 2)}</span>
-                  <Chg value={i.changePercent} className="text-[11px]" />
-                </div>
-              </Link>
-            ))}
-          </div>
-        ) : (
-          <span className="text-[11px] text-text-muted">Chỉ số: đang đồng bộ VNDirect…</span>
-        )}
+        {meta && <MetaLine meta={meta} compact />}
       </div>
 
+      {/* Indices strip */}
+      {intel.indicesAvailable ? (
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+          {intel.indices!.slice(0, 4).map((i) => (
+            <Link
+              key={i.code}
+              href={`/market/index/${encodeURIComponent(i.code)}`}
+              className="panel-inset flex flex-col gap-0.5 p-2.5 transition hover:border-border-default"
+            >
+              <span className="text-[10px] font-medium uppercase tracking-wider text-text-muted">{i.code}</span>
+              <span className="num text-[15px] font-semibold text-text-primary">{fmtNum(i.value, 2)}</span>
+              <Chg value={i.changePercent} className="text-[11px]" />
+            </Link>
+          ))}
+        </div>
+      ) : (
+        <Unavailable title="Chỉ số VN chưa sẵn sàng" note="Đang kết nối VNDirect / SSI." />
+      )}
+
+      {/* Market condition */}
       <Panel
-        title="Trạng thái thị trường"
-        icon={<BrainCircuit className="size-4" />}
-        right={<Badge tone={tone}>{RATING_VI[c.rating] ?? c.rating}</Badge>}
+        title={
+          <span className="flex items-center gap-1.5">
+            <BrainCircuit className="size-3.5 text-accent-primary" />
+            Trạng thái thị trường
+          </span>
+        }
+        right={<Badge tone={RATING_TONE[c.rating] ?? "neutral"}>{RATING_VI[c.rating] ?? c.rating}</Badge>}
       >
-        <div className="grid gap-3 sm:grid-cols-2">
+        <div className="grid gap-4 sm:grid-cols-[1fr_1.2fr]">
           <div>
-            <div className="text-[11px] text-text-muted">Điểm tổng hợp</div>
-            <div className="num text-[28px] font-semibold text-text-primary">{Math.round(c.score)}</div>
+            <div className="flex items-end gap-2">
+              <span className="num text-3xl font-semibold text-text-primary">{Math.round(c.score)}</span>
+              <span className="mb-1 text-[11px] text-text-muted">/ 100 · {c.confidence}</span>
+            </div>
             <ScoreBar score={c.score} />
-            <div className="mt-2 text-[11px] text-text-muted">Confidence: {c.confidence} · Coverage {(c.coverage * 100).toFixed(0)}%</div>
+            <p className="mt-2 text-[11px] text-text-secondary">Cross-asset: {c.crossAssetState}</p>
+            {c.drivers.length > 0 && (
+              <ul className="mt-2 space-y-0.5 text-[11px] text-text-secondary">
+                {c.drivers.slice(0, 4).map((d) => (
+                  <li key={d}>• {d}</li>
+                ))}
+              </ul>
+            )}
+            {c.risks.length > 0 && (
+              <ul className="mt-1 space-y-0.5 text-[11px] text-warning">
+                {c.risks.slice(0, 3).map((d) => (
+                  <li key={d}>• {d}</li>
+                ))}
+              </ul>
+            )}
           </div>
           <div className="space-y-1.5">
             {c.components.map((comp) => (
-              <div key={comp.key} className="flex items-center justify-between gap-2 text-[12px]">
-                <span className="text-text-secondary">{comp.label}</span>
-                <span className="num text-text-primary">{comp.available && comp.score != null ? Math.round(comp.score) : "—"}</span>
+              <div key={comp.key} className="flex items-center gap-2 text-[12px]">
+                <span className="w-24 shrink-0 text-text-muted">{comp.label}</span>
+                <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-surface-modal">
+                  <div
+                    className={`h-full rounded-full ${
+                      !comp.available || comp.score == null
+                        ? "bg-border-default"
+                        : comp.score >= 55
+                          ? "bg-positive"
+                          : comp.score <= 45
+                            ? "bg-negative"
+                            : "bg-warning"
+                    }`}
+                    style={{ width: `${comp.available && comp.score != null ? Math.max(4, Math.min(100, comp.score)) : 4}%` }}
+                  />
+                </div>
+                <span className="num w-8 text-right text-text-secondary">
+                  {comp.available && comp.score != null ? Math.round(comp.score) : "—"}
+                </span>
               </div>
             ))}
           </div>
         </div>
-        {(c.drivers.length > 0 || c.risks.length > 0) && (
-          <div className="mt-3 grid gap-2 sm:grid-cols-2 text-[11px]">
-            {c.drivers.length > 0 && (
-              <div>
-                <div className="mb-1 font-medium text-positive">Động lực</div>
-                <ul className="list-disc space-y-0.5 pl-4 text-text-secondary">
-                  {c.drivers.map((d, i) => (
-                    <li key={i}>{d}</li>
-                  ))}
-                </ul>
-              </div>
-            )}
-            {c.risks.length > 0 && (
-              <div>
-                <div className="mb-1 font-medium text-warning">Rủi ro</div>
-                <ul className="list-disc space-y-0.5 pl-4 text-text-secondary">
-                  {c.risks.map((d, i) => (
-                    <li key={i}>{d}</li>
-                  ))}
-                </ul>
-              </div>
-            )}
-          </div>
-        )}
-        {meta && <MetaLine meta={meta} className="mt-3" />}
       </Panel>
 
-      <div className="grid gap-3 lg:grid-cols-3">
-        <Panel title="Độ rộng" icon={<Activity className="size-4" />}>
+      {/* Breadth / Flow / Liquidity */}
+      <div className="grid grid-cols-12 gap-3">
+        <Panel
+          className="col-span-12 md:col-span-6 xl:col-span-4"
+          title={
+            <span className="flex items-center gap-1.5">
+              <Activity className="size-3.5" /> Độ rộng thị trường
+            </span>
+          }
+        >
           {intel.breadth.available ? (
-            <BreadthView a={intel.breadth.advancers} d={intel.breadth.decliners} u={intel.breadth.unchanged} source={intel.breadth.source} />
+            <BreadthView
+              a={intel.breadth.advancers}
+              d={intel.breadth.decliners}
+              u={intel.breadth.unchanged}
+              source={intel.breadth.source}
+            />
           ) : (
-            <Unavailable title="Breadth chưa sẵn sàng" note={intel.breadth.note} />
+            <Unavailable title="Breadth chưa có" note={intel.breadth.note} />
           )}
         </Panel>
-        <Panel title="Thanh khoản" icon={<Layers className="size-4" />}>
+
+        <Panel className="col-span-12 md:col-span-6 xl:col-span-4" title="Dòng vốn thị trường">
+          <div className="space-y-2">
+            {(
+              [
+                ["Khối ngoại", intel.flow.foreignNet],
+                ["Tự doanh", intel.flow.propNet],
+                ["ETF", intel.flow.etfNet],
+              ] as const
+            ).map(([label, val]) => (
+              <div key={label} className="flex items-center justify-between text-[12px]">
+                <span className="text-text-secondary">{label}</span>
+                <span
+                  className={`num font-medium ${
+                    val == null ? "text-text-muted" : val >= 0 ? "text-positive" : "text-negative"
+                  }`}
+                >
+                  {val == null ? "—" : fmtCompact(val)}
+                </span>
+              </div>
+            ))}
+            <p className="text-[10px] text-text-muted">{intel.flow.note}</p>
+          </div>
+        </Panel>
+
+        <Panel className="col-span-12 xl:col-span-4" title="Thanh khoản">
           {intel.liquidity.available ? (
             <div>
               <div className="text-[11px] text-text-muted">GTGD phiên</div>
-              <div className="num text-[18px] font-semibold">{fmtCompact(intel.liquidity.valueTraded!)}</div>
+              <div className="num text-[18px] font-semibold text-text-primary">
+                {fmtCompact(intel.liquidity.valueTraded!)}
+              </div>
               <p className="mt-1 text-[11px] text-text-muted">{intel.liquidity.note}</p>
             </div>
           ) : (
             <Unavailable title="Thanh khoản" note={intel.liquidity.note} />
           )}
         </Panel>
-        <Panel title="Dòng vốn" icon={<ArrowUpRight className="size-4" />}>
-          {intel.flow.available ? (
-            <div className="space-y-1.5 text-[12px]">
-              {(
-                [
-                  ["Khối ngoại", intel.flow.foreignNet],
-                  ["Tự doanh", intel.flow.propNet],
-                  ["ETF", intel.flow.etfNet],
-                ] as const
-              ).map(([label, val]) => (
-                <div key={label} className="flex justify-between gap-2">
-                  <span className="text-text-secondary">{label}</span>
-                  <span className={`num ${val != null && val >= 0 ? "text-positive" : val != null ? "text-negative" : "text-text-muted"}`}>
-                    {val != null ? fmtCompact(val) : "—"}
-                  </span>
-                </div>
-              ))}
-              <p className="pt-1 text-[10px] text-text-muted">{intel.flow.note}</p>
-            </div>
-          ) : (
-            <Unavailable title="Dòng vốn" note={intel.flow.note} />
-          )}
-        </Panel>
       </div>
 
-      <div className="grid gap-3 lg:grid-cols-2">
-        <Panel title="Đóng góp chỉ số" icon={<TrendingUp className="size-4" />}>
-          {intel.contributors.positive.length + intel.contributors.negative.length === 0 ? (
-            <Unavailable title="Chưa có đóng góp" note={intel.contributors.note} />
-          ) : (
-            <div className="grid gap-2 sm:grid-cols-2">
-              <ContribList title="Đóng góp tích cực" rows={intel.contributors.positive} tone="up" hasWeights={intel.contributors.hasWeights} />
-              <ContribList title="Đóng góp tiêu cực" rows={intel.contributors.negative} tone="down" hasWeights={intel.contributors.hasWeights} />
-            </div>
-          )}
-        </Panel>
-        <Panel title="Cross-asset" icon={<Globe2 className="size-4" />}>
+      {/* Contributors */}
+      <Panel
+        title={
+          <span className="flex items-center gap-1.5">
+            <TrendingUp className="size-3.5" /> Đóng góp chỉ số
+          </span>
+        }
+      >
+        {intel.contributors.positive.length + intel.contributors.negative.length === 0 ? (
+          <Unavailable title="Chưa có đóng góp" note={intel.contributors.note} />
+        ) : (
+          <div className="grid gap-2 sm:grid-cols-2">
+            <ContribList
+              title="Đóng góp tích cực"
+              rows={intel.contributors.positive}
+              tone="up"
+              hasWeights={intel.contributors.hasWeights}
+            />
+            <ContribList
+              title="Đóng góp tiêu cực"
+              rows={intel.contributors.negative}
+              tone="down"
+              hasWeights={intel.contributors.hasWeights}
+            />
+          </div>
+        )}
+      </Panel>
+
+      {/* Cross-asset + news */}
+      <div className="grid grid-cols-12 gap-3">
+        <Panel
+          className="col-span-12 lg:col-span-5"
+          title={
+            <span className="flex items-center gap-1.5">
+              <Globe2 className="size-3.5" /> Cross-asset
+            </span>
+          }
+        >
           {intel.crossAsset.length === 0 ? (
             <Unavailable title="Cross-asset chưa sẵn sàng" />
           ) : (
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+            <div className="grid grid-cols-2 gap-2">
               {intel.crossAsset.map((x) => (
                 <div key={x.symbol} className="rounded-md border border-border-subtle px-2 py-1.5">
                   <div className="text-[10px] text-text-muted">{x.label ?? x.symbol}</div>
@@ -228,35 +284,49 @@ function IntelView({ intel, meta }: { intel: MarketIntel; meta: Meta | null }) {
             </div>
           )}
         </Panel>
+
+        <Panel
+          className="col-span-12 lg:col-span-7"
+          title="Dòng tin thị trường"
+          right={
+            <Link href="/news" className="text-[11px] text-text-muted hover:text-text-secondary">
+              Xem tất cả <ArrowRight className="inline size-3" />
+            </Link>
+          }
+        >
+          {!intel.news.length ? (
+            <Unavailable title="Luồng tin chưa khả dụng" />
+          ) : (
+            <ul className="divide-y divide-border-subtle">
+              {intel.news.slice(0, 8).map((n, idx) => (
+                <li key={idx} className="py-2">
+                  <a
+                    href={n.url ?? "#"}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-[13px] text-text-primary hover:text-accent-primary"
+                  >
+                    {n.title}
+                  </a>
+                  <div className="mt-0.5 text-[10px] text-text-muted">
+                    {n.source ?? "news"}
+                    {n.publishedAt ? ` · ${new Date(n.publishedAt).toLocaleString("vi-VN")}` : ""}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </Panel>
       </div>
 
-      <Panel title="Tin thị trường" icon={<Factory className="size-4" />}>
-        {!intel.news.length ? (
-          <Unavailable title="Luồng tin chưa khả dụng" />
-        ) : (
-          <ul className="divide-y divide-border-subtle">
-            {intel.news.map((n, idx) => (
-              <li key={idx} className="py-2">
-                <a href={n.url ?? "#"} target="_blank" rel="noreferrer" className="text-[13px] text-text-primary hover:text-accent-primary">
-                  {n.title}
-                </a>
-                <div className="mt-0.5 text-[10px] text-text-muted">
-                  {n.source ?? "news"}
-                  {n.publishedAt ? ` · ${new Date(n.publishedAt).toLocaleString("vi-VN")}` : ""}
-                </div>
-              </li>
-            ))}
-          </ul>
-        )}
-      </Panel>
-
-      {settings.dashboard?.showSystemLink !== false && (
-        <div className="flex justify-end">
-          <Link href="/system" className="inline-flex items-center gap-1 text-[11px] text-text-muted hover:text-text-secondary">
-            System health <ArrowRight className="size-3" />
-          </Link>
-        </div>
-      )}
+      <div className="flex justify-end">
+        <Link
+          href="/system"
+          className="inline-flex items-center gap-1 text-[11px] text-text-muted hover:text-text-secondary"
+        >
+          System health <ArrowRight className="size-3" />
+        </Link>
+      </div>
     </div>
   );
 }
