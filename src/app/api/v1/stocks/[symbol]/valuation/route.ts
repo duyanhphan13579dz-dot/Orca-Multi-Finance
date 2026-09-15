@@ -4,7 +4,8 @@ import { computeFinancialHealth } from "@/lib/engines/fundamental";
 import { computeValuation } from "@/lib/engines/valuation";
 import { collectPeerMetrics } from "@/lib/engines/valuation-peers";
 import { sectorOf } from "@/lib/vn/master";
-import { getVndOutstandingShares } from "@/lib/providers/vndirect-company";
+import { getVndEquitySnapshot } from "@/lib/providers/vndirect-company";
+import { ensureVndirectWsStarted, vndirectWs } from "@/lib/realtime/vndirect-ws";
 import { cached } from "@/lib/cache";
 
 export const dynamic = "force-dynamic";
@@ -12,7 +13,7 @@ export const runtime = "nodejs";
 
 /**
  * GET /api/v1/stocks/:symbol/valuation
- * Optimized: parallel detail+shares+peers, response cache, slim payload.
+ * Market data (price, shares, mcap) + BCTC snapshot → valuation engine.
  * Query: ?peers=0 skip peers | ?full=1 include raw phase objects
  */
 export async function GET(
@@ -44,7 +45,11 @@ export async function GET(
       });
     } catch (e) {
       if (e && typeof e === "object" && (e as { code?: string }).code === "STOCK_UNAVAILABLE") {
-        return fail("STOCK_UNAVAILABLE", e instanceof Error ? e.message : `Không lấy được dữ liệu ${symbol}`, 503);
+        return fail(
+          "STOCK_UNAVAILABLE",
+          e instanceof Error ? e.message : `Không lấy được dữ liệu ${symbol}`,
+          503,
+        );
       }
       throw e;
     }
@@ -59,14 +64,22 @@ async function buildValuationPayload(
   wantPeers: boolean,
   wantFull: boolean,
 ) {
-  // Parallel: stock detail + shares + peers (peers independent of shares)
+  try {
+    if (process.env.VNDIRECT_WS_DISABLED !== "true") {
+      ensureVndirectWsStarted();
+      vndirectWs.watchSymbol(symbol);
+    }
+  } catch {
+    /* optional on serverless */
+  }
+
   const detailP = getVnStockDetail(symbol);
-  const sharesP = cached(`val:shares:${symbol}`, {
-    ttlMs: 6 * 3_600_000,
-    staleMs: 24 * 3_600_000,
+  const sharesP = cached(`val:equity:${symbol}`, {
+    ttlMs: 2 * 3_600_000,
+    staleMs: 12 * 3_600_000,
     producer: async () => {
       try {
-        return await getVndOutstandingShares(symbol);
+        return await getVndEquitySnapshot(symbol);
       } catch {
         return null;
       }
@@ -75,7 +88,10 @@ async function buildValuationPayload(
   const peersP = wantPeers
     ? collectPeerMetrics(symbol, 4).catch((e) => {
         console.warn("[valuation] peers skipped", e);
-        return { sector: sectorOf(symbol), peers: [] as Awaited<ReturnType<typeof collectPeerMetrics>>["peers"] };
+        return {
+          sector: sectorOf(symbol),
+          peers: [] as Awaited<ReturnType<typeof collectPeerMetrics>>["peers"],
+        };
       })
     : Promise.resolve(null);
 
@@ -107,80 +123,69 @@ async function buildValuationPayload(
   let sharesOutstanding: number | null = health.anchors?.shares ?? null;
   let sharesSource: string | null = sharesOutstanding != null ? "financial-statements" : null;
   let sharesReportDate: string | null = null;
+  let marketCapReported: number | null = null;
 
-  if (vndShares?.shares && vndShares.shares > 0) {
-    sharesOutstanding = vndShares.shares;
+  if (vndShares?.sharesOutstanding && vndShares.sharesOutstanding > 0) {
+    sharesOutstanding = vndShares.sharesOutstanding;
     sharesSource = vndShares.source;
     sharesReportDate = vndShares.reportDate;
+    marketCapReported = vndShares.marketCapReported;
     health = {
       ...health,
       anchors: {
         ...health.anchors,
-        shares: vndShares.shares,
+        shares: vndShares.sharesOutstanding,
         epsTtm:
-          health.anchors.netProfit != null && vndShares.shares > 0
-            ? health.anchors.netProfit / vndShares.shares
+          health.anchors.netProfit != null && vndShares.sharesOutstanding > 0
+            ? health.anchors.netProfit / vndShares.sharesOutstanding
             : health.anchors.epsTtm,
       },
     };
   }
 
+  const marketCapComputed =
+    price > 0 && sharesOutstanding != null && sharesOutstanding > 0
+      ? price * sharesOutstanding
+      : marketCapReported;
+
   const capexFromGroup =
     typeof health?.groups?.cashflow?.ocfTtm === "number" &&
-    typeof health?.groups?.cashflow?.fcfTtm === "number"
-      ? (health.groups!.cashflow!.ocfTtm as number) - (health.groups!.cashflow!.fcfTtm as number)
+    typeof health?.anchors?.fcfTtm === "number"
+      ? null
       : null;
 
   const peerComparison =
-    peerPack && peerPack.peers.length > 0
+    peerPack && peerPack.peers && peerPack.peers.length > 0
       ? {
           symbol,
-          sector: peerPack.sector || sectorOf(symbol),
+          sector: peerPack.sector ?? sectorOf(symbol),
           subject: {
             symbol,
             pe: null as number | null,
             pb: null as number | null,
             ps: null as number | null,
             evEbitda: null as number | null,
-            pfcf: null as number | null,
-            dividendYield: null as number | null,
-            marketCap: null as number | null,
           },
           peers: peerPack.peers,
         }
       : undefined;
 
-  let valuation = computeValuation({
+  const valuation = computeValuation({
     price,
     health,
-    capexTtm: capexFromGroup,
     symbol,
-    peerComparison,
+    peerComparison: peerComparison as Parameters<typeof computeValuation>[0]["peerComparison"],
+    capexTtm: capexFromGroup,
   });
 
-  if (peerComparison) {
-    peerComparison.subject = {
-      symbol,
-      pe: valuation.multiples.pe,
-      pb: valuation.multiples.pb,
-      ps: valuation.multiples.ps,
-      evEbitda: valuation.multiples.evEbitda,
-      pfcf: valuation.multiples.pfcf,
-      dividendYield: valuation.multiples.dividendYield,
-      marketCap: valuation.marketCap,
-    };
-    valuation = computeValuation({
-      price,
-      health,
-      capexTtm: capexFromGroup,
-      symbol,
-      peerComparison,
-    });
-  }
+  const fv = valuation.fairValue ?? null;
+  const p4 = valuation.phase4 ?? null;
+  const p5 = valuation.phase5 ?? null;
 
-  const fv = valuation.fairValue;
-  const p4 = valuation.phase4;
-  const p5 = valuation.phase5;
+  const resolvedMarketCap =
+    valuation.marketCap ??
+    marketCapComputed ??
+    (price > 0 && sharesOutstanding ? price * sharesOutstanding : null);
 
   const data: Record<string, unknown> = {
     symbol,
@@ -189,7 +194,18 @@ async function buildValuationPayload(
     sharesOutstanding,
     sharesSource,
     sharesReportDate,
-    marketCap: valuation.marketCap,
+    marketCap: resolvedMarketCap,
+    marketCapReported,
+    marketSnapshot: {
+      price: valuation.price,
+      priceSource,
+      sharesOutstanding,
+      sharesSource,
+      sharesReportDate,
+      marketCap: resolvedMarketCap,
+      marketCapReported,
+      enterpriseValue: valuation.enterpriseValue ?? null,
+    },
     enterpriseValue: valuation.enterpriseValue,
     multiples: valuation.multiples,
     fairValues: {
