@@ -191,7 +191,7 @@ function AlertRow({ alert, onRemove }: { alert: PriceAlert; onRemove: () => void
           <span className="num text-[12px] text-text-secondary">
             {dirLabel} {alert.targetPrice.toLocaleString("vi-VN")}
           </span>
-          <Badge tone={isTrig ? "up" : "accent">{isTrig ? "Đã kích hoạt" : "Đang theo dõi"}</Badge>
+          <Badge tone={isTrig ? "up" : "neutral"}>{isTrig ? "Đã kích hoạt" : "Đang theo dõi"}</Badge>
         </div>
         {alert.reason && (
           <p className="mt-0.5 text-[11.5px] text-text-muted">{alert.reason}</p>
@@ -199,7 +199,9 @@ function AlertRow({ alert, onRemove }: { alert: PriceAlert; onRemove: () => void
         <p className="mt-0.5 text-[10px] text-text-muted">
           Tạo {new Date(alert.createdAt).toLocaleString("vi-VN")}
           {alert.triggeredAt &&
-            ` · Chạm ${alert.triggeredPrice?.toLocaleString("vi-VN")} lúc ${new Date(alert.triggeredAt).toLocaleString("vi-VN")}`}
+            ` · Chạm ${alert.triggeredPrice?.toLocaleString("vi-VN")} lúc ${
+              new Date(alert.triggeredAt).toLocaleString("vi-VN")
+            }`}
         </p>
       </div>
       <button
