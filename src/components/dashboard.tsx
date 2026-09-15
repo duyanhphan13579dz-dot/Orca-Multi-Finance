@@ -2,12 +2,10 @@
 
 import Link from "next/link";
 import { useApi } from "@/lib/hooks";
-import { useSettings } from "@/lib/settings";
 import type { MarketIntel } from "@/lib/services/market-intel";
 import type { Meta } from "@/lib/types";
-import { VN_SECTOR_MAP } from "@/lib/vn/master";
 import { Badge, Chg, fmtCompact, fmtNum, FreshnessDot, Loading, MetaLine, Panel, Unavailable } from "@/components/ui";
-import { Activity, ArrowRight, ArrowUpRight, BrainCircuit, Factory, Globe2, KeyRound, Layers, Scale, TrendingUp } from "lucide-react";
+import { Activity, ArrowRight, BrainCircuit, Globe2, TrendingUp } from "lucide-react";
 
 /**
  * ORCA REAL-TIME MARKET INTELLIGENCE COMMAND CENTER
@@ -271,9 +269,9 @@ function IntelView({ intel, meta }: { intel: MarketIntel; meta: Meta | null }) {
           ) : (
             <div className="grid grid-cols-2 gap-2">
               {intel.crossAsset.map((x) => (
-                <div key={x.symbol} className="rounded-md border border-border-subtle px-2 py-1.5">
-                  <div className="text-[10px] text-text-muted">{x.label ?? x.symbol}</div>
-                  <div className="num text-[13px] font-medium">{fmtNum(x.price, 2)}</div>
+                <div key={x.key} className="rounded-md border border-border-subtle px-2 py-1.5">
+                  <div className="text-[10px] text-text-muted">{x.label}</div>
+                  <div className="num text-[13px] font-medium">{fmtNum(x.value, 2)}</div>
                   <Chg value={x.changePercent} className="text-[11px]" />
                 </div>
               ))}
