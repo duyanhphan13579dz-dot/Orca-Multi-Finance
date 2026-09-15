@@ -1,5 +1,5 @@
 import { ok, badRequest, fail } from "@/lib/envelope";
-import { getVndSymbolForeignFlow } from "@/lib/providers/vndirect";
+import { getVndSymbolForeignFlow } from "@/lib/providers/vndirect-foreign-symbol";
 import { cached } from "@/lib/cache";
 
 export const dynamic = "force-dynamic";
