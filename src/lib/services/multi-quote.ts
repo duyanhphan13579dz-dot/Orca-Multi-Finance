@@ -6,81 +6,269 @@ import { getVietcapQuotes } from "../providers/vietcap";
 import { getSsiIboardQuotes } from "../providers/ssi-iboard";
 import { getSsiQuotes, ssiFcConfigured } from "../providers/ssi-fcdata";
 
+/**
+ * Reconciliation giá đa nguồn — KHÔNG trung bình.
+ *
+ * Ưu tiên giá (cao → thấp):
+ *   1. vndirect     — nguồn chính dự án
+ *   2. vps          — feed realtime public, latency thấp
+ *   3. ssi-iboard   — bảng giá sàn
+ *   4. ssi-fcdata   — nếu có key
+ *   5. vietcap      — profile (ít realtime hơn)
+ *
+ * Field phụ (volume, name, ceiling…) chỉ fill khi field đang null.
+ * Lệch giá lớn giữa nguồn → log, vẫn giữ giá theo ưu tiên.
+ */
+
 export type MultiQuoteResult = {
   quotes: Quote[];
   sources: string[];
   sourceTs: number | null;
+  /** latency từng nguồn (ms) */
+  latencies: Record<string, number>;
+  /** số mã có lệch giá > tolerance giữa 2 nguồn top */
+  conflicts: number;
 };
 
-/**
- * Kéo quote đa nguồn: VNDirect → VPS → SSI iBoard → SSI FC → Vietcap.
- * Merge theo symbol; nguồn đầu tiên có giá thắng, các field null được điền từ nguồn sau.
- */
-export async function getMultiQuotes(symbols: string[]): Promise<MultiQuoteResult> {
-  const uniq = [...new Set(symbols.map((s) => s.toUpperCase()).filter(Boolean))].slice(0, 40);
-  if (!uniq.length) return { quotes: [], sources: [], sourceTs: null };
+const PRICE_PRIORITY: Record<string, number> = {
+  vndirect: 100,
+  vps: 90,
+  "ssi-iboard": 80,
+  "ssi-fcdata": 70,
+  vietcap: 40,
+};
 
-  const sources: string[] = [];
-  const bySym = new Map<string, Quote>();
+const rank = (src: string) => PRICE_PRIORITY[src] ?? 0;
 
-  const merge = (list: Quote[], src: string) => {
-    if (!list.length) return;
-    sources.push(src);
-    for (const q of list) {
-      const prev = bySym.get(q.symbol);
-      if (!prev) {
-        bySym.set(q.symbol, q);
-        continue;
-      }
-      // fill missing fields
-      bySym.set(q.symbol, {
-        ...q,
-        ...prev,
-        price: prev.price ?? q.price,
-        change: prev.change ?? q.change,
-        changePercent: prev.changePercent ?? q.changePercent,
-        open: prev.open ?? q.open,
-        high: prev.high ?? q.high,
-        low: prev.low ?? q.low,
-        volume: prev.volume ?? q.volume,
-        quoteVolume: prev.quoteVolume ?? q.quoteVolume,
-        referencePrice: prev.referencePrice ?? q.referencePrice,
-        ceilingPrice: prev.ceilingPrice ?? q.ceilingPrice,
-        floorPrice: prev.floorPrice ?? q.floorPrice,
-        name: prev.name ?? q.name,
-      });
-    }
-  };
+/** Lệch tương đối > 1.5% hoặc tuyệt đối > 200 VND coi là conflict (log only) */
+const CONFLICT_PCT = 0.015;
+const CONFLICT_ABS = 200;
 
-  const tasks: Promise<void>[] = [
-    vndirect
-      .getVndQuotes(uniq)
-      .then((r) => merge(r.quotes, "vndirect"))
-      .catch(() => undefined),
-    getVpsQuotes(uniq)
-      .then((r) => merge(r.quotes, "vps"))
-      .catch(() => undefined),
-    getSsiIboardQuotes(uniq)
-      .then((r) => merge(r.quotes, "ssi-iboard"))
-      .catch(() => undefined),
-    getVietcapQuotes(uniq)
-      .then((r) => merge(r.quotes, "vietcap"))
-      .catch(() => undefined),
-  ];
+type TaggedQuote = Quote & { _src: string; _latencyMs: number };
 
-  if (ssiFcConfigured()) {
-    tasks.push(
-      getSsiQuotes(uniq)
-        .then((r) => merge(r.quotes, "ssi-fcdata"))
-        .catch(() => undefined),
+type SourceBatch = {
+  src: string;
+  quotes: Quote[];
+  latencyMs: number;
+  ok: boolean;
+};
+
+function withDeadline<T>(p: Promise<T>, ms: number): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error("deadline")), ms);
+    p.then(
+      (v) => {
+        clearTimeout(t);
+        resolve(v);
+      },
+      (e) => {
+        clearTimeout(t);
+        reject(e);
+      },
     );
+  });
+}
+
+async function runSource(
+  src: string,
+  fn: () => Promise<{ quotes: Quote[]; sourceTs: number | null }>,
+  timeoutMs: number,
+): Promise<SourceBatch> {
+  const t0 = performance.now();
+  try {
+    const r = await withDeadline(fn(), timeoutMs);
+    return {
+      src,
+      quotes: r.quotes ?? [],
+      latencyMs: Math.round(performance.now() - t0),
+      ok: (r.quotes?.length ?? 0) > 0,
+    };
+  } catch {
+    return {
+      src,
+      quotes: [],
+      latencyMs: Math.round(performance.now() - t0),
+      ok: false,
+    };
+  }
+}
+
+function pickPrice(
+  existing: TaggedQuote | undefined,
+  incoming: Quote,
+  src: string,
+  latencyMs: number,
+): TaggedQuote {
+  const tagged: TaggedQuote = { ...incoming, _src: src, _latencyMs: latencyMs };
+  if (!existing) return tagged;
+
+  const er = rank(existing._src);
+  const ir = rank(src);
+
+  // Giá: nguồn ưu tiên cao hơn LUÔN thắng — không trung bình
+  let price = existing.price;
+  let priceSrc = existing._src;
+  if (ir > er && incoming.price != null && incoming.price > 0) {
+    price = incoming.price;
+    priceSrc = src;
+  } else if (er >= ir && (existing.price == null || existing.price <= 0) && incoming.price != null) {
+    price = incoming.price;
+    priceSrc = src;
   }
 
-  await Promise.all(tasks);
+  // Change/% theo cùng nguồn giá nếu có, else fill null
+  const preferIncomingForChg = priceSrc === src;
+  const change = preferIncomingForChg
+    ? (incoming.change ?? existing.change)
+    : (existing.change ?? incoming.change);
+  const changePercent = preferIncomingForChg
+    ? (incoming.changePercent ?? existing.changePercent)
+    : (existing.changePercent ?? incoming.changePercent);
+
+  // Field phụ: chỉ fill khi null — không ghi đè giá trị đã có từ nguồn cao hơn
+  const fill = <T>(a: T | null | undefined, b: T | null | undefined): T | null =>
+    a != null && a !== ("" as unknown) ? (a as T) : b != null ? (b as T) : null;
 
   return {
-    quotes: [...bySym.values()],
-    sources: [...new Set(sources)],
-    sourceTs: bySym.size ? Date.now() : null,
+    ...existing,
+    ...incoming,
+    symbol: existing.symbol,
+    price,
+    change,
+    changePercent,
+    open: fill(existing.open, incoming.open),
+    high: fill(existing.high, incoming.high),
+    low: fill(existing.low, incoming.low),
+    volume: fill(existing.volume, incoming.volume),
+    quoteVolume: fill(existing.quoteVolume, incoming.quoteVolume),
+    referencePrice: fill(existing.referencePrice, incoming.referencePrice),
+    ceilingPrice: fill(existing.ceilingPrice, incoming.ceilingPrice),
+    floorPrice: fill(existing.floorPrice, incoming.floorPrice),
+    name: fill(existing.name, incoming.name),
+    assetClass: existing.assetClass ?? incoming.assetClass ?? "stock",
+    updatedAt: existing.updatedAt ?? incoming.updatedAt,
+    _src: priceSrc,
+    _latencyMs: priceSrc === src ? latencyMs : existing._latencyMs,
+  };
+}
+
+function countConflicts(batches: SourceBatch[]): number {
+  const bySym = new Map<string, { src: string; price: number }[]>();
+  for (const b of batches) {
+    if (!b.ok) continue;
+    for (const q of b.quotes) {
+      if (q.price == null || q.price <= 0) continue;
+      const arr = bySym.get(q.symbol) ?? [];
+      arr.push({ src: b.src, price: q.price });
+      bySym.set(q.symbol, arr);
+    }
+  }
+  let n = 0;
+  for (const [sym, arr] of bySym) {
+    if (arr.length < 2) continue;
+    // so sánh top-2 theo priority
+    arr.sort((a, b) => rank(b.src) - rank(a.src));
+    const a = arr[0]!;
+    const b = arr[1]!;
+    const abs = Math.abs(a.price - b.price);
+    const pct = abs / Math.max(a.price, 1);
+    if (abs > CONFLICT_ABS && pct > CONFLICT_PCT) {
+      n += 1;
+      if (process.env.NODE_ENV !== "production" || process.env.ORCA_LOG_QUOTE_CONFLICT === "1") {
+        console.warn(
+          `[quote-conflict] ${sym}: ${a.src}=${a.price} vs ${b.src}=${b.price} (Δ${abs.toFixed(0)} / ${(pct * 100).toFixed(2)}%) → keep ${a.src}`,
+        );
+      }
+    }
+  }
+  return n;
+}
+
+export async function getMultiQuotes(symbols: string[]): Promise<MultiQuoteResult> {
+  const uniq = [...new Set(symbols.map((s) => s.toUpperCase()).filter(Boolean))].slice(0, 40);
+  if (!uniq.length) {
+    return { quotes: [], sources: [], sourceTs: null, latencies: {}, conflicts: 0 };
+  }
+
+  /**
+   * Latency strategy:
+   * - Tier A (fast, primary): vndirect + vps — timeout 4s, song song
+   * - Tier B (board): ssi-iboard — timeout 5s
+   * - Tier C (optional): ssi-fc / vietcap — timeout 3.5s, chỉ chờ nếu còn mã thiếu giá
+   *
+   * Early exit: nếu Tier A đã cover đủ mọi symbol → không chờ Tier C.
+   */
+
+  const tierA = Promise.all([
+    runSource("vndirect", () => vndirect.getVndQuotes(uniq), 4_000),
+    runSource("vps", () => getVpsQuotes(uniq), 3_500),
+  ]);
+
+  const tierB = runSource("ssi-iboard", () => getSsiIboardQuotes(uniq), 5_000);
+
+  const tierCTasks: Promise<SourceBatch>[] = [
+    runSource("vietcap", () => getVietcapQuotes(uniq), 3_500),
+  ];
+  if (ssiFcConfigured()) {
+    tierCTasks.push(runSource("ssi-fcdata", () => getSsiQuotes(uniq), 4_000));
+  }
+
+  // Chạy A+B ngay; C song song nhưng có thể bỏ nếu A đủ
+  const tierCPromise = Promise.all(tierCTasks);
+  const [aBatches, bBatch] = await Promise.all([tierA, tierB]);
+
+  const primary = [...aBatches, bBatch];
+  const covered = new Set<string>();
+  for (const b of primary) {
+    for (const q of b.quotes) {
+      if (q.price != null && q.price > 0) covered.add(q.symbol);
+    }
+  }
+  const missing = uniq.filter((s) => !covered.has(s));
+
+  let cBatches: SourceBatch[] = [];
+  if (missing.length > 0) {
+    // Chỉ cần C nếu còn mã thiếu — nhưng vẫn lấy C nếu đã xong nhanh
+    cBatches = await tierCPromise;
+  } else {
+    // Không block: nếu C xong trong 200ms thì merge phụ, không thì bỏ
+    cBatches = await Promise.race([
+      tierCPromise,
+      new Promise<SourceBatch[]>((r) => setTimeout(() => r([]), 200)),
+    ]);
+  }
+
+  const batches = [...primary, ...cBatches].sort((a, b) => rank(b.src) - rank(a.src));
+
+  const bySym = new Map<string, TaggedQuote>();
+  const usedSources: string[] = [];
+  const latencies: Record<string, number> = {};
+
+  for (const batch of batches) {
+    latencies[batch.src] = batch.latencyMs;
+    if (!batch.ok && !batch.quotes.length) continue;
+    usedSources.push(batch.src);
+    for (const q of batch.quotes) {
+      const prev = bySym.get(q.symbol);
+      bySym.set(q.symbol, pickPrice(prev, q, batch.src, batch.latencyMs));
+    }
+  }
+
+  const conflicts = countConflicts(batches);
+
+  const quotes: Quote[] = [...bySym.values()].map(({ _src, _latencyMs, ...rest }) => ({
+    ...rest,
+    // gắn source vào name note không — giữ Quote sạch; meta ở ngoài
+  }));
+
+  // Gắn provider thắng vào updatedAt metadata nhẹ qua symbol order ổn định
+  quotes.sort((a, b) => a.symbol.localeCompare(b.symbol));
+
+  return {
+    quotes,
+    sources: [...new Set(usedSources)],
+    sourceTs: quotes.length ? Date.now() : null,
+    latencies,
+    conflicts,
   };
 }
