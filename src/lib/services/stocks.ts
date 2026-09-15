@@ -6,17 +6,13 @@ import type { FinancialPackageMeta, GrowthSnapshot, NormalizedPeriod } from "../
 import type { FinancialHealthResult } from "../engines/fundamental";
 import * as vndirect from "../providers/vndirect";
 import {
-  getSsiDailyOhlc,
-  getSsiFullBoard,
   getSsiIndices,
   getSsiQuotes,
-  getSsiUniverse,
   ssiFcConfigured,
 } from "../providers/ssi-fcdata";
 import { ensureSsiWsStarted, ssiWs } from "../realtime/ssi-ws";
 import { bootSsiMarketDataPipeline } from "../realtime/ssi-market-boot";
 import { ensureVndirectWsStarted, vndirectWs } from "../realtime/vndirect-ws";
-import { validateBars, logQualityEvent } from "../quality";
 import { analyzeSeries, detectPatterns } from "../technical";
 import type { CandlePattern, IndexQuote, Meta, OhlcvBar, Quote, TechnicalSnapshot } from "../types";
 import {
@@ -25,6 +21,7 @@ import {
   type VndCompanyProfile,
   type VndEquitySnapshot,
 } from "../providers/vndirect-company";
+import { getVndSymbolForeignFlow } from "../providers/vndirect-foreign-symbol";
 import { getVnOrderBook, type VnOrderBook } from "./stock-orderbook";
 
 const INDEX_PRIORITY = ["VNINDEX", "VN30", "HNX", "UPCOM", "HNX30", "VN100"];
@@ -73,7 +70,6 @@ export function vnPrimaryProvider(): "ssi-fcdata" | "vndirect" {
   return "vndirect";
 }
 
-/** Re-export remaining market helpers from backup module pattern — see git history for full board/universe. */
 export async function getVnIndices(): Promise<{ items: IndexQuote[]; meta: Meta } | null> {
   bootVndLive();
   try {
@@ -164,10 +160,7 @@ export async function getVnOhlcv(
   }
 }
 
-export async function getVnMarketBoard(): Promise<{
-  quotes: Quote[];
-  meta: Meta;
-} | null> {
+export async function getVnMarketBoard(): Promise<{ quotes: Quote[]; meta: Meta } | null> {
   try {
     const r = await vndirect.getVndMarketQuotes();
     return {
@@ -264,7 +257,7 @@ export async function getVnStockDetail(
       getVndCompanyProfile(sym).catch(() => null),
       getVndEquitySnapshot(sym).catch(() => null),
       getVnOrderBook(sym).catch(() => null),
-      vndirect.getVndSymbolForeignFlow(sym, 20).catch(() => null),
+      getVndSymbolForeignFlow(sym, 20).catch(() => null),
       getFinancialsForSymbol(sym).catch(() => null),
     ]);
 
