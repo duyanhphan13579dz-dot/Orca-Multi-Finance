@@ -1,1 +1,348 @@
-PLACEHOLDER
+"use client";
+
+import Link from "next/link";
+import { useApi } from "@/lib/hooks";
+import { useSettings } from "@/lib/settings";
+import type { MarketIntel } from "@/lib/services/market-intel";
+import type { Meta } from "@/lib/types";
+import { VN_SECTOR_MAP } from "@/lib/vn/master";
+import { Badge, Chg, fmtCompact, fmtNum, FreshnessDot, Loading, MetaLine, Panel, Unavailable } from "@/components/ui";
+import { Activity, ArrowRight, ArrowUpRight, BrainCircuit, Factory, Globe2, KeyRound, Layers, Scale, TrendingUp } from "lucide-react";
+
+/**
+ * ORCA REAL-TIME MARKET INTELLIGENCE COMMAND CENTER
+ * Vietnam market → condition engine → cross-asset context → breadth → flow →
+ * contributors → analyst intelligence. Every widget shows source + freshness.
+ */
+
+export function Dashboard() {
+  const { data, meta, isLoading, isValidating, mutate, error } = useApi<MarketIntel>("/api/v1/market/intel", {
+    refreshInterval: 12_000,
+    timeoutMs: 18_000,
+  });
+  if (isLoading && !data) {
+    return (
+      <div className="space-y-3">
+        <Loading rows={6} />
+        <Loading rows={8} />
+        <p className="text-center text-[11px] text-text-muted">Đang dựng Market Intelligence từ VNDirect…</p>
+      </div>
+    );
+  }
+  if (!data) {
+    return (
+      <div className="space-y-3">
+        <Unavailable
+          title="Market Intelligence Engine đang kết nối lại"
+          note={
+            error
+              ? "Mất kết nối tạm thời tới provider — tự thử lại sau vài giây. Hoặc mở /system."
+              : "Payload chưa sẵn sàng — đang đồng bộ VNDirect. Thử làm mới."
+          }
+        />
+        <div className="flex justify-center">
+          <button
+            type="button"
+            onClick={() => void mutate()}
+            className="rounded-md border border-border-subtle px-3 py-1.5 text-[12px] text-text-secondary hover:border-border-default hover:text-text-primary"
+          >
+            {isValidating ? "Đang tải…" : "Thử lại ngay"}
+          </button>
+        </div>
+      </div>
+    );
+  }
+  return <IntelView intel={data} meta={meta} />;
+}
+
+const RATING_TONE: Record<string, "up" | "down" | "warn" | "neutral"> = {
+  BULLISH: "up",
+  "MODERATELY BULLISH": "up",
+  NEUTRAL: "neutral",
+  MIXED: "warn",
+  "MODERATELY BEARISH": "down",
+  BEARISH: "down",
+};
+
+const RATING_VI: Record<string, string> = {
+  BULLISH: "Tích cực",
+  "MODERATELY BULLISH": "Nghiêng tích cực",
+  NEUTRAL: "Trung tính",
+  MIXED: "Phân hóa",
+  "MODERATELY BEARISH": "Nghiêng tiêu cực",
+  BEARISH: "Tiêu cực",
+};
+
+function IntelView({ intel, meta }: { intel: MarketIntel; meta: Meta | null }) {
+  const { settings } = useSettings();
+  const c = intel.condition;
+  const tone = RATING_TONE[c.rating] ?? "neutral";
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <div className="flex flex-wrap items-center gap-2">
+            <h1 className="text-[18px] font-semibold tracking-tight text-text-primary">Market Intelligence</h1>
+            <Badge tone={intel.session.trading ? "up" : "neutral"}>{intel.session.labelVi}</Badge>
+            {meta && <FreshnessDot status={meta.freshness} />}
+          </div>
+          <p className="mt-1 text-[12px] text-text-muted">{intel.sessionHint}</p>
+        </div>
+        {intel.indicesAvailable ? (
+          <div className="flex flex-wrap gap-2">
+            {intel.indices!.slice(0, 4).map((i) => (
+              <Link
+                key={i.code}
+                href={`/market/index/${i.code}`}
+                className="rounded-lg border border-border-subtle bg-surface-elevated px-2.5 py-1.5 hover:border-border-default"
+              >
+                <div className="text-[10px] uppercase tracking-wider text-text-muted">{i.code}</div>
+                <div className="flex items-baseline gap-1.5">
+                  <span className="num text-[14px] font-semibold text-text-primary">{fmtNum(i.value, 2)}</span>
+                  <Chg value={i.changePercent} className="text-[11px]" />
+                </div>
+              </Link>
+            ))}
+          </div>
+        ) : (
+          <span className="text-[11px] text-text-muted">Chỉ số: đang đồng bộ VNDirect…</span>
+        )}
+      </div>
+
+      <Panel
+        title="Trạng thái thị trường"
+        icon={<BrainCircuit className="size-4" />}
+        right={<Badge tone={tone}>{RATING_VI[c.rating] ?? c.rating}</Badge>}
+      >
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div>
+            <div className="text-[11px] text-text-muted">Điểm tổng hợp</div>
+            <div className="num text-[28px] font-semibold text-text-primary">{Math.round(c.score)}</div>
+            <ScoreBar score={c.score} />
+            <div className="mt-2 text-[11px] text-text-muted">Confidence: {c.confidence} · Coverage {(c.coverage * 100).toFixed(0)}%</div>
+          </div>
+          <div className="space-y-1.5">
+            {c.components.map((comp) => (
+              <div key={comp.key} className="flex items-center justify-between gap-2 text-[12px]">
+                <span className="text-text-secondary">{comp.label}</span>
+                <span className="num text-text-primary">{comp.available && comp.score != null ? Math.round(comp.score) : "—"}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+        {(c.drivers.length > 0 || c.risks.length > 0) && (
+          <div className="mt-3 grid gap-2 sm:grid-cols-2 text-[11px]">
+            {c.drivers.length > 0 && (
+              <div>
+                <div className="mb-1 font-medium text-positive">Động lực</div>
+                <ul className="list-disc space-y-0.5 pl-4 text-text-secondary">
+                  {c.drivers.map((d, i) => (
+                    <li key={i}>{d}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {c.risks.length > 0 && (
+              <div>
+                <div className="mb-1 font-medium text-warning">Rủi ro</div>
+                <ul className="list-disc space-y-0.5 pl-4 text-text-secondary">
+                  {c.risks.map((d, i) => (
+                    <li key={i}>{d}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        )}
+        {meta && <MetaLine meta={meta} className="mt-3" />}
+      </Panel>
+
+      <div className="grid gap-3 lg:grid-cols-3">
+        <Panel title="Độ rộng" icon={<Activity className="size-4" />}>
+          {intel.breadth.available ? (
+            <BreadthView a={intel.breadth.advancers} d={intel.breadth.decliners} u={intel.breadth.unchanged} source={intel.breadth.source} />
+          ) : (
+            <Unavailable title="Breadth chưa sẵn sàng" note={intel.breadth.note} />
+          )}
+        </Panel>
+        <Panel title="Thanh khoản" icon={<Layers className="size-4" />}>
+          {intel.liquidity.available ? (
+            <div>
+              <div className="text-[11px] text-text-muted">GTGD phiên</div>
+              <div className="num text-[18px] font-semibold">{fmtCompact(intel.liquidity.valueTraded!)}</div>
+              <p className="mt-1 text-[11px] text-text-muted">{intel.liquidity.note}</p>
+            </div>
+          ) : (
+            <Unavailable title="Thanh khoản" note={intel.liquidity.note} />
+          )}
+        </Panel>
+        <Panel title="Dòng vốn" icon={<ArrowUpRight className="size-4" />}>
+          {intel.flow.available ? (
+            <div className="space-y-1.5 text-[12px]">
+              {(
+                [
+                  ["Khối ngoại", intel.flow.foreignNet],
+                  ["Tự doanh", intel.flow.propNet],
+                  ["ETF", intel.flow.etfNet],
+                ] as const
+              ).map(([label, val]) => (
+                <div key={label} className="flex justify-between gap-2">
+                  <span className="text-text-secondary">{label}</span>
+                  <span className={`num ${val != null && val >= 0 ? "text-positive" : val != null ? "text-negative" : "text-text-muted"}`}>
+                    {val != null ? fmtCompact(val) : "—"}
+                  </span>
+                </div>
+              ))}
+              <p className="pt-1 text-[10px] text-text-muted">{intel.flow.note}</p>
+            </div>
+          ) : (
+            <Unavailable title="Dòng vốn" note={intel.flow.note} />
+          )}
+        </Panel>
+      </div>
+
+      <div className="grid gap-3 lg:grid-cols-2">
+        <Panel title="Đóng góp chỉ số" icon={<TrendingUp className="size-4" />}>
+          {intel.contributors.positive.length + intel.contributors.negative.length === 0 ? (
+            <Unavailable title="Chưa có đóng góp" note={intel.contributors.note} />
+          ) : (
+            <div className="grid gap-2 sm:grid-cols-2">
+              <ContribList title="Đóng góp tích cực" rows={intel.contributors.positive} tone="up" hasWeights={intel.contributors.hasWeights} />
+              <ContribList title="Đóng góp tiêu cực" rows={intel.contributors.negative} tone="down" hasWeights={intel.contributors.hasWeights} />
+            </div>
+          )}
+        </Panel>
+        <Panel title="Cross-asset" icon={<Globe2 className="size-4" />}>
+          {intel.crossAsset.length === 0 ? (
+            <Unavailable title="Cross-asset chưa sẵn sàng" />
+          ) : (
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+              {intel.crossAsset.map((x) => (
+                <div key={x.symbol} className="rounded-md border border-border-subtle px-2 py-1.5">
+                  <div className="text-[10px] text-text-muted">{x.label ?? x.symbol}</div>
+                  <div className="num text-[13px] font-medium">{fmtNum(x.price, 2)}</div>
+                  <Chg value={x.changePercent} className="text-[11px]" />
+                </div>
+              ))}
+            </div>
+          )}
+        </Panel>
+      </div>
+
+      <Panel title="Tin thị trường" icon={<Factory className="size-4" />}>
+        {!intel.news.length ? (
+          <Unavailable title="Luồng tin chưa khả dụng" />
+        ) : (
+          <ul className="divide-y divide-border-subtle">
+            {intel.news.map((n, idx) => (
+              <li key={idx} className="py-2">
+                <a href={n.url ?? "#"} target="_blank" rel="noreferrer" className="text-[13px] text-text-primary hover:text-accent-primary">
+                  {n.title}
+                </a>
+                <div className="mt-0.5 text-[10px] text-text-muted">
+                  {n.source ?? "news"}
+                  {n.publishedAt ? ` · ${new Date(n.publishedAt).toLocaleString("vi-VN")}` : ""}
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Panel>
+
+      {settings.dashboard?.showSystemLink !== false && (
+        <div className="flex justify-end">
+          <Link href="/system" className="inline-flex items-center gap-1 text-[11px] text-text-muted hover:text-text-secondary">
+            System health <ArrowRight className="size-3" />
+          </Link>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ScoreBar({ score }: { score: number }) {
+  return (
+    <div className="mt-2">
+      <div className="relative h-2 overflow-hidden rounded-full bg-gradient-to-r from-negative via-warning to-positive">
+        <div
+          className="absolute top-0 h-full w-[3px] rounded-full bg-white shadow-[0_0_6px_rgba(255,255,255,0.7)]"
+          style={{ left: `calc(${Math.max(1, Math.min(99, score))}% - 1.5px)` }}
+        />
+      </div>
+      <div className="mt-0.5 flex justify-between text-[9px] uppercase tracking-wider text-text-muted">
+        <span>Bearish</span>
+        <span>Neutral</span>
+        <span>Bullish</span>
+      </div>
+    </div>
+  );
+}
+
+function BreadthView({ a, d, u, source }: { a: number; d: number; u: number; source: string }) {
+  const tot = Math.max(1, a + d + u);
+  return (
+    <div className="space-y-2">
+      <div className="flex gap-2">
+        <span className="flex-1 rounded-md bg-up/10 p-2 text-center text-[13px] text-up">
+          ↑ <b className="num">{a}</b>
+        </span>
+        <span className="flex-1 rounded-md bg-down/10 p-2 text-center text-[13px] text-down">
+          ↓ <b className="num">{d}</b>
+        </span>
+        <span className="flex-1 rounded-md bg-surface-elevated p-2 text-center text-[13px] text-text-muted">
+          — <b className="num">{u}</b>
+        </span>
+      </div>
+      <div className="flex h-2 overflow-hidden rounded-full bg-surface-modal">
+        <div className="bg-positive" style={{ width: `${(a / tot) * 100}%` }} />
+        <div className="bg-border-default" style={{ width: `${(u / tot) * 100}%` }} />
+        <div className="bg-negative" style={{ width: `${(d / tot) * 100}%` }} />
+      </div>
+      <div className="text-[10px] text-text-muted">{source}</div>
+    </div>
+  );
+}
+
+function ContribList({
+  title,
+  rows,
+  tone,
+  hasWeights,
+}: {
+  title: string;
+  rows: { symbol: string; changePercent: number; indexPoints: number | null }[];
+  tone: "up" | "down";
+  hasWeights: boolean;
+}) {
+  return (
+    <div className="panel-inset p-2.5">
+      <div
+        className={`mb-1.5 text-[10px] font-semibold uppercase tracking-widest ${
+          tone === "up" ? "text-positive" : "text-negative"
+        }`}
+      >
+        {title}
+      </div>
+      <ul className="space-y-0.5">
+        {rows.map((r) => (
+          <li key={r.symbol} className="flex items-center justify-between text-[12px]">
+            <Link href={`/stocks/${r.symbol}`} className="font-semibold hover:text-accent-primary">
+              {r.symbol}
+            </Link>
+            <span className="flex items-center gap-2">
+              <Chg value={r.changePercent} className="text-[11px]" arrow={false} />
+              {hasWeights && r.indexPoints != null && (
+                <span className="num w-14 text-right text-[11px] text-text-muted">
+                  {r.indexPoints >= 0 ? "+" : ""}
+                  {r.indexPoints.toFixed(2)}đ
+                </span>
+              )}
+            </span>
+          </li>
+        ))}
+        {!rows.length && <li className="text-[11px] text-text-muted">—</li>}
+      </ul>
+    </div>
+  );
+}
