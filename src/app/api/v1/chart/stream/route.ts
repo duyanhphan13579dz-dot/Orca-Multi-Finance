@@ -22,7 +22,7 @@ const INDEX_ALIASES: Record<string, string[]> = {
 
 /**
  * REALTIME CHART STREAM (SSE).
- * VN: VNDirect WS + 2s poll (WS cache → REST) so chart is not frozen history.
+ * VN: VNDirect WS + 1.5s poll (WS cache → REST) — realtime ổn định, seed nhanh.
  */
 export async function GET(req: Request) {
   const url = new URL(req.url);
@@ -83,7 +83,7 @@ export async function GET(req: Request) {
           /* best-effort */
         }
       })(),
-      new Promise<void>((resolve) => setTimeout(resolve, 250)),
+      new Promise<void>((resolve) => setTimeout(resolve, 180)),
     ]);
   }
 
@@ -180,7 +180,7 @@ export async function GET(req: Request) {
           void resolveLivePrice().then((live) => {
             if (live) injectTick(live.price, live.ts, live.volume, live.source);
           });
-        }, 2_000);
+        }, 1_500);
         pollTimer.unref?.();
 
         const snap = candleAggregator.snapshot(symbol, timeframe);
@@ -191,7 +191,7 @@ export async function GET(req: Request) {
           candle: snap,
           live: true,
           source: vndDisabled ? "ssi-fallback+http-poll" : "vndirect-ws+poll",
-          note: snap ? undefined : "đang kết nối VNDirect (WS + poll 2s)",
+          note: snap ? undefined : "đang kết nối VNDirect (WS + poll 1.5s)",
         });
       } else {
         send("snapshot", {
