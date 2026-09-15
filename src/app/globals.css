@@ -189,6 +189,43 @@ body {
   }
 }
 
+/* —— Ticker tape marquee —— */
+@keyframes ticker-marquee {
+  from {
+    transform: translate3d(0, 0, 0);
+  }
+  to {
+    transform: translate3d(-50%, 0, 0);
+  }
+}
+
+.ticker-track {
+  width: max-content;
+  will-change: transform;
+  animation: ticker-marquee 55s linear infinite;
+}
+
+.ticker-track.is-paused {
+  animation-play-state: paused;
+}
+
+.ticker-track:hover {
+  animation-play-state: paused;
+}
+
+@media (max-width: 767px) {
+  .ticker-track {
+    animation-duration: 40s;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ticker-track {
+    animation: none;
+    transform: none;
+  }
+}
+
 /* —— Panel system —— */
 .panel {
   border: 1px solid var(--color-border-subtle);
@@ -349,7 +386,6 @@ body {
   min-width: 0;
 }
 
-/* Nested workspace inside layout children — tighter top gap */
 .stock-page-body > .stock-workspace {
   gap: 1rem;
   padding-top: 0.125rem;
