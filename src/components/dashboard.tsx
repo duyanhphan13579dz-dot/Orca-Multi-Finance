@@ -78,7 +78,6 @@ function IntelView({ intel, meta }: { intel: MarketIntel; meta: Meta | null }) {
 
   return (
     <div className="space-y-4">
-      {/* Header */}
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
@@ -89,10 +88,9 @@ function IntelView({ intel, meta }: { intel: MarketIntel; meta: Meta | null }) {
           <p className="mt-0.5 text-[12px] text-text-secondary">{intel.sessionHint}</p>
           {intel.vnDataNote && <p className="mt-1 text-[11px] text-text-muted">{intel.vnDataNote}</p>}
         </div>
-        {meta && <MetaLine meta={meta} compact />}
+        {meta && <MetaLine meta={meta} />}
       </div>
 
-      {/* Indices strip */}
       {intel.indicesAvailable ? (
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
           {intel.indices!.slice(0, 4).map((i) => (
@@ -111,7 +109,6 @@ function IntelView({ intel, meta }: { intel: MarketIntel; meta: Meta | null }) {
         <Unavailable title="Chỉ số VN chưa sẵn sàng" note="Đang kết nối VNDirect / SSI." />
       )}
 
-      {/* Market condition */}
       <Panel
         title={
           <span className="flex items-center gap-1.5">
@@ -159,7 +156,9 @@ function IntelView({ intel, meta }: { intel: MarketIntel; meta: Meta | null }) {
                             ? "bg-negative"
                             : "bg-warning"
                     }`}
-                    style={{ width: `${comp.available && comp.score != null ? Math.max(4, Math.min(100, comp.score)) : 4}%` }}
+                    style={{
+                      width: `${comp.available && comp.score != null ? Math.max(4, Math.min(100, comp.score)) : 4}%`,
+                    }}
                   />
                 </div>
                 <span className="num w-8 text-right text-text-secondary">
@@ -171,7 +170,6 @@ function IntelView({ intel, meta }: { intel: MarketIntel; meta: Meta | null }) {
         </div>
       </Panel>
 
-      {/* Breadth / Flow / Liquidity */}
       <div className="grid grid-cols-12 gap-3">
         <Panel
           className="col-span-12 md:col-span-6 xl:col-span-4"
@@ -232,7 +230,6 @@ function IntelView({ intel, meta }: { intel: MarketIntel; meta: Meta | null }) {
         </Panel>
       </div>
 
-      {/* Contributors */}
       <Panel
         title={
           <span className="flex items-center gap-1.5">
@@ -260,7 +257,6 @@ function IntelView({ intel, meta }: { intel: MarketIntel; meta: Meta | null }) {
         )}
       </Panel>
 
-      {/* Cross-asset + news */}
       <div className="grid grid-cols-12 gap-3">
         <Panel
           className="col-span-12 lg:col-span-5"
