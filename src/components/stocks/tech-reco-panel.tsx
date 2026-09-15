@@ -9,84 +9,133 @@ import { Brain, Compass, ShieldAlert } from "lucide-react";
 export const TechRecoPanel = memo(function TechRecoPanel({ symbol }: { symbol: string }) {
   const { data, meta, isLoading } = useApi<StockTechRecoResult>(
     symbol ? `/api/v1/stocks/${encodeURIComponent(symbol)}/tech-reco` : null,
-    { refreshInterval: 180_000 },
+    { refreshInterval: 120_000 },
   );
 
   if (isLoading && !data) {
     return (
-      <Panel title="Khuyến nghị kỹ thuật">
+      <Panel title="Tín hiệu kỹ thuật">
         <Loading rows={4} />
       </Panel>
     );
   }
   if (!data) {
     return (
-      <Panel title="Khuyến nghị kỹ thuật">
-        <p className="text-[12px] text-text-muted">Chưa đủ dữ liệu để tổng hợp khuyến nghị kỹ thuật.</p>
+      <Panel title="Tín hiệu kỹ thuật">
+        <p className="text-[12px] text-text-muted">
+          Chưa đủ dữ liệu nến/indicator để tính MUA · BÁN · QUAN SÁT.
+        </p>
       </Panel>
     );
   }
 
   const { quant, llm, llmStatus } = data;
+  const signal = quant.signal ?? "QUAN_SÁT";
+  const confPct = quant.confidencePct ?? 0;
+  const signalTone = signal === "MUA" ? "up" : signal === "BÁN" ? "down" : "neutral";
+  const signalColor =
+    signal === "MUA" ? "text-positive" : signal === "BÁN" ? "text-negative" : "text-text-secondary";
+
   const stanceTone =
     (llm?.stance ?? quant.stance) === "watch-long"
       ? "up"
       : (llm?.stance ?? quant.stance) === "watch-short"
         ? "down"
         : "neutral";
-  const stanceLabel =
-    (llm?.stance ?? quant.stance) === "watch-long"
-      ? "Theo dõi tăng"
-      : (llm?.stance ?? quant.stance) === "watch-short"
-        ? "Theo dõi giảm"
-        : "Trung lập";
 
   return (
     <Panel
       title={
         <span className="flex flex-wrap items-center gap-2">
           <Compass className="size-4 text-accent-primary" />
-          Khuyến nghị kỹ thuật
+          Tín hiệu kỹ thuật
           {meta && <FreshnessDot status={meta.freshness} ageMs={meta.ageMs} />}
         </span>
       }
       right={
         <span className="flex flex-wrap items-center gap-1.5">
-          <Badge tone={stanceTone}>{stanceLabel}</Badge>
+          <Badge tone={signalTone}>{signal === "QUAN_SÁT" ? "QUAN SÁT" : signal}</Badge>
           <Badge
             tone={
               quant.confidence === "HIGH" ? "up" : quant.confidence === "MEDIUM" ? "warn" : "neutral"
             }
           >
-            {quant.confidence}
+            {confPct}%
           </Badge>
         </span>
       }
     >
       <div className="space-y-3">
-        <div className="flex flex-wrap items-end justify-between gap-2">
+        <div className="flex flex-wrap items-end justify-between gap-3 rounded-lg border border-border-subtle bg-surface-elevated/60 px-3 py-3">
           <div>
-            <div className="text-[10px] uppercase tracking-wider text-text-muted">Điểm quant kỹ thuật</div>
-            <div className="num mt-0.5 text-[22px] font-semibold text-text-primary">
-              {quant.score > 0 ? "+" : ""}
-              {quant.score}
-              <span className="ml-1.5 text-[12px] font-normal text-text-muted">/ 100</span>
+            <div className="text-[10px] uppercase tracking-wider text-text-muted">Tín hiệu</div>
+            <div className={`mt-0.5 text-[28px] font-bold tracking-tight ${signalColor}`}>
+              {signal === "QUAN_SÁT" ? "QUAN SÁT" : signal}
+            </div>
+            <p className="mt-1 max-w-md text-[11.5px] text-text-secondary">{quant.summary}</p>
+          </div>
+          <div className="text-right">
+            <div className="text-[10px] uppercase tracking-wider text-text-muted">Độ tin cậy</div>
+            <div className="num text-[26px] font-semibold text-text-primary">
+              {confPct}
+              <span className="ml-0.5 text-[13px] font-normal text-text-muted">%</span>
+            </div>
+            <div className="mt-1 text-[10px] text-text-muted">
+              Điểm quant {quant.score > 0 ? "+" : ""}
+              {quant.score}/100 · {quant.confidence}
             </div>
           </div>
         </div>
 
-        <div className="h-1.5 overflow-hidden rounded-full bg-surface-elevated">
-          <div
-            className={`h-full rounded-full ${quant.score >= 0 ? "bg-positive" : "bg-negative"}`}
-            style={{ width: `${Math.min(100, Math.abs(quant.score))}%` }}
-          />
+        <div>
+          <div className="mb-1 flex justify-between text-[10px] text-text-muted">
+            <span>Độ tin cậy quant</span>
+            <span className="num">{confPct}%</span>
+          </div>
+          <div className="h-1.5 overflow-hidden rounded-full bg-surface-modal">
+            <div
+              className={`h-full rounded-full ${
+                signal === "MUA" ? "bg-positive" : signal === "BÁN" ? "bg-negative" : "bg-warning"
+              }`}
+              style={{ width: `${Math.max(4, Math.min(100, confPct))}%` }}
+            />
+          </div>
         </div>
 
-        <div className="grid gap-1.5 sm:grid-cols-2">
+        {quant.patterns && quant.patterns.length > 0 && (
+          <div>
+            <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-text-muted">
+              Mẫu hình nến
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {quant.patterns.map((p) => (
+                <span
+                  key={p.name}
+                  className={`rounded-md border px-2 py-0.5 text-[11px] ${
+                    p.type === "bullish"
+                      ? "border-positive/40 bg-positive/10 text-positive"
+                      : p.type === "bearish"
+                        ? "border-negative/40 bg-negative/10 text-negative"
+                        : "border-border-subtle text-text-secondary"
+                  }`}
+                  title={p.reliability}
+                >
+                  {p.nameVi}
+                  <span className="ml-1 opacity-70">({p.reliability})</span>
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <div className="space-y-1.5">
+          <div className="text-[10px] font-semibold uppercase tracking-wider text-text-muted">
+            Indicator / factor
+          </div>
           {quant.factors.map((f) => (
             <div
               key={f.key}
-              className="flex items-start gap-2 rounded-lg border border-border-subtle bg-surface-elevated/50 px-2.5 py-2"
+              className="flex items-start gap-2 rounded-md border border-border-subtle/80 px-2 py-1.5"
             >
               <span
                 className={`mt-1 size-1.5 shrink-0 rounded-full ${
@@ -94,8 +143,8 @@ export const TechRecoPanel = memo(function TechRecoPanel({ symbol }: { symbol: s
                 }`}
               />
               <div className="min-w-0 flex-1">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-[11px] font-medium text-text-secondary">{f.label}</span>
+                <div className="flex flex-wrap items-baseline justify-between gap-x-2">
+                  <span className="text-[11.5px] font-medium text-text-primary">{f.label}</span>
                   <span className="num text-[11px] text-text-primary">{f.value}</span>
                 </div>
                 <p className="text-[10.5px] leading-snug text-text-muted">{f.note}</p>
@@ -109,7 +158,13 @@ export const TechRecoPanel = memo(function TechRecoPanel({ symbol }: { symbol: s
             <div className="flex flex-wrap items-center gap-1.5 text-[10px] uppercase tracking-wider text-text-muted">
               <Brain className="size-3.5 text-accent-primary" />
               <span>LLM tổng hợp</span>
-              <Badge tone={stanceTone}>{stanceLabel}</Badge>
+              <Badge tone={stanceTone}>
+                {(llm.stance ?? quant.stance) === "watch-long"
+                  ? "Theo dõi tăng"
+                  : (llm.stance ?? quant.stance) === "watch-short"
+                    ? "Theo dõi giảm"
+                    : "Trung lập"}
+              </Badge>
               {llm.model && <span className="normal-case tracking-normal text-text-muted">{llm.model}</span>}
             </div>
             <p className="text-[12.5px] leading-relaxed text-text-primary">{llm.narrative}</p>
@@ -134,6 +189,14 @@ export const TechRecoPanel = memo(function TechRecoPanel({ symbol }: { symbol: s
             )}
           </div>
         )}
+
+        {llmStatus !== "ok" && llmStatus !== "skipped" && (
+          <p className="text-[10px] text-text-muted">LLM: {llmStatus} — đang dùng tín hiệu quant.</p>
+        )}
+
+        <p className="text-[10px] text-text-muted">
+          Tín hiệu nghiên cứu từ mẫu hình nến + indicator · không phải khuyến nghị đầu tư.
+        </p>
       </div>
     </Panel>
   );
