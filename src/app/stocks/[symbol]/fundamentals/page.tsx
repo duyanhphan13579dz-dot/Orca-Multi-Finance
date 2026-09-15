@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useApi } from "@/lib/hooks";
-import type { VnStockDetail } from "@/lib/services/stocks";
 import { Chg, Loading, Panel, Unavailable } from "@/components/ui";
 import { AiFinancialPanel } from "@/components/stocks/ai-financial-panel";
 import { ValuationPanel } from "@/components/stocks/valuation-panel";
@@ -50,6 +49,23 @@ function MetricGrid({ items }: { items: MetricCell[] }) {
   );
 }
 
+type FundPayload = {
+  financials?: {
+    income?: Record<string, unknown>[];
+    balance?: Record<string, unknown>[];
+    cashflow?: Record<string, unknown>[];
+  };
+  financialHealth?: { anchors?: { shares?: number | null } };
+  financialGrowth?: {
+    yoy?: { metric: string; changePct: number | null }[];
+    qoq?: { metric: string; changePct: number | null }[];
+  };
+  quote?: { price?: number } | null;
+  sharesOutstanding?: number | null;
+  periodCount?: number;
+  pipeline?: string;
+};
+
 export default function StockFundamentalsPage({
   params,
 }: {
@@ -62,23 +78,20 @@ export default function StockFundamentalsPage({
     params.then((p) => setSymbol(p.symbol.toUpperCase()));
   }, [params]);
 
-  const { res, data, isLoading } = useApi<VnStockDetail>(
-    symbol ? `/api/v1/stocks/${symbol}` : null,
-    { refreshInterval: 60_000 },
+  const { res, data, isLoading } = useApi<FundPayload>(
+    symbol ? `/api/v1/stocks/${encodeURIComponent(symbol)}/fundamentals` : null,
+    { refreshInterval: 90_000 },
   );
 
   const metrics = useMemo(() => {
-    if (!data) return null;
-    const closes = (data.bars ?? [])
-      .map((b) => b.close)
-      .filter((c): c is number => typeof c === "number");
+    if (!data?.financials) return null;
     return buildSnapshotMetrics({
-      income: (data.financials?.income ?? []) as Record<string, unknown>[],
-      balance: (data.financials?.balance ?? []) as Record<string, unknown>[],
-      cashflow: (data.financials?.cashflow ?? []) as Record<string, unknown>[],
+      income: (data.financials.income ?? []) as Record<string, unknown>[],
+      balance: (data.financials.balance ?? []) as Record<string, unknown>[],
+      cashflow: (data.financials.cashflow ?? []) as Record<string, unknown>[],
       price: data.quote?.price ?? null,
-      closes,
-      shares: data.financialHealth?.anchors?.shares ?? null,
+      closes: [],
+      shares: data.sharesOutstanding ?? data.financialHealth?.anchors?.shares ?? null,
       growthYoy: (data.financialGrowth?.yoy ?? []).map((g) => ({
         metric: g.metric,
         changePct: g.changePct,
@@ -106,10 +119,7 @@ export default function StockFundamentalsPage({
   const empty: MetricCell[] = [];
   const operating = metrics?.operating ?? empty;
   const investment = metrics?.investment ?? empty;
-  const health = [
-    ...(metrics?.debtPillars ?? empty),
-    ...(metrics?.healthExtra ?? empty),
-  ];
+  const health = [...(metrics?.debtPillars ?? empty), ...(metrics?.healthExtra ?? empty)];
   const cashflow = metrics?.cashflow ?? empty;
   const valuation = metrics?.valuation ?? empty;
 
@@ -132,6 +142,12 @@ export default function StockFundamentalsPage({
           </button>
         ))}
       </div>
+
+      {data.periodCount != null && (
+        <p className="px-0.5 text-[11px] text-text-muted">
+          Pipeline {data.pipeline ?? "direct"} · {data.periodCount} kỳ BCTC từ VNDirect
+        </p>
+      )}
 
       {tab === "operating" && (
         <Panel title="Hiệu suất kinh doanh">
