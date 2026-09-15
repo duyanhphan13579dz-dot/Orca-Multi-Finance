@@ -81,8 +81,11 @@ export async function getVnIndices(): Promise<{ items: IndexQuote[]; meta: Meta 
   } catch (e) {
     if (ssiFcConfigured()) {
       try {
-        const items = await getSsiIndices();
-        return { items: sortIndices(items), meta: buildMeta({ source: "ssi-fcdata" }) };
+        const ssi = await getSsiIndices();
+        return {
+          items: sortIndices(ssi.items),
+          meta: buildMeta({ source: "ssi-fcdata", sourceTimestampMs: ssi.sourceTs ?? undefined }),
+        };
       } catch {
         /* */
       }
@@ -109,8 +112,11 @@ export async function getVnQuotes(symbols: string[]): Promise<{ quotes: Quote[];
   } catch (e) {
     if (ssiFcConfigured()) {
       try {
-        const quotes = await getSsiQuotes(uniq);
-        return { quotes, meta: buildMeta({ source: "ssi-fcdata" }) };
+        const ssi = await getSsiQuotes(uniq);
+        return {
+          quotes: ssi.quotes,
+          meta: buildMeta({ source: "ssi-fcdata", sourceTimestampMs: ssi.sourceTs ?? undefined }),
+        };
       } catch {
         /* */
       }
