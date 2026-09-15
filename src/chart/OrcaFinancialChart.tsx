@@ -114,13 +114,17 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
   const dataRef = useRef<ChartMarketData | null>(null);
   const extraLevelsRef = useRef(extraLevels);
   const [liveState, setLiveState] = useState<LiveState | null>(null);
-  useEffect(() => { extraLevelsRef.current = extraLevels; }, [extraLevels]);
+  useEffect(() => {
+    extraLevelsRef.current = extraLevels;
+  }, [extraLevels]);
 
   const limit = historyLimit(assetType, tf);
-  const { data, meta, isLoading, mutate } = useApi<ChartMarketData>(
+  const { data, isLoading, mutate } = useApi<ChartMarketData>(
     `/api/v1/chart/history?symbol=${encodeURIComponent(symbol)}&assetType=${assetType}&timeframe=${tf}&limit=${limit}`,
   );
-  useEffect(() => { dataRef.current = data ?? null; }, [data]);
+  useEffect(() => {
+    dataRef.current = data ?? null;
+  }, [data]);
 
   const readout = useMemo(() => {
     const ind = data?.indicators;
@@ -364,9 +368,6 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
     <div className="relative rounded-xl border border-border-subtle bg-background-secondary">
       <div className="flex flex-wrap items-center gap-2 border-b border-border-subtle px-3 py-2">
         <span className="text-[13px] font-medium text-text-primary">{title ?? symbol}</span>
-        {meta?.source && (
-          <span className="text-[10px] uppercase tracking-wider text-text-muted" title={meta.note ?? undefined}>{meta.source}</span>
-        )}
         {(assetType === "crypto" || assetType === "stock") && liveState && (
           <span
             className="inline-flex items-center gap-1 text-[10px] uppercase tracking-wider"
@@ -401,7 +402,16 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
           </span>
         )}
         {data?.candles?.length ? (
-          <span className="text-[10px] text-text-muted">{data.candles.length} nến · {new Date(data.candles[data.candles.length - 1].time).toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh", hour: "2-digit", minute: "2-digit", day: "2-digit", month: "2-digit" })}</span>
+          <span className="text-[10px] text-text-muted">
+            {data.candles.length} nến ·{" "}
+            {new Date(data.candles[data.candles.length - 1].time).toLocaleString("vi-VN", {
+              timeZone: "Asia/Ho_Chi_Minh",
+              hour: "2-digit",
+              minute: "2-digit",
+              day: "2-digit",
+              month: "2-digit",
+            })}
+          </span>
         ) : null}
         <div className="chart-control-group ml-auto">
           <span className="chart-control-label">Khung thời gian</span>
@@ -420,7 +430,13 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
           <span className="chart-control-label">Dạng biểu đồ</span>
           <div className="seg" role="group" aria-label="Dạng biểu đồ">
             {CHART_KINDS.map((k) => (
-              <button key={k.id} type="button" data-active={activeKind === k.id} onClick={() => setKind(k.id)} aria-pressed={activeKind === k.id}>
+              <button
+                key={k.id}
+                type="button"
+                data-active={activeKind === k.id}
+                onClick={() => setKind(k.id)}
+                aria-pressed={activeKind === k.id}
+              >
                 {k.label}
               </button>
             ))}
@@ -431,10 +447,10 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
           <span className="chart-control-label">Chỉ báo</span>
           <div className="flex min-w-0 flex-wrap items-center gap-1">
             <span className="mr-0.5 text-[9.5px] font-semibold tracking-wide text-text-muted">Overlay</span>
-          {OVERLAY_INDS.map(renderChip)}
+            {OVERLAY_INDS.map(renderChip)}
             <span className="mx-1 hidden h-3.5 w-px bg-border-subtle sm:inline-block" />
             <span className="mr-0.5 text-[9.5px] font-semibold tracking-wide text-text-muted">Osc</span>
-          {OSC_INDS.map(renderChip)}
+            {OSC_INDS.map(renderChip)}
           </div>
         </div>
       </div>
@@ -489,9 +505,6 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
           Không có dữ liệu nến
         </div>
       )}
-      <div className="border-t border-border-subtle px-3 py-1.5 text-[9.5px] text-text-muted">
-        Charts powered by <a className="underline hover:text-text-secondary" href="https://www.tradingview.com" target="_blank" rel="noreferrer">TradingView Lightweight Charts</a> · Data by Orca providers
-      </div>
     </div>
   );
 }
