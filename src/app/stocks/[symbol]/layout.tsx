@@ -41,9 +41,9 @@ export default function StockSymbolLayout({
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
               <h1 className="text-lg font-semibold tracking-tight sm:text-xl">{symbol}</h1>
-              {q?.name ? (
+              {(data?.name || q?.name) ? (
                 <span className="max-w-[12rem] truncate text-[11px] text-text-muted sm:max-w-[18rem] sm:text-[12px]">
-                  {q.name}
+                  {data?.name || q?.name}
                 </span>
               ) : null}
               <FreshnessDot status={meta?.freshness} ageMs={meta?.ageMs} />
@@ -65,18 +65,36 @@ export default function StockSymbolLayout({
             )}
           </div>
 
-          <div className="grid grid-cols-3 gap-2.5 text-right sm:gap-3 md:grid-cols-3 lg:grid-cols-6">
+          <div className="grid grid-cols-3 gap-2.5 text-right sm:gap-3 md:grid-cols-4 lg:grid-cols-8">
             <Stat label="Khối lượng" value={fmtCompact(q?.volume)} />
             <Stat label="Giá trị" value={fmtCompact(q?.quoteVolume)} />
+            <Stat
+              label="CP lưu hành"
+              value={data?.sharesOutstanding != null ? fmtCompact(data.sharesOutstanding) : "—"}
+            />
+            <Stat
+              label="NN ròng"
+              value={
+                data?.foreignFlow?.latest != null
+                  ? fmtCompact(data.foreignFlow.latest.netVal)
+                  : "—"
+              }
+            />
             <Stat
               label="Cập nhật"
               value={
                 q?.updatedAt
-                  ? new Date(q.updatedAt).toLocaleTimeString("vi-VN", {
-                      timeZone: "Asia/Ho_Chi_Minh",
-                      hour: "2-digit",
-                      minute: "2-digit",
-                    })
+                  ? (() => {
+                      try {
+                        return new Date(q.updatedAt).toLocaleTimeString("vi-VN", {
+                          timeZone: "Asia/Ho_Chi_Minh",
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        });
+                      } catch {
+                        return String(q.updatedAt).slice(11, 16) || "—";
+                      }
+                    })()
                   : "—"
               }
             />
@@ -113,6 +131,35 @@ export default function StockSymbolLayout({
             {q?.floorPrice != null && (
               <span>
                 Sàn <span className="num text-text-secondary">{fmtNum(q.floorPrice, 2)}</span>
+              </span>
+            )}
+          </div>
+        )}
+
+        {data?.foreignFlow?.latest && (
+          <div className="flex flex-wrap gap-x-4 gap-y-1 border-t border-border-subtle px-3 py-1.5 text-[11px] text-text-muted">
+            <span>
+              NN mua <span className="num text-up">{fmtCompact(data.foreignFlow.latest.buyVal)}</span>
+            </span>
+            <span>
+              NN bán <span className="num text-down">{fmtCompact(data.foreignFlow.latest.sellVal)}</span>
+            </span>
+            <span>
+              Ròng{" "}
+              <span
+                className={`num ${
+                  data.foreignFlow.latest.netVal >= 0 ? "text-up" : "text-down"
+                }`}
+              >
+                {fmtCompact(data.foreignFlow.latest.netVal)}
+              </span>
+            </span>
+            {data.foreignFlow.latest.currentRoom != null && (
+              <span>
+                Room còn{" "}
+                <span className="num text-text-secondary">
+                  {fmtCompact(data.foreignFlow.latest.currentRoom)}
+                </span>
               </span>
             )}
           </div>
