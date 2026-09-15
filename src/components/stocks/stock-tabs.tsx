@@ -26,7 +26,7 @@ export function StockTabs({ symbol }: { symbol: string }) {
   return (
     <nav
       ref={navRef}
-      className="stock-tabs-scroll border-b border-line px-1.5 pt-0.5 sm:px-2 sm:pt-1"
+      className="stock-tabs-scroll border-t border-line"
       aria-label="Tab cổ phiếu"
     >
       {TABS.map((t) => {
@@ -40,7 +40,7 @@ export function StockTabs({ symbol }: { symbol: string }) {
             key={t.key}
             href={href}
             data-active={active ? "true" : undefined}
-            className={`min-h-10 shrink-0 rounded-t-md px-3 py-2.5 text-[12px] font-medium transition-colors sm:min-h-0 sm:px-3.5 sm:py-2 ${
+            className={`min-h-11 shrink-0 rounded-t-md px-3.5 py-2.5 text-[12.5px] font-medium leading-snug transition-colors sm:min-h-0 sm:px-4 sm:py-2.5 ${
               active
                 ? "border border-b-0 border-line bg-surface-elevated text-accent-primary"
                 : "text-text-muted hover:text-text-primary"

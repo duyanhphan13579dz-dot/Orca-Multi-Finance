@@ -25,7 +25,7 @@ export default function StockSymbolLayout({
 
   if (!symbol || (isLoading && !res)) {
     return (
-      <div className="space-y-3">
+      <div className="stock-workspace">
         <Loading rows={4} />
         {children}
       </div>
@@ -37,12 +37,12 @@ export default function StockSymbolLayout({
   return (
     <div className="stock-workspace stock-page-body">
       <Panel pad={false} className="sticky top-0 z-20 overflow-visible shadow-sm shadow-black/20">
-        <div className="stock-hero flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2">
-              <h1 className="text-lg font-semibold tracking-tight sm:text-xl">{symbol}</h1>
+        <div className="stock-hero flex flex-col gap-4 md:flex-row md:items-end md:justify-between md:gap-6">
+          <div className="min-w-0 flex-1">
+            <div className="stock-hero-title-row">
+              <h1 className="text-[1.25rem] font-semibold tracking-tight sm:text-[1.35rem]">{symbol}</h1>
               {(data?.name || q?.name) ? (
-                <span className="max-w-[12rem] truncate text-[11px] text-text-muted sm:max-w-[18rem] sm:text-[12px]">
+                <span className="max-w-[14rem] truncate text-[12px] leading-snug text-text-muted sm:max-w-[22rem] sm:text-[13px]">
                   {data?.name || q?.name}
                 </span>
               ) : null}
@@ -50,22 +50,26 @@ export default function StockSymbolLayout({
               <AddToWatchlist assetType="stock" symbol={symbol} />
             </div>
             {q ? (
-              <div className="num mt-1 flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
-                <span className="text-[26px] font-semibold leading-none sm:text-[28px]">{fmtNum(q.price, 2)}</span>
+              <div className="stock-hero-price-row num">
+                <span className="text-[1.65rem] font-semibold leading-none tracking-tight sm:text-[1.85rem]">
+                  {fmtNum(q.price, 2)}
+                </span>
                 <Chg value={q.changePercent} className="text-[13px] sm:text-[14px]" />
                 {q.change != null && (
-                  <span className={`text-[12px] ${q.change >= 0 ? "text-up" : "text-down"}`}>
+                  <span className={`text-[12px] leading-none ${q.change >= 0 ? "text-up" : "text-down"}`}>
                     {q.change >= 0 ? "+" : ""}
                     {fmtNum(q.change, 2)}
                   </span>
                 )}
               </div>
             ) : (
-              <p className="mt-1 text-[12px] text-text-muted">Giá phiên tạm chưa có — xem các tab bên dưới.</p>
+              <p className="mt-2 text-[12px] leading-relaxed text-text-muted">
+                Giá phiên tạm chưa có — xem các tab bên dưới.
+              </p>
             )}
           </div>
 
-          <div className="grid grid-cols-3 gap-2.5 text-right sm:gap-3 md:grid-cols-4 lg:grid-cols-8">
+          <div className="stock-hero-stats shrink-0 md:max-w-[min(100%,42rem)]">
             <Stat label="Khối lượng" value={fmtCompact(q?.volume)} />
             <Stat label="Giá trị" value={fmtCompact(q?.quoteVolume)} />
             <Stat
@@ -75,9 +79,7 @@ export default function StockSymbolLayout({
             <Stat
               label="NN ròng"
               value={
-                data?.foreignFlow?.latest != null
-                  ? fmtCompact(data.foreignFlow.latest.netVal)
-                  : "—"
+                data?.foreignFlow?.latest != null ? fmtCompact(data.foreignFlow.latest.netVal) : "—"
               }
             />
             <Stat
@@ -117,27 +119,27 @@ export default function StockSymbolLayout({
         </div>
 
         {(q?.referencePrice != null || q?.ceilingPrice != null || q?.floorPrice != null) && (
-          <div className="flex flex-wrap gap-x-3 gap-y-1 border-t border-border-subtle px-3 py-1.5 text-[11px] text-text-muted lg:hidden">
+          <div className="stock-meta-strip lg:hidden">
             {q?.referencePrice != null && (
               <span>
-                TC <span className="num text-text-secondary">{fmtNum(q.referencePrice, 2)}</span>
+                TC <span className="num">{fmtNum(q.referencePrice, 2)}</span>
               </span>
             )}
             {q?.ceilingPrice != null && (
               <span>
-                Trần <span className="num text-text-secondary">{fmtNum(q.ceilingPrice, 2)}</span>
+                Trần <span className="num">{fmtNum(q.ceilingPrice, 2)}</span>
               </span>
             )}
             {q?.floorPrice != null && (
               <span>
-                Sàn <span className="num text-text-secondary">{fmtNum(q.floorPrice, 2)}</span>
+                Sàn <span className="num">{fmtNum(q.floorPrice, 2)}</span>
               </span>
             )}
           </div>
         )}
 
         {data?.foreignFlow?.latest && (
-          <div className="flex flex-wrap gap-x-4 gap-y-1 border-t border-border-subtle px-3 py-1.5 text-[11px] text-text-muted">
+          <div className="stock-meta-strip">
             <span>
               NN mua <span className="num text-up">{fmtCompact(data.foreignFlow.latest.buyVal)}</span>
             </span>
@@ -146,27 +148,20 @@ export default function StockSymbolLayout({
             </span>
             <span>
               Ròng{" "}
-              <span
-                className={`num ${
-                  data.foreignFlow.latest.netVal >= 0 ? "text-up" : "text-down"
-                }`}
-              >
+              <span className={`num ${data.foreignFlow.latest.netVal >= 0 ? "text-up" : "text-down"}`}>
                 {fmtCompact(data.foreignFlow.latest.netVal)}
               </span>
             </span>
             {data.foreignFlow.latest.currentRoom != null && (
               <span>
-                Room còn{" "}
-                <span className="num text-text-secondary">
-                  {fmtCompact(data.foreignFlow.latest.currentRoom)}
-                </span>
+                Room còn <span className="num">{fmtCompact(data.foreignFlow.latest.currentRoom)}</span>
               </span>
             )}
           </div>
         )}
 
         {meta && (
-          <div className="hidden border-t border-border-subtle px-4 py-1.5 sm:block">
+          <div className="hidden border-t border-border-subtle px-4 py-2 sm:block">
             <MetaLine meta={meta} />
           </div>
         )}
@@ -187,9 +182,9 @@ function Stat({
   className?: string;
 }) {
   return (
-    <div className={className}>
-      <div className="text-[9px] uppercase tracking-wide text-text-muted sm:text-[10px]">{label}</div>
-      <div className="num text-[12px] text-text-primary sm:text-[13px]">{value}</div>
+    <div className={`stock-stat ${className}`}>
+      <div className="stock-stat-label">{label}</div>
+      <div className="stock-stat-value num">{value}</div>
     </div>
   );
 }

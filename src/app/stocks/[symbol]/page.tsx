@@ -53,7 +53,8 @@ export default function StockOverviewPage({ params }: { params: Promise<{ symbol
 
   return (
     <div className="stock-workspace">
-      <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(280px,380px)]">
+      {/* Chart + Order book */}
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(280px,360px)] xl:items-start">
         <div className="min-w-0">
           {q || data.bars.length > 0 ? (
             <OrcaChart
@@ -76,7 +77,7 @@ export default function StockOverviewPage({ params }: { params: Promise<{ symbol
             />
           ) : (
             <Panel title="Biểu đồ">
-              <p className="text-[12px] text-text-muted">Chưa có chuỗi giá để vẽ biểu đồ.</p>
+              <p className="stock-copy">Chưa có chuỗi giá để vẽ biểu đồ.</p>
             </Panel>
           )}
         </div>
@@ -85,7 +86,8 @@ export default function StockOverviewPage({ params }: { params: Promise<{ symbol
         </div>
       </div>
 
-      <div className="grid gap-3 lg:grid-cols-2">
+      {/* Signal + Structure */}
+      <div className="grid gap-4 lg:grid-cols-2 lg:items-start">
         <TechRecoPanel symbol={data.symbol} />
         <StockStructurePanel symbol={data.symbol} />
       </div>
@@ -94,12 +96,12 @@ export default function StockOverviewPage({ params }: { params: Promise<{ symbol
 
       <ValuationPanel symbol={data.symbol} compact showAnalyst={false} />
 
-      <div className="grid gap-3 md:grid-cols-2">
+      <div className="grid gap-4 md:grid-cols-2 md:items-start">
         <Panel title="Trạng thái cổ phiếu">
           {data.technical ? (
-            <ul className="space-y-1.5 text-[12px] text-text-secondary">
-              <li className="flex justify-between gap-2">
-                <span className="text-text-muted">Xu hướng</span>
+            <ul className="stock-list">
+              <li className="stock-list-row">
+                <span>Xu hướng</span>
                 <strong className="text-text-primary">
                   {String(
                     (data.technical.trend as { label?: string } | null)?.label ??
@@ -108,15 +110,15 @@ export default function StockOverviewPage({ params }: { params: Promise<{ symbol
                   )}
                 </strong>
               </li>
-              <li className="flex justify-between gap-2">
-                <span className="text-text-muted">RSI(14)</span>
-                <span className="num">
+              <li className="stock-list-row">
+                <span>RSI(14)</span>
+                <span className="num text-text-primary">
                   {data.technical.rsi14 != null ? data.technical.rsi14.toFixed(1) : "—"}
                 </span>
               </li>
-              <li className="flex justify-between gap-2">
-                <span className="text-text-muted">Biến động 30d</span>
-                <span className="num">
+              <li className="stock-list-row">
+                <span>Biến động 30d</span>
+                <span className="num text-text-primary">
                   {data.technical.volatility30d != null
                     ? `${(data.technical.volatility30d * 100).toFixed(1)}%`
                     : "—"}
@@ -124,7 +126,7 @@ export default function StockOverviewPage({ params }: { params: Promise<{ symbol
               </li>
             </ul>
           ) : (
-            <p className="text-[12px] text-text-muted">Chưa đủ dữ liệu kỹ thuật.</p>
+            <p className="stock-copy">Chưa đủ dữ liệu kỹ thuật.</p>
           )}
         </Panel>
 
