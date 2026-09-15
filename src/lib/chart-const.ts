@@ -30,18 +30,27 @@ export const TF_MS: Record<string, number> = {
   "12h": 43_200_000,
   "1d": 86_400_000,
   "1w": 604_800_000,
-  "1M": 2_592_000_000,
+  "1M": 2_592_000_000, // ~30d
+  "12M": 31_536_000_000, // ~365d
 };
 
-export const CRYPTO_TFS = ["1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "12h", "1d", "1w", "1M"] as const;
-export const FOREX_TFS = ["1d", "1w", "1M"] as const;
-/** Intraday TFs are tick-built from VNDirect/SSI; daily+ align to VN session 15:00+07. */
-export const STOCK_TFS = ["5m", "15m", "1h", "1d", "1w", "1M"] as const;
+/** Full set for VN stocks/indices: dchart intraday + daily aggregate for 4H/1W/1M/12M */
+export const CRYPTO_TFS = ["1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "12h", "1d", "1w", "1M", "12M"] as const;
+export const FOREX_TFS = ["1d", "1w", "1M", "12M"] as const;
+/**
+ * VN stock/index TFs.
+ * 1m/5m/15m/1h → VNDirect dchart (+ live ticks).
+ * 4h → aggregate from 1h dchart.
+ * 1d → dchart D + live session bucket.
+ * 1w/1M/12M → aggregate from daily (dchart has no native W/M).
+ */
+export const STOCK_TFS = ["1m", "5m", "15m", "1h", "4h", "1d", "1w", "1M", "12M"] as const;
+export const COMMODITY_TFS = ["1h", "4h", "1d", "1w", "1M", "12M"] as const;
 
 export function tfsFor(asset: ChartAssetType): readonly string[] {
   if (asset === "crypto") return CRYPTO_TFS;
   if (asset === "forex") return FOREX_TFS;
-  if (asset === "commodity") return ["1h", "4h", "1d", "1w", "1M"];
+  if (asset === "commodity") return COMMODITY_TFS;
   return STOCK_TFS;
 }
 
@@ -59,14 +68,36 @@ export const TF_LABEL: Record<string, string> = {
   "1d": "1D",
   "1w": "1W",
   "1M": "1M",
+  "12M": "12M",
 };
 
-/** binance kline interval for crypto timeframe (1:1 coverage) */
+/** binance kline interval for crypto timeframe (1:1 where available) */
 export function binanceInterval(tf: string): string {
   if (tf === "1d") return "1d";
   if (tf === "1w") return "1w";
   if (tf === "1M") return "1M";
+  if (tf === "12M") return "1M"; // aggregate 12× monthly
   return tf;
+}
+
+/** Map app TF → VNDirect dchart resolution (native only). */
+export function vndDchartResolution(tf: string): "1" | "5" | "15" | "30" | "60" | "D" | null {
+  switch (tf) {
+    case "1m":
+      return "1";
+    case "5m":
+      return "5";
+    case "15m":
+      return "15";
+    case "30m":
+      return "30";
+    case "1h":
+      return "60";
+    case "1d":
+      return "D";
+    default:
+      return null; // 4h/1w/1M/12M: aggregate
+  }
 }
 
 /** aggregate small candles into a larger timeframe */
