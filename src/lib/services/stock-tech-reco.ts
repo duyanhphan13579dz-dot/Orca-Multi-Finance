@@ -335,12 +335,13 @@ async function enrichLlm(
       null,
       0,
     );
-    const res = await llmChat({
+    const res = await llmChat("analysis", {
       system: SYS,
       user: `STRUCTURED CONTEXT:\n${user}`,
       temperature: 0.2,
       maxTokens: 700,
     });
+    if (!res?.text) return { llm: null, status: "unavailable" };
     const parsed = parseLlmJson(res.text);
     if (!parsed) return { llm: null, status: "failed" };
     const facts = collectFactNumbers(contract);
