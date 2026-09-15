@@ -68,187 +68,283 @@ export interface MarketIntel {
 const VN30_BOARD = ["VCB", "BID", "CTG", "TCB", "MBB", "VPB", "ACB", "STB", "HDB", "VIC", "VHM", "VRE", "HPG", "FPT", "VNM", "MSN", "MWG", "GAS", "PLX", "SSI", "POW", "SAB", "BCM", "GVR", "SHB", "TPB", "BVH", "PDR", "KDH", "VJC"];
 
 export async function buildMarketIntel(): Promise<{ intel: MarketIntel; meta: Meta }> {
-  const res = await cached("market:intel:v4", {
-    ttlMs: 15_000,
-    staleMs: 20 * 60_000,
+  const res = await cached("market:intel:v5", {
+    ttlMs: 10_000,
+    staleMs: 30 * 60_000,
     producer: async () => {
-      const [snapRes, crossRes, boardRes, foreignRes, etfRes, propRes] = await Promise.allSettled([
-        buildMarketSnapshot(),
-        getCrossAsset(),
-        getVnQuotes(VN30_BOARD),
-        vndirect.getVndForeignFlow(),
-        vndirect.getVndEtfFlow(),
-        (async () => {
-          const date = await vndirect.getVndLatestSessionDate();
-          return getCafefPropFlow(date);
-        })(),
-      ]);
-
-      const snap = snapRes.status === "fulfilled" ? snapRes.value : null;
-      const cross = crossRes.status === "fulfilled" ? crossRes.value : null;
-      const board = boardRes.status === "fulfilled" ? boardRes.value : null;
-      const foreign = foreignRes.status === "fulfilled" ? foreignRes.value : null;
-      const etf = etfRes.status === "fulfilled" ? etfRes.value : null;
-      const prop = propRes.status === "fulfilled" ? propRes.value : null;
-
-      const indices = snap?.snapshot.indices ?? null;
-      const indicesAvailable = Boolean(indices?.length);
-      const session = getVnSession();
-
-      let breadth: BreadthData;
-      const idxStats = await vndirect.getVndIndexSessionStats("VNINDEX").catch(() => null);
-      if (idxStats && (idxStats.advances > 0 || idxStats.declines > 0)) {
-        breadth = {
-          advancers: idxStats.advances,
-          decliners: idxStats.declines,
-          unchanged: idxStats.unchanged,
-          source: "vndirect vnmarket_prices",
-          available: true,
-          note: "Breadth từ VNDirect vnmarket_prices",
+      try {
+        return await produceMarketIntel();
+      } catch (e) {
+        const session = getVnSession();
+        const intel: MarketIntel = {
+          session,
+          sessionHint: session.labelVi,
+          indices: null,
+          indicesAvailable: false,
+          breadth: {
+            advancers: 0,
+            decliners: 0,
+            unchanged: 0,
+            source: "degraded",
+            available: false,
+            note: "Engine tạm thời không lấy được breadth.",
+          },
+          liquidity: {
+            valueTraded: null,
+            baseline: null,
+            available: false,
+            note: "Chưa có thanh khoản phiên.",
+          },
+          flow: {
+            foreignNet: null,
+            propNet: null,
+            etfNet: null,
+            source: "degraded",
+            available: false,
+            note: e instanceof Error ? e.message : "degraded",
+          },
+          crossAsset: [],
+          condition: computeMarketCondition({
+            index: null,
+            breadth: null,
+            liquidity: null,
+            flow: null,
+            crossAsset: null,
+            cryptoBreadth: null,
+          }),
+          contributors: {
+            positive: [],
+            negative: [],
+            hasWeights: false,
+            note: "Chưa có dữ liệu đóng góp.",
+          },
+          news: [],
+          sections: {
+            indices: "UNAVAILABLE",
+            breadth: "UNAVAILABLE",
+            liquidity: "UNAVAILABLE",
+            flow: "UNAVAILABLE",
+            crossAsset: "UNAVAILABLE",
+          },
+          vnDataNote: "Payload suy giảm — đang kết nối lại VNDirect.",
         };
-      } else if (board?.quotes?.length) {
-        const a = board.quotes.filter((q) => (q.changePercent ?? 0) > 0).length;
-        const d = board.quotes.filter((q) => (q.changePercent ?? 0) < 0).length;
-        breadth = {
-          advancers: a,
-          decliners: d,
-          unchanged: board.quotes.length - a - d,
-          source: board.meta.source,
-          available: true,
-        };
-      } else {
-        breadth = {
-          advancers: 0,
-          decliners: 0,
-          unchanged: 0,
-          source: "vndirect",
-          available: false,
-          note: "Chưa lấy được thống kê tăng/giảm phiên từ VNDirect.",
+        return {
+          intel,
+          meta: buildMeta({
+            source: "degraded",
+            sourceTimestampMs: Date.now(),
+            note: "Market intel degraded",
+            degraded: true,
+            hasData: false,
+            slas: { liveSlaMs: 30_000, freshSlaMs: 120_000, delayedSlaMs: 600_000 },
+          }),
         };
       }
-
-      const valueTraded =
-        idxStats?.value ?? board?.quotes?.reduce((sum, q) => sum + (q.quoteVolume ?? 0), 0) ?? null;
-      const liquidity = {
-        valueTraded: valueTraded && valueTraded > 0 ? valueTraded : null,
-        baseline: null as number | null,
-        available: Boolean(valueTraded && valueTraded > 0),
-        note: valueTraded
-          ? "Giá trị giao dịch phiên (chỉ số hoặc rổ theo dõi)."
-          : "Cần dữ liệu giá trị giao dịch từ provider VN.",
-      };
-
-      const sessionDate = foreign?.sessionDate ?? etf?.sessionDate ?? prop?.sessionDate ?? null;
-      const parts: string[] = [];
-      if (foreign) {
-        parts.push(
-          `Khối ngoại phiên ${foreign.sessionDate}: mua ${foreign.buyVal.toExponential(2)} / bán ${foreign.sellVal.toExponential(2)} (VND)`,
-        );
-      }
-      if (prop) {
-        parts.push(
-          `Tự doanh: mua ${prop.buyVal.toExponential(2)} / bán ${prop.sellVal.toExponential(2)} (CafeF EOD)`,
-        );
-      } else {
-        parts.push("Tự doanh: chưa có (CafeF EOD sau phiên)");
-      }
-      if (etf) {
-        parts.push(
-          `ETF NN: mua ${etf.buyVal.toExponential(2)} / bán ${etf.sellVal.toExponential(2)} (${etf.stockCount} mã)`,
-        );
-      } else {
-        parts.push("ETF: chưa có nguồn phiên");
-      }
-
-      const flow: FlowData = {
-        foreignNet: foreign?.netVal ?? null,
-        propNet: prop?.netVal ?? null,
-        etfNet: etf?.netVal ?? null,
-        source:
-          [foreign && "vndirect foreigns", prop && "cafef prop", etf && "vndirect etf"]
-            .filter(Boolean)
-            .join(" + ") || "unavailable",
-        available: Boolean(foreign || prop || etf),
-        note: parts.join(". ") + (sessionDate ? "." : ""),
-      };
-
-      const cryptoSum = snap?.snapshot.crypto?.summary ?? null;
-      const condition = computeMarketCondition({
-        index: indices?.[0]
-          ? { changePercent: indices[0].changePercent, value: indices[0].value, code: indices[0].code }
-          : null,
-        breadth: breadth.available
-          ? { advancers: breadth.advancers, decliners: breadth.decliners, unchanged: breadth.unchanged }
-          : null,
-        liquidity: liquidity.available
-          ? { valueTraded: liquidity.valueTraded, baseline: liquidity.baseline }
-          : null,
-        flow: foreign || prop ? { foreignNet: foreign?.netVal ?? null, propNet: prop?.netVal ?? null } : null,
-        crossAsset: cross ? crossAssetChanges(cross.items) : null,
-        cryptoBreadth: cryptoSum
-          ? {
-              advancers: cryptoSum.advancers,
-              decliners: cryptoSum.decliners,
-              total: cryptoSum.marketCount,
-              avgChange: cryptoSum.avgChangePercent,
-            }
-          : null,
-      });
-
-      const contribRows = (board?.quotes ?? []).map((q) => ({
-        symbol: q.symbol,
-        changePercent: q.changePercent ?? null,
-        weightPct: null as number | null,
-      }));
-      const contributors = {
-        ...computeContributions(indices?.[0]?.value ?? null, contribRows),
-        note: "Đóng góp ước lượng theo % biến động rổ theo dõi (chưa có tỷ trọng chính thức).",
-      };
-
-      const news = snap?.snapshot.news ?? [];
-      const sections: Record<string, FreshnessStatus> = {
-        indices: indicesAvailable ? (snap?.meta.freshness ?? "FRESH") : "UNAVAILABLE",
-        breadth: breadth.available ? "FRESH" : "UNAVAILABLE",
-        liquidity: liquidity.available ? "FRESH" : "UNAVAILABLE",
-        flow: flow.available ? "FRESH" : "UNAVAILABLE",
-        crossAsset: cross ? cross.meta.freshness : "UNAVAILABLE",
-      };
-
-      const intel: MarketIntel = {
-        session,
-        sessionHint: session.labelVi,
-        indices,
-        indicesAvailable,
-        breadth,
-        liquidity,
-        flow,
-        crossAsset: cross?.items ?? [],
-        condition,
-        contributors,
-        news: news.slice(0, 12),
-        sections,
-        vnDataNote: flow.note,
-      };
-
-      const newest =
-        prop?.sourceTs ??
-        etf?.sourceTs ??
-        foreign?.sourceTs ??
-        (cross?.meta.sourceTimestamp ? Date.parse(cross.meta.sourceTimestamp) : Date.now());
-
-      return {
-        intel,
-        meta: buildMeta({
-          source: flow.source,
-          sourceTimestampMs: newest,
-          note: flow.note,
-          slas: { liveSlaMs: 30_000, freshSlaMs: 120_000, delayedSlaMs: 600_000 },
-        }),
-      };
     },
   });
-
   return res.value;
+}
+
+/** Soft timeout so one slow provider never blocks the whole homepage payload. */
+function withTimeout<T>(p: Promise<T>, ms: number): Promise<T | null> {
+  return Promise.race([
+    p.then((v) => v).catch(() => null as T | null),
+    new Promise<null>((resolve) => setTimeout(() => resolve(null), ms)),
+  ]);
+}
+
+async function produceMarketIntel(): Promise<{ intel: MarketIntel; meta: Meta }> {
+  const [indicesPack, quotesPack] = await Promise.all([
+    withTimeout(
+      (async () => {
+        const { getVnIndices } = await import("./stocks");
+        return getVnIndices();
+      })(),
+      5_500,
+    ),
+    withTimeout(getVnQuotes(VN30_BOARD.slice(0, 20)), 6_000),
+  ]);
+
+  const [snapRes, crossRes, foreignRes, etfRes, propRes, idxStats] = await Promise.all([
+    withTimeout(buildMarketSnapshot(), 7_000),
+    withTimeout(getCrossAsset(), 5_000),
+    withTimeout(vndirect.getVndForeignFlow(), 5_000),
+    withTimeout(vndirect.getVndEtfFlow(), 5_000),
+    withTimeout(
+      (async () => {
+        const date = await vndirect.getVndLatestSessionDate();
+        return getCafefPropFlow(date);
+      })(),
+      5_000,
+    ),
+    withTimeout(vndirect.getVndIndexSessionStats("VNINDEX"), 4_000),
+  ]);
+
+  const indices =
+    indicesPack?.items?.length
+      ? indicesPack.items
+      : snapRes?.snapshot?.indices?.length
+        ? snapRes.snapshot.indices
+        : null;
+  const indicesAvailable = Boolean(indices?.length);
+  const session = getVnSession();
+  const board = quotesPack;
+
+  let breadth: BreadthData;
+  if (idxStats && (idxStats.advances > 0 || idxStats.declines > 0)) {
+    breadth = {
+      advancers: idxStats.advances,
+      decliners: idxStats.declines,
+      unchanged: idxStats.unchanged,
+      source: "vndirect vnmarket_prices",
+      available: true,
+      note: "Breadth từ VNDirect vnmarket_prices",
+    };
+  } else if (board?.quotes?.length) {
+    const a = board.quotes.filter((q) => (q.changePercent ?? 0) > 0).length;
+    const d = board.quotes.filter((q) => (q.changePercent ?? 0) < 0).length;
+    breadth = {
+      advancers: a,
+      decliners: d,
+      unchanged: board.quotes.length - a - d,
+      source: board.meta.source,
+      available: true,
+    };
+  } else {
+    breadth = {
+      advancers: 0,
+      decliners: 0,
+      unchanged: 0,
+      source: "vndirect",
+      available: false,
+      note: "Chưa lấy được thống kê tăng/giảm phiên từ VNDirect.",
+    };
+  }
+
+  const valueTraded =
+    idxStats?.value ?? board?.quotes?.reduce((sum, q) => sum + (q.quoteVolume ?? 0), 0) ?? null;
+  const liquidity = {
+    valueTraded: valueTraded && valueTraded > 0 ? valueTraded : null,
+    baseline: null as number | null,
+    available: Boolean(valueTraded && valueTraded > 0),
+    note: valueTraded
+      ? "Giá trị giao dịch phiên (chỉ số hoặc rổ theo dõi)."
+      : "Cần dữ liệu giá trị giao dịch từ provider VN.",
+  };
+
+  const foreign = foreignRes;
+  const etf = etfRes;
+  const prop = propRes;
+  const sessionDate = foreign?.sessionDate ?? etf?.sessionDate ?? prop?.sessionDate ?? null;
+  const parts: string[] = [];
+  if (foreign) {
+    parts.push(
+      `Khối ngoại phiên ${foreign.sessionDate}: mua ${foreign.buyVal.toExponential(2)} / bán ${foreign.sellVal.toExponential(2)} (VND)`,
+    );
+  }
+  if (prop) {
+    parts.push(
+      `Tự doanh: mua ${prop.buyVal.toExponential(2)} / bán ${prop.sellVal.toExponential(2)} (CafeF EOD)`,
+    );
+  } else {
+    parts.push("Tự doanh: chưa có (CafeF EOD sau phiên)");
+  }
+  if (etf) {
+    parts.push(
+      `ETF NN: mua ${etf.buyVal.toExponential(2)} / bán ${etf.sellVal.toExponential(2)} (${etf.stockCount} mã)`,
+    );
+  } else {
+    parts.push("ETF: chưa có nguồn phiên");
+  }
+
+  const flow: FlowData = {
+    foreignNet: foreign?.netVal ?? null,
+    propNet: prop?.netVal ?? null,
+    etfNet: etf?.netVal ?? null,
+    source:
+      [foreign && "vndirect foreigns", prop && "cafef prop", etf && "vndirect etf"]
+        .filter(Boolean)
+        .join(" + ") || (indicesAvailable ? "vndirect-indices" : "partial"),
+    available: Boolean(foreign || prop || etf || indicesAvailable),
+    note: parts.join(". ") + (sessionDate ? "." : ""),
+  };
+
+  const cross = crossRes;
+  const snap = snapRes;
+  const cryptoSum = snap?.snapshot?.crypto?.summary ?? null;
+  const condition = computeMarketCondition({
+    index: indices?.[0]
+      ? { changePercent: indices[0].changePercent, value: indices[0].value, code: indices[0].code }
+      : null,
+    breadth: breadth.available
+      ? { advancers: breadth.advancers, decliners: breadth.decliners, unchanged: breadth.unchanged }
+      : null,
+    liquidity: liquidity.available
+      ? { valueTraded: liquidity.valueTraded, baseline: liquidity.baseline }
+      : null,
+    flow: foreign || prop ? { foreignNet: foreign?.netVal ?? null, propNet: prop?.netVal ?? null } : null,
+    crossAsset: cross ? crossAssetChanges(cross.items) : null,
+    cryptoBreadth: cryptoSum
+      ? {
+          advancers: cryptoSum.advancers,
+          decliners: cryptoSum.decliners,
+          total: cryptoSum.marketCount,
+          avgChange: cryptoSum.avgChangePercent,
+        }
+      : null,
+  });
+
+  const contribRows = (board?.quotes ?? []).map((q) => ({
+    symbol: q.symbol,
+    changePercent: q.changePercent ?? null,
+    weightPct: null as number | null,
+  }));
+  const contributors = {
+    ...computeContributions(indices?.[0]?.value ?? null, contribRows),
+    note: "Đóng góp ước lượng theo % biến động rổ theo dõi (chưa có tỷ trọng chính thức).",
+  };
+
+  const news = snap?.snapshot?.news ?? [];
+  const sections: Record<string, FreshnessStatus> = {
+    indices: indicesAvailable
+      ? (indicesPack?.meta.freshness ?? snap?.meta.freshness ?? "FRESH")
+      : "UNAVAILABLE",
+    breadth: breadth.available ? "FRESH" : "UNAVAILABLE",
+    liquidity: liquidity.available ? "FRESH" : "UNAVAILABLE",
+    flow: flow.available ? "FRESH" : "UNAVAILABLE",
+    crossAsset: cross ? cross.meta.freshness : "UNAVAILABLE",
+  };
+
+  const intel: MarketIntel = {
+    session,
+    sessionHint: session.labelVi,
+    indices,
+    indicesAvailable,
+    breadth,
+    liquidity,
+    flow,
+    crossAsset: cross?.items ?? [],
+    condition,
+    contributors,
+    news: news.slice(0, 12),
+    sections,
+    vnDataNote: flow.note,
+  };
+
+  const newest = prop?.sourceTs ?? etf?.sourceTs ?? foreign?.sourceTs ?? Date.now();
+
+  return {
+    intel,
+    meta: buildMeta({
+      source: flow.source,
+      sourceTimestampMs: newest,
+      note: flow.note,
+      partial: !indicesAvailable || !breadth.available,
+      degraded: !indicesAvailable && !board?.quotes?.length,
+      hasData: Boolean(indicesAvailable || board?.quotes?.length || cross?.items?.length),
+      slas: { liveSlaMs: 30_000, freshSlaMs: 120_000, delayedSlaMs: 600_000 },
+    }),
+  };
 }
 
 function fmtCompactLocal(n: number): string {
