@@ -221,7 +221,6 @@ export function validateIndexCandles(symbol: string, candles: ChartCandle[]) {
 async function stockCandles(symbol: string, tf: string, limit: number): Promise<CandleSeriesResult> {
   const { fetchVndDchartHistory } = await import("../providers/vndirect-dchart");
 
-  // Native dchart resolutions: 1m / 5m / 15m / 1h / 1d
   const native = vndDchartResolution(tf);
   if (native) {
     try {
@@ -236,7 +235,6 @@ async function stockCandles(symbol: string, tf: string, limit: number): Promise<
     } catch {
       /* fall through */
     }
-    // Intraday fallback: session anchor + live ticks (keeps realtime engine working)
     if (tf === "1m" || tf === "5m" || tf === "15m" || tf === "1h") {
       const r = await getVnOhlcv(symbol, Math.min(limit, 40));
       if (!r?.bars.length) {
@@ -260,7 +258,6 @@ async function stockCandles(symbol: string, tf: string, limit: number): Promise<
     }
   }
 
-  // 4h: no native dchart 240 → aggregate 1h
   if (tf === "4h") {
     try {
       const bars = await fetchVndDchartHistory(symbol, "60", Math.min(limit * 4, 500));
@@ -273,7 +270,6 @@ async function stockCandles(symbol: string, tf: string, limit: number): Promise<
     }
   }
 
-  // 1w / 1M / 12M (and 1d fallback): daily series then aggregate
   const dayLimit =
     tf === "1d"
       ? Math.min(limit, 400)
@@ -360,7 +356,7 @@ export async function getChartHistory(args: ChartArgs): Promise<{ data: ChartMar
 
   try {
     const res = await cached(`chart:${args.assetType}:${symbol}:${tf}:${limit}`, {
-      ttlMs: args.assetType === "crypto" ? 12_000 : args.assetType === "forex" ? 25_000 : 8_000,
+      ttlMs: args.assetType === "crypto" ? 10_000 : args.assetType === "forex" ? 20_000 : 5_000,
       staleMs: 24 * 3_600_000,
       producer: async () => {
         const raw =
@@ -374,8 +370,8 @@ export async function getChartHistory(args: ChartArgs): Promise<{ data: ChartMar
 
         const q = validateBars(raw.candles as OhlcvBar[]);
         if (q.status !== "VALID") void logQualityEvent("chart-engine", `${args.assetType}:${symbol}:${tf}`, q);
-        if (q.status === "INVALID") throw new Error("invalid candle series");
-        const gap = detectGaps(q.cleaned, TF_MS[tf]);
+        if (!q.cleaned?.length) throw new Error("invalid candle series");
+        const gap = detectGaps(q.cleaned, TF_MS[tf] ?? 86_400_000);
         const suspect = (q.status === "SUSPECT" ? 1 : 0) + (gap ? 1 : 0);
         return {
           candles: q.cleaned,
