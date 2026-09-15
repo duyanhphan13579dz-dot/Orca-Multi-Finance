@@ -10,6 +10,11 @@ export async function GET() {
     const { intel, meta } = await buildMarketIntel();
     return ok(intel, meta);
   } catch (e) {
-    return fail("INTEL_FAILED", e instanceof Error ? e.message : "unknown", 502);
+    try {
+      const { intel, meta } = await buildMarketIntel();
+      return ok(intel, meta);
+    } catch {
+      return fail("INTEL_FAILED", e instanceof Error ? e.message : "unknown", 502);
+    }
   }
 }
