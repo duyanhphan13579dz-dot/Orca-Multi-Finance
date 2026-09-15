@@ -5,6 +5,7 @@ import { cached, peekStale } from "../cache";
 import { buildMeta } from "../freshness";
 import { ssiFcConfigured } from "../providers/ssi-fcdata";
 import { ensureSsiWsStarted, ssiWs, type SsiOrderBook } from "../realtime/ssi-ws";
+import { fetchSsiIboardDepth, fetchVpsDepth } from "../providers/orderbook-rest";
 import type { Meta } from "../types";
 
 export interface VnOrderBookLevel {
@@ -115,7 +116,7 @@ async function rememberLastBook(sym: string, book: VnOrderBook): Promise<void> {
       `);
     }
   } catch {
-    /* best-effort persistence; memory/Redis remain available */
+    /* best-effort */
   }
 }
 
@@ -158,7 +159,6 @@ async function recallLastBook(sym: string): Promise<VnOrderBook | null> {
   return null;
 }
 
-/** Persist a raw SSI depth snapshot for the scheduled session snapshot job. */
 export async function persistSsiOrderBookSnapshot(ob: SsiOrderBook): Promise<boolean> {
   const book = toBook(ob.symbol, ob, [], true);
   if (!book || (!book.bids.length && !book.asks.length)) return false;
@@ -222,100 +222,141 @@ function toBook(
   };
 }
 
+async function fetchRestDepth(sym: string): Promise<{ book: VnOrderBook; source: string } | null> {
+  // Song song SSI iBoard + VPS — ưu tiên SSI (giá VND chuẩn)
+  const [ssi, vps] = await Promise.all([
+    fetchSsiIboardDepth(sym).catch(() => null),
+    fetchVpsDepth(sym).catch(() => null),
+  ]);
+  if (ssi && (ssi.bids.length || ssi.asks.length)) {
+    return { book: ssi, source: "ssi-iboard" };
+  }
+  if (vps && (vps.bids.length || vps.asks.length)) {
+    return { book: vps, source: "vps" };
+  }
+  return null;
+}
+
 /**
- * SSI order book — depth only exists on DataHub WS (channel X).
- * Always tries WS (forceEnable) even when SSI_WS_DISABLED=true so Vercel
- * can still fetch a one-shot snapshot for the orderbook API.
+ * Độ sâu thị trường:
+ * 1) SSI WS (nếu có credentials) — nhiều mức + trades
+ * 2) SSI iBoard REST / VPS REST — 3 mức bid/ask, không cần key
+ * 3) Snapshot cache phiên trước
  */
 export async function getVnOrderBook(
   symbol: string,
 ): Promise<{ book: VnOrderBook; meta: Meta } | null> {
   const sym = symbol.toUpperCase().replace(/[^A-Z0-9]/g, "");
-  if (!sym || !ssiFcConfigured()) return null;
+  if (!sym) return null;
 
   const inSession = isVnSessionWindow();
   let fromLastSession = false;
 
-  // Force WS for this request — depth is not available via REST
-  const eng = ssiWs as typeof ssiWs & { forceEnable?: (on?: boolean) => void };
-  try {
-    eng.forceEnable?.(true);
-    ensureSsiWsStarted();
-    ssiWs.watchSymbol(sym);
-
-    // 1) Hot memory
-    let ob: SsiOrderBook | null = null;
+  // ——— Path A: SSI WebSocket (optional) ———
+  if (ssiFcConfigured()) {
+    const eng = ssiWs as typeof ssiWs & { forceEnable?: (on?: boolean) => void };
     try {
-      ob = ssiWs.getOrderBook(sym, LIVE_MAX_AGE_MS);
-      if (!ob) ob = ssiWs.getQuote(sym, LIVE_MAX_AGE_MS)?.orderBook ?? null;
-    } catch {
-      ob = null;
-    }
+      eng.forceEnable?.(true);
+      ensureSsiWsStarted();
+      ssiWs.watchSymbol(sym);
 
-    // 2) Wait for first depth tick / last-session snapshot from SSI
-    //    Outside session SSI often still pushes last X on SwitchChannel.
-    if (!ob) {
-        // Keep the first request bounded: SSE continues receiving later ticks,
-        // while a slow SSI handshake must not block the Vercel response.
+      let ob: SsiOrderBook | null = null;
+      try {
+        ob = ssiWs.getOrderBook(sym, LIVE_MAX_AGE_MS);
+        if (!ob) ob = ssiWs.getQuote(sym, LIVE_MAX_AGE_MS)?.orderBook ?? null;
+      } catch {
+        ob = null;
+      }
+
+      if (!ob) {
         const waitMs = inSession ? 850 : 1_200;
-      try {
-        if (typeof ssiWs.waitForOrderBook === "function") {
-          ob = await ssiWs.waitForOrderBook(sym, waitMs);
+        try {
+          if (typeof ssiWs.waitForOrderBook === "function") {
+            ob = await ssiWs.waitForOrderBook(sym, waitMs);
+          }
+        } catch {
+          ob = null;
         }
-      } catch {
-        ob = null;
       }
-    }
 
-    // 3) Longer-lived WS memory (same process)
-    if (!ob) {
-      try {
-        ob = ssiWs.getOrderBook(sym, LAST_SESSION_MAX_AGE_MS);
-        if (!ob) ob = ssiWs.getQuote(sym, LAST_SESSION_MAX_AGE_MS)?.orderBook ?? null;
-        if (ob) fromLastSession = true;
-      } catch {
-        ob = null;
+      if (!ob) {
+        try {
+          ob = ssiWs.getOrderBook(sym, LAST_SESSION_MAX_AGE_MS);
+          if (!ob) ob = ssiWs.getQuote(sym, LAST_SESSION_MAX_AGE_MS)?.orderBook ?? null;
+          if (ob) fromLastSession = true;
+        } catch {
+          ob = null;
+        }
+      } else if (!inSession) {
+        const age = Date.now() - ob.eventTime;
+        if (age > LIVE_MAX_AGE_MS) fromLastSession = true;
       }
-    } else if (!inSession) {
-      const age = Date.now() - ob.eventTime;
-      if (age > LIVE_MAX_AGE_MS) fromLastSession = true;
+
+      const trades = fromLastSession ? [] : readTrades(sym);
+      let book = toBook(sym, ob, trades, fromLastSession);
+
+      if (book && (book.bids.length > 0 || book.asks.length > 0)) {
+        void rememberLastBook(sym, book);
+        const note = book.fromLastSession
+          ? `Sổ lệnh phiên gần nhất · ${book.levels} mức · ${new Date(book.eventTime).toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })}`
+          : `Độ sâu SSI WS · ${book.levels} mức · ${(book.trades ?? []).length} khớp · live`;
+        return {
+          book,
+          meta: buildMeta({
+            source: book.fromLastSession ? "ssi-ws-last-session" : "ssi-ws",
+            sourceTimestampMs: book.eventTime,
+            note,
+            slas: book.fromLastSession
+              ? { liveSlaMs: 5_000, freshSlaMs: 60_000, delayedSlaMs: LAST_SESSION_MAX_AGE_MS }
+              : { liveSlaMs: 5_000, freshSlaMs: 20_000, delayedSlaMs: 60_000 },
+          }),
+        };
+      }
+    } finally {
+      eng.forceEnable?.(false);
     }
+  }
 
-    const trades = fromLastSession ? [] : readTrades(sym);
-    let book = toBook(sym, ob, trades, fromLastSession);
-
-    // 4) Persist for next requests / outside session
-    if (book && (book.bids.length > 0 || book.asks.length > 0)) {
+  // ——— Path B: REST public (SSI iBoard / VPS) — luôn có cho TCX/HPA… ———
+  try {
+    const rest = await fetchRestDepth(sym);
+    if (rest) {
+      const book = {
+        ...rest.book,
+        fromLastSession: !inSession ? true : rest.book.fromLastSession,
+      };
       void rememberLastBook(sym, book);
+      return {
+        book,
+        meta: buildMeta({
+          source: rest.source,
+          sourceTimestampMs: book.eventTime,
+          note: `Độ sâu ${rest.source} · ${book.levels} mức bid/ask${book.fromLastSession ? " · ngoài phiên" : " · live"}`,
+          slas: {
+            liveSlaMs: 8_000,
+            freshSlaMs: 30_000,
+            delayedSlaMs: 120_000,
+          },
+        }),
+      };
     }
+  } catch (e) {
+    console.warn("[getVnOrderBook rest]", sym, e);
+  }
 
-    // 5) Redis / memory recall
-    if (!book) {
-      const recalled = await recallLastBook(sym);
-      if (recalled) {
-        book = recalled;
-        fromLastSession = true;
-      }
-    }
-
-    if (!book) return null;
-
-    const note = book.fromLastSession
-      ? `Sổ lệnh phiên gần nhất · ${book.levels} mức · ${new Date(book.eventTime).toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })}`
-      : `Độ sâu SSI · ${book.levels} mức · ${(book.trades ?? []).length} khớp · live`;
-
+  // ——— Path C: snapshot cache ———
+  const recalled = await recallLastBook(sym);
+  if (recalled) {
     return {
-      book,
+      book: recalled,
       meta: buildMeta({
-        source: book.fromLastSession ? "ssi-ws-last-session" : "ssi-ws",
-        sourceTimestampMs: book.eventTime,
-        note,
-        slas: book.fromLastSession
-          ? { liveSlaMs: 5_000, freshSlaMs: 60_000, delayedSlaMs: LAST_SESSION_MAX_AGE_MS }
-          : { liveSlaMs: 5_000, freshSlaMs: 20_000, delayedSlaMs: 60_000 },
+        source: "orderbook-cache",
+        sourceTimestampMs: recalled.eventTime,
+        note: `Sổ lệnh cache · ${recalled.levels} mức · ${new Date(recalled.eventTime).toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })}`,
+        slas: { liveSlaMs: 5_000, freshSlaMs: 60_000, delayedSlaMs: LAST_SESSION_MAX_AGE_MS },
       }),
     };
-  } finally {
-    eng.forceEnable?.(false);
   }
+
+  return null;
 }
