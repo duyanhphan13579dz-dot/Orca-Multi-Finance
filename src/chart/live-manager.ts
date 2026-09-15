@@ -103,10 +103,20 @@ export class ChartLiveManager {
           }).formatToParts(new Date(d.ts ?? Date.now()));
           const get = (ty: string) => parts.find((p) => p.type === ty)?.value ?? "00";
           const dayKey = `${get("year")}-${get("month")}-${get("day")}`;
-          const tfMs =
-            timeframe === "1h" ? 3_600_000 : timeframe === "15m" ? 900_000 : timeframe === "5m" ? 300_000 : 0;
+          const TF_MS_CLIENT: Record<string, number> = {
+            "1m": 60_000,
+            "5m": 300_000,
+            "15m": 900_000,
+            "1h": 3_600_000,
+            "4h": 14_400_000,
+            "1d": 86_400_000,
+            "1w": 604_800_000,
+            "1M": 2_592_000_000,
+            "12M": 31_536_000_000,
+          };
+          const tfMs = TF_MS_CLIENT[timeframe] ?? 0;
           const bucket =
-            timeframe === "1d" || timeframe === "1w" || timeframe === "1M"
+            timeframe === "1d" || timeframe === "1w" || timeframe === "1M" || timeframe === "12M"
               ? Date.parse(`${dayKey}T15:00:00+07:00`)
               : tfMs
                 ? Math.floor((d.ts ?? Date.now()) / tfMs) * tfMs
