@@ -142,7 +142,7 @@ export async function getVnOhlcv(
       producer: async () => {
         try {
           const { fetchVndDchartHistory } = await import("../providers/vndirect-dchart");
-          const bars = await fetchVndDchartHistory(sym, "1D", limit);
+          const bars = await fetchVndDchartHistory(sym, "D", limit);
           if (bars?.length) return bars;
         } catch {
           /* fall through */
