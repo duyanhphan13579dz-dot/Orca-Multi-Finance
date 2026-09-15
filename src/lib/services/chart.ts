@@ -7,7 +7,7 @@ import { getYahooChart, yahooIntervalFor } from "../providers/yahoo";
 import { getVnOhlcv } from "./stocks";
 import * as vndirect from "../providers/vndirect";
 import { validateBars, detectGaps, logQualityEvent } from "../quality";
-import { aggregateCandles, binanceInterval, TF_MS, tfsFor, type ChartAssetType, type ChartCandle } from "../chart-const";
+import { aggregateCandles, binanceInterval, TF_MS, tfsFor, vndDchartResolution, type ChartAssetType, type ChartCandle } from "../chart-const";
 import { ema, rsi, macd, sma, supportResistance } from "../technical";
 import { analyzeScalp } from "../engines/scalp";
 import type { Meta, OhlcvBar, TechnicalSnapshot } from "../types";
@@ -154,6 +154,11 @@ type CandleSeriesResult = {
 };
 
 async function cryptoCandles(symbol: string, tf: string, limit: number): Promise<CandleSeriesResult> {
+  if (tf === "12M") {
+    const bars = await binance.getKlinesDeep(symbol, "1M", Math.min(limit * 12, 500));
+    const candles = aggregateCandles(bars.map(toCandle), TF_MS["12M"]).slice(-limit);
+    return { candles, source: "binance", note: "12M aggregate từ 1M" };
+  }
   const bars = await binance.getKlinesDeep(symbol, binanceInterval(tf), Math.min(limit, 5000));
   return { candles: bars.map(toCandle), source: "binance" };
 }
@@ -161,7 +166,7 @@ async function cryptoCandles(symbol: string, tf: string, limit: number): Promise
 async function forexCandles(pair: string, tf: string, limit: number): Promise<CandleSeriesResult> {
   const base = pair.slice(0, 3);
   const quote = pair.slice(3, 6);
-  const days = tf === "1M" ? 3650 : tf === "1w" ? 1825 : 730;
+  const days = tf === "12M" ? 4000 : tf === "1M" ? 3650 : tf === "1w" ? 1825 : 730;
   const direct = await getFrankfurterSeries(base, quote, days);
   let candles: ChartCandle[] = direct.map((x) => ({
     time: Date.parse(`${x.date}T00:00:00Z`),
@@ -173,6 +178,7 @@ async function forexCandles(pair: string, tf: string, limit: number): Promise<Ca
   }));
   if (tf === "1w") candles = aggregateCandles(candles, TF_MS["1w"]);
   if (tf === "1M") candles = aggregateCandles(candles, TF_MS["1M"]);
+  if (tf === "12M") candles = aggregateCandles(candles, TF_MS["12M"]);
   return {
     candles: candles.slice(-limit),
     source: "frankfurter-ecb (free, no key)",
@@ -213,46 +219,97 @@ export function validateIndexCandles(symbol: string, candles: ChartCandle[]) {
 }
 
 async function stockCandles(symbol: string, tf: string, limit: number): Promise<CandleSeriesResult> {
-  if (tf === "5m" || tf === "15m" || tf === "1h") {
-    const r = await getVnOhlcv(symbol, Math.min(limit, 40));
-    if (!r?.bars.length) {
-      return { candles: [] as ChartCandle[], source: "vndirect-live-only", note: "Intraday VN — chờ tick" };
+  const { fetchVndDchartHistory } = await import("../providers/vndirect-dchart");
+
+  // Native dchart resolutions: 1m / 5m / 15m / 1h / 1d
+  const native = vndDchartResolution(tf);
+  if (native) {
+    try {
+      const bars = await fetchVndDchartHistory(symbol, native, Math.min(limit, native === "D" ? 400 : 500));
+      if (bars.length >= 1) {
+        return {
+          candles: bars.map(toCandle).slice(-limit),
+          source: "vndirect-dchart",
+          note: `VNDirect dchart ${tf}`,
+        };
+      }
+    } catch {
+      /* fall through */
     }
-    const last = r.bars[r.bars.length - 1];
-    return {
-      candles: [{ time: last.time, open: last.open, high: last.high, low: last.low, close: last.close, volume: last.volume }],
-      source: "vndirect-session-anchor",
-      note: "Intraday VN: neo phiên + live ticks",
-    };
+    // Intraday fallback: session anchor + live ticks (keeps realtime engine working)
+    if (tf === "1m" || tf === "5m" || tf === "15m" || tf === "1h") {
+      const r = await getVnOhlcv(symbol, Math.min(limit, 40));
+      if (!r?.bars.length) {
+        return { candles: [] as ChartCandle[], source: "vndirect-live-only", note: "Intraday VN — chờ tick" };
+      }
+      const last = r.bars[r.bars.length - 1];
+      return {
+        candles: [
+          {
+            time: last.time,
+            open: last.open,
+            high: last.high,
+            low: last.low,
+            close: last.close,
+            volume: last.volume,
+          },
+        ],
+        source: "vndirect-session-anchor",
+        note: "Intraday VN: neo phiên + live ticks",
+      };
+    }
   }
 
+  // 4h: no native dchart 240 → aggregate 1h
+  if (tf === "4h") {
+    try {
+      const bars = await fetchVndDchartHistory(symbol, "60", Math.min(limit * 4, 500));
+      const candles = aggregateCandles(bars.map(toCandle), TF_MS["4h"]).slice(-limit);
+      if (candles.length) {
+        return { candles, source: "vndirect-dchart-1h→4h", note: "4H aggregate từ dchart 1H" };
+      }
+    } catch {
+      /* fall through */
+    }
+  }
+
+  // 1w / 1M / 12M (and 1d fallback): daily series then aggregate
   const dayLimit =
-    tf === "1d" ? Math.min(limit, 320) : tf === "1w" ? Math.min(limit * 5, 800) : Math.min(limit * 20, 900);
+    tf === "1d"
+      ? Math.min(limit, 400)
+      : tf === "1w"
+        ? Math.min(limit * 5, 900)
+        : tf === "1M"
+          ? Math.min(limit * 22, 1200)
+          : tf === "12M"
+            ? Math.min(limit * 250, 2000)
+            : Math.min(limit * 5, 800);
 
   const r = await getVnOhlcv(symbol, dayLimit);
   if (!r) throw new Error("stock_ohlcv_unavailable");
+  let candles = r.bars.map(toCandle);
+  if (tf === "1w") candles = aggregateCandles(candles, TF_MS["1w"]).slice(-limit);
+  else if (tf === "1M") candles = aggregateCandles(candles, TF_MS["1M"]).slice(-limit);
+  else if (tf === "12M") candles = aggregateCandles(candles, TF_MS["12M"]).slice(-limit);
+  else if (tf === "4h") candles = aggregateCandles(candles, TF_MS["4h"]).slice(-limit);
+  else candles = candles.slice(-limit);
+
   if (vndirect.isVnIndexSymbol(symbol)) {
-    let candles = r.bars.map(toCandle);
-    if (tf === "1w") candles = aggregateCandles(candles, TF_MS["1w"]).slice(-limit);
-    if (tf === "1M") candles = aggregateCandles(candles, TF_MS["1M"]).slice(-limit);
     const indexQuality = validateIndexCandles(symbol, candles);
-    if (indexQuality.valid.length < Math.max(5, candles.length * 0.8)) {
+    if (indexQuality.valid.length < Math.max(3, candles.length * 0.5)) {
       throw new Error(indexQuality.reason ?? "index_fallback_out_of_range");
     }
     return {
       candles: indexQuality.valid.slice(-limit),
       source: r.meta.source === "vndirect" ? "vndirect-index-ohlcv" : r.meta.source,
-      note: r.meta.note,
+      note: r.meta.note ?? `index ${tf}`,
     };
   }
 
-  let candles = r.bars.map(toCandle);
-  if (tf === "1w") candles = aggregateCandles(candles, TF_MS["1w"]).slice(-limit);
-  if (tf === "1M") candles = aggregateCandles(candles, TF_MS["1M"]).slice(-limit);
   return {
     candles: candles.slice(-limit),
     source: r.meta.source === "vndirect" ? "vndirect-stock-ohlcv" : r.meta.source,
-    note: r.meta.note,
+    note: r.meta.note ?? `stock ${tf}`,
   };
 }
 
