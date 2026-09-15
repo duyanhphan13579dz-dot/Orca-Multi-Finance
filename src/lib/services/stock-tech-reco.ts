@@ -127,7 +127,7 @@ export function computeStockTechReco(
     value: `${tr.vi} (${tech.trend.score >= 0 ? "+" : ""}${tech.trend.score.toFixed(1)})`,
     bias: tr.w > 0 ? "up" : tr.w < 0 ? "down" : "neutral",
     weight: tr.w,
-    note: "Cấu trúc xu hướng từ SMA + slope",
+    note: "Cấu trúc xu hướng từ SMA + độ dốc",
   });
 
   if (tech.rsi14 != null) {
@@ -160,7 +160,15 @@ export function computeStockTechReco(
   if (tech.macd) {
     const h = tech.macd.histogram;
     const w =
-      h > 0 ? (h > Math.abs(tech.last) * 0.001 ? 12 : 6) : h < 0 ? (Math.abs(h) > Math.abs(tech.last) * 0.001 ? -12 : -6) : 0;
+      h > 0
+        ? h > Math.abs(tech.last) * 0.001
+          ? 12
+          : 6
+        : h < 0
+          ? Math.abs(h) > Math.abs(tech.last) * 0.001
+            ? -12
+            : -6
+          : 0;
     score += w;
     factors.push({
       key: "macd",
@@ -201,7 +209,7 @@ export function computeStockTechReco(
       value: `${r >= 0 ? "+" : ""}${r.toFixed(1)}%`,
       bias: w > 0 ? "up" : w < 0 ? "down" : "neutral",
       weight: w,
-      note: "Momentum trung hạn",
+      note: "Đà giá trung hạn",
     });
   } else if (changePercent != null) {
     const w = changePercent > 2 ? 6 : changePercent < -2 ? -6 : 0;
@@ -233,7 +241,7 @@ export function computeStockTechReco(
       value: patterns.slice(0, 3).map((p) => p.nameVi).join(", ") || `${bull}↑/${bear}↓`,
       bias: w > 0 ? "up" : w < 0 ? "down" : "neutral",
       weight: w,
-      note: `Bull ${bull} · Bear ${bear} (đã trọng số reliability)`,
+      note: `Tăng ${bull} · Giảm ${bear} (đã trọng số độ tin cậy)`,
     });
   }
 
@@ -280,7 +288,7 @@ export function computeStockTechReco(
   const summary =
     top.length === 0
       ? "Chưa đủ tín hiệu kỹ thuật nổi bật."
-      : `${signal} (${confidencePct}%): điểm ${score >= 0 ? "+" : ""}${score} · ${top.map((f) => f.label).join(" · ")}.`;
+      : `${signal === "QUAN_SÁT" ? "QUAN SÁT" : signal} (${confidencePct}%): điểm ${score >= 0 ? "+" : ""}${score} · ${top.map((f) => f.label).join(" · ")}.`;
 
   return {
     score,
@@ -391,33 +399,26 @@ export async function getStockTechReco(
   if (!detail) return null;
   const tech = detail.detail.technical;
   const patterns = detail.detail.patterns ?? [];
-  const chg = detail.detail.quote?.changePercent ?? null;
-  const quant = computeStockTechReco(tech, patterns, chg);
+  const quant = computeStockTechReco(tech, patterns, detail.detail.quote?.changePercent ?? null);
   const contract = {
     symbol,
     last: tech?.last ?? detail.detail.quote?.price ?? null,
-    changePercent: chg,
+    changePercent: detail.detail.quote?.changePercent ?? null,
     rsi14: tech?.rsi14 ?? null,
-    trend: tech?.trend ?? null,
-    sma: tech?.sma ?? null,
-    macdHist: tech?.macd?.histogram ?? null,
-    support: tech?.support?.slice(0, 3) ?? [],
-    resistance: tech?.resistance?.slice(0, 3) ?? [],
-    returns: tech?.returns ?? null,
-    patterns: patterns.map((p) => ({ name: p.nameVi, type: p.type, reliability: p.reliability })),
+    score: quant.score,
   };
   const { llm, status } = await enrichLlm(quant, contract);
   return {
-    data: { symbol, quant, llm, llmStatus: status },
+    data: {
+      symbol,
+      quant,
+      llm,
+      llmStatus: status,
+    },
     meta: buildMeta({
-      source: status === "ok" && llm ? `tech-quant+llm:${llm.model}` : "tech-quant",
+      source: "stock-tech-reco",
       sourceTimestampMs: Date.now(),
-      note:
-        status === "skipped"
-          ? "LLM chưa cấu hình — chỉ điểm quant kỹ thuật"
-          : status === "unavailable" || status === "failed"
-            ? "LLM tạm lỗi — hiển thị điểm quant"
-            : "Tổng hợp kỹ thuật · không phải khuyến nghị đầu tư",
+      note: quant.label,
     }),
   };
 }

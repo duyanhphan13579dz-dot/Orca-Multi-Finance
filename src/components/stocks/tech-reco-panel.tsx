@@ -6,6 +6,18 @@ import type { StockTechRecoResult } from "@/lib/services/stock-tech-reco";
 import { Badge, FreshnessDot, Loading, Panel } from "@/components/ui";
 import { Brain, Compass, ShieldAlert } from "lucide-react";
 
+const CONF_VI: Record<string, string> = {
+  HIGH: "Cao",
+  MEDIUM: "Trung bình",
+  LOW: "Thấp",
+};
+
+const REL_VI: Record<string, string> = {
+  high: "cao",
+  medium: "TB",
+  low: "thấp",
+};
+
 export const TechRecoPanel = memo(function TechRecoPanel({ symbol }: { symbol: string }) {
   const { data, meta, isLoading } = useApi<StockTechRecoResult>(
     symbol ? `/api/v1/stocks/${encodeURIComponent(symbol)}/tech-reco` : null,
@@ -23,7 +35,7 @@ export const TechRecoPanel = memo(function TechRecoPanel({ symbol }: { symbol: s
     return (
       <Panel title="Tín hiệu kỹ thuật">
         <p className="text-[12px] text-text-muted">
-          Chưa đủ dữ liệu nến/indicator để tính MUA · BÁN · QUAN SÁT.
+          Chưa đủ dữ liệu nến / chỉ báo để tính MUA · BÁN · QUAN SÁT.
         </p>
       </Panel>
     );
@@ -42,6 +54,8 @@ export const TechRecoPanel = memo(function TechRecoPanel({ symbol }: { symbol: s
       : (llm?.stance ?? quant.stance) === "watch-short"
         ? "down"
         : "neutral";
+
+  const confLabel = CONF_VI[quant.confidence] ?? quant.confidence;
 
   return (
     <Panel
@@ -81,15 +95,15 @@ export const TechRecoPanel = memo(function TechRecoPanel({ symbol }: { symbol: s
               <span className="ml-0.5 text-[13px] font-normal text-text-muted">%</span>
             </div>
             <div className="mt-1 text-[10px] text-text-muted">
-              Điểm quant {quant.score > 0 ? "+" : ""}
-              {quant.score}/100 · {quant.confidence}
+              Điểm định lượng {quant.score > 0 ? "+" : ""}
+              {quant.score}/100 · {confLabel}
             </div>
           </div>
         </div>
 
         <div>
           <div className="mb-1 flex justify-between text-[10px] text-text-muted">
-            <span>Độ tin cậy quant</span>
+            <span>Độ tin cậy định lượng</span>
             <span className="num">{confPct}%</span>
           </div>
           <div className="h-1.5 overflow-hidden rounded-full bg-surface-modal">
@@ -118,10 +132,10 @@ export const TechRecoPanel = memo(function TechRecoPanel({ symbol }: { symbol: s
                         ? "border-negative/40 bg-negative/10 text-negative"
                         : "border-border-subtle text-text-secondary"
                   }`}
-                  title={p.reliability}
+                  title={REL_VI[p.reliability] ?? p.reliability}
                 >
                   {p.nameVi}
-                  <span className="ml-1 opacity-70">({p.reliability})</span>
+                  <span className="ml-1 opacity-70">({REL_VI[p.reliability] ?? p.reliability})</span>
                 </span>
               ))}
             </div>
@@ -130,7 +144,7 @@ export const TechRecoPanel = memo(function TechRecoPanel({ symbol }: { symbol: s
 
         <div className="space-y-1.5">
           <div className="text-[10px] font-semibold uppercase tracking-wider text-text-muted">
-            Indicator / factor
+            Chỉ báo / yếu tố
           </div>
           {quant.factors.map((f) => (
             <div
@@ -157,7 +171,7 @@ export const TechRecoPanel = memo(function TechRecoPanel({ symbol }: { symbol: s
           <div className="panel-inset space-y-2 p-3">
             <div className="flex flex-wrap items-center gap-1.5 text-[10px] uppercase tracking-wider text-text-muted">
               <Brain className="size-3.5 text-accent-primary" />
-              <span>LLM tổng hợp</span>
+              <span>Tổng hợp AI</span>
               <Badge tone={stanceTone}>
                 {(llm.stance ?? quant.stance) === "watch-long"
                   ? "Theo dõi tăng"
@@ -165,7 +179,9 @@ export const TechRecoPanel = memo(function TechRecoPanel({ symbol }: { symbol: s
                     ? "Theo dõi giảm"
                     : "Trung lập"}
               </Badge>
-              {llm.model && <span className="normal-case tracking-normal text-text-muted">{llm.model}</span>}
+              {llm.model && (
+                <span className="normal-case tracking-normal text-text-muted">{llm.model}</span>
+              )}
             </div>
             <p className="text-[12.5px] leading-relaxed text-text-primary">{llm.narrative}</p>
             {llm.keyDrivers?.length > 0 && (
@@ -191,11 +207,14 @@ export const TechRecoPanel = memo(function TechRecoPanel({ symbol }: { symbol: s
         )}
 
         {llmStatus !== "ok" && llmStatus !== "skipped" && (
-          <p className="text-[10px] text-text-muted">LLM: {llmStatus} — đang dùng tín hiệu quant.</p>
+          <p className="text-[10px] text-text-muted">
+            AI: {llmStatus === "unavailable" ? "không khả dụng" : llmStatus === "failed" ? "lỗi" : llmStatus}{" "}
+            — đang dùng tín hiệu định lượng.
+          </p>
         )}
 
         <p className="text-[10px] text-text-muted">
-          Tín hiệu nghiên cứu từ mẫu hình nến + indicator · không phải khuyến nghị đầu tư.
+          Tín hiệu nghiên cứu từ mẫu hình nến + chỉ báo · không phải khuyến nghị đầu tư.
         </p>
       </div>
     </Panel>

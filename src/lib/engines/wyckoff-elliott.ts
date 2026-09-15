@@ -59,6 +59,7 @@ export interface StructureAnalysis {
   summary: string;
 }
 
+/** Giữ tên Wyckoff gốc + giải thích tiếng Việt */
 const PHASE_VI: Record<WyckoffPhase, string> = {
   accumulation: "Tích lũy (Accumulation)",
   markup: "Mark-up (Xu hướng tăng)",
@@ -74,7 +75,7 @@ const ELLIOTT_VI: Record<ElliottPattern, string> = {
   "impulse-down": "Xung lực giảm (1-2-3-4-5)",
   "corrective-abc-up": "Điều chỉnh ABC tăng",
   "corrective-abc-down": "Điều chỉnh ABC giảm",
-  diagonal: "Diagonal / nêm",
+  diagonal: "Nêm chéo (Diagonal)",
   unclear: "Cấu trúc chưa rõ",
 };
 
@@ -98,7 +99,6 @@ export function findPivots(bars: OhlcvBar[], w = 3): StructurePivot[] {
     if (isH) out.push({ time: b.time, price: b.high, kind: "H", index: i });
     if (isL) out.push({ time: b.time, price: b.low, kind: "L", index: i });
   }
-  // Keep chronological, drop near-duplicates
   out.sort((a, b) => a.index - b.index);
   const cleaned: StructurePivot[] = [];
   for (const p of out) {
@@ -154,38 +154,32 @@ export function analyzeWyckoff(bars: OhlcvBar[]): WyckoffSnapshot {
   const rangePct = ((hi - lo) / lo) * 100;
   const vt = volumeTrend(slice);
 
-  // Prior trend from first half vs second half
   const mid = Math.floor(slice.length / 2);
   const firstHalfRet = closes[mid] / closes[0] - 1;
   const secondHalfRet = last / closes[mid] - 1;
 
-  // Effort vs result: up-bar volume vs down-bar volume recently
   const recent = slice.slice(-12);
   let upVol = 0;
   let downVol = 0;
-  let upBars = 0;
-  let downBars = 0;
   for (const b of recent) {
-    if (b.close >= b.open) {
-      upVol += b.volume || 0;
-      upBars++;
-    } else {
-      downVol += b.volume || 0;
-      downBars++;
-    }
+    if (b.close >= b.open) upVol += b.volume || 0;
+    else downVol += b.volume || 0;
   }
 
-  // Spring / upthrust heuristics near range extremes
   const lastBar = slice[slice.length - 1];
   const nearLow = (lastBar.low - lo) / (hi - lo + 1e-12) < 0.12;
   const nearHigh = (hi - lastBar.high) / (hi - lo + 1e-12) < 0.12;
-  const recoveredFromLow = nearLow && lastBar.close > (lastBar.high + lastBar.low) / 2 && lastBar.close > lastBar.open;
-  const rejectedAtHigh = nearHigh && lastBar.close < (lastBar.high + lastBar.low) / 2 && lastBar.close < lastBar.open;
+  const recoveredFromLow =
+    nearLow && lastBar.close > (lastBar.high + lastBar.low) / 2 && lastBar.close > lastBar.open;
+  const rejectedAtHigh =
+    nearHigh && lastBar.close < (lastBar.high + lastBar.low) / 2 && lastBar.close < lastBar.open;
 
-  if (recoveredFromLow) events.push("Spring-like: thủng gần đáy rồi thu hồi");
-  if (rejectedAtHigh) events.push("Upthrust-like: xuyên gần đỉnh rồi bị đẩy xuống");
-  if (upVol > downVol * 1.25 && secondHalfRet > 0) events.push("Effort tăng: volume phiên tăng > volume phiên giảm");
-  if (downVol > upVol * 1.25 && secondHalfRet < 0) events.push("Effort giảm: volume phiên giảm chiếm ưu thế");
+  if (recoveredFromLow) events.push("Dạng Spring: thủng gần đáy rồi thu hồi");
+  if (rejectedAtHigh) events.push("Dạng Upthrust: xuyên gần đỉnh rồi bị đẩy xuống");
+  if (upVol > downVol * 1.25 && secondHalfRet > 0)
+    events.push("Nỗ lực tăng: khối lượng nến tăng > nến giảm");
+  if (downVol > upVol * 1.25 && secondHalfRet < 0)
+    events.push("Nỗ lực giảm: khối lượng nến giảm chiếm ưu thế");
 
   let phase: WyckoffPhase = "unknown";
   let confidence = 35;
@@ -199,22 +193,22 @@ export function analyzeWyckoff(bars: OhlcvBar[]): WyckoffSnapshot {
     phase = "accumulation";
     bias = "bullish";
     confidence = recoveredFromLow ? 62 : 48;
-    notes.push("Sideway sau nhịp giảm — nghiêng tích lũy");
+    notes.push("Đi ngang sau nhịp giảm — nghiêng tích lũy");
   } else if (isRange && firstHalfRet > 0.04) {
     phase = "distribution";
     bias = "bearish";
     confidence = rejectedAtHigh ? 62 : 48;
-    notes.push("Sideway sau nhịp tăng — nghiêng phân phối");
+    notes.push("Đi ngang sau nhịp tăng — nghiêng phân phối");
   } else if (strongUp && !isRange) {
     phase = secondHalfRet > 0.02 && firstHalfRet > 0.02 ? "markup" : "re-accumulation";
     bias = "bullish";
     confidence = 58;
-    notes.push("Chuỗi HH/HL hoặc đà tăng chiếm ưu thế");
+    notes.push("Chuỗi đỉnh/đáy cao hơn hoặc đà tăng chiếm ưu thế");
   } else if (strongDown && !isRange) {
     phase = secondHalfRet < -0.02 && firstHalfRet < -0.02 ? "markdown" : "re-distribution";
     bias = "bearish";
     confidence = 58;
-    notes.push("Chuỗi LH/LL hoặc đà giảm chiếm ưu thế");
+    notes.push("Chuỗi đỉnh/đáy thấp hơn hoặc đà giảm chiếm ưu thế");
   } else if (ret > 3) {
     phase = "markup";
     bias = "bullish";
@@ -225,14 +219,14 @@ export function analyzeWyckoff(bars: OhlcvBar[]): WyckoffSnapshot {
     confidence = 42;
   } else {
     phase = "unknown";
-    notes.push("Biên độ hẹp / hỗn hợp — chờ breakout volume");
+    notes.push("Biên độ hẹp / hỗn hợp — chờ phá vỡ kèm khối lượng");
   }
 
   if (vt === "rising" && phase === "markup") confidence = Math.min(85, confidence + 8);
   if (vt === "rising" && phase === "markdown") confidence = Math.min(85, confidence + 8);
   if (vt === "falling" && (phase === "accumulation" || phase === "distribution")) {
     confidence = Math.min(80, confidence + 5);
-    notes.push("Volume co lại trong range — đặc trưng giai đoạn cân bằng");
+    notes.push("Khối lượng co trong biên — đặc trưng giai đoạn cân bằng");
   }
 
   return {
@@ -264,7 +258,6 @@ export function analyzeElliott(bars: OhlcvBar[]): ElliottSnapshot {
     };
   }
 
-  // Take last up to 6 alternating pivots
   const seq = pivots.slice(-6);
   const waves = seq.map((p, i) => ({
     label: p.kind === "H" ? `P${i + 1}H` : `P${i + 1}L`,
@@ -272,7 +265,6 @@ export function analyzeElliott(bars: OhlcvBar[]): ElliottSnapshot {
     time: p.time,
   }));
 
-  // Classify last 5 swings if possible (L-H-L-H-L or H-L-H-L-H)
   const last5 = pivots.slice(-5);
   let pattern: ElliottPattern = "unclear";
   let confidence = 30;
@@ -304,7 +296,6 @@ export function analyzeElliott(bars: OhlcvBar[]): ElliottSnapshot {
       c.price < a.price &&
       e.price < c.price;
 
-    // 3-wave ABC: L-H-L or H-L-H on last 3
     const last3 = pivots.slice(-3);
     const abcUp =
       last3.length === 3 &&
@@ -328,15 +319,13 @@ export function analyzeElliott(bars: OhlcvBar[]): ElliottSnapshot {
       pattern = "impulse-up";
       bias = "bullish";
       confidence = 58;
-      // Label 1..5 conceptually on swings
       waves.length = 0;
       const labels = ["1", "2", "3", "4", "5"];
-      // Map L H L H L → start of 1, end 1/start 2, end 2, end 3, end 4 — simplified
       last5.forEach((p, i) => waves.push({ label: labels[i] ?? `${i}`, price: p.price, time: p.time }));
       invalidation = c.price;
       const w3 = d.price - c.price;
       nextTarget = e.price + w3 * 0.618;
-      notes.push("Cấu trúc HH/HL 5 điểm — nghiêng impulse tăng");
+      notes.push("Cấu trúc đỉnh/đáy cao hơn 5 điểm — nghiêng xung lực tăng");
       notes.push("Vô hiệu nếu thủng đáy sóng 4 (ước lượng)");
     } else if (downImpulse) {
       pattern = "impulse-down";
@@ -347,7 +336,7 @@ export function analyzeElliott(bars: OhlcvBar[]): ElliottSnapshot {
       invalidation = c.price;
       const w3 = c.price - d.price;
       nextTarget = e.price - w3 * 0.618;
-      notes.push("Cấu trúc LH/LL 5 điểm — nghiêng impulse giảm");
+      notes.push("Cấu trúc đỉnh/đáy thấp hơn 5 điểm — nghiêng xung lực giảm");
     } else if (abcUp) {
       pattern = "corrective-abc-up";
       bias = "bullish";
@@ -356,7 +345,7 @@ export function analyzeElliott(bars: OhlcvBar[]): ElliottSnapshot {
       last3.forEach((p, i) => waves.push({ label: ["A", "B", "C"][i], price: p.price, time: p.time }));
       invalidation = last3[0].price;
       nextTarget = last3[1].price + (last3[1].price - last3[2].price);
-      notes.push("3 nhịp L-H-L — đọc như ABC điều chỉnh trong xu hướng tăng");
+      notes.push("3 nhịp đáy–đỉnh–đáy — đọc như ABC điều chỉnh trong xu hướng tăng");
     } else if (abcDown) {
       pattern = "corrective-abc-down";
       bias = "bearish";
@@ -365,18 +354,17 @@ export function analyzeElliott(bars: OhlcvBar[]): ElliottSnapshot {
       last3.forEach((p, i) => waves.push({ label: ["A", "B", "C"][i], price: p.price, time: p.time }));
       invalidation = last3[0].price;
       nextTarget = last3[1].price - (last3[2].price - last3[1].price);
-      notes.push("3 nhịp H-L-H — đọc như ABC điều chỉnh trong xu hướng giảm");
+      notes.push("3 nhịp đỉnh–đáy–đỉnh — đọc như ABC điều chỉnh trong xu hướng giảm");
     } else {
-      // Overlapping swings → diagonal-ish
       const prices = last5.map((p) => p.price);
       const span = Math.max(...prices) - Math.min(...prices);
       const lastSpan = Math.abs(last5[4].price - last5[0].price);
       if (span > 0 && lastSpan / span < 0.55) {
         pattern = "diagonal";
         confidence = 40;
-        notes.push("Biên độ co hẹp giữa các pivot — có thể diagonal/nêm");
+        notes.push("Biên độ co hẹp giữa các pivot — có thể nêm chéo (diagonal)");
       } else {
-        notes.push("Pivot không khớp impulse/ABC chuẩn — giữ quan sát");
+        notes.push("Pivot không khớp xung lực/ABC chuẩn — giữ quan sát");
       }
     }
   } else {

@@ -14,6 +14,17 @@ function biasTone(b: string): "up" | "down" | "neutral" {
   return "neutral";
 }
 
+const VOL_VI: Record<string, string> = {
+  rising: "tăng",
+  falling: "giảm",
+  flat: "đi ngang",
+};
+
+const DEGREE_VI: Record<string, string> = {
+  minor: "nhỏ",
+  intermediate: "trung gian",
+};
+
 export const StockStructurePanel = memo(function StockStructurePanel({ symbol }: { symbol: string }) {
   const { data, meta, isLoading } = useApi<Data>(
     symbol ? `/api/v1/stocks/${encodeURIComponent(symbol)}/structure` : null,
@@ -53,16 +64,18 @@ export const StockStructurePanel = memo(function StockStructurePanel({ symbol }:
         <div className="grid gap-2 md:grid-cols-2">
           <div className="rounded-lg border border-border-subtle bg-background-secondary/40 p-2.5">
             <div className="mb-1.5 flex items-center justify-between gap-2">
-              <span className="text-[10px] font-semibold uppercase tracking-wider text-text-muted">Wyckoff</span>
+              <span className="text-[10px] font-semibold uppercase tracking-wider text-text-muted">
+                Wyckoff
+              </span>
               <Badge tone={biasTone(w.bias)}>{w.confidence}%</Badge>
             </div>
             <div className="text-[13px] font-medium text-text-primary">{w.phaseVi}</div>
             <div className="mt-1 text-[11px] text-text-muted">
-              Volume: {w.volumeTrend}
+              Khối lượng: {VOL_VI[w.volumeTrend] ?? w.volumeTrend}
               {w.range && (
                 <span className="num">
                   {" "}
-                  · range {w.range.low.toLocaleString()} – {w.range.high.toLocaleString()}
+                  · biên {w.range.low.toLocaleString("vi-VN")} – {w.range.high.toLocaleString("vi-VN")}
                 </span>
               )}
             </div>
@@ -90,7 +103,9 @@ export const StockStructurePanel = memo(function StockStructurePanel({ symbol }:
               <Badge tone={biasTone(e.bias)}>{e.confidence}%</Badge>
             </div>
             <div className="text-[13px] font-medium text-text-primary">{e.patternVi}</div>
-            <div className="mt-1 text-[11px] text-text-muted">Degree: {e.degree}</div>
+            <div className="mt-1 text-[11px] text-text-muted">
+              Cấp độ: {DEGREE_VI[e.degree] ?? e.degree}
+            </div>
             {e.waves.length > 0 && (
               <div className="mt-1.5 flex flex-wrap gap-1">
                 {e.waves.map((wv, i) => (
@@ -98,25 +113,25 @@ export const StockStructurePanel = memo(function StockStructurePanel({ symbol }:
                     key={i}
                     className="num rounded bg-surface-elevated px-1.5 py-0.5 text-[10px] text-text-secondary"
                   >
-                    {wv.label}:{wv.price.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                    {wv.label}:{wv.price.toLocaleString("vi-VN", { maximumFractionDigits: 2 })}
                   </span>
                 ))}
               </div>
             )}
             <div className="mt-1.5 grid grid-cols-2 gap-1 text-[10.5px]">
               <div>
-                <span className="text-text-muted">Invalidation </span>
+                <span className="text-text-muted">Vô hiệu </span>
                 <span className="num text-text-secondary">
                   {e.invalidation != null
-                    ? e.invalidation.toLocaleString(undefined, { maximumFractionDigits: 2 })
+                    ? e.invalidation.toLocaleString("vi-VN", { maximumFractionDigits: 2 })
                     : "—"}
                 </span>
               </div>
               <div>
-                <span className="text-text-muted">Target </span>
+                <span className="text-text-muted">Mục tiêu </span>
                 <span className="num text-text-secondary">
                   {e.nextTarget != null
-                    ? e.nextTarget.toLocaleString(undefined, { maximumFractionDigits: 2 })
+                    ? e.nextTarget.toLocaleString("vi-VN", { maximumFractionDigits: 2 })
                     : "—"}
                 </span>
               </div>
