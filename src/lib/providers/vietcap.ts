@@ -83,13 +83,15 @@ export async function getVietcapQuotes(symbols: string[]): Promise<{
   const results = await Promise.allSettled(uniq.map((s) => getVietcapCompany(s)));
   const quotes: Quote[] = [];
   for (const r of results) {
-    if (r.status !== "fulfilled" || !r.value?.price) continue;
+    if (r.status !== "fulfilled" || !r.value) continue;
     const p = r.value;
+    const price = p.price;
+    if (price == null || !(price > 0)) continue;
     quotes.push({
       symbol: p.symbol,
       assetClass: "stock",
       name: p.name,
-      price: p.price,
+      price,
       change: null,
       changePercent: null,
       open: null,
