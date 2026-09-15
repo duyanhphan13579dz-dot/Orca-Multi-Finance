@@ -7,9 +7,7 @@ export const runtime = "nodejs";
 
 /**
  * GET /api/v1/stocks/:symbol/fundamentals
- *
  * Phân tích cơ bản độc lập — BCTC kéo thẳng VNDirect, không qua trang báo cáo.
- * Trả health score + anchors + groups (không bắt buộc full valuation detail).
  */
 export async function GET(
   _req: Request,
@@ -50,12 +48,14 @@ export async function GET(
           marketCap: r.data.marketCap,
         },
         health: {
-          score: health.score,
-          grade: health.grade,
+          score: health.scores?.overall ?? null,
+          scores: health.scores,
+          coverage: health.coverage,
           anchors: health.anchors,
           groups: health.groups,
           warnings: health.warnings?.slice(0, 12),
           riskFlags: health.riskFlags?.slice(0, 8),
+          industry: health.industry,
         },
         multiples: r.data.multiples,
         notes: r.data.notes,

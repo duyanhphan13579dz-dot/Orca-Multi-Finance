@@ -43,7 +43,6 @@ export async function runFundamentalValuation(
     /* serverless */
   }
 
-  // Parallel: BCTC trực tiếp + giá + CP lưu hành (+ peers)
   const fsP = cached(`fv:fs:${symbol}`, {
     ttlMs: 15 * 60_000,
     staleMs: 2 * 3_600_000,
@@ -228,11 +227,14 @@ export async function runFundamentalValuation(
     historical: valuation.historical ?? null,
     peerComparison: valuation.peers ?? null,
     health: {
-      score: health.score,
-      grade: health.grade,
+      score: health.scores?.overall ?? null,
+      scores: health.scores,
+      coverage: health.coverage,
       anchors: health.anchors,
       groups: health.groups,
       warnings: health.warnings?.slice(0, 8),
+      riskFlags: health.riskFlags?.slice(0, 8),
+      industry: health.industry,
     },
     assumptions: {
       dcf: (valuation.phase3?.dcf ?? []).map((d) => ({
