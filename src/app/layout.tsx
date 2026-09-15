@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import { AppShell } from "@/components/shell";
+import { ClientProviders } from "@/components/client-providers";
 import { SettingsProvider } from "@/lib/settings";
 
 export const metadata: Metadata = {
@@ -33,7 +34,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="vi" data-theme="navy" suppressHydrationWarning className="h-full">
       <body className="h-full overflow-hidden">
         <SettingsProvider>
-          <AppShell>{children}</AppShell>
+          <ClientProviders>
+            <AppShell>{children}</AppShell>
+          </ClientProviders>
         </SettingsProvider>
       </body>
     </html>
