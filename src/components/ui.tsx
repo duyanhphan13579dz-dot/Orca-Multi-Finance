@@ -1,4 +1,4 @@
-import { Database, AlertTriangle } from "lucide-react";
+import { AlertTriangle } from "lucide-react";
 import type { FreshnessStatus, Meta } from "@/lib/types";
 
 export function Panel({
@@ -41,7 +41,17 @@ export function Panel({
   );
 }
 
-export function PanelMetric({ label, value, detail, tone = "neutral" }: { label: React.ReactNode; value: React.ReactNode; detail?: React.ReactNode; tone?: "neutral" | "up" | "down" | "warn" }) {
+export function PanelMetric({
+  label,
+  value,
+  detail,
+  tone = "neutral",
+}: {
+  label: React.ReactNode;
+  value: React.ReactNode;
+  detail?: React.ReactNode;
+  tone?: "neutral" | "up" | "down" | "warn";
+}) {
   return (
     <div className={`panel-metric panel-metric-${tone}`}>
       <span className="panel-metric-label">{label}</span>
@@ -51,7 +61,13 @@ export function PanelMetric({ label, value, detail, tone = "neutral" }: { label:
   );
 }
 
-export function Badge({ children, tone = "neutral" }: { children: React.ReactNode; tone?: "up" | "down" | "neutral" | "warn" | "accent" }) {
+export function Badge({
+  children,
+  tone = "neutral",
+}: {
+  children: React.ReactNode;
+  tone?: "up" | "down" | "neutral" | "warn" | "accent";
+}) {
   const map: Record<string, string> = {
     up: "bg-up/15 text-up border-up/30",
     down: "bg-down/15 text-down border-down/30",
@@ -59,10 +75,24 @@ export function Badge({ children, tone = "neutral" }: { children: React.ReactNod
     warn: "bg-warn/15 text-warn border-warn/30",
     accent: "bg-accent-primary/15 text-accent-primary border-accent-primary/30",
   };
-  return <span className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10.5px] sm:text-[11px] ${map[tone]}`}>{children}</span>;
+  return (
+    <span className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10.5px] sm:text-[11px] ${map[tone]}`}>
+      {children}
+    </span>
+  );
 }
 
-export function Chg({ value, suffix = "%", arrow = true, className = "" }: { value: number | null | undefined; suffix?: string; arrow?: boolean; className?: string }) {
+export function Chg({
+  value,
+  suffix = "%",
+  arrow = true,
+  className = "",
+}: {
+  value: number | null | undefined;
+  suffix?: string;
+  arrow?: boolean;
+  className?: string;
+}) {
   if (value == null || Number.isNaN(value)) return <span className={`num text-text-muted ${className}`}>—</span>;
   const up = value > 0;
   const down = value < 0;
@@ -88,32 +118,28 @@ const statusColor: Record<string, string> = {
   ERROR: "bg-down",
 };
 
-export function FreshnessDot({ status, ageMs }: { status?: FreshnessStatus | null; ageMs?: number | null }) {
+export function FreshnessDot({
+  status,
+  ageMs,
+}: {
+  status?: FreshnessStatus | null;
+  ageMs?: number | null;
+}) {
   const s = status ?? "UNAVAILABLE";
   return (
-    <span className="inline-flex items-center gap-1.5 text-[10px] font-medium tracking-wide text-ink-2" title={ageMs != null ? `Dữ liệu cách nguồn ${formatAge(ageMs)}` : s}>
+    <span
+      className="inline-flex items-center gap-1.5 text-[10px] font-medium tracking-wide text-ink-2"
+      title={ageMs != null ? `Dữ liệu cách nguồn ${formatAge(ageMs)}` : s}
+    >
       <span className={`inline-block size-1.5 rounded-full ${statusColor[s] ?? "bg-text-muted"}`} />
       {s}
     </span>
   );
 }
 
-export function MetaLine({ meta }: { meta: Meta | null | undefined }) {
-  if (!meta) return null;
-  return (
-    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-ink-3">
-      <span className="inline-flex items-center gap-1">
-        <Database className="size-3" />
-        <span className="max-w-[12rem] truncate sm:max-w-none">{meta.source}</span>
-      </span>
-      {meta.sourceTimestamp && (
-        <span className="hidden sm:inline">
-          nguồn: {new Date(meta.sourceTimestamp).toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })}
-        </span>
-      )}
-      {meta.cached && <span>cache</span>}
-    </div>
-  );
+/** Hidden — source chains clutter the UI; keep export for callers. */
+export function MetaLine(_props: { meta: Meta | null | undefined }) {
+  return null;
 }
 
 export function formatAge(ms: number): string {
@@ -130,13 +156,24 @@ export function Loading({ rows = 6 }: { rows?: number }) {
   return (
     <div className="space-y-2 p-2">
       {Array.from({ length: rows }).map((_, i) => (
-        <div key={i} className="h-8 animate-pulse rounded-md bg-surface-elevated" style={{ width: `${70 + (i % 3) * 10}%` }} />
+        <div
+          key={i}
+          className="h-8 animate-pulse rounded-md bg-surface-elevated"
+          style={{ width: `${70 + (i % 3) * 10}%` }}
+        />
       ))}
     </div>
   );
 }
 
-export function Unavailable({ title = "Nguồn dữ liệu chưa khả dụng", note, meta }: { title?: string; note?: string | null; meta?: Meta | null }) {
+export function Unavailable({
+  title = "Nguồn dữ liệu chưa khả dụng",
+  note,
+}: {
+  title?: string;
+  note?: string | null;
+  meta?: Meta | null;
+}) {
   return (
     <div className="flex flex-col items-start gap-2 rounded-lg border border-border-subtle bg-surface-panel p-5">
       <div className="flex items-center gap-2 text-warn">
@@ -144,7 +181,6 @@ export function Unavailable({ title = "Nguồn dữ liệu chưa khả dụng", 
         <span className="text-[13.5px] font-semibold">{title}</span>
       </div>
       {note && <p className="text-[12px] leading-relaxed text-text-muted">{note}</p>}
-      {meta && <MetaLine meta={meta} />}
     </div>
   );
 }

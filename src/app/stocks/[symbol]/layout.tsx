@@ -5,7 +5,7 @@ import { useApi } from "@/lib/hooks";
 import type { VnStockDetail } from "@/lib/services/stocks";
 import { AddToWatchlist } from "@/components/watchlist-button";
 import { StockTabs } from "@/components/stocks/stock-tabs";
-import { Chg, fmtCompact, fmtNum, FreshnessDot, Loading, MetaLine, Panel } from "@/components/ui";
+import { Chg, fmtCompact, fmtNum, FreshnessDot, Loading, Panel } from "@/components/ui";
 
 export default function StockSymbolLayout({
   children,
@@ -160,11 +160,6 @@ export default function StockSymbolLayout({
           </div>
         )}
 
-        {meta && (
-          <div className="hidden border-t border-border-subtle px-4 py-2 sm:block">
-            <MetaLine meta={meta} />
-          </div>
-        )}
         <StockTabs symbol={symbol} />
       </Panel>
       {children}
