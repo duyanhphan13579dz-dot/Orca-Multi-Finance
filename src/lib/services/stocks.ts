@@ -160,12 +160,32 @@ export async function getVnOhlcv(
   }
 }
 
-export async function getVnMarketBoard(): Promise<{ quotes: Quote[]; meta: Meta } | null> {
+export async function getVnMarketBoard(): Promise<{
+  quotes: Quote[];
+  indices: IndexQuote[];
+  universeSize: number;
+  sessionDate: string;
+  meta: Meta;
+} | null> {
+  bootVndLive();
+  bootSsiLive();
   try {
-    const r = await vndirect.getVndMarketQuotes();
+    const [mq, idx] = await Promise.all([
+      vndirect.getVndMarketQuotes(),
+      vndirect.getVndIndices().catch(() => ({
+        items: [] as IndexQuote[],
+        sourceTs: null as number | null,
+      })),
+    ]);
     return {
-      quotes: r.quotes,
-      meta: buildMeta({ source: "vndirect", sourceTimestampMs: r.sourceTs ?? Date.now() }),
+      quotes: mq.quotes,
+      indices: sortIndices(idx.items),
+      universeSize: mq.quotes.length,
+      sessionDate: mq.sessionDate,
+      meta: buildMeta({
+        source: "vndirect",
+        sourceTimestampMs: mq.sourceTs ?? Date.now(),
+      }),
     };
   } catch (e) {
     console.warn("[getVnMarketBoard]", e);
