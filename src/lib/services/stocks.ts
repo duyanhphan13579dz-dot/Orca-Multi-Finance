@@ -23,6 +23,7 @@ import {
 } from "../providers/vndirect-company";
 import { getVndSymbolForeignFlow } from "../providers/vndirect-foreign-symbol";
 import { getVnOrderBook, type VnOrderBook } from "./stock-orderbook";
+import { getMultiQuotes } from "./multi-quote";
 
 const INDEX_PRIORITY = ["VNINDEX", "VN30", "HNX", "UPCOM", "HNX30", "VN100"];
 
@@ -103,6 +104,23 @@ export async function getVnQuotes(symbols: string[]): Promise<{ quotes: Quote[];
     if (process.env.VNDIRECT_WS_DISABLED !== "true") vndirectWs.watchSymbol(s);
     if (ssiFcConfigured()) ssiWs.watchSymbol(s);
   }
+  try {
+    // Đa nguồn: VNDirect + VPS + SSI iBoard + Vietcap (+ SSI FC nếu có)
+    const multi = await getMultiQuotes(uniq);
+    if (multi.quotes.length) {
+      return {
+        quotes: multi.quotes,
+        meta: buildMeta({
+          source: multi.sources.join("+") || "multi",
+          sourceTimestampMs: multi.sourceTs ?? Date.now(),
+          note: multi.sources.length > 1 ? `Merged: ${multi.sources.join(", ")}` : undefined,
+        }),
+      };
+    }
+  } catch (e) {
+    console.warn("[getVnQuotes multi]", e);
+  }
+  // Last resort single-source
   try {
     const r = await vndirect.getVndQuotes(uniq);
     return {
