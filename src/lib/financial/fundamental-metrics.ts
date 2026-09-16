@@ -86,6 +86,18 @@ export interface SnapshotBundle {
   shares: number | null;
   growthYoy: { metric: string; changePct: number | null }[];
   growthQoq: { metric: string; changePct: number | null }[];
+  /** Hiệu suất đã tính server (ưu tiên) */
+  performance?: {
+    tsr?: number | null;
+    tsr1y?: number | null;
+    beta?: number | null;
+    sharpe?: number | null;
+    alpha?: number | null;
+    dividendYield?: number | null;
+    payoutRatio?: number | null;
+    sampleDays?: number;
+    note?: string;
+  } | null;
   overrides?: {
     pe?: number | null;
     pb?: number | null;
@@ -96,6 +108,7 @@ export interface SnapshotBundle {
     graham?: number | null;
     upsidePct?: number | null;
     marketCap?: number | null;
+    dividendYield?: number | null;
   };
 }
 
@@ -120,46 +133,40 @@ export function buildSnapshotMetrics(b: SnapshotBundle) {
   const ebitda = n(i0.ebitda) ?? (ebit != null ? ebit * 1.15 : null);
   const ni = rowNi(i0);
   const niPrev = rowNi(i1);
-  const interest = n(i0.interestExpense);
+  const interest = n(i0.interestExpense) ?? n(i0.financeExpense);
 
   const assets = n(b0.totalAssets);
   const equity = n(b0.equity);
-  const ca = n(b0.currentAssets);
-  const cl = n(b0.currentLiabilities);
   const cash = n(b0.cash);
-  const inv = n(b0.inventory);
-  const recv = n(b0.receivables);
-  const tl = n(b0.totalLiabilities);
+  const inventory = n(b0.inventory);
+  const receivables = n(b0.receivables) ?? n(b0.accountsReceivable);
+  const currentAssets = n(b0.currentAssets);
+  const currentLiab = n(b0.currentLiabilities);
   const std = n(b0.shortTermDebt);
   const ltd = n(b0.longTermDebt);
-  // Ưu tiên vay NH+DH; fallback tổng nợ phải trả
-  const interestBearingDebt =
-    std != null || ltd != null ? (std ?? 0) + (ltd ?? 0) : null;
-  const debt = interestBearingDebt != null && interestBearingDebt > 0 ? interestBearingDebt : tl;
-  const retained = n(b0.retainedEarnings);
+  const totalLiab = n(b0.totalLiabilities);
+  const debt =
+    std != null || ltd != null ? (std ?? 0) + (ltd ?? 0) : totalLiab;
 
-  // Dòng tiền — chỉ lấy số trên BCTC
   const ocf = n(c0.operatingCashFlow);
-  const icf = n(c0.investingCashFlow);
-  const fcfFin = n(c0.financingCashFlow);
   const capexRaw = n(c0.capex);
   const capex = capexRaw != null ? Math.abs(capexRaw) : null;
-  // FCF = OCF − |Capex| (không dùng item "biến động tiền thuần")
   const fcf =
     n(c0.freeCashFlow) ??
-    (ocf != null ? ocf - (capex ?? 0) : null);
-  const cashBegin = n(c0.cashBegin);
-  const cashEnd = n(c0.cashEnd);
-  const netCashChange =
-    cashBegin != null && cashEnd != null ? cashEnd - cashBegin : null;
-  const cfPeriod = periodLabel(c0);
+    (ocf != null && capex != null ? ocf - capex : null);
 
-  const shares = b.shares ?? n(b0.shares) ?? n(i0.shares);
-  const epsVnd = shares && ni != null && shares > 0 ? ni / shares : null;
-  const bvpsVnd = shares && equity != null && shares > 0 ? equity / shares : null;
-
+  const shares = b.shares;
   const priceQuote = b.price;
   const priceVnd = priceToVnd(priceQuote);
+
+  const yoyRev =
+    b.growthYoy.find((g) => /revenue|doanh thu/i.test(g.metric))?.changePct ??
+    (rev != null && revPrev != null && revPrev !== 0 ? (rev - revPrev) / revPrev : null);
+  const yoyNi =
+    b.growthYoy.find((g) => /netIncome|lnst|lợi nhuận/i.test(g.metric))?.changePct ??
+    (ni != null && niPrev != null && niPrev !== 0 ? (ni - niPrev) / niPrev : null);
+  const qoqRev =
+    b.growthQoq.find((g) => /revenue|doanh thu/i.test(g.metric))?.changePct ?? null;
 
   const grossMargin = div(gp, rev);
   const ebitdaMargin = div(ebitda, rev);
@@ -167,100 +174,102 @@ export function buildSnapshotMetrics(b: SnapshotBundle) {
   const roe = div(ni, equity);
   const roa = div(ni, assets);
   const nopat = ebit != null ? ebit * 0.8 : null;
-  const invested = debt != null && equity != null ? debt + equity - (cash ?? 0) : null;
+  const invested =
+    equity != null && debt != null
+      ? equity + debt - (cash ?? 0)
+      : equity;
   const roic = div(nopat, invested);
   const assetTurnover = div(rev, assets);
-  const invTurnover = div(n(i0.cogs) ?? (rev != null && gp != null ? rev - gp : null), inv);
-  const recvTurnover = div(rev, recv);
-  const dio = invTurnover ? 365 / invTurnover : inv != null && rev ? (inv * 365) / rev : null;
-  const dso = recvTurnover ? 365 / recvTurnover : recv != null && rev ? (recv * 365) / rev : null;
-  const ccc = dio != null && dso != null ? dio + dso : null;
+  const invTurnover = div(rev, inventory);
+  const recvTurnover = div(rev, receivables);
+
+  const dio = invTurnover != null && invTurnover > 0 ? 365 / invTurnover : null;
+  const dso = recvTurnover != null && recvTurnover > 0 ? 365 / recvTurnover : null;
+  const ccc = dio != null || dso != null ? (dio ?? 0) + (dso ?? 0) : null;
 
   const debtEquity = div(debt, equity);
   const ebitdaAssets = div(ebitda, assets);
-  const interestCover = div(ebitda ?? ebit, interest);
+  const interestCover = div(ebit, interest != null ? Math.abs(interest) : null);
   const fcfEbit = div(fcf, ebit);
   const debtEbitda = div(debt, ebitda);
-  const currentRatio = div(ca, cl);
-  const quickRatio = ca != null && cl != null ? (ca - (inv ?? 0)) / cl : null;
+  const currentRatio = div(currentAssets, currentLiab);
+  const quickRatio = div(
+    currentAssets != null && inventory != null ? currentAssets - inventory : currentAssets,
+    currentLiab,
+  );
 
-  const wc = ca != null && cl != null ? ca - cl : null;
+  // Altman Z (phi tài chính)
+  const wc = currentAssets != null && currentLiab != null ? currentAssets - currentLiab : null;
   const x1 = div(wc, assets);
-  const x2 = div(retained, assets);
+  const re = n(b0.retainedEarnings);
+  const x2 = div(re, assets);
   const x3 = div(ebit, assets);
-  const mktEquity =
-    b.overrides?.marketCap && b.overrides.marketCap > 0
-      ? b.overrides.marketCap
-      : priceVnd != null && shares != null
-        ? priceVnd * shares
-        : equity;
-  const x4 = div(mktEquity, tl);
+  const mcap =
+    b.overrides?.marketCap ??
+    (priceVnd != null && shares != null ? priceVnd * shares : null);
+  const x4 = div(mcap, totalLiab ?? debt);
   const x5 = div(rev, assets);
-  const altman =
-    x1 != null && x2 != null && x3 != null && x4 != null && x5 != null
-      ? 1.2 * x1 + 1.4 * x2 + 3.3 * x3 + 0.6 * x4 + 1.0 * x5
-      : null;
+  let altman: number | null = null;
+  if (x1 != null && x3 != null && x5 != null) {
+    altman =
+      1.2 * (x1 ?? 0) +
+      1.4 * (x2 ?? 0) +
+      3.3 * (x3 ?? 0) +
+      0.6 * (x4 ?? 0) +
+      1.0 * (x5 ?? 0);
+  }
+
+  const epsVnd =
+    shares != null && shares > 0 && ni != null ? ni / shares : n(i0.eps);
+  const bvpsVnd =
+    shares != null && shares > 0 && equity != null ? equity / shares : n(b0.bvps);
+
+  const pe =
+    b.overrides?.pe ??
+    (priceVnd != null && epsVnd != null && epsVnd > 0 ? priceVnd / epsVnd : null);
+  const pb =
+    b.overrides?.pb ??
+    (priceVnd != null && bvpsVnd != null && bvpsVnd > 0 ? priceVnd / bvpsVnd : null);
+  const ps =
+    b.overrides?.ps ??
+    (mcap != null && rev != null && rev > 0 ? mcap / rev : null);
+  const ev =
+    mcap != null && debt != null ? mcap + debt - (cash ?? 0) : null;
+  const evEbitda =
+    b.overrides?.evEbitda ?? (ev != null && ebitda != null && ebitda > 0 ? ev / ebitda : null);
+  const peg =
+    b.overrides?.peg ??
+    (pe != null && yoyNi != null && yoyNi > 0 ? pe / (yoyNi * 100) : null);
+
+  const dcfBase = b.overrides?.dcfBase ?? null;
+  const grahamQuote = b.overrides?.graham ?? null;
+  let upsidePct = b.overrides?.upsidePct ?? null;
+  if (upsidePct == null && dcfBase != null && priceQuote != null && priceQuote > 0) {
+    upsidePct = (dcfBase / priceQuote - 1) * 100;
+  }
+
+  // —— Hiệu suất đầu tư ——
+  const perf = b.performance;
+  let tsr: number | null = perf?.tsr1y ?? perf?.tsr ?? null;
+  if (tsr == null && b.closes.length >= 2) {
+    const a0 = b.closes[0]!;
+    const z = b.closes[b.closes.length - 1]!;
+    if (a0 > 0) tsr = (z - a0) / a0;
+  }
+  const beta = perf?.beta ?? null;
+  const sharpe = perf?.sharpe ?? null;
+  const alpha = perf?.alpha ?? null;
+  const divY =
+    perf?.dividendYield ??
+    b.overrides?.dividendYield ??
+    null;
+  const payout = perf?.payoutRatio ?? null;
+  const perfNote = perf?.note;
 
   const deBand = bandDebtEquity(debtEquity);
   const eaBand = bandEbitdaAssets(ebitdaAssets);
   const icBand = bandInterestCover(interestCover);
   const feBand = bandFcfEbit(fcfEbit);
-
-  const yoyRev =
-    b.growthYoy.find((g) => g.metric === "netRevenue" || g.metric === "revenue")?.changePct ??
-    div(rev != null && revPrev != null ? rev - revPrev : null, revPrev);
-  const yoyNi =
-    b.growthYoy.find((g) => g.metric === "netIncome")?.changePct ??
-    div(ni != null && niPrev != null ? ni - niPrev : null, niPrev);
-  const qoqRev =
-    b.growthQoq.find((g) => g.metric === "netRevenue" || g.metric === "revenue")?.changePct ?? null;
-
-  let pe = div(priceVnd, epsVnd);
-  let pb = div(priceVnd, bvpsVnd);
-  const mcap =
-    b.overrides?.marketCap && b.overrides.marketCap > 0
-      ? b.overrides.marketCap
-      : priceVnd != null && shares != null
-        ? priceVnd * shares
-        : null;
-  let ps = div(mcap, rev);
-  const ev = mcap != null ? mcap + (debt ?? 0) - (cash ?? 0) : null;
-  let evEbitda = div(ev, ebitda);
-
-  let peg: number | null = null;
-  if (pe != null && yoyNi != null && Math.abs(yoyNi) > 0.001) {
-    const gPct = Math.abs(yoyNi) < 2 ? yoyNi * 100 : yoyNi;
-    if (gPct > 0) peg = pe / gPct;
-  }
-
-  const grahamVnd =
-    epsVnd != null && bvpsVnd != null && epsVnd > 0 && bvpsVnd > 0
-      ? Math.sqrt(22.5 * epsVnd * bvpsVnd)
-      : null;
-  let grahamQuote = vndPerShareToQuote(grahamVnd);
-
-  const o = b.overrides;
-  if (o?.pe != null && o.pe > 0) pe = o.pe;
-  if (o?.pb != null && o.pb > 0) pb = o.pb;
-  if (o?.ps != null && o.ps > 0) ps = o.ps;
-  if (o?.evEbitda != null && o.evEbitda > 0) evEbitda = o.evEbitda;
-  if (o?.peg != null && o.peg > 0) peg = o.peg;
-  if (o?.graham != null && o.graham > 0) grahamQuote = o.graham;
-  const dcfBase = o?.dcfBase ?? null;
-  let upsidePct = o?.upsidePct ?? null;
-  if (upsidePct == null && dcfBase != null && priceQuote != null && priceQuote > 0) {
-    upsidePct = (dcfBase / priceQuote - 1) * 100;
-  }
-  if (upsidePct == null && grahamQuote != null && priceQuote != null && priceQuote > 0) {
-    upsidePct = (grahamQuote / priceQuote - 1) * 100;
-  }
-
-  let tsr: number | null = null;
-  if (b.closes.length >= 2) {
-    const a0 = b.closes[0]!;
-    const z = b.closes[b.closes.length - 1]!;
-    if (a0 > 0) tsr = (z - a0) / a0;
-  }
 
   const operating: MetricCell[] = [
     { key: "rev", labelVi: "Doanh thu thuần", value: rev, format: "money", delta: yoyRev, note: "YoY nếu có" },
@@ -293,18 +302,48 @@ export function buildSnapshotMetrics(b: SnapshotBundle) {
       note: shares == null ? "Thiếu SL cổ phiếu" : "Đơn vị giá quote",
     },
     { key: "epsG", labelVi: "Tăng trưởng EPS YoY", value: yoyNi, format: "pct", note: "Xấp xỉ theo LNST YoY" },
-    { key: "divY", labelVi: "Tỷ suất cổ tức", value: null, format: "pct", note: "Chưa có lịch sử cổ tức" },
-    { key: "payout", labelVi: "Tỷ lệ chi trả cổ tức", value: null, format: "pct", note: "Không đủ dữ liệu" },
+    {
+      key: "divY",
+      labelVi: "Tỷ suất cổ tức",
+      value: divY,
+      format: "pct",
+      note: divY != null ? "VNDirect ratios" : "Chưa có lịch sử cổ tức",
+    },
+    {
+      key: "payout",
+      labelVi: "Tỷ lệ chi trả cổ tức",
+      value: payout,
+      format: "pct",
+      note: payout != null ? "Ước tính" : "Không đủ dữ liệu",
+    },
     {
       key: "tsr",
       labelVi: "Total Shareholder Return",
       value: tsr,
       format: "pct",
-      note: "Theo chuỗi giá (chưa gồm cổ tức)",
+      note: perf?.tsr1y != null ? "~12 tháng (giá, chưa gồm cổ tức)" : "Theo chuỗi giá (chưa gồm cổ tức)",
     },
-    { key: "beta", labelVi: "Beta", value: null, format: "num", note: "Cần hiệp phương sai với VN-Index" },
-    { key: "sharpe", labelVi: "Sharpe Ratio", value: null, format: "num", note: "Không đủ dữ liệu" },
-    { key: "alpha", labelVi: "Alpha vs VN-Index", value: null, format: "pct", note: "Không đủ dữ liệu" },
+    {
+      key: "beta",
+      labelVi: "Beta",
+      value: beta,
+      format: "num",
+      note: beta != null ? (perfNote ?? "vs VNINDEX") : "Cần hiệp phương sai với VN-Index",
+    },
+    {
+      key: "sharpe",
+      labelVi: "Sharpe Ratio",
+      value: sharpe,
+      format: "num",
+      note: sharpe != null ? "rf≈5%, annualized" : "Không đủ dữ liệu",
+    },
+    {
+      key: "alpha",
+      labelVi: "Alpha vs VN-Index",
+      value: alpha,
+      format: "pct",
+      note: alpha != null ? "Jensen, annualized" : "Không đủ dữ liệu",
+    },
   ];
 
   const debtPillars: MetricCell[] = [
@@ -358,224 +397,45 @@ export function buildSnapshotMetrics(b: SnapshotBundle) {
     },
   ];
 
-  /** Dòng tiền — 100% từ BCTC VNDirect */
-  const cashflow: MetricCell[] = [
+  const valuation: MetricCell[] = [
+    { key: "pe", labelVi: "P/E", value: pe, format: "x" },
+    { key: "pb", labelVi: "P/B", value: pb, format: "x" },
+    { key: "ps", labelVi: "P/S", value: ps, format: "x" },
+    { key: "eve", labelVi: "EV/EBITDA", value: evEbitda, format: "x" },
+    { key: "peg", labelVi: "PEG", value: peg, format: "x" },
     {
-      key: "ocf",
-      labelVi: "CFO (LC tiền HĐKD)",
-      value: ocf,
-      format: "money",
-      note: cfPeriod !== "—" ? `Kỳ ${cfPeriod} · BCTC` : "Từ báo cáo LC tiền tệ",
-    },
-    {
-      key: "icf",
-      labelVi: "CFI (LC tiền đầu tư)",
-      value: icf,
-      format: "money",
-      note: "Từ BCTC",
-    },
-    {
-      key: "fff",
-      labelVi: "CFF (LC tiền tài chính)",
-      value: fcfFin,
-      format: "money",
-      note: "Từ BCTC",
-    },
-    {
-      key: "capex",
-      labelVi: "Capex (mua TSCĐ)",
-      value: capex,
-           format: "money",
-      note: capex == null ? "Chưa có chỉ tiêu mua TSCĐ trên CF" : "|item 32100/33100|",
-    },
-    {
-      key: "fcf",
-      labelVi: "FCF = CFO − |Capex|",
-      value: fcf,
-           format: "money",
-      note: "Tính từ BCTC, không dùng biến động tiền thuần",
-    },
-    {
-      key: "fcfm",
-      labelVi: "Biên FCF",
-      value: div(fcf, rev),
+      key: "upside",
+      labelVi: "Upside định giá",
+      value: upsidePct != null ? upsidePct / 100 : null,
       format: "pct",
-      note: "FCF / Doanh thu thuần",
+    },
+  ];
+
+  const cashflow: MetricCell[] = [
+    { key: "ocf", labelVi: "CFO (HĐKD)", value: ocf, format: "money" },
+    { key: "fcf", labelVi: "FCF", value: fcf, format: "money", note: "CFO − |Capex|" },
+    { key: "capex", labelVi: "Capex", value: capex != null ? -Math.abs(capex) : null, format: "money" },
+    {
+      key: "fcfYield",
+      labelVi: "FCF Yield",
+      value: mcap != null && fcf != null && mcap > 0 ? fcf / mcap : null,
+      format: "pct",
     },
     {
-      key: "ocfni",
+      key: "ocfNi",
       labelVi: "CFO / LNST",
       value: div(ocf, ni),
       format: "x",
-      note: ">1 lợi nhuận có tiền thật",
-    },
-    {
-      key: "ocfdebt",
-      labelVi: "CFO / Tổng nợ vay",
-      value: div(ocf, debt),
-      format: "x",
-      note: debt == null ? "Thiếu số dư vay trên BCĐKT" : undefined,
-    },
-    {
-      key: "capexrev",
-      labelVi: "Capex / Doanh thu",
-      value: div(capex, rev),
-      format: "pct",
-    },
-    {
-      key: "cashBegin",
-      labelVi: "Tiền đầu kỳ",
-      value: cashBegin,
-      format: "money",
-    },
-    {
-      key: "cashEnd",
-      labelVi: "Tiền cuối kỳ",
-      value: cashEnd,
-      format: "money",
-    },
-    {
-      key: "netCash",
-      labelVi: "Biến động tiền thuần",
-      value: netCashChange,
-      format: "money",
-      note: "Tiền cuối − đầu kỳ",
-    },
-    {
-      key: "ccc2",
-      labelVi: "Chu kỳ tiền mặt",
-      value: ccc,
-      format: "days",
-      note: ccc == null ? "Thiếu tồn kho / phải thu" : "DIO+DSO",
     },
   ];
-
-  const valuation: MetricCell[] = [
-    {
-      key: "pe",
-      labelVi: "P/E",
-      value: pe != null && pe > 0 && pe < 500 ? pe : null,
-      format: "x",
-      note: pe == null ? "Thiếu giá hoặc EPS" : undefined,
-    },
-    {
-      key: "pb",
-      labelVi: "P/B",
-      value: pb != null && pb > 0 && pb < 100 ? pb : null,
-      format: "x",
-    },
-    {
-      key: "ps",
-      labelVi: "P/S",
-      value: ps != null && ps > 0 && ps < 200 ? ps : null,
-      format: "x",
-    },
-    {
-      key: "eve",
-      labelVi: "EV/EBITDA",
-      value: evEbitda != null && evEbitda > 0 && evEbitda < 200 ? evEbitda : null,
-      format: "x",
-    },
-    {
-      key: "peg",
-      labelVi: "PEG",
-      value: peg != null && peg > 0 && peg < 20 ? peg : null,
-      format: "x",
-      note: "P/E ÷ (EPS growth %)",
-    },
-    {
-      key: "dcf",
-      labelVi: "DCF (giá trị nội tại)",
-      value: dcfBase,
-      format: "money",
-      note: dcfBase == null ? "Cần FCF dương — xem panel Định giá doanh nghiệp" : "Kịch bản Base",
-    },
-    {
-      key: "graham",
-      labelVi: "Graham Number",
-      value: grahamQuote,
-      format: "money",
-      note: grahamQuote == null ? "Cần EPS & BVPS dương" : "√(22.5×EPS×BVPS)",
-    },
-    {
-      key: "upside",
-      labelVi: "Upside vs giá mục tiêu",
-      value: upsidePct != null ? upsidePct / 100 : null,
-      format: "pct",
-      note:
-        upsidePct == null
-          ? "Chưa có FV/DCF/Graham"
-          : dcfBase != null
-            ? "So với DCF Base"
-            : "So với Graham Number",
-    },
-  ];
-
-  const incomeChrono = [...b.income].slice(0, 8).reverse();
-  const balChrono = [...b.balance].slice(0, 8).reverse();
-
-  const seriesIncome = incomeChrono.map((r) => ({
-    period: periodLabel(r),
-    revenue: rowRev(r),
-    netIncome: rowNi(r),
-    grossProfit: n(r.grossProfit),
-    grossMargin: div(n(r.grossProfit), rowRev(r)),
-    netMargin: div(rowNi(r), rowRev(r)),
-    roe: div(rowNi(r), n(r.equity) ?? equity),
-  }));
-
-  const seriesRoe = incomeChrono.map((r, idx) => {
-    const bal = balChrono[idx] ?? b0;
-    return {
-      period: periodLabel(r),
-      roe: div(rowNi(r), n(bal.equity)),
-      roa: div(rowNi(r), n(bal.totalAssets)),
-    };
-  });
 
   return {
     operating,
     investment,
     debtPillars,
     healthExtra,
-    cashflow,
     valuation,
-    seriesIncome,
-    seriesRoe,
-    meta: {
-      priceQuote,
-      priceVnd,
-      shares,
-      marketCap: mcap,
-      epsVnd,
-      bvpsVnd,
-      ocf,
-      fcf,
-      capex,
-      cfPeriod,
-    },
+    cashflow,
+    period: periodLabel(i0),
   };
-}
-
-export function formatMetric(m: MetricCell): string {
-  if (m.value == null || !Number.isFinite(m.value)) return "Không đủ dữ liệu";
-  const v = m.value;
-  switch (m.format) {
-    case "pct":
-      return `${(v * 100).toFixed(Math.abs(v) >= 0.1 ? 1 : 2)}%`;
-    case "x":
-      return `${v.toFixed(v >= 10 ? 1 : 2)}x`;
-    case "days":
-      return `${Math.round(v)} ngày`;
-    case "money": {
-      const abs = Math.abs(v);
-      if (abs >= 1e12) return `${(v / 1e12).toFixed(2)}T`;
-      if (abs >= 1e9) return `${(v / 1e9).toFixed(2)}B`;
-      if (abs >= 1e6) return `${(v / 1e6).toFixed(2)}M`;
-      if (abs >= 1000) return v.toLocaleString("vi-VN", { maximumFractionDigits: 0 });
-      return v.toLocaleString("vi-VN", { maximumFractionDigits: 2 });
-    }
-    default:
-      return v.toLocaleString("vi-VN", { maximumFractionDigits: 2 });
-  }
 }
