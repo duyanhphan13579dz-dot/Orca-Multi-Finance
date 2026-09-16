@@ -132,15 +132,12 @@ export function AiFinancialPanel({ symbol }: { symbol: string }) {
     >
       {!data && !fc && !err && !loading && !loadingFc && (
         <p className="text-[12px] text-ink-3">
-          Dữ liệu + chuỗi biểu đồ từ snapshot <strong className="text-ink-2">Báo cáo tài chính</strong>. LLM
-          OpenRouter role <code className="text-ink-2">report</code> →{" "}
-          <code className="text-ink-2">qwen/qwen3-235b-a22b:free</code> (AI_MODEL_REPORT). Reasoning sâu:{" "}
-          <code className="text-ink-2">openai/gpt-oss-120b</code>. Kiểm tra{" "}
-          <code className="text-ink-2">/api/v1/system/llm</code>.
+          Bấm <strong className="text-ink-2">AI phân tích</strong> hoặc{" "}
+          <strong className="text-ink-2">Dự báo doanh thu</strong> để bắt đầu.
         </p>
       )}
       {(loading || loadingFc) && (
-        <p className="text-[12px] text-ink-3">Đang gọi OpenRouter (qwen report)…</p>
+        <p className="text-[12px] text-ink-3">Đang phân tích…</p>
       )}
       {err && <p className="text-[12px] text-warn/90">{err}</p>}
 
@@ -210,12 +207,6 @@ export function AiFinancialPanel({ symbol }: { symbol: string }) {
               </ul>
             </div>
           )}
-          <p className="text-[10px] text-ink-3">
-            {data.usedLlm
-              ? `OpenRouter · ${data.model ?? "—"} · ${data.latencyMs ?? "—"}ms`
-              : "Engine deterministic"}{" "}
-            · {data.sourceNote}
-          </p>
         </div>
       )}
 
@@ -257,9 +248,6 @@ export function AiFinancialPanel({ symbol }: { symbol: string }) {
           {fc.narrative && (
             <p className="whitespace-pre-wrap text-[12px] leading-relaxed text-ink-2">{fc.narrative}</p>
           )}
-          <p className="text-[10px] text-ink-3">
-            {fc.usedLlm ? `LLM · ${fc.model}` : "Engine"} · {fc.sourceNote} · {fc.currencyNote}
-          </p>
         </div>
       )}
     </Panel>
