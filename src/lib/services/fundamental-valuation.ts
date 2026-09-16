@@ -183,7 +183,6 @@ export async function runFundamentalValuation(
     notes.push(`EPS suy từ giá quote / PE ratios`);
   }
 
-  // FCF proxy cho DCF: ưu tiên FCF; fallback 70% LN ròng nếu FCF ≤ 0
   let fcfProxy = health.anchors.fcfTtm;
   if ((fcfProxy == null || fcfProxy <= 0) && health.anchors.netProfit != null && health.anchors.netProfit > 0) {
     fcfProxy = health.anchors.netProfit * 0.7;
@@ -333,7 +332,8 @@ export async function runFundamentalValuation(
       discountRate?: number;
       intrinsicPerShare?: number;
       marginOfSafetyPct?: number;
-    };n    // Hỗ trợ cả DcfResult phase3 và DcfScenario legacy
+    };
+    // Hỗ trợ cả DcfResult phase3 và DcfScenario legacy
     if (row.assumptions) {
       return {
         label: row.label,
@@ -433,7 +433,6 @@ export async function runFundamentalValuation(
       weightsUsed: fv?.weightsUsed ?? null,
       dcf: valuation.dcf,
     },
-    /** Chi tiết DCF 2 giai đoạn — luôn có cho UI */
     dcfDetail: {
       scenarios: dcfScenarios,
       sensitivity: valuation.sensitivity ?? p3?.sensitivity ?? null,
