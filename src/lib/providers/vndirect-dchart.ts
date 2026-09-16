@@ -29,19 +29,32 @@ export function toDchartSymbol(symbol: string): string {
 }
 
 const MEMO = new Map<string, { at: number; bars: OhlcvBar[] }>();
-const MEMO_TTL_MS = 4_000;
+const MEMO_TTL_MS = 6_000;
+
+/** Max bars per resolution we request from dchart (API returns within from/to). */
+const MAX_BARS: Record<string, number> = {
+  D: 2_000,
+  "60": 1_500,
+  "30": 1_200,
+  "15": 1_200,
+  "5": 1_000,
+  "1": 800,
+};
 
 /**
  * Cùng nguồn biểu đồ https://dchart.vndirect.com.vn — chuẩn nến VNDirect.
- * Timeout ngắn + memo 4s để history/stream không double-fetch.
+ * Timeout + memo để history/stream không double-fetch.
+ * `bars` lớn hơn → from lùi xa hơn (ngày lịch × hệ số phiên giao dịch).
  */
 export async function fetchVndDchartHistory(
   symbol: string,
   resolution: "D" | "1" | "5" | "15" | "30" | "60" = "D",
-  bars = 250,
+  bars = 500,
 ): Promise<OhlcvBar[]> {
   const sym = toDchartSymbol(symbol);
-  const key = `${sym}:${resolution}:${bars}`;
+  const cap = MAX_BARS[resolution] ?? 1_000;
+  const want = Math.max(20, Math.min(Math.floor(bars), cap));
+  const key = `${sym}:${resolution}:${want}`;
   const hit = MEMO.get(key);
   if (hit && Date.now() - hit.at < MEMO_TTL_MS && hit.bars.length) return hit.bars;
 
@@ -58,7 +71,10 @@ export async function fetchVndDchartHistory(
             : resolution === "5"
               ? 300
               : 60;
-  const from = to - Math.ceil(bars * stepSec * 1.2);
+
+  // Daily: ~250 phiên/năm → nhân 1.6 lịch; intraday: buffer 1.35
+  const calendarPad = resolution === "D" ? 1.65 : 1.35;
+  const from = to - Math.ceil(want * stepSec * calendarPad);
   const url = `https://dchart-api.vndirect.com.vn/dchart/history?symbol=${encodeURIComponent(sym)}&resolution=${resolution}&from=${from}&to=${to}`;
 
   let lastErr: unknown = null;
@@ -71,7 +87,7 @@ export async function fetchVndDchartHistory(
           Origin: "https://dchart.vndirect.com.vn",
           Referer: "https://dchart.vndirect.com.vn/",
         },
-        signal: AbortSignal.timeout(attempt === 0 ? 4_500 : 6_000),
+        signal: AbortSignal.timeout(attempt === 0 ? 6_000 : 9_000),
         cache: "no-store",
       });
       if (!res.ok) throw new ProviderError(`vndirect dchart HTTP ${res.status} (${sym})`, "vndirect");
@@ -123,16 +139,16 @@ export async function fetchVndDchartHistory(
         });
       }
       if (!out.length) throw new ProviderError(`vndirect dchart empty ${sym}`, "vndirect");
-      const sliced = out.slice(-bars);
+      const sliced = out.slice(-want);
       MEMO.set(key, { at: Date.now(), bars: sliced });
-      if (MEMO.size > 80) {
+      if (MEMO.size > 100) {
         const oldest = [...MEMO.entries()].sort((a, b) => a[1].at - b[1].at)[0];
         if (oldest) MEMO.delete(oldest[0]);
       }
       return sliced;
     } catch (e) {
       lastErr = e;
-      if (attempt === 0) await new Promise((r) => setTimeout(r, 120));
+      if (attempt === 0) await new Promise((r) => setTimeout(r, 150));
     }
   }
   throw lastErr instanceof ProviderError
