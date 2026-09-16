@@ -224,21 +224,36 @@ async function stockCandles(symbol: string, tf: string, limit: number): Promise<
   const native = vndDchartResolution(tf);
   if (native) {
     try {
-      const bars = await fetchVndDchartHistory(symbol, native, Math.min(limit, native === "D" ? 400 : 500));
+      // Daily up to 2000 bars (~8y); intraday up to 1500
+      const fetchN =
+        native === "D"
+          ? Math.min(limit, 2_000)
+          : native === "60"
+            ? Math.min(limit, 1_500)
+            : Math.min(limit, 1_200);
+      const bars = await fetchVndDchartHistory(symbol, native, fetchN);
       if (bars.length >= 1) {
         return {
           candles: bars.map(toCandle).slice(-limit),
           source: "vndirect-dchart",
-          note: `VNDirect dchart ${tf}`,
+          note: `VNDirect dchart ${tf} · ${Math.min(bars.length, limit)} nến`,
         };
       }
     } catch {
       /* fall through */
     }
     if (tf === "1m" || tf === "5m" || tf === "15m" || tf === "1h") {
-      const r = await getVnOhlcv(symbol, Math.min(limit, 40));
+      // Prefer dchart history; only fall back to single session anchor if empty
+      const r = await getVnOhlcv(symbol, Math.min(limit, 250));
       if (!r?.bars.length) {
         return { candles: [] as ChartCandle[], source: "vndirect-live-only", note: "Intraday VN — chờ tick" };
+      }
+      if (r.bars.length >= 5) {
+        return {
+          candles: r.bars.map(toCandle).slice(-limit),
+          source: r.meta.source || "vndirect-ohlcv",
+          note: `Intraday fallback OHLCV · ${Math.min(r.bars.length, limit)} nến`,
+        };
       }
       const last = r.bars[r.bars.length - 1];
       return {
@@ -260,7 +275,7 @@ async function stockCandles(symbol: string, tf: string, limit: number): Promise<
 
   if (tf === "4h") {
     try {
-      const bars = await fetchVndDchartHistory(symbol, "60", Math.min(limit * 4, 500));
+      const bars = await fetchVndDchartHistory(symbol, "60", Math.min(limit * 4, 1_500));
       const candles = aggregateCandles(bars.map(toCandle), TF_MS["4h"]).slice(-limit);
       if (candles.length) {
         return { candles, source: "vndirect-dchart-1h→4h", note: "4H aggregate từ dchart 1H" };
@@ -272,14 +287,14 @@ async function stockCandles(symbol: string, tf: string, limit: number): Promise<
 
   const dayLimit =
     tf === "1d"
-      ? Math.min(limit, 400)
+      ? Math.min(limit, 2_000)
       : tf === "1w"
-        ? Math.min(limit * 5, 900)
+        ? Math.min(limit * 5, 2_000)
         : tf === "1M"
-          ? Math.min(limit * 22, 1200)
+          ? Math.min(limit * 22, 2_000)
           : tf === "12M"
-            ? Math.min(limit * 250, 2000)
-            : Math.min(limit * 5, 800);
+            ? Math.min(limit * 250, 2_000)
+            : Math.min(limit * 5, 1_500);
 
   const r = await getVnOhlcv(symbol, dayLimit);
   if (!r) throw new Error("stock_ohlcv_unavailable");
@@ -348,15 +363,22 @@ async function commodityCandles(symbol: string, tf: string, limit: number): Prom
   return { candles, source: `yahoo-finance (${ySym})`, note: "Yahoo futures/spot" };
 }
 
+function maxHistoryLimit(assetType: ChartAssetType): number {
+  if (assetType === "crypto") return 5_000;
+  if (assetType === "stock") return 2_500;
+  return 2_000;
+}
+
 export async function getChartHistory(args: ChartArgs): Promise<{ data: ChartMarketData; meta: Meta } | null> {
   const symbol = args.symbol.toUpperCase().replace(/[^A-Z0-9]/g, "");
   const tf = args.timeframe;
-  const limit = Math.min(Math.max(args.limit ?? 280, 40), args.assetType === "crypto" ? 5000 : 400);
+  const maxL = maxHistoryLimit(args.assetType);
+  const limit = Math.min(Math.max(args.limit ?? 500, 40), maxL);
   if (!tfsFor(args.assetType).includes(tf)) return null;
 
   try {
     const res = await cached(`chart:${args.assetType}:${symbol}:${tf}:${limit}`, {
-      ttlMs: args.assetType === "crypto" ? 10_000 : args.assetType === "forex" ? 20_000 : 5_000,
+      ttlMs: args.assetType === "crypto" ? 10_000 : args.assetType === "forex" ? 20_000 : 8_000,
       staleMs: 24 * 3_600_000,
       producer: async () => {
         const raw =
@@ -390,7 +412,10 @@ export async function getChartHistory(args: ChartArgs): Promise<{ data: ChartMar
       sourceTimestampMs: last?.time ?? Date.now(),
       cached: res.cached,
       stale: res.stale,
-      note: [note, gaps ? `${gaps} khoảng trống` : null, suspect ? "quality: SUSPECT" : null].filter(Boolean).join(" · ") || undefined,
+      note:
+        [note, gaps ? `${gaps} khoảng trống` : null, suspect ? "quality: SUSPECT" : null]
+          .filter(Boolean)
+          .join(" · ") || undefined,
       slas:
         args.assetType === "crypto"
           ? { liveSlaMs: TF_MS[tf] * 1.5, freshSlaMs: TF_MS[tf] * 4, delayedSlaMs: TF_MS[tf] * 20 }

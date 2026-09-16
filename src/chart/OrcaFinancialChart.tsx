@@ -64,7 +64,10 @@ function normalizeKind(raw: string | undefined): ChartKind {
   return "candles";
 }
 
-/** Prefer deeper history on higher TFs; keep intraday lighter for performance. */
+/**
+ * Độ sâu lịch sử theo asset / timeframe.
+ * Cổ phiếu VN: 1D ~3–4 năm phiên, 1W ~5 năm, 1H/4H sâu hơn để zoom.
+ */
 function historyLimit(assetType: ChartAssetType, tf: string): number {
   const isDailyPlus = tf === "1d" || tf === "1w" || tf === "1M";
   const isHighTf = isDailyPlus || tf === "4h" || tf === "6h" || tf === "12h" || tf === "2h";
@@ -74,10 +77,15 @@ function historyLimit(assetType: ChartAssetType, tf: string): number {
     return 1500;
   }
   if (assetType === "stock") {
-    if (tf === "12M" || tf === "1M") return 120;
-    if (isDailyPlus) return 180;
-    if (tf === "4h" || tf === "1h") return 120;
-    return 100;
+    if (tf === "12M") return 40;
+    if (tf === "1M") return 180;
+    if (tf === "1w") return 400;
+    if (tf === "1d") return 1000;
+    if (tf === "4h") return 600;
+    if (tf === "1h") return 500;
+    if (tf === "15m" || tf === "30m") return 400;
+    if (tf === "5m") return 350;
+    return 300;
   }
   if (assetType === "commodity") return isDailyPlus ? 1000 : 800;
   if (isDailyPlus) return 1500;
@@ -404,6 +412,13 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
         {data?.candles?.length ? (
           <span className="text-[10px] text-text-muted">
             {data.candles.length} nến ·{" "}
+            {new Date(data.candles[0].time).toLocaleDateString("vi-VN", {
+              timeZone: "Asia/Ho_Chi_Minh",
+              day: "2-digit",
+              month: "2-digit",
+              year: "2-digit",
+            })}
+            {" → "}
             {new Date(data.candles[data.candles.length - 1].time).toLocaleString("vi-VN", {
               timeZone: "Asia/Ho_Chi_Minh",
               hour: "2-digit",
