@@ -78,6 +78,106 @@ function tierClass(t: string) {
   return "text-positive";
 }
 
+/** RR mục tiêu theo đòn bẩy — đòn cao → RR thấp hơn (chốt gần hơn). */
+function rrForLeverage(leverage: number): number {
+  if (leverage >= 100) return 1.0;
+  if (leverage >= 50) return 1.15;
+  if (leverage >= 20) return 1.3;
+  if (leverage >= 10) return 1.5;
+  if (leverage >= 5) return 1.75;
+  return 2.0;
+}
+
+/**
+ * Scale khoảng SL theo đòn bẩy (ref 10x).
+ * Đòn cao → SL hẹp hơn; đòn thấp → SL rộng hơn.
+ */
+function stopScaleForLeverage(leverage: number): number {
+  const ref = 10;
+  const raw = Math.sqrt(ref / Math.max(1, leverage));
+  return Math.min(2.2, Math.max(0.28, raw));
+}
+
+/**
+ * Entry đề xuất + SL/TP theo đòn bẩy.
+ * Entry = limit/vùng chờ, không neo cứng giá thị trường.
+ */
+function levelsForLeverage(opts: {
+  last: number;
+  direction: string;
+  setupEntry: number | null;
+  setupSl: number | null;
+  entryZone: [number, number] | null;
+  micro: { support: number[]; resistance: number[] };
+  pipSize: number;
+  atrPips: number | null;
+  leverage: number;
+}) {
+  const { last, direction, setupEntry, setupSl, entryZone, micro, pipSize, atrPips, leverage } = opts;
+
+  const dirLower = (direction || "").toLowerCase();
+  const isBuy =
+    direction === "watch-long" || direction === "BUY" || dirLower.includes("long") || dirLower === "buy";
+  const isSell =
+    direction === "watch-short" ||
+    direction === "SELL" ||
+    dirLower.includes("short") ||
+    dirLower === "sell";
+  if (!isBuy && !isSell) return null;
+  if (!Number.isFinite(last) || last <= 0) return null;
+
+  const atrAbs =
+    atrPips != null && atrPips > 0 ? atrPips * pipSize : Math.max(last * 0.001, pipSize * 10);
+  const scale = stopScaleForLeverage(leverage);
+  const rr = rrForLeverage(leverage);
+
+  let entry: number;
+  if (entryZone && entryZone.length === 2 && entryZone[0] > 0 && entryZone[1] > 0) {
+    const lo = Math.min(entryZone[0], entryZone[1]);
+    const hi = Math.max(entryZone[0], entryZone[1]);
+    entry = isBuy ? lo + (hi - lo) * 0.35 : lo + (hi - lo) * 0.65;
+  } else if (setupEntry != null && Number.isFinite(setupEntry) && setupEntry > 0) {
+    const pull = atrAbs * 0.15 * scale;
+    entry = isBuy ? Math.min(setupEntry, last) - pull * 0.25 : Math.max(setupEntry, last) + pull * 0.25;
+  } else {
+    const pull = atrAbs * 0.2 * Math.min(scale, 1.2);
+    entry = isBuy ? last - pull : last + pull;
+  }
+
+  if (isBuy && micro.support.length) {
+    const near = micro.support.filter((x) => x < last && x > last * 0.98).sort((a, b) => b - a)[0];
+    if (near) entry = (entry + near) / 2;
+  } else if (isSell && micro.resistance.length) {
+    const near = micro.resistance.filter((x) => x > last && x < last * 1.02).sort((a, b) => a - b)[0];
+    if (near) entry = (entry + near) / 2;
+  }
+
+  let baseStop =
+    setupSl != null && setupEntry != null && Number.isFinite(setupSl)
+      ? Math.abs(setupEntry - setupSl)
+      : atrAbs * 1.0;
+  baseStop = Math.max(baseStop, pipSize * 5);
+
+  let stopDist = baseStop * scale;
+  const maxStopPct = 0.4 / Math.max(1, leverage);
+  stopDist = Math.min(stopDist, entry * maxStopPct);
+  stopDist = Math.max(stopDist, pipSize * (leverage >= 50 ? 4 : leverage >= 20 ? 6 : 8));
+
+  const stopLoss = isBuy ? entry - stopDist : entry + stopDist;
+  const takeProfit = isBuy ? entry + stopDist * rr : entry - stopDist * rr;
+  const stopPips = stopDist / pipSize;
+
+  return {
+    entry,
+    stopLoss,
+    takeProfit,
+    stopPips,
+    riskReward: rr,
+    direction: isBuy ? "BUY" : "SELL",
+    scale,
+  };
+}
+
 export const ForexScalpPanel = memo(function ForexScalpPanel({ pair }: { pair: string }) {
   const { data, meta, isLoading } = useApi<FxScalpResult>(`/api/v1/forex/${encodeURIComponent(pair)}/scalp`, {
     refreshInterval: 90_000,
@@ -88,14 +188,14 @@ export const ForexScalpPanel = memo(function ForexScalpPanel({ pair }: { pair: s
       title={
         <span className="flex items-center gap-2">
           <Zap className="size-4 text-accent-primary" /> Signal · Forex Scalping
-          {meta && <FreshnessDot status={meta.freshness} ageMs={meta.ageMs} />}
         </span>
       }
+      right={meta ? <FreshnessDot status={meta.freshness} ageMs={meta.ageMs} /> : undefined}
     >
       {isLoading && !data ? (
-        <Loading rows={4} />
-      ) : !data ? (
-        <Unavailable title="Chua du du lieu M15/M5 (Yahoo FX)" meta={meta} />
+        <Loading rows={6} />
+      ) : !data?.signal ? (
+        <Unavailable title={`Không có tín hiệu scalp ${pair}`} meta={meta} />
       ) : (
         <View signal={data.signal} meta={meta} />
       )}
@@ -111,25 +211,44 @@ const View = memo(function View({ signal: s, meta }: { signal: FxSignal; meta: M
   const [leverage, setLeverage] = useState(10);
   const capital = 10_000;
 
-  const entry = setup?.entry ?? null;
-  const stopLoss = setup?.stopLoss ?? null;
-  const takeProfit = setup?.takeProfit ?? null;
+  const levels = useMemo(
+    () =>
+      levelsForLeverage({
+        last: s.last,
+        direction: setup?.direction ?? s.direction,
+        setupEntry: setup?.entry ?? null,
+        setupSl: setup?.stopLoss ?? null,
+        entryZone: s.entryZone,
+        micro: s.micro,
+        pipSize: s.pipSize > 0 ? s.pipSize : s.last >= 50 ? 0.01 : 0.0001,
+        atrPips: s.atrPips,
+        leverage,
+      }),
+    [s.last, s.direction, s.entryZone, s.micro, s.pipSize, s.atrPips, setup, leverage],
+  );
+
+  const entry = levels?.entry ?? null;
+  const stopLoss = levels?.stopLoss ?? null;
+  const takeProfit = levels?.takeProfit ?? null;
+  const stopPips = levels?.stopPips ?? null;
+  const riskReward = levels?.riskReward ?? null;
 
   const levScenario = useMemo(() => {
-    if (entry == null || !Number.isFinite(entry) || entry <= 0) return null;
+    if (entry == null || !Number.isFinite(entry) || entry <= 0 || stopLoss == null) return null;
     const notional = capital * leverage;
-    const riskPct =
-      stopLoss != null && Number.isFinite(stopLoss) ? Math.abs(entry - stopLoss) / entry : null;
+    const riskPct = Math.abs(entry - stopLoss) / entry;
     const rewardPct =
       takeProfit != null && Number.isFinite(takeProfit) ? Math.abs(takeProfit - entry) / entry : null;
     const tpPnl = rewardPct != null ? notional * rewardPct : null;
-    const slPnl = riskPct != null ? -(notional * riskPct) : null;
+    const slPnl = -(notional * riskPct);
     const tier = riskTier(leverage);
     return {
       notional,
       tpPnl,
       slPnl,
       tier,
+      riskPct: Number((riskPct * 100).toFixed(3)),
+      rewardPct: rewardPct != null ? Number((rewardPct * 100).toFixed(3)) : null,
       wipePct: Number(((1 / leverage) * 100).toFixed(2)),
     };
   }, [entry, stopLoss, takeProfit, leverage]);
@@ -154,61 +273,44 @@ const View = memo(function View({ signal: s, meta }: { signal: FxSignal; meta: M
         </div>
         <div className="flex flex-wrap gap-1.5">
           <Badge tone={s.filter.eligible ? "up" : "down"}>tier {s.filter.tier}</Badge>
-          <Badge tone={s.filter.sessionLabel === "OFF_SESSION" ? "neutral" : "accent"}>{s.filter.sessionLabel}</Badge>
+          <Badge tone={s.filter.sessionLabel === "OFF_SESSION" ? "neutral" : "accent"}>
+            {s.filter.sessionLabel}
+          </Badge>
           <Badge tone="neutral">{s.regime.market}</Badge>
-          {setup && (
-            <Badge tone={setup.status === "TRIGGERED" ? "up" : "neutral"}>
-              {setup.strategy}:{setup.status}
-            </Badge>
-          )}
         </div>
       </div>
 
-      <div>
-        <div className="mb-1 flex items-center justify-between text-[10px] text-text-muted">
-          <span>Độ tin cậy (strength)</span>
-          <span className="num text-text-secondary">{conf}%</span>
-        </div>
-        <div className="h-1.5 overflow-hidden rounded-full bg-background-secondary">
-          <div className={`h-full rounded-full transition-all ${confBar}`} style={{ width: `${conf}%` }} />
-        </div>
+      <div className="h-1.5 overflow-hidden rounded-full bg-background-secondary">
+        <div className={`h-full ${confBar} transition-all`} style={{ width: `${conf}%` }} />
       </div>
 
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-        <Metric label="Last" value={fmtNum(s.last, digits)} />
-        <Metric
-          label="Spread"
-          value={
-            s.filter.spreadPips != null
-              ? `${s.filter.spreadPips.toFixed(1)} / ${s.filter.maxSpreadPips} pip`
-              : `max ${s.filter.maxSpreadPips} pip`
-          }
-        />
-        <Metric label="ATR" value={s.atrPips != null ? `${s.atrPips.toFixed(1)} pip` : "-"} />
-        <Metric
-          label="Risk / trade"
-          value={`${s.riskHint.recommendedRiskPct}%`}
-          hint={s.riskHint.stopPips != null ? `SL ~ ${s.riskHint.stopPips.toFixed(1)} pip` : undefined}
-        />
-      </div>
-
-      {setup && (setup.entry != null || setup.stopLoss != null) && (
+      {levels && (
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-          <Metric label="Entry" value={setup.entry != null ? fmtNum(setup.entry, digits) : "-"} tone="up" />
-          <Metric label="Stop" value={setup.stopLoss != null ? fmtNum(setup.stopLoss, digits) : "-"} tone="down" />
+          <Metric
+            label="Entry đề xuất"
+            value={entry != null ? fmtNum(entry, digits) : "-"}
+            tone="up"
+            hint="Limit / vùng chờ"
+          />
+          <Metric
+            label="SL"
+            value={stopLoss != null ? fmtNum(stopLoss, digits) : "-"}
+            tone="down"
+            hint={stopPips != null ? `${stopPips.toFixed(1)} pip · ${leverage}x` : undefined}
+          />
           <Metric
             label="TP"
-            value={setup.takeProfit != null ? fmtNum(setup.takeProfit, digits) : "-"}
+            value={takeProfit != null ? fmtNum(takeProfit, digits) : "-"}
             tone="up"
-            hint={setup.riskReward != null ? `RR ${setup.riskReward}` : undefined}
+            hint={riskReward != null ? `RR ${riskReward}` : undefined}
           />
-          <Metric label="Stop pips" value={setup.stopPips != null ? `${setup.stopPips.toFixed(1)}` : "-"} />
+          <Metric label="Giá TT" value={fmtNum(s.last, digits)} hint="Tham chiếu" />
         </div>
       )}
 
       <div className="rounded-lg border border-border-subtle bg-background-secondary/40 p-2.5">
         <div className="mb-1.5 flex items-center justify-between text-[10px]">
-          <span className="font-semibold text-text-secondary">Đòn bẩy · kịch bản (minh họa)</span>
+          <span className="font-semibold text-text-secondary">Đòn bẩy · SL/TP theo mức</span>
           <span className="num text-text-primary">{leverage}x</span>
         </div>
         <input
@@ -238,18 +340,24 @@ const View = memo(function View({ signal: s, meta }: { signal: FxSignal; meta: M
           ))}
         </div>
 
-        <div className="mt-2.5 grid grid-cols-3 gap-1.5 text-[10px]">
+        <p className="mt-1.5 text-[10px] text-text-muted">
+          Mỗi mức đòn bẩy cho SL/TP khác nhau · Entry là mức limit đề xuất (không cố định giá TT).
+        </p>
+        <div className="mt-2 grid grid-cols-3 gap-1.5 text-[10px]">
           <div className="panel-inset p-1.5 text-center">
-            <div className="text-text-muted">Entry</div>
+            <div className="text-text-muted">Entry đề xuất</div>
             <div className="num mt-0.5 text-text-primary">{entry != null ? fmtNum(entry, digits) : "—"}</div>
           </div>
           <div className="panel-inset p-1.5 text-center">
-            <div className="text-text-muted">SL</div>
+            <div className="text-text-muted">SL · {leverage}x</div>
             <div className="num mt-0.5 text-negative">{stopLoss != null ? fmtNum(stopLoss, digits) : "—"}</div>
+            {stopPips != null && <div className="text-[9px] text-text-muted">{stopPips.toFixed(1)} pip</div>}
           </div>
           <div className="panel-inset p-1.5 text-center">
-            <div className="text-text-muted">TP</div>
-            <div className="num mt-0.5 text-positive">{takeProfit != null ? fmtNum(takeProfit, digits) : "—"}</div>
+            <div className="text-text-muted">TP · RR {riskReward ?? "—"}</div>
+            <div className="num mt-0.5 text-positive">
+              {takeProfit != null ? fmtNum(takeProfit, digits) : "—"}
+            </div>
           </div>
         </div>
 
@@ -260,73 +368,53 @@ const View = memo(function View({ signal: s, meta }: { signal: FxSignal; meta: M
               <div className="num mt-0.5 text-text-primary">${levScenario.notional.toLocaleString()}</div>
             </div>
             <div className="panel-inset p-1.5">
-              <div className="text-text-muted">TP PnL</div>
+              <div className="text-text-muted">PnL nếu chạm TP</div>
               <div className="num mt-0.5 text-positive">{money(levScenario.tpPnl)}</div>
             </div>
             <div className="panel-inset p-1.5">
-              <div className="text-text-muted">SL PnL</div>
+              <div className="text-text-muted">PnL nếu chạm SL</div>
               <div className="num mt-0.5 text-negative">{money(levScenario.slPnl)}</div>
             </div>
             <div className="panel-inset p-1.5">
-              <div className="text-text-muted">Rủi ro</div>
-              <div className={`mt-0.5 font-semibold ${tierClass(levScenario.tier)}`}>{levScenario.tier}</div>
+              <div className="text-text-muted">Rủi ro đòn bẩy</div>
+              <div className={`num mt-0.5 font-semibold ${tierClass(levScenario.tier)}`}>
+                {levScenario.tier}
+              </div>
+              <div className="text-[9px] text-text-muted">Liquid ~{levScenario.wipePct}% move</div>
             </div>
           </div>
         )}
-
-        {!levScenario && (
-          <p className="mt-2 text-[10px] text-text-muted">
-            Chưa có Entry/SL/TP — chờ confluence mẫu nến + EMA/RSI/MACD hoặc setup A/C.
-          </p>
-        )}
-
-        {levScenario && leverage >= 20 && (
-          <p className="mt-1.5 text-[9px] leading-snug text-warning">
-            ~{levScenario.wipePct}% biến động ngược ≈ rủi ro vốn (minh họa, không phải thanh lý thực tế). Vốn giả định ${
-            capital.toLocaleString()}.
-          </p>
-        )}
       </div>
 
-      {(s.micro?.support?.length ?? 0) + (s.micro?.resistance?.length ?? 0) > 0 && (
-        <div className="flex flex-wrap items-center gap-2 text-[11px]">
-          <Crosshair className="size-3.5 text-text-muted" />
-          {(s.micro.support ?? []).slice(0, 2).map((v) => (
-            <span key={`s${v}`} className="num rounded bg-positive/10 px-1.5 py-0.5 text-positive">
-              {fmtNum(v, digits)}
-            </span>
-          ))}
-          <span className="text-text-muted">·</span>
-          {(s.micro.resistance ?? []).slice(0, 2).map((v) => (
-            <span key={`r${v}`} className="num rounded bg-negative/10 px-1.5 py-0.5 text-negative">
-              {fmtNum(v, digits)}
-            </span>
-          ))}
+      {s.evidence?.length > 0 && (
+        <div className="space-y-1">
+          <div className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-text-muted">
+            <Crosshair className="size-3" /> Evidence
+          </div>
+          <ul className="space-y-0.5 text-[11px] text-text-secondary">
+            {s.evidence.slice(0, 6).map((e, i) => (
+              <li key={i} className="flex gap-1.5">
+                <span className="text-accent-primary">·</span>
+                <span>{e}</span>
+              </li>
+            ))}
+          </ul>
         </div>
       )}
 
-      <ul className="space-y-1">
-        {(s.evidence ?? []).map((e, i) => (
-          <li key={i} className="text-[12px] text-text-secondary">
-            ▸ {e}
-          </li>
-        ))}
-      </ul>
-
-      {(s.riskNotes ?? []).length > 0 && (
-        <div className="space-y-1 rounded-lg border border-warning/25 bg-warning/5 p-2.5">
-          {s.riskNotes.map((r, i) => (
-            <div key={i} className="flex items-start gap-1.5 text-[11.5px] text-text-secondary">
-              <ShieldAlert className="mt-0.5 size-3.5 shrink-0 text-warning" /> {r}
-            </div>
-          ))}
+      {s.riskNotes?.length > 0 && (
+        <div className="rounded-md border border-warning/30 bg-warning/5 p-2 text-[11px] text-text-secondary">
+          <div className="mb-1 flex items-center gap-1 font-semibold text-warning">
+            <ShieldAlert className="size-3.5" /> Lưu ý rủi ro
+          </div>
+          <ul className="space-y-0.5">
+            {s.riskNotes.slice(0, 4).map((n, i) => (
+              <li key={i}>· {n}</li>
+            ))}
+          </ul>
         </div>
       )}
 
-      <p className="text-[10.5px] text-text-muted">
-        Module A/C + Tech/Pattern (EMA·RSI·MACD·nến) · Session soft-gate (OFF_SESSION giảm strength) · Module B OTC
-        chưa có order-flow. Risk mặc định ≤0.25%/lệnh. Không phải khuyến nghị đầu tư.
-      </p>
       {meta && <MetaLine meta={meta} />}
     </div>
   );
