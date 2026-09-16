@@ -163,27 +163,80 @@ async function cryptoCandles(symbol: string, tf: string, limit: number): Promise
   return { candles: bars.map(toCandle), source: "binance" };
 }
 
+/** Map EURUSD / USDJPY → Yahoo FX symbol */
+function yahooForexSymbol(pair: string): string {
+  const s = pair.toUpperCase().replace(/[^A-Z]/g, "");
+  if (s.length >= 6) return `${s.slice(0, 3)}${s.slice(3, 6)}=X`;
+  return `${s}=X`;
+}
+
+/**
+ * Forex chart multi-source:
+ * 1) Yahoo Finance OHLC (intraday + daily) — primary
+ * 2) Frankfurter/ECB daily reference — fallback
+ */
 async function forexCandles(pair: string, tf: string, limit: number): Promise<CandleSeriesResult> {
-  const base = pair.slice(0, 3);
-  const quote = pair.slice(3, 6);
-  const days = tf === "12M" ? 4000 : tf === "1M" ? 3650 : tf === "1w" ? 1825 : 730;
-  const direct = await getFrankfurterSeries(base, quote, days);
-  let candles: ChartCandle[] = direct.map((x) => ({
-    time: Date.parse(`${x.date}T00:00:00Z`),
-    open: x.rate,
-    high: x.rate,
-    low: x.rate,
-    close: x.rate,
-    volume: 0,
-  }));
-  if (tf === "1w") candles = aggregateCandles(candles, TF_MS["1w"]);
-  if (tf === "1M") candles = aggregateCandles(candles, TF_MS["1M"]);
-  if (tf === "12M") candles = aggregateCandles(candles, TF_MS["12M"]);
-  return {
-    candles: candles.slice(-limit),
-    source: "frankfurter-ecb (free, no key)",
-    note: "Chart FX dùng tỷ giá tham chiếu ECB/Frankfurter miễn phí",
-  };
+  const base = pair.slice(0, 3).toUpperCase();
+  const quote = pair.slice(3, 6).toUpperCase();
+  const ySym = yahooForexSymbol(pair);
+
+  try {
+    const cfg =
+      yahooIntervalFor(
+        tf === "12M" ? "1M" : tf === "1w" ? "1w" : tf === "1M" ? "1M" : tf === "4h" ? "4h" : tf,
+      ) ?? (tf === "1d" ? { interval: "1d", range: "max" } : null);
+
+    if (cfg) {
+      const y = await getYahooChart(ySym, cfg.interval, cfg.range);
+      let candles = y.candles;
+      if (cfg.aggregate4h || tf === "4h") {
+        candles = aggregateCandles(candles, TF_MS["4h"]);
+      }
+      if (tf === "12M") {
+        candles = aggregateCandles(candles, TF_MS["12M"]);
+      }
+      if (candles.length >= 5) {
+        return {
+          candles: candles.slice(-limit),
+          source: `yahoo-finance (${ySym})`,
+          note: `FX OHLC Yahoo · ${tf} · ${Math.min(candles.length, limit)} nến`,
+        };
+      }
+    }
+  } catch {
+    /* fall through to Frankfurter */
+  }
+
+  const days =
+    tf === "12M" ? 4000 : tf === "1M" ? 3650 : tf === "1w" ? 1825 : tf === "1d" ? 1200 : 730;
+  try {
+    const direct = await getFrankfurterSeries(base, quote, days);
+    let candles: ChartCandle[] = direct.map((x) => ({
+      time: Date.parse(`${x.date}T00:00:00Z`),
+      open: x.rate,
+      high: x.rate,
+      low: x.rate,
+      close: x.rate,
+      volume: 0,
+    }));
+    if (tf === "1w") candles = aggregateCandles(candles, TF_MS["1w"]);
+    else if (tf === "1M") candles = aggregateCandles(candles, TF_MS["1M"]);
+    else if (tf === "12M") candles = aggregateCandles(candles, TF_MS["12M"]);
+    else if (tf === "4h" || tf === "1h" || tf === "15m" || tf === "5m" || tf === "30m") {
+      return {
+        candles: candles.slice(-limit),
+        source: "frankfurter-ecb",
+        note: `ECB daily fallback (không có ${tf} intraday) · dùng 1D`,
+      };
+    }
+    return {
+      candles: candles.slice(-limit),
+      source: "frankfurter-ecb",
+      note: "Tỷ giá tham chiếu ECB/Frankfurter (fallback)",
+    };
+  } catch (e) {
+    throw new Error(`forex_chart_unavailable: ${e instanceof Error ? e.message : "unknown"}`);
+  }
 }
 
 export function canonicalIndexSymbol(symbol: string): string | null {
@@ -224,7 +277,6 @@ async function stockCandles(symbol: string, tf: string, limit: number): Promise<
   const native = vndDchartResolution(tf);
   if (native) {
     try {
-      // Daily up to 2000 bars (~8y); intraday up to 1500
       const fetchN =
         native === "D"
           ? Math.min(limit, 2_000)
@@ -243,7 +295,6 @@ async function stockCandles(symbol: string, tf: string, limit: number): Promise<
       /* fall through */
     }
     if (tf === "1m" || tf === "5m" || tf === "15m" || tf === "1h") {
-      // Prefer dchart history; only fall back to single session anchor if empty
       const r = await getVnOhlcv(symbol, Math.min(limit, 250));
       if (!r?.bars.length) {
         return { candles: [] as ChartCandle[], source: "vndirect-live-only", note: "Intraday VN — chờ tick" };
@@ -378,7 +429,7 @@ export async function getChartHistory(args: ChartArgs): Promise<{ data: ChartMar
 
   try {
     const res = await cached(`chart:${args.assetType}:${symbol}:${tf}:${limit}`, {
-      ttlMs: args.assetType === "crypto" ? 10_000 : args.assetType === "forex" ? 20_000 : 8_000,
+      ttlMs: args.assetType === "crypto" ? 10_000 : args.assetType === "forex" ? 8_000 : 8_000,
       staleMs: 24 * 3_600_000,
       producer: async () => {
         const raw =
