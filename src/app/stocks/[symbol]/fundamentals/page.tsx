@@ -5,6 +5,7 @@ import { useApi } from "@/lib/hooks";
 import { Chg, Loading, Panel, Unavailable } from "@/components/ui";
 import { AiFinancialPanel } from "@/components/stocks/ai-financial-panel";
 import { ValuationPanel } from "@/components/stocks/valuation-panel";
+import { FundamentalTrendCharts } from "@/components/stocks/fundamental-trend-charts";
 import {
   buildSnapshotMetrics,
   formatMetric,
@@ -144,6 +145,73 @@ export default function StockFundamentalsPage({
     });
   }, [data, valData]);
 
+  const chartSeries = useMemo(() => {
+    if (!data?.financials) {
+      return { income: [], roe: [], cashflow: [] };
+    }
+    const incomeRows = (data.financials.income ?? []) as Record<string, unknown>[];
+    const balanceRows = (data.financials.balance ?? []) as Record<string, unknown>[];
+    const cfRows = (data.financials.cashflow ?? []) as Record<string, unknown>[];
+
+    const label = (r: Record<string, unknown>) => {
+      if (typeof r.period === "string" && r.period) return r.period;
+      if (r.year != null && r.quarter != null) return `${r.year}-Q${r.quarter}`;
+      if (r.year != null) return String(r.year);
+      return "—";
+    };
+    const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : null);
+    const rev = (r: Record<string, unknown>) => num(r.netRevenue) ?? num(r.revenue);
+    const ni = (r: Record<string, unknown>) =>
+      num(r.netIncome) ?? num(r.netProfit) ?? num(r.netIncomeParent);
+
+    // chronological oldest → newest for charts
+    const incomeChrono = [...incomeRows].slice(0, 12).reverse();
+    const balChrono = [...balanceRows].slice(0, 12).reverse();
+    const cfChrono = [...cfRows].slice(0, 12).reverse();
+
+    const income = incomeChrono.map((r) => {
+      const revenue = rev(r);
+      const netIncome = ni(r);
+      const gp = num(r.grossProfit);
+      return {
+        period: label(r),
+        revenue,
+        netIncome,
+        grossProfit: gp,
+        grossMargin: revenue && gp != null && revenue !== 0 ? gp / revenue : null,
+        netMargin: revenue && netIncome != null && revenue !== 0 ? netIncome / revenue : null,
+      };
+    });
+
+    const roe = incomeChrono.map((r, idx) => {
+      const bal = balChrono[idx] ?? {};
+      const equity = num(bal.equity);
+      const assets = num(bal.totalAssets);
+      const net = ni(r);
+      return {
+        period: label(r),
+        roe: equity && net != null && equity !== 0 ? net / equity : null,
+        roa: assets && net != null && assets !== 0 ? net / assets : null,
+      };
+    });
+
+    const cashflow = cfChrono.map((r) => {
+      const ocf = num(r.operatingCashFlow);
+      const capex = num(r.capex) != null ? Math.abs(num(r.capex)!) : 0;
+      const fcf = num(r.freeCashFlow) ?? (ocf != null ? ocf - capex : null);
+      return {
+        period: label(r),
+        operatingCashFlow: ocf,
+        freeCashFlow: fcf,
+        investingCashFlow: num(r.investingCashFlow),
+        financingCashFlow: num(r.financingCashFlow),
+        capex: num(r.capex) != null ? Math.abs(num(r.capex)!) : null,
+      };
+    });
+
+    return { income, roe, cashflow };
+  }, [data]);
+
   if (!symbol || (isLoading && !res)) {
     return <Loading rows={6} />;
   }
@@ -189,6 +257,13 @@ export default function StockFundamentalsPage({
           Pipeline {data.pipeline ?? "direct"} · {data.periodCount} kỳ BCTC từ VNDirect
         </p>
       )}
+
+      {/* Biểu đồ xu hướng — luôn hiện phía trên metric grid */}
+      <FundamentalTrendCharts
+        income={chartSeries.income}
+        roe={chartSeries.roe}
+        cashflow={chartSeries.cashflow}
+      />
 
       {tab === "operating" && (
         <Panel title="Hiệu suất kinh doanh">
