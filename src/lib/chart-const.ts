@@ -46,7 +46,8 @@ export const FOREX_TFS = ["5m", "15m", "30m", "1h", "4h", "1d", "1w", "1M", "12M
  * 1w/1M/12M → aggregate from daily (dchart has no native W/M).
  */
 export const STOCK_TFS = ["1m", "5m", "15m", "1h", "4h", "1d", "1w", "1M", "12M"] as const;
-export const COMMODITY_TFS = ["1h", "4h", "1d", "1w", "1M", "12M"] as const;
+/** Commodity / metals — Yahoo futures intervals */
+export const COMMODITY_TFS = ["5m", "15m", "30m", "1h", "4h", "1d", "1w", "1M", "12M"] as const;
 
 export function tfsFor(asset: ChartAssetType): readonly string[] {
   if (asset === "crypto") return CRYPTO_TFS;
