@@ -36,7 +36,8 @@ export const TF_MS: Record<string, number> = {
 
 /** Full set for VN stocks/indices: dchart intraday + daily aggregate for 4H/1W/1M/12M */
 export const CRYPTO_TFS = ["1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "12h", "1d", "1w", "1M", "12M"] as const;
-export const FOREX_TFS = ["1d", "1w", "1M", "12M"] as const;
+/** FX: Yahoo intraday + daily; ECB daily fallback */
+export const FOREX_TFS = ["5m", "15m", "30m", "1h", "4h", "1d", "1w", "1M", "12M"] as const;
 /**
  * VN stock/index TFs.
  * 1m/5m/15m/1h → VNDirect dchart (+ live ticks).
