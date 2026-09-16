@@ -198,7 +198,6 @@ export function buildSnapshotMetrics(b: SnapshotBundle) {
     currentLiab,
   );
 
-  // Altman Z (phi tài chính)
   const wc = currentAssets != null && currentLiab != null ? currentAssets - currentLiab : null;
   const x1 = div(wc, assets);
   const re = n(b0.retainedEarnings);
@@ -248,7 +247,6 @@ export function buildSnapshotMetrics(b: SnapshotBundle) {
     upsidePct = (dcfBase / priceQuote - 1) * 100;
   }
 
-  // —— Hiệu suất đầu tư ——
   const perf = b.performance;
   let tsr: number | null = perf?.tsr1y ?? perf?.tsr ?? null;
   if (tsr == null && b.closes.length >= 2) {
@@ -259,10 +257,7 @@ export function buildSnapshotMetrics(b: SnapshotBundle) {
   const beta = perf?.beta ?? null;
   const sharpe = perf?.sharpe ?? null;
   const alpha = perf?.alpha ?? null;
-  const divY =
-    perf?.dividendYield ??
-    b.overrides?.dividendYield ??
-    null;
+  const divY = perf?.dividendYield ?? b.overrides?.dividendYield ?? null;
   const payout = perf?.payoutRatio ?? null;
   const perfNote = perf?.note;
 
@@ -438,4 +433,27 @@ export function buildSnapshotMetrics(b: SnapshotBundle) {
     cashflow,
     period: periodLabel(i0),
   };
+}
+
+export function formatMetric(m: MetricCell): string {
+  if (m.value == null || !Number.isFinite(m.value)) return "Không đủ dữ liệu";
+  const v = m.value;
+  switch (m.format) {
+    case "pct":
+      return `${(v * 100).toFixed(Math.abs(v) >= 0.1 ? 1 : 2)}%`;
+    case "x":
+      return `${v.toFixed(v >= 10 ? 1 : 2)}x`;
+    case "days":
+      return `${Math.round(v)} ngày`;
+    case "money": {
+      const abs = Math.abs(v);
+      if (abs >= 1e12) return `${(v / 1e12).toFixed(2)}T`;
+      if (abs >= 1e9) return `${(v / 1e9).toFixed(2)}B`;
+      if (abs >= 1e6) return `${(v / 1e6).toFixed(2)}M`;
+      if (abs >= 1000) return v.toLocaleString("vi-VN", { maximumFractionDigits: 0 });
+      return v.toLocaleString("vi-VN", { maximumFractionDigits: 2 });
+    }
+    default:
+      return v.toLocaleString("vi-VN", { maximumFractionDigits: 2 });
+  }
 }
