@@ -1,5 +1,5 @@
 /**
- * CHART SUBSCRIPTION MANAGER (client) — EventSource + stock live-quote poll.
+ * CHART SUBSCRIPTION MANAGER (client) — EventSource + stock/forex live-quote poll.
  */
 import type { ChartCandle } from "@/lib/chart-const";
 import type { LiveState } from "./theme";
@@ -63,12 +63,12 @@ export class ChartLiveManager {
       }
     };
 
-    if (assetType === "stock") {
+    if (assetType === "stock" || assetType === "forex") {
       const poll = async () => {
         if (tk !== this.token) return;
         try {
           const res = await fetch(
-            `/api/v1/chart/live-quote?symbol=${encodeURIComponent(symbol)}&_=${Date.now()}`,
+            `/api/v1/chart/live-quote?symbol=${encodeURIComponent(symbol)}&assetType=${encodeURIComponent(assetType)}&_=${Date.now()}`,
             { cache: "no-store", headers: { Accept: "application/json" } },
           );
           const json = (await res.json()) as {
@@ -96,7 +96,7 @@ export class ChartLiveManager {
           this.lastPrice = d.price;
           this.lastEventAt = Date.now();
           const parts = new Intl.DateTimeFormat("en-CA", {
-            timeZone: "Asia/Ho_Chi_Minh",
+            timeZone: assetType === "forex" ? "UTC" : "Asia/Ho_Chi_Minh",
             year: "numeric",
             month: "2-digit",
             day: "2-digit",
@@ -107,6 +107,7 @@ export class ChartLiveManager {
             "1m": 60_000,
             "5m": 300_000,
             "15m": 900_000,
+            "30m": 1_800_000,
             "1h": 3_600_000,
             "4h": 14_400_000,
             "1d": 86_400_000,
@@ -117,10 +118,12 @@ export class ChartLiveManager {
           const tfMs = TF_MS_CLIENT[timeframe] ?? 0;
           const bucket =
             timeframe === "1d" || timeframe === "1w" || timeframe === "1M" || timeframe === "12M"
-              ? Date.parse(`${dayKey}T15:00:00+07:00`)
+              ? assetType === "forex"
+                ? Date.parse(`${dayKey}T00:00:00Z`)
+                : Date.parse(`${dayKey}T15:00:00+07:00`)
               : tfMs
                 ? Math.floor((d.ts ?? Date.now()) / tfMs) * tfMs
-                : Date.parse(`${dayKey}T15:00:00+07:00`);
+                : Date.parse(`${dayKey}T00:00:00Z`);
           const open = d.open && d.open > 0 ? d.open : d.price;
           const high = Math.max(d.high && d.high > 0 ? d.high : d.price, d.price);
           const low = Math.min(d.low && d.low > 0 ? d.low : d.price, d.price);
@@ -133,7 +136,7 @@ export class ChartLiveManager {
         }
       };
       void poll();
-      this.pollTimer = setInterval(poll, 2_500);
+      this.pollTimer = setInterval(poll, assetType === "forex" ? 5_000 : 2_500);
     }
 
     this.interval = setInterval(() => {
@@ -142,7 +145,7 @@ export class ChartLiveManager {
       handlers.onLiveState(
         age == null
           ? { state: this.lastEventAt ? "live" : "connecting", ageMs: null }
-          : age < 8_000
+          : age < 12_000
             ? { state: "live", ageMs: age }
             : { state: "delayed", ageMs: age },
       );
