@@ -7,13 +7,24 @@ import { getVndEquitySnapshot, getVndValuationRatios } from "@/lib/providers/vnd
 import { computeFinancialHealth } from "@/lib/engines/fundamental";
 import { computeInvestmentPerformance } from "@/lib/financial/investment-performance";
 import { fetchVndDchartHistory } from "@/lib/providers/vndirect-dchart";
+import type { OhlcvBar } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
+function closesFromBars(bars: OhlcvBar[] | null | undefined): number[] {
+  if (!bars?.length) return [];
+  const out: number[] = [];
+  for (const b of bars) {
+    const c = Number(b.close);
+    if (Number.isFinite(c) && c > 0) out.push(c);
+  }
+  return out;
+}
+
 /**
  * GET /api/v1/stocks/:symbol/fundamentals
- * Phân tích cơ bản độc lập — BCTC + giá + hiệu suất (Beta/Sharpe/Alpha/TSR/cổ tức).
+ * BCTC + giá TT + lịch sử dchart (mã + VNINDEX) + ratios → TSR/Beta/Sharpe/Alpha/cổ tức.
  */
 export async function GET(
   _req: Request,
@@ -26,18 +37,29 @@ export async function GET(
       return badRequest("symbol không hợp lệ");
     }
 
-    const cachedRes = await cached(`fund:ui:${symbol}:v4`, {
+    const cachedRes = await cached(`fund:ui:${symbol}:v5`, {
       ttlMs: 90_000,
       staleMs: 300_000,
       producer: async () => {
+        // Song song: BCTC, giá, equity, ratios, lịch sử mã, lịch sử VNINDEX
         const [fs, quotes, equity, ratios, bars, idxBars] = await Promise.all([
           fetchVndirectFinancials(symbol, { limitPeriods: 16 }).catch(() => null),
           getVnQuotes([symbol]).catch(() => null),
           getVndEquitySnapshot(symbol).catch(() => null),
           getVndValuationRatios(symbol).catch(() => null),
-          fetchVndDchartHistory(symbol, "D", 280).catch(() => [] as { c: number }[]),
-          fetchVndDchartHistory("VNINDEX", "D", 280).catch(() => [] as { c: number }[]),
+          fetchVndDchartHistory(symbol, "D", 320).catch(() => [] as OhlcvBar[]),
+          fetchVndDchartHistory("VNINDEX", "D", 320).catch(() => [] as OhlcvBar[]),
         ]);
+
+        // Retry dchart nếu lần 1 rỗng (timeout / rate limit)
+        let stockBars = bars ?? [];
+        let indexBars = idxBars ?? [];
+        if (!stockBars.length) {
+          stockBars = await fetchVndDchartHistory(symbol, "D", 320).catch(() => [] as OhlcvBar[]);
+        }
+        if (!indexBars.length) {
+          indexBars = await fetchVndDchartHistory("VNINDEX", "D", 320).catch(() => [] as OhlcvBar[]);
+        }
 
         if (!fs?.periods?.length) {
           throw Object.assign(new Error(`Không lấy được BCTC ${symbol} từ VNDirect`), {
@@ -64,12 +86,8 @@ export async function GET(
         const price = quotes?.quotes?.[0]?.price ?? null;
         const growth = computeGrowth(periods);
 
-        const closes = (bars ?? [])
-          .map((b) => Number((b as { c?: number }).c))
-          .filter((c) => Number.isFinite(c) && c > 0);
-        const indexCloses = (idxBars ?? [])
-          .map((b) => Number((b as { c?: number }).c))
-          .filter((c) => Number.isFinite(c) && c > 0);
+        const closes = closesFromBars(stockBars);
+        const indexCloses = closesFromBars(indexBars);
 
         const income0 = (rows.income[0] ?? {}) as Record<string, unknown>;
         const ni =
@@ -77,15 +95,18 @@ export async function GET(
             ? income0.netIncome
             : typeof income0.netProfit === "number"
               ? income0.netProfit
-              : null;
+              : typeof income0.netIncomeParent === "number"
+                ? income0.netIncomeParent
+                : null;
 
         const dividendYield =
           ratios?.dividendYield != null && Number.isFinite(ratios.dividendYield)
             ? ratios.dividendYield
             : null;
 
+        // Cổ tức tiền mặt năm ≈ yield × giá VND × SLCP
         let annualDividendCash: number | null = null;
-        if (dividendYield != null && price != null && shares != null && shares > 0) {
+        if (dividendYield != null && dividendYield > 0 && price != null && shares != null && shares > 0) {
           const priceVnd = price < 500 ? price * 1000 : price;
           annualDividendCash = dividendYield * priceVnd * shares;
         }
@@ -100,7 +121,7 @@ export async function GET(
 
         return {
           symbol,
-          pipeline: "fundamental-direct-v4",
+          pipeline: "fundamental-direct-v5",
           financials: {
             income: rows.income,
             balance: rows.balance,
@@ -120,18 +141,25 @@ export async function GET(
           marketCap:
             price != null && shares != null && shares > 0
               ? price * shares
-              : (equity?.marketCapReported ?? null),
+              : (equity?.marketCapReported ?? ratios?.marketCap ?? null),
           periodCount: periods.length,
           latencyMs: fs.latencyMs,
           profile: fs.profile,
           closes,
+          indexClosesCount: indexCloses.length,
           performance,
           vndirectRatios: ratios
             ? {
                 pe: ratios.pe,
                 pb: ratios.pb,
-                dividendYield: ratios.dividendYield,
+                ps: ratios.ps,
                 eps: ratios.eps,
+                bvps: ratios.bvps,
+                roe: ratios.roe,
+                roa: ratios.roa,
+                dividendYield: ratios.dividendYield,
+                marketCap: ratios.marketCap,
+                reportDate: ratios.reportDate,
               }
             : null,
         };
@@ -140,11 +168,11 @@ export async function GET(
 
     const r = cachedRes.value;
     return ok(r, {
-      source: `vndirect-fs+dchart+ratios`,
+      source: "vndirect-fs+dchart+ratios",
       sourceTimestampMs: Date.now(),
       cached: cachedRes.cached,
       stale: cachedRes.stale,
-      note: `BCTC ${r.periodCount} kỳ · perf ${r.performance?.sampleDays ?? 0} phiên · ${r.latencyMs}ms`,
+      note: `BCTC ${r.periodCount} kỳ · giá ${r.closes?.length ?? 0} phiên · VNINDEX ${r.indexClosesCount ?? 0} · ${r.latencyMs}ms`,
     });
   } catch (e) {
     if (e && typeof e === "object" && (e as { code?: string }).code === "STOCK_UNAVAILABLE") {

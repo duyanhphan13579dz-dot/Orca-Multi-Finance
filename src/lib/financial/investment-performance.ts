@@ -16,6 +16,7 @@ export type PerformanceMetrics = {
   /** Payout ước tính (thập phân) nếu suy được */
   payoutRatio: number | null;
   sampleDays: number;
+  indexSampleDays?: number;
   note?: string;
 };
 
@@ -81,6 +82,8 @@ export function computeInvestmentPerformance(opts: {
   annualDividendCash?: number | null;
 }): PerformanceMetrics {
   const closes = opts.closes.filter((c) => Number.isFinite(c) && c > 0);
+  const idxRaw = (opts.indexCloses ?? []).filter((c) => Number.isFinite(c) && c > 0);
+
   const empty: PerformanceMetrics = {
     tsr: null,
     tsr1y: null,
@@ -90,10 +93,14 @@ export function computeInvestmentPerformance(opts: {
     dividendYield: opts.dividendYield ?? null,
     payoutRatio: null,
     sampleDays: closes.length,
+    indexSampleDays: idxRaw.length,
   };
 
   if (closes.length < 5) {
-    return { ...empty, note: "Chưa đủ chuỗi giá để tính hiệu suất" };
+    return {
+      ...empty,
+      note: `Chưa đủ chuỗi giá (có ${closes.length} phiên, cần ≥5)`,
+    };
   }
 
   const tsr =
@@ -101,7 +108,7 @@ export function computeInvestmentPerformance(opts: {
 
   // ~252 phiên ≈ 1 năm giao dịch
   let tsr1y: number | null = null;
-  if (closes.length >= 60) {
+  if (closes.length >= 40) {
     const look = Math.min(252, closes.length - 1);
     const a = closes[closes.length - 1 - look]!;
     const z = closes[closes.length - 1]!;
@@ -112,20 +119,21 @@ export function computeInvestmentPerformance(opts: {
   const mu = mean(rets);
   const sd = stdev(rets);
   let sharpe: number | null = null;
-  if (mu != null && sd != null && sd > 1e-12) {
+  if (mu != null && sd != null && sd > 1e-12 && rets.length >= 20) {
     const excessAnn = mu * 252 - RF_ANNUAL;
     sharpe = excessAnn / (sd * Math.sqrt(252));
   }
 
   let beta: number | null = null;
   let alpha: number | null = null;
-  const idx = (opts.indexCloses ?? []).filter((c) => Number.isFinite(c) && c > 0);
-  if (idx.length >= 30 && closes.length >= 30) {
-    const [sc, ic] = alignTail(closes, idx);
+  // Ngưỡng thấp hơn cho mã mới IPO (≥20 return pairs ≈ 21 phiên)
+  const minPairs = 20;
+  if (idxRaw.length >= minPairs + 1 && closes.length >= minPairs + 1) {
+    const [sc, ic] = alignTail(closes, idxRaw);
     const rs = dailyReturns(sc);
     const rm = dailyReturns(ic);
     const n = Math.min(rs.length, rm.length);
-    if (n >= 40) {
+    if (n >= minPairs) {
       const a = rs.slice(rs.length - n);
       const b = rm.slice(rm.length - n);
       const cov = covariance(a, b);
@@ -135,7 +143,6 @@ export function computeInvestmentPerformance(opts: {
         const ms = mean(a);
         const mm = mean(b);
         if (ms != null && mm != null) {
-          // Jensen alpha annualized
           alpha = (ms - RF_ANNUAL / 252 - beta * (mm - RF_ANNUAL / 252)) * 252;
         }
       }
@@ -150,9 +157,15 @@ export function computeInvestmentPerformance(opts: {
     payoutRatio = divCash / ni;
   }
 
-  // Giới hạn hợp lý
   const clamp = (v: number | null, lo: number, hi: number) =>
     v == null || !Number.isFinite(v) ? null : Math.min(hi, Math.max(lo, v));
+
+  const notes: string[] = [];
+  notes.push(`${closes.length} phiên mã`);
+  if (idxRaw.length) notes.push(`${idxRaw.length} phiên VNINDEX`);
+  if (beta == null) notes.push("Beta/Alpha cần ≥20 phiên đồng thời với VNINDEX");
+  else notes.push(`rf≈${(RF_ANNUAL * 100).toFixed(0)}%`);
+  if (dy == null) notes.push("Chưa có DIVIDEND_YIELD từ ratios");
 
   return {
     tsr: clamp(tsr, -0.99, 20),
@@ -163,9 +176,7 @@ export function computeInvestmentPerformance(opts: {
     dividendYield: dy != null && dy >= 0 && dy < 0.5 ? dy : null,
     payoutRatio: clamp(payoutRatio, 0, 2),
     sampleDays: closes.length,
-    note:
-      beta == null
-        ? "Beta/Alpha cần đủ lịch sử giá mã + VNINDEX"
-        : `Mẫu ${closes.length} phiên · rf≈${(RF_ANNUAL * 100).toFixed(0)}%`,
+    indexSampleDays: idxRaw.length,
+    note: notes.join(" · "),
   };
 }
