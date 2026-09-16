@@ -9,7 +9,6 @@ import {
 } from "../providers/vndirect-company";
 import { fetchVndirectFinancials, periodsToLegacyRows } from "../financial/vndirect-fs";
 import { llmChat, llmConfigured } from "../ai/gateway";
-import { collectFactNumbers, validateOutput } from "../ai/validate";
 import { buildDeterministicResearch, enrichFoundDate } from "./company-research";
 import type { Meta } from "../types";
 
@@ -87,12 +86,12 @@ Trả đúng JSON, không markdown.
 }`;
 
   try {
-    const raw = await llmChat({
+    const raw = await llmChat("analysis", {
       system,
       user: `CONTEXT:\n${JSON.stringify(context)}\n\nViết SWOT, chuỗi giá trị, catalyst, rủi ro bằng tiếng Việt, ngắn, bám số liệu.`,
       temperature: 0.2,
     });
-    const text = typeof raw === "string" ? raw : (raw as { content?: string })?.content ?? "";
+    const text = raw?.text ?? "";
     const start = text.indexOf("{");
     const end = text.lastIndexOf("}");
     if (start < 0 || end <= start) return null;
@@ -102,12 +101,6 @@ Trả đúng JSON, không markdown.
       catalysts?: string[];
       risks?: string[];
     };
-
-    const facts = collectFactNumbers(JSON.stringify(context));
-    const check = validateOutput(text, facts);
-    if (check && (check as { ok?: boolean }).ok === false) {
-      /* vẫn trả nếu parse được — deterministic là lớp chính */
-    }
 
     return {
       valueChain: parsed.valueChain ?? null,
@@ -139,7 +132,6 @@ export async function getStockCompanyPackage(
       },
     });
 
-    // BCTC trực tiếp VNDirect — không phụ thuộc snapshot trang khác
     let fin: {
       income: Record<string, unknown>[];
       balance: Record<string, unknown>[];
@@ -164,7 +156,6 @@ export async function getStockCompanyPackage(
     if (!companyRes.value.shareholders.length) notes.push("Chưa có danh sách cổ đông lớn.");
     if (!fin.income.length) notes.push("Chưa lấy được BCTC — SWOT dựa chủ yếu trên hồ sơ.");
 
-    // Lớp 1: deterministic (luôn chạy khi có profile hoặc BCTC)
     const det =
       companyRes.value.profile || fin.income.length
         ? buildDeterministicResearch({
@@ -177,7 +168,6 @@ export async function getStockCompanyPackage(
           })
         : null;
 
-    // Lớp 2: AI (tuỳ chọn) — bổ sung, không thay thế nếu AI fail
     let ai: Awaited<ReturnType<typeof enrichCompanyWithAi>> = null;
     if (companyRes.value.profile && llmConfigured()) {
       try {
@@ -212,15 +202,17 @@ export async function getStockCompanyPackage(
           opportunities: mergeList(det.swot.opportunities, ai?.swot?.opportunities ?? [], 4),
           threats: mergeList(det.swot.threats, ai?.swot?.threats ?? [], 4),
         }
-      : ai?.swot ?? null;
+      : (ai?.swot ?? null);
 
     const valueChain = det?.valueChain ?? ai?.valueChain ?? null;
     const catalysts = mergeList(det?.catalysts ?? [], ai?.catalysts ?? [], 5);
     const risks = mergeList(det?.risks ?? [], ai?.risks ?? [], 5);
 
-    const researchSource = ai && det ? "deterministic+llm" : det ? "deterministic-fs+profile" : ai ? "llm" : "none";
+    const researchSource =
+      ai && det ? "deterministic+llm" : det ? "deterministic-fs+profile" : ai ? "llm" : "none";
 
-    if (det) notes.push("SWOT / catalyst / rủi ro / chuỗi giá trị suy từ hồ sơ + BCTC VNDirect (không bịa số).");
+    if (det)
+      notes.push("SWOT / catalyst / rủi ro / chuỗi giá trị suy từ hồ sơ + BCTC VNDirect (không bịa số).");
     if (ai) notes.push("Đã bổ sung gợi ý từ AI — ưu tiên đối chiếu số liệu BCTC.");
     if (!det && !ai) notes.push("Chưa đủ dữ liệu nền để dựng SWOT tự động.");
 
@@ -242,9 +234,7 @@ export async function getStockCompanyPackage(
       sourceTimestampMs: Date.now(),
       cached: companyRes.cached,
       stale: companyRes.stale,
-      note: det
-        ? "Hồ sơ DN + BCTC → SWOT/catalyst/chuỗi giá trị"
-        : "Hồ sơ DN VNDirect",
+      note: det ? "Hồ sơ DN + BCTC → SWOT/catalyst/chuỗi giá trị" : "Hồ sơ DN VNDirect",
       partial: !companyRes.value.profile || !swot,
     });
     return { data, meta };
