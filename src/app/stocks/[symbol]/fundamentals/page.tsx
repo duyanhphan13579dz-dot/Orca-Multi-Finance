@@ -66,6 +66,29 @@ type FundPayload = {
   pipeline?: string;
 };
 
+type ValPayload = {
+  multiples?: {
+    pe?: number | null;
+    pb?: number | null;
+    ps?: number | null;
+    evEbitda?: number | null;
+    peg?: number | null;
+  };
+  fairValues?: {
+    blended?: number | null;
+    dcfBase?: number | null;
+    dcfBear?: number | null;
+    dcfBull?: number | null;
+  };
+  upsideDownside?: number | null;
+  marketCap?: number | null;
+  vndirectRatios?: {
+    pe?: number | null;
+    pb?: number | null;
+    ps?: number | null;
+  } | null;
+};
+
 export default function StockFundamentalsPage({
   params,
 }: {
@@ -83,8 +106,16 @@ export default function StockFundamentalsPage({
     { refreshInterval: 90_000 },
   );
 
+  const { data: valData } = useApi<ValPayload>(
+    symbol ? `/api/v1/stocks/${encodeURIComponent(symbol)}/valuation` : null,
+    { refreshInterval: 120_000 },
+  );
+
   const metrics = useMemo(() => {
     if (!data?.financials) return null;
+    const m = valData?.multiples;
+    const vr = valData?.vndirectRatios;
+    const fv = valData?.fairValues;
     return buildSnapshotMetrics({
       income: (data.financials.income ?? []) as Record<string, unknown>[],
       balance: (data.financials.balance ?? []) as Record<string, unknown>[],
@@ -100,8 +131,18 @@ export default function StockFundamentalsPage({
         metric: g.metric,
         changePct: g.changePct,
       })),
+      overrides: {
+        pe: m?.pe ?? vr?.pe ?? null,
+        pb: m?.pb ?? vr?.pb ?? null,
+        ps: m?.ps ?? vr?.ps ?? null,
+        evEbitda: m?.evEbitda ?? null,
+        peg: m?.peg ?? null,
+        dcfBase: fv?.dcfBase ?? fv?.blended ?? null,
+        upsidePct: valData?.upsideDownside ?? null,
+        marketCap: valData?.marketCap ?? null,
+      },
     });
-  }, [data]);
+  }, [data, valData]);
 
   if (!symbol || (isLoading && !res)) {
     return <Loading rows={6} />;
