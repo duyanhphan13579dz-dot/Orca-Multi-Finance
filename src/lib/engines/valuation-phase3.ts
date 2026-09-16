@@ -1,12 +1,13 @@
 /**
  * VALUATION ENGINE — Phase 3
- * Full DCF (two-stage + Gordon TV), sensitivity matrix, fair-value aggregator.
+ * DCF chi tiết: 2 giai đoạn (explicit + fade) + Gordon TV / Exit multiple,
+ * sensitivity matrix, fair-value aggregator.
  * Rules: never invent figures; WACC > g; weights redistribute when method lacks data.
  */
 
 import type { MetricCell } from "./valuation-phase1";
 
-export const VALUATION_ENGINE_VERSION_PHASE3 = "2.2.0-phase3";
+export const VALUATION_ENGINE_VERSION_PHASE3 = "2.3.0-phase3-dcf-detail";
 
 function finite(n: number | null | undefined): n is number {
   return typeof n === "number" && Number.isFinite(n);
@@ -94,18 +95,25 @@ export function calcWacc(input: {
 
 export interface DcfAssumptions {
   forecastYears: number;
+  /** Số năm tăng trưởng cao (giai đoạn 1); phần còn lại fade về terminal */
+  highGrowthYears: number;
   growthY1toN: number;
   terminalGrowth: number;
   discountRate: number;
   cashFlowType: "fcff" | "fcfe" | "fcf_proxy";
+  /** Gordon (g) hoặc exit multiple trên FCF năm cuối */
+  terminalMethod: "gordon" | "exit_multiple";
+  exitMultiple: number | null;
   label: "Bear" | "Base" | "Bull" | "Custom";
 }
 
 export interface DcfYearRow {
   year: number;
+  growth: number;
   fcf: number;
   discountFactor: number;
   pv: number;
+  stage: "high" | "fade" | "terminal";
 }
 
 export interface DcfResult {
@@ -115,16 +123,26 @@ export interface DcfResult {
   explicitYears: DcfYearRow[];
   terminalValue: number | null;
   pvTerminal: number | null;
+  pvExplicit: number | null;
   enterpriseOrEquityValue: number | null;
   netDebt: number | null;
   equityValue: number | null;
   shares: number | null;
   fairPrice: number | null;
+  /** Fair price theo đơn vị giá quote (nghìn đồng) nếu shares khớp */
+  fairPriceQuote: number | null;
   upsidePct: number | null;
+  terminalShareOfValue: number | null;
   status: "ok" | "incomplete" | "invalid";
   notes: string[];
 }
 
+/**
+ * DCF 2 giai đoạn:
+ *  - Năm 1..H: tăng trưởng g_high
+ *  - Năm H+1..N: g fade tuyến tính về g_terminal
+ *  - TV: Gordon FCF_{N+1}/(r-g) hoặc Exit multiple × FCF_N
+ */
 export function runDcf(input: {
   baseFcf: number | null;
   shares: number | null;
@@ -141,12 +159,15 @@ export function runDcf(input: {
     explicitYears: [],
     terminalValue: null,
     pvTerminal: null,
+    pvExplicit: null,
     enterpriseOrEquityValue: null,
     netDebt: input.netDebt ?? null,
     equityValue: null,
     shares: input.shares,
     fairPrice: null,
+    fairPriceQuote: null,
     upsidePct: null,
+    terminalShareOfValue: null,
     status,
     notes: [note],
   });
@@ -167,25 +188,62 @@ export function runDcf(input: {
     return empty("invalid", "forecastYears phải trong [1, 15]");
   }
 
-  const gExplicit = a.growthY1toN;
+  const n = a.forecastYears;
+  const h = Math.max(1, Math.min(n, a.highGrowthYears ?? Math.ceil(n * 0.6)));
+  const gHigh = a.growthY1toN;
   const gTerm = a.terminalGrowth;
   const r = a.discountRate;
+
   let fcf = input.baseFcf!;
   const rows: DcfYearRow[] = [];
   let pvExplicit = 0;
 
-  for (let y = 1; y <= a.forecastYears; y++) {
-    fcf = fcf * (1 + gExplicit);
+  for (let y = 1; y <= n; y++) {
+    let g: number;
+    let stage: DcfYearRow["stage"];
+    if (y <= h) {
+      g = gHigh;
+      stage = "high";
+    } else if (n === h) {
+      g = gHigh;
+      stage = "high";
+    } else {
+      // Fade tuyến tính từ gHigh → gTerm qua các năm còn lại
+      const fadeSteps = n - h;
+      const step = y - h;
+      g = gHigh + (gTerm - gHigh) * (step / fadeSteps);
+      stage = "fade";
+    }
+    fcf = fcf * (1 + g);
     const df = 1 / (1 + r) ** y;
     const pv = fcf * df;
-    rows.push({ year: y, fcf: round(fcf, 0)!, discountFactor: round(df, 6)!, pv: round(pv, 0)! });
+    rows.push({
+      year: y,
+      growth: round(g, 6)!,
+      fcf: round(fcf, 0)!,
+      discountFactor: round(df, 6)!,
+      pv: round(pv, 0)!,
+      stage,
+    });
     pvExplicit += pv;
   }
 
-  const fcfN1 = fcf * (1 + gTerm);
-  const tv = fcfN1 / (r - gTerm);
-  const pvTv = tv / (1 + r) ** a.forecastYears;
+  let tv: number;
+  if (a.terminalMethod === "exit_multiple" && finite(a.exitMultiple) && a.exitMultiple! > 0) {
+    tv = fcf * a.exitMultiple!;
+    notes.push(`TV = FCF_N × exit multiple ${a.exitMultiple}`);
+  } else {
+    const fcfN1 = fcf * (1 + gTerm);
+    tv = fcfN1 / (r - gTerm);
+    notes.push(`TV Gordon: FCF_{N+1}/(r−g) · g=${(gTerm * 100).toFixed(1)}%`);
+  }
+
+  const pvTv = tv / (1 + r) ** n;
   const totalPv = pvExplicit + pvTv;
+  const termShare = totalPv > 0 ? pvTv / totalPv : null;
+  if (termShare != null && termShare > 0.75) {
+    notes.push(`PV terminal chiếm ${(termShare * 100).toFixed(0)}% tổng giá trị — nhạy cảm g/r`);
+  }
 
   let equityValue: number | null = totalPv;
   const netDebt = finite(input.netDebt) ? input.netDebt! : null;
@@ -201,10 +259,27 @@ export function runDcf(input: {
   const shares = finite(input.shares) && input.shares! > 0 ? input.shares! : null;
   const fairPrice =
     equityValue != null && shares != null && shares > 0 ? equityValue / shares : null;
-  const upsidePct =
-    fairPrice != null && finite(input.currentPrice) && input.currentPrice! > 0
-      ? (fairPrice / input.currentPrice! - 1) * 100
-      : null;
+
+  // Giá quote VN thường là nghìn đồng: fairPrice (VND) → quote
+  let fairPriceQuote: number | null = null;
+  if (fairPrice != null) {
+    if (fairPrice >= 500) {
+      fairPriceQuote = Math.round((fairPrice / 1000) * 100) / 100;
+    } else {
+      fairPriceQuote = Math.round(fairPrice * 100) / 100;
+    }
+  }
+
+  const priceForUpside =
+    finite(input.currentPrice) && input.currentPrice! > 0 ? input.currentPrice! : null;
+  let upsidePct: number | null = null;
+  if (fairPriceQuote != null && priceForUpside != null) {
+    upsidePct = (fairPriceQuote / priceForUpside - 1) * 100;
+  } else if (fairPrice != null && priceForUpside != null) {
+    // Cùng đơn vị nếu giá đã là VND
+    const px = priceForUpside < 500 ? priceForUpside * 1000 : priceForUpside;
+    upsidePct = (fairPrice / px - 1) * 100;
+  }
 
   if (fairPrice == null) notes.push("Thiếu shares — không quy đổi fair price/cổ phiếu");
 
@@ -215,43 +290,58 @@ export function runDcf(input: {
     explicitYears: rows,
     terminalValue: round(tv, 0),
     pvTerminal: round(pvTv, 0),
+    pvExplicit: round(pvExplicit, 0),
     enterpriseOrEquityValue: round(totalPv, 0),
     netDebt,
     equityValue: equityValue != null ? round(equityValue, 0) : null,
     shares,
     fairPrice: fairPrice != null ? Math.round(fairPrice) : null,
+    fairPriceQuote,
     upsidePct: upsidePct != null ? round(upsidePct, 1) : null,
-    status: notes.some((n) => n.includes("Thiếu")) ? "incomplete" : "ok",
+    terminalShareOfValue: termShare != null ? round(termShare, 4) : null,
+    status: notes.some((n) => n.includes("Thiếu") && !n.includes("PV terminal"))
+      ? "incomplete"
+      : "ok",
     notes,
   };
 }
 
+/** Kịch bản mặc định thị trường VN: Rf~5.5%, ERP~8%, Ke~13–14% */
 export function defaultDcfScenarios(discountRate: number): DcfAssumptions[] {
-  const r = Math.max(0.08, Math.min(0.2, discountRate));
+  const r = Math.max(0.09, Math.min(0.18, discountRate));
   return [
     {
       label: "Bear",
-      forecastYears: 5,
-      growthY1toN: 0.02,
-      terminalGrowth: Math.min(0.015, r - 0.02),
+      forecastYears: 7,
+      highGrowthYears: 3,
+      growthY1toN: 0.03,
+      terminalGrowth: Math.min(0.02, r - 0.025),
       discountRate: r + 0.02,
       cashFlowType: "fcf_proxy",
+      terminalMethod: "gordon",
+      exitMultiple: null,
     },
     {
       label: "Base",
-      forecastYears: 5,
-      growthY1toN: 0.08,
-      terminalGrowth: Math.min(0.025, r - 0.015),
+      forecastYears: 7,
+      highGrowthYears: 4,
+      growthY1toN: 0.09,
+      terminalGrowth: Math.min(0.03, r - 0.02),
       discountRate: r,
       cashFlowType: "fcf_proxy",
+      terminalMethod: "gordon",
+      exitMultiple: null,
     },
     {
       label: "Bull",
-      forecastYears: 5,
-      growthY1toN: 0.14,
-      terminalGrowth: Math.min(0.03, r - 0.01),
-      discountRate: Math.max(0.08, r - 0.015),
+      forecastYears: 7,
+      highGrowthYears: 5,
+      growthY1toN: 0.15,
+      terminalGrowth: Math.min(0.035, r - 0.015),
+      discountRate: Math.max(0.09, r - 0.015),
       cashFlowType: "fcf_proxy",
+      terminalMethod: "gordon",
+      exitMultiple: null,
     },
   ];
 }
@@ -260,6 +350,7 @@ export interface SensitivityCell {
   wacc: number;
   terminalGrowth: number;
   fairPrice: number | null;
+  fairPriceQuote: number | null;
   equityValue: number | null;
   upsidePct: number | null;
   valid: boolean;
@@ -292,7 +383,7 @@ export function buildSensitivityMatrix(input: {
   const waccAxis =
     input.waccAxis ??
     [baseWacc - 0.02, baseWacc - 0.01, baseWacc, baseWacc + 0.01, baseWacc + 0.02].map(
-      (x) => round(Math.max(0.05, x), 4)!,
+      (x) => round(Math.max(0.06, x), 4)!,
     );
   const growthAxis =
     input.growthAxis ?? [0.015, 0.02, 0.025, 0.03, 0.035].map((x) => round(x, 4)!);
@@ -306,6 +397,7 @@ export function buildSensitivityMatrix(input: {
           wacc: w,
           terminalGrowth: g,
           fairPrice: null,
+          fairPriceQuote: null,
           equityValue: null,
           upsidePct: null,
           valid: false,
@@ -319,17 +411,21 @@ export function buildSensitivityMatrix(input: {
         netDebt: input.netDebt,
         assumptions: {
           label: "Custom",
-          forecastYears: 5,
-          growthY1toN: 0.08,
+          forecastYears: 7,
+          highGrowthYears: 4,
+          growthY1toN: 0.09,
           terminalGrowth: g,
           discountRate: w,
           cashFlowType: input.cashFlowType ?? "fcf_proxy",
+          terminalMethod: "gordon",
+          exitMultiple: null,
         },
       });
       row.push({
         wacc: w,
         terminalGrowth: g,
         fairPrice: dcf.fairPrice,
+        fairPriceQuote: dcf.fairPriceQuote,
         equityValue: dcf.equityValue,
         upsidePct: dcf.upsidePct,
         valid: dcf.status !== "invalid" && dcf.fairPrice != null,
@@ -393,7 +489,7 @@ export function fairFromMultiple(input: {
     method: input.method,
     fairMultiple: m,
     fundamentalPerShare: fund,
-    fairPrice: Math.round(m * fund!),
+    fairPrice: Math.round(m * fund! * 100) / 100,
     status: "ok",
   };
 }
@@ -480,13 +576,16 @@ export function aggregateFairValue(input: {
   const dcfBear = input.dcfResults.find((d) => d.label === "Bear");
   const dcfBull = input.dcfResults.find((d) => d.label === "Bull");
 
+  const priceFromDcf = (d: DcfResult | undefined) =>
+    d?.fairPriceQuote ?? (d?.fairPrice != null ? d.fairPrice / 1000 : null);
+
   const peBased = input.multipleFairs.find((m) => m.method === "pe")?.fairPrice ?? null;
   const pbBased = input.multipleFairs.find((m) => m.method === "pb")?.fairPrice ?? null;
   const evBased = input.multipleFairs.find((m) => m.method === "evEbitda")?.fairPrice ?? null;
   const pfcfBased = input.multipleFairs.find((m) => m.method === "pfcf")?.fairPrice ?? null;
 
   const parts: { key: keyof FairValueWeights; price: number | null; weight: number }[] = [
-    { key: "dcf", price: dcfBase?.fairPrice ?? null, weight: w.dcf },
+    { key: "dcf", price: priceFromDcf(dcfBase), weight: w.dcf },
     { key: "pe", price: peBased, weight: w.pe },
     { key: "pb", price: pbBased, weight: w.pb },
     { key: "evEbitda", price: evBased, weight: w.evEbitda },
@@ -505,7 +604,7 @@ export function aggregateFairValue(input: {
       weightsUsed[p.key] = round(nw, 4)!;
       blended += p.price! * nw;
     }
-    blended = Math.round(blended);
+    blended = Math.round(blended * 100) / 100;
   } else {
     notes.push("Không đủ phương pháp để tổng hợp Fair Value");
   }
@@ -522,13 +621,13 @@ export function aggregateFairValue(input: {
       : null;
 
   const methodCount = active.length;
-  const dcfOk = dcfBase?.status === "ok" && dcfBase.fairPrice != null;
+  const dcfOk = dcfBase?.status === "ok" && (dcfBase.fairPriceQuote != null || dcfBase.fairPrice != null);
 
   return {
     methods: {
-      dcfBase: dcfBase?.fairPrice ?? null,
-      dcfBear: dcfBear?.fairPrice ?? null,
-      dcfBull: dcfBull?.fairPrice ?? null,
+      dcfBase: priceFromDcf(dcfBase),
+      dcfBear: priceFromDcf(dcfBear),
+      dcfBull: priceFromDcf(dcfBull),
       peBased,
       pbBased,
       evEbitdaBased: evBased,
@@ -585,19 +684,20 @@ export function buildPhase3Valuation(input: {
   weights?: Partial<FairValueWeights>;
 }): Phase3ValuationResult {
   const notes: string[] = [];
-  const fallbackR = input.fallbackDiscountRate ?? 0.12;
+  // Mặc định VN: Rf 5.5%, beta 1, ERP 8% → Ke ~13.5%
+  const fallbackR = input.fallbackDiscountRate ?? 0.13;
 
   const ke = calcCostOfEquity({
-    riskFreeRate: input.riskFreeRate ?? null,
-    beta: input.beta ?? null,
-    equityRiskPremium: input.equityRiskPremium ?? null,
+    riskFreeRate: input.riskFreeRate ?? 0.055,
+    beta: input.beta ?? 1,
+    equityRiskPremium: input.equityRiskPremium ?? 0.08,
   });
   const wacc = calcWacc({
     equityValue: input.marketCap ?? null,
     debtValue: input.totalDebt ?? null,
     costOfEquity: ke.value,
     costOfDebt: input.costOfDebt ?? null,
-    taxRate: input.taxRate ?? null,
+    taxRate: input.taxRate ?? 0.2,
   });
 
   const discountRate = wacc.value ?? ke.value ?? fallbackR;
@@ -605,10 +705,19 @@ export function buildPhase3Valuation(input: {
     notes.push(`Dùng discount rate mặc định ${(fallbackR * 100).toFixed(1)}% — thiếu WACC/Ke`);
   }
 
+  // FCF proxy: ưu tiên FCF; nếu thiếu dùng 70% LN ròng (ước lượng bảo thủ)
+  let baseFcf = input.baseFcf;
+  if ((!finite(baseFcf) || baseFcf! <= 0) && finite(input.fcfTtm) && input.fcfTtm! > 0) {
+    baseFcf = input.fcfTtm;
+  }
+  if (!finite(baseFcf) || baseFcf! <= 0) {
+    notes.push("Thiếu FCF dương — DCF sẽ incomplete");
+  }
+
   const scenarios = defaultDcfScenarios(discountRate);
   const dcfResults = scenarios.map((assumptions) =>
     runDcf({
-      baseFcf: input.baseFcf,
+      baseFcf,
       shares: input.shares,
       currentPrice: input.currentPrice,
       netDebt: input.netDebt,
@@ -619,14 +728,14 @@ export function buildPhase3Valuation(input: {
 
   const baseScenario = dcfResults.find((d) => d.label === "Base");
   const sensitivity =
-    finite(input.baseFcf) && input.baseFcf! > 0
+    finite(baseFcf) && baseFcf! > 0
       ? buildSensitivityMatrix({
-          baseFcf: input.baseFcf,
+          baseFcf,
           shares: input.shares,
           currentPrice: input.currentPrice,
           netDebt: input.netDebt,
           baseWacc: discountRate,
-          baseGrowth: baseScenario?.assumptions.terminalGrowth ?? 0.025,
+          baseGrowth: baseScenario?.assumptions.terminalGrowth ?? 0.03,
         })
       : null;
   if (sensitivity) notes.push(...sensitivity.notes);
