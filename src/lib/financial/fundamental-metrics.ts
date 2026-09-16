@@ -3,6 +3,7 @@
  * Missing inputs → null (UI shows "Không đủ dữ liệu").
  *
  * Đơn vị VN: giá quote HOSE thường là nghìn đồng; BCTC là VND đầy đủ.
+ * Số liệu dòng tiền lấy trực tiếp từ báo cáo LC tiền tệ VNDirect — không bịa.
  */
 
 export type Band = "safe" | "ok" | "risk" | "na";
@@ -85,7 +86,6 @@ export interface SnapshotBundle {
   shares: number | null;
   growthYoy: { metric: string; changePct: number | null }[];
   growthQoq: { metric: string; changePct: number | null }[];
-  /** Override từ API valuation / VNDirect ratios */
   overrides?: {
     pe?: number | null;
     pb?: number | null;
@@ -132,13 +132,27 @@ export function buildSnapshotMetrics(b: SnapshotBundle) {
   const tl = n(b0.totalLiabilities);
   const std = n(b0.shortTermDebt);
   const ltd = n(b0.longTermDebt);
-  const debt = std != null || ltd != null ? (std ?? 0) + (ltd ?? 0) : tl;
+  // Ưu tiên vay NH+DH; fallback tổng nợ phải trả
+  const interestBearingDebt =
+    std != null || ltd != null ? (std ?? 0) + (ltd ?? 0) : null;
+  const debt = interestBearingDebt != null && interestBearingDebt > 0 ? interestBearingDebt : tl;
   const retained = n(b0.retainedEarnings);
 
+  // Dòng tiền — chỉ lấy số trên BCTC
   const ocf = n(c0.operatingCashFlow);
-  const capex = n(c0.capex) != null ? Math.abs(n(c0.capex)!) : null;
+  const icf = n(c0.investingCashFlow);
+  const fcfFin = n(c0.financingCashFlow);
+  const capexRaw = n(c0.capex);
+  const capex = capexRaw != null ? Math.abs(capexRaw) : null;
+  // FCF = OCF − |Capex| (không dùng item "biến động tiền thuần")
   const fcf =
-    n(c0.freeCashFlow) ?? (ocf != null && capex != null ? ocf - capex : ocf);
+    n(c0.freeCashFlow) ??
+    (ocf != null ? ocf - (capex ?? 0) : null);
+  const cashBegin = n(c0.cashBegin);
+  const cashEnd = n(c0.cashEnd);
+  const netCashChange =
+    cashBegin != null && cashEnd != null ? cashEnd - cashBegin : null;
+  const cfPeriod = periodLabel(c0);
 
   const shares = b.shares ?? n(b0.shares) ?? n(i0.shares);
   const epsVnd = shares && ni != null && shares > 0 ? ni / shares : null;
@@ -201,7 +215,6 @@ export function buildSnapshotMetrics(b: SnapshotBundle) {
   const qoqRev =
     b.growthQoq.find((g) => g.metric === "netRevenue" || g.metric === "revenue")?.changePct ?? null;
 
-  // Multiples: giá VND / (EPS|BVPS VND)
   let pe = div(priceVnd, epsVnd);
   let pb = div(priceVnd, bvpsVnd);
   const mcap =
@@ -214,21 +227,18 @@ export function buildSnapshotMetrics(b: SnapshotBundle) {
   const ev = mcap != null ? mcap + (debt ?? 0) - (cash ?? 0) : null;
   let evEbitda = div(ev, ebitda);
 
-  // PEG: P/E ÷ (tăng trưởng EPS % dạng số nguyên, vd 15 = 15%)
   let peg: number | null = null;
   if (pe != null && yoyNi != null && Math.abs(yoyNi) > 0.001) {
     const gPct = Math.abs(yoyNi) < 2 ? yoyNi * 100 : yoyNi;
     if (gPct > 0) peg = pe / gPct;
   }
 
-  // Graham Number (VND) → hiển thị đơn vị quote
   const grahamVnd =
     epsVnd != null && bvpsVnd != null && epsVnd > 0 && bvpsVnd > 0
       ? Math.sqrt(22.5 * epsVnd * bvpsVnd)
       : null;
   let grahamQuote = vndPerShareToQuote(grahamVnd);
 
-  // Overrides từ valuation API / ratios VNDirect (ưu tiên)
   const o = b.overrides;
   if (o?.pe != null && o.pe > 0) pe = o.pe;
   if (o?.pb != null && o.pb > 0) pb = o.pb;
@@ -348,13 +358,96 @@ export function buildSnapshotMetrics(b: SnapshotBundle) {
     },
   ];
 
+  /** Dòng tiền — 100% từ BCTC VNDirect */
   const cashflow: MetricCell[] = [
-    { key: "fcf", labelVi: "FCF", value: fcf, format: "money" },
-    { key: "fcfm", labelVi: "Biên FCF", value: div(fcf, rev), format: "pct" },
-    { key: "ocfni", labelVi: "CFO / LNST", value: div(ocf, ni), format: "x", note: ">1 lợi nhuận có tiền thật" },
-    { key: "ocfdebt", labelVi: "CFO / Tổng nợ vay", value: div(ocf, debt), format: "x" },
-    { key: "capexrev", labelVi: "Capex / Doanh thu", value: div(capex, rev), format: "pct" },
-    { key: "ccc2", labelVi: "Chu kỳ tiền mặt", value: ccc, format: "days" },
+    {
+      key: "ocf",
+      labelVi: "CFO (LC tiền HĐKD)",
+      value: ocf,
+      format: "money",
+      note: cfPeriod !== "—" ? `Kỳ ${cfPeriod} · BCTC` : "Từ báo cáo LC tiền tệ",
+    },
+    {
+      key: "icf",
+      labelVi: "CFI (LC tiền đầu tư)",
+      value: icf,
+      format: "money",
+      note: "Từ BCTC",
+    },
+    {
+      key: "fff",
+      labelVi: "CFF (LC tiền tài chính)",
+      value: fcfFin,
+      format: "money",
+      note: "Từ BCTC",
+    },
+    {
+      key: "capex",
+      labelVi: "Capex (mua TSCĐ)",
+      value: capex,
+           format: "money",
+      note: capex == null ? "Chưa có chỉ tiêu mua TSCĐ trên CF" : "|item 32100/33100|",
+    },
+    {
+      key: "fcf",
+      labelVi: "FCF = CFO − |Capex|",
+      value: fcf,
+           format: "money",
+      note: "Tính từ BCTC, không dùng biến động tiền thuần",
+    },
+    {
+      key: "fcfm",
+      labelVi: "Biên FCF",
+      value: div(fcf, rev),
+      format: "pct",
+      note: "FCF / Doanh thu thuần",
+    },
+    {
+      key: "ocfni",
+      labelVi: "CFO / LNST",
+      value: div(ocf, ni),
+      format: "x",
+      note: ">1 lợi nhuận có tiền thật",
+    },
+    {
+      key: "ocfdebt",
+      labelVi: "CFO / Tổng nợ vay",
+      value: div(ocf, debt),
+      format: "x",
+      note: debt == null ? "Thiếu số dư vay trên BCĐKT" : undefined,
+    },
+    {
+      key: "capexrev",
+      labelVi: "Capex / Doanh thu",
+      value: div(capex, rev),
+      format: "pct",
+    },
+    {
+      key: "cashBegin",
+      labelVi: "Tiền đầu kỳ",
+      value: cashBegin,
+      format: "money",
+    },
+    {
+      key: "cashEnd",
+      labelVi: "Tiền cuối kỳ",
+      value: cashEnd,
+      format: "money",
+    },
+    {
+      key: "netCash",
+      labelVi: "Biến động tiền thuần",
+      value: netCashChange,
+      format: "money",
+      note: "Tiền cuối − đầu kỳ",
+    },
+    {
+      key: "ccc2",
+      labelVi: "Chu kỳ tiền mặt",
+      value: ccc,
+      format: "days",
+      note: ccc == null ? "Thiếu tồn kho / phải thu" : "DIO+DSO",
+    },
   ];
 
   const valuation: MetricCell[] = [
@@ -456,6 +549,10 @@ export function buildSnapshotMetrics(b: SnapshotBundle) {
       marketCap: mcap,
       epsVnd,
       bvpsVnd,
+      ocf,
+      fcf,
+      capex,
+      cfPeriod,
     },
   };
 }
