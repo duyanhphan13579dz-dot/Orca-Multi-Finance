@@ -92,7 +92,7 @@ export default function StockFundamentalsPage({
     params.then((p) => setSymbol(p.symbol.toUpperCase()));
   }, [params]);
 
-  const { res, data, isLoading } = useApi<FundPayload>(
+  const { res, data, isLoading, meta } = useApi<FundPayload>(
     symbol ? `/api/v1/stocks/${encodeURIComponent(symbol)}/fundamentals` : null,
     { refreshInterval: 90_000 },
   );
@@ -217,7 +217,7 @@ export default function StockFundamentalsPage({
 
   return (
     <div className="space-y-4">
-      <MetaLine source={(res as { meta?: { source?: string } })?.meta?.source ?? "vndirect"} />
+      <MetaLine meta={meta} />
 
       <div className="flex flex-wrap gap-1.5">
         {tabs.map((t) => (
