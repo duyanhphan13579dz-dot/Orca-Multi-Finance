@@ -14,6 +14,7 @@ const DSTOCK_HEADERS: Record<string, string> = {
   "User-Agent": "OrcaFinancial/1.0 (+dstock-api-finfo)",
 };
 
+/** Balance sheet (VAS + CK model 89) */
 const BS: Record<number, keyof NormalizedMetrics> = {
   11000: "currentAssets",
   11100: "cash",
@@ -36,12 +37,15 @@ const BS: Record<number, keyof NormalizedMetrics> = {
   13000: "totalLiabilities",
   13100: "currentLiabilities",
   13110: "shortTermDebt",
+  13120: "shortTermDebt",
+  13140: "shortTermDebt",
   13200: "longTermDebt",
   13300: "longTermDebt",
   13340: "longTermDebt",
   14000: "equity",
   14100: "equity",
   14220: "retainedEarnings",
+  14230: "retainedEarnings",
   14400: "totalAssets",
   12700: "totalAssets",
   411100: "cash",
@@ -80,23 +84,39 @@ const IS: Record<number, keyof NormalizedMetrics> = {
   23500: "taxExpense",
 };
 
+/**
+ * Cash flow codes.
+ * 35000 trên mẫu CK (model 91) = biến động tiền thuần — KHÔNG map thành FCF.
+ * FCF chỉ tính: OCF − |Capex| trong normalizeCashflowMetrics.
+ */
 const CF: Record<number, keyof NormalizedMetrics> = {
   32000: "operatingCashFlow",
+  32500: "operatingCashFlow",
   33000: "investingCashFlow",
   34000: "financingCashFlow",
   32100: "capex",
+  33100: "capex",
+  400760: "capex",
   36000: "cashBegin",
   36100: "cashBegin",
   37000: "cashEnd",
-  32500: "operatingCashFlow",
-  35000: "freeCashFlow",
 };
 
+/**
+ * Model VNDirect:
+ * BS: 1 (DN), 89 (CK), 101/111 (NH)
+ * IS: 2, 90 (CK), 102/112 (NH)
+ * CF: 3, 91 (CK), 92, 103/104/113 (NH)
+ */
 const MODEL_TYPES: Record<1 | 2 | 3, string> = {
-  1: "1,91,101,111,413",
+  1: "1,89,101,111,413",
   2: "2,90,102,112,412",
-  3: "3,92,103,104,113,414",
+  3: "3,91,92,103,104,113,414",
 };
+
+const BS_MODELS = new Set([1, 89, 101, 111, 413]);
+const IS_MODELS = new Set([2, 90, 102, 112, 412]);
+const CF_MODELS = new Set([3, 91, 92, 103, 104, 113, 414]);
 
 interface RawRow {
   code: string;
@@ -139,14 +159,8 @@ function resolveMetricKey(
   modelType: number,
   profile: MetricProfile,
 ): keyof NormalizedMetrics | null {
-  const primary =
-    modelType === 1 || modelType === 91 || modelType === 101 || modelType === 111 || modelType === 413
-      ? BS
-      : modelType === 2 || modelType === 90 || modelType === 102 || modelType === 112 || modelType === 412
-        ? IS
-        : modelType === 3 || modelType === 92 || modelType === 103 || modelType === 104 || modelType === 113 || modelType === 414
-          ? CF
-          : null;
+  const mt = Number(modelType);
+  const primary = BS_MODELS.has(mt) ? BS : IS_MODELS.has(mt) ? IS : CF_MODELS.has(mt) ? CF : null;
   if (primary && primary[itemCode]) return primary[itemCode];
   return metricKeyFromItemCode(itemCode, profile);
 }
@@ -172,6 +186,12 @@ function pivot(rows: RawRow[], profile: MetricProfile, _symbol: string): Normali
       if (!key) continue;
       const v = Number(r.numericValue);
       if (!Number.isFinite(v)) continue;
+      if (key === "capex") {
+        const cur = metrics.capex;
+        const absV = Math.abs(v);
+        if (cur == null || absV > Math.abs(cur as number)) metrics.capex = v;
+        continue;
+      }
       const cur = metrics[key];
       if (cur == null || Math.abs(v) > Math.abs(cur as number)) metrics[key] = v;
     }

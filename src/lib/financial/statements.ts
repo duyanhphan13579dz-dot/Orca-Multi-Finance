@@ -36,12 +36,20 @@ export function normalizeBalanceMetrics(m: NormalizedMetrics): NormalizedMetrics
   if (out.equity == null && out.totalAssets != null && out.totalLiabilities != null) {
     out.equity = out.totalAssets - out.totalLiabilities;
   }
+  // Tổng nợ vay = vay NH + vay DH khi thiếu totalLiabilities chi tiết
+  if (out.totalLiabilities == null && out.currentLiabilities != null && out.longTermDebt != null) {
+    out.totalLiabilities = out.currentLiabilities + out.longTermDebt;
+  }
   return out;
 }
 
+/**
+ * FCF chỉ suy ra từ OCF − |Capex|.
+ * Không dùng chỉ tiêu "biến động tiền thuần" (item 35000 mẫu CK) làm FCF.
+ */
 export function normalizeCashflowMetrics(m: NormalizedMetrics): NormalizedMetrics {
   const out: NormalizedMetrics = { ...m };
-  if (out.freeCashFlow == null && out.operatingCashFlow != null) {
+  if (out.operatingCashFlow != null) {
     const cap = out.capex != null ? Math.abs(out.capex) : 0;
     out.freeCashFlow = out.operatingCashFlow - cap;
   }
