@@ -41,6 +41,21 @@ export interface VndEquitySnapshot {
   source: string;
 }
 
+/** Multiples & fundamentals từ VNDirect ratios (đồng bộ với DStock) */
+export interface VndValuationRatios {
+  pe: number | null;
+  pb: number | null;
+  ps: number | null;
+  eps: number | null;
+  bvps: number | null;
+  roe: number | null;
+  roa: number | null;
+  dividendYield: number | null;
+  marketCap: number | null;
+  reportDate: string | null;
+  source: string;
+}
+
 export async function getVndCompanyProfile(symbol: string): Promise<VndCompanyProfile | null> {
   const sym = symbol.toUpperCase();
   const res = await httpJson<{ data?: Record<string, unknown>[] }>(
@@ -103,7 +118,6 @@ export async function getVndShareholders(symbol: string, size = 30): Promise<Vnd
 
 /**
  * Kéo snapshot CP lưu hành + vốn hóa báo cáo từ VNDirect ratios.
- * Thử nhiều ratioCode / endpoint để tránh miss dữ liệu.
  */
 export async function getVndEquitySnapshot(symbol: string): Promise<VndEquitySnapshot | null> {
   const sym = symbol.toUpperCase();
@@ -119,15 +133,15 @@ export async function getVndEquitySnapshot(symbol: string): Promise<VndEquitySna
   const attempts: { url: string; label: string }[] = [
     {
       label: "ratios-desc",
-      url: `${base()}/v4/ratios?q=${encodeURIComponent(q)}&size=20&sort=reportDate:desc`,
+      url: `${base()}/v4/ratios?q=${encodeURIComponent(q)}&size=30&sort=reportDate:desc`,
     },
     {
       label: "ratios-out",
       url: `${base()}/v4/ratios?q=code:${sym}~ratioCode:OUTSTANDING_SHARES&size=5&sort=reportDate:desc`,
     },
     {
-      label: "ratios-total",
-      url: `${base()}/v4/ratios?q=code:${sym}~ratioCode:TOTAL_SHARES&size=5&sort=reportDate:desc`,
+      label: "ratios-mcap",
+      url: `${base()}/v4/ratios?q=code:${sym}~ratioCode:MARKETCAP&size=5&sort=reportDate:desc`,
     },
   ];
 
@@ -148,21 +162,19 @@ export async function getVndEquitySnapshot(symbol: string): Promise<VndEquitySna
         const v = Number(r.value);
         if (!Number.isFinite(v) || v <= 0) continue;
         if (!reportDate && r.reportDate) reportDate = String(r.reportDate).slice(0, 10);
-        if (
-          (code === "OUTSTANDING_SHARES" || code === "LISTED_SHARES") &&
-          outstanding == null
-        ) {
+        if ((code === "OUTSTANDING_SHARES" || code === "LISTED_SHARES") && outstanding == null) {
           outstanding = v;
         }
         if (code === "TOTAL_SHARES" && total == null) total = v;
         if ((code === "MARKET_CAP" || code === "MARKETCAP") && marketCapReported == null) {
-          marketCapReported = v > 1e6 ? v : v * 1e9;
+          // VNDirect MARKETCAP luôn là VND đầy đủ (~1e11–1e15)
+          marketCapReported = v;
         }
       }
       source = `vndirect-ratios:${att.label}`;
-      if (outstanding != null || total != null) break;
+      if (outstanding != null || total != null || marketCapReported != null) break;
     } catch {
-      /* next attempt */
+      /* next */
     }
   }
 
@@ -197,6 +209,74 @@ export async function getVndEquitySnapshot(symbol: string): Promise<VndEquitySna
   };
 }
 
+/**
+ * PE / PB / PS / EPS / BVPS / MARKETCAP từ VNDirect ratios — nguồn chuẩn DStock.
+ * Giá HOSE/HNX trên API thường là nghìn đồng; MARKETCAP là VND đầy đủ.
+ */
+export async function getVndValuationRatios(symbol: string): Promise<VndValuationRatios | null> {
+  const sym = symbol.toUpperCase();
+  const codes = [
+    "PRICE_TO_EARNINGS",
+    "PRICE_TO_BOOK",
+    "PRICE_TO_SALES",
+    "EPS",
+    "BVPS",
+    "ROE",
+    "ROA",
+    "DIVIDEND_YIELD",
+    "MARKETCAP",
+    "MARKET_CAP",
+  ];
+  const url = `${base()}/v4/ratios?q=code:${sym}~ratioCode:${codes.join(",")}&size=40&sort=reportDate:desc`;
+  try {
+    const res = await httpJson<{
+      data?: { ratioCode?: string; value?: number; reportDate?: string }[];
+    }>(url, { provider: VND, timeoutMs: 10_000, retries: 1 });
+    if (!res.ok || !res.data?.data?.length) return null;
+
+    const pick = (want: string): { v: number; d: string | null } | null => {
+      for (const r of res.data!.data!) {
+        if (String(r.ratioCode ?? "").toUpperCase() !== want) continue;
+        const v = Number(r.value);
+        if (!Number.isFinite(v)) continue;
+        return { v, d: r.reportDate ? String(r.reportDate).slice(0, 10) : null };
+      }
+      return null;
+    };
+
+    const pe = pick("PRICE_TO_EARNINGS");
+    const pb = pick("PRICE_TO_BOOK");
+    const ps = pick("PRICE_TO_SALES");
+    const eps = pick("EPS");
+    const bvps = pick("BVPS");
+    const roe = pick("ROE");
+    const roa = pick("ROA");
+    const dy = pick("DIVIDEND_YIELD");
+    const mcap = pick("MARKETCAP") ?? pick("MARKET_CAP");
+
+    if (!pe && !pb && !ps && !mcap && !eps) return null;
+
+    const reportDate =
+      pe?.d ?? pb?.d ?? ps?.d ?? mcap?.d ?? eps?.d ?? bvps?.d ?? null;
+
+    return {
+      pe: pe && pe.v > 0 ? pe.v : null,
+      pb: pb && pb.v > 0 ? pb.v : null,
+      ps: ps && ps.v > 0 ? ps.v : null,
+      eps: eps ? eps.v : null,
+      bvps: bvps && bvps.v > 0 ? bvps.v : null,
+      roe: roe ? roe.v : null,
+      roa: roa ? roa.v : null,
+      dividendYield: dy && dy.v >= 0 ? dy.v : null,
+      marketCap: mcap && mcap.v > 0 ? mcap.v : null,
+      reportDate,
+      source: "vndirect-ratios",
+    };
+  } catch {
+    return null;
+  }
+}
+
 /** @deprecated dùng getVndEquitySnapshot */
 export async function getVndOutstandingShares(
   symbol: string,
@@ -214,4 +294,16 @@ export async function getVndOutstandingShares(
     reportDate: snap.reportDate,
     source: snap.source,
   };
+}
+
+/**
+ * Giá quote VN (HOSE/HNX) thường là nghìn đồng.
+ * BCTC + MARKETCAP VNDirect là VND đầy đủ.
+ * Trả về giá VND để nhân với số CP lưu hành.
+ */
+export function priceQuoteToVnd(priceQuote: number): number {
+  if (!Number.isFinite(priceQuote) || priceQuote <= 0) return 0;
+  // Giá cổ phiếu VN hiếm khi < 1.000 VND trên sàn chính; quote < 500 gần như chắc là nghìn đồng
+  if (priceQuote > 0 && priceQuote < 500) return priceQuote * 1000;
+  return priceQuote;
 }

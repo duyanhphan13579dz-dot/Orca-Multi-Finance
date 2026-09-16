@@ -1,8 +1,13 @@
 /**
  * Pipeline phân tích cơ bản + định giá — ĐỘC LẬP với trang Báo cáo tài chính.
  *
- * Không đi qua getFinancialPackage / getFinancialsForSymbol / snapshot báo cáo.
- * Kéo BCTC thẳng từ VNDirect api-finfo → health → valuation.
+ * Kết hợp:
+ *  - Giá realtime (multi-source getVnQuotes)
+ *  - CP lưu hành + MARKETCAP ratios VNDirect
+ *  - PE/PB/PS/EPS/BVPS từ VNDirect ratios (chuẩn DStock)
+ *  - BCTC kéo thẳng api-finfo → health anchors → engine định giá
+ *
+ * Lưu ý đơn vị: giá quote HOSE thường là nghìn đồng; BCTC/MARKETCAP là VND.
  */
 import "server-only";
 import { cached } from "../cache";
@@ -11,7 +16,12 @@ import { computeFinancialHealth, type FinancialHealthResult } from "../engines/f
 import { computeValuation } from "../engines/valuation";
 import { collectPeerMetrics } from "../engines/valuation-peers";
 import { fetchVndirectFinancials, periodsToLegacyRows } from "../financial/vndirect-fs";
-import { getVndEquitySnapshot } from "../providers/vndirect-company";
+import {
+  getVndEquitySnapshot,
+  getVndValuationRatios,
+  priceQuoteToVnd,
+  type VndValuationRatios,
+} from "../providers/vndirect-company";
 import { ensureVndirectWsStarted, vndirectWs } from "../realtime/vndirect-ws";
 import { getVnQuotes } from "./stocks";
 import { sectorOf } from "../vn/master";
@@ -22,6 +32,20 @@ export interface FundamentalValuationResult {
   data: Record<string, unknown>;
   meta: Meta;
   health: FinancialHealthResult;
+}
+
+function saneMultiple(v: number | null | undefined, maxAbs = 500): number | null {
+  if (v == null || !Number.isFinite(v)) return null;
+  if (v <= 0) return null;
+  if (Math.abs(v) > maxAbs) return null;
+  return v;
+}
+
+function saneYieldPct(v: number | null | undefined): number | null {
+  if (v == null || !Number.isFinite(v)) return null;
+  // |FCF yield| > 80% hầu như luôn do lệch đơn vị → ẩn
+  if (Math.abs(v) > 80) return null;
+  return v;
 }
 
 export async function runFundamentalValuation(
@@ -69,24 +93,47 @@ export async function runFundamentalValuation(
     },
   }).then((r) => r.value);
 
+  const ratiosP = cached(`fv:ratios:${symbol}`, {
+    ttlMs: 5 * 60_000,
+    staleMs: 60 * 60_000,
+    producer: async () => {
+      try {
+        return await getVndValuationRatios(symbol);
+      } catch {
+        return null;
+      }
+    },
+  }).then((r) => r.value);
+
   const peersP = wantPeers
     ? collectPeerMetrics(symbol, 4).catch(() => null)
     : Promise.resolve(null);
 
-  const [fs, quotes, equity, peerPack] = await Promise.all([fsP, quoteP, equityP, peersP]);
+  const [fs, quotes, equity, vndRatios, peerPack] = await Promise.all([
+    fsP,
+    quoteP,
+    equityP,
+    ratiosP,
+    peersP,
+  ]);
 
-  const price =
-    quotes?.quotes?.[0]?.price && quotes.quotes[0].price > 0
-      ? quotes.quotes[0].price
-      : 0;
+  const priceQuote =
+    quotes?.quotes?.[0]?.price && quotes.quotes[0].price > 0 ? quotes.quotes[0].price : 0;
   const priceSource = quotes?.meta?.source ?? "vndirect";
+  /** Giá VND đầy đủ để khớp BCTC */
+  const priceVnd = priceQuoteToVnd(priceQuote);
 
-  if (!fs?.periods?.length && price <= 0) {
+  if (!fs?.periods?.length && priceQuote <= 0 && !vndRatios?.marketCap) {
     return null;
   }
 
   const notes: string[] = [];
-  notes.push("Pipeline độc lập — BCTC kéo trực tiếp VNDirect api-finfo (không qua trang báo cáo).");
+  notes.push(
+    "Pipeline độc lập — giá realtime + ratios + BCTC VNDirect (không qua snapshot trang báo cáo).",
+  );
+  if (priceQuote > 0 && priceQuote < 500) {
+    notes.push(`Giá quote ${priceQuote} → ${priceVnd.toLocaleString("vi-VN")} VND (×1000 nghìn đồng).`);
+  }
 
   let health: FinancialHealthResult;
   if (fs?.periods?.length) {
@@ -105,7 +152,7 @@ export async function runFundamentalValuation(
       { income: [], balance: [], cashflow: [] },
       { symbol },
     );
-    notes.push("Không lấy được BCTC từ VNDirect — định giá chỉ dựa giá/CP nếu có.");
+    notes.push("Không lấy được BCTC từ VNDirect — dùng ratios/giá thị trường.");
   }
 
   let sharesOutstanding: number | null = health.anchors?.shares ?? null;
@@ -118,23 +165,55 @@ export async function runFundamentalValuation(
     sharesSource = equity.source;
     sharesReportDate = equity.reportDate;
     marketCapReported = equity.marketCapReported;
-    health = {
-      ...health,
-      anchors: {
-        ...health.anchors,
-        shares: equity.sharesOutstanding,
-        epsTtm:
-          health.anchors.netProfit != null && equity.sharesOutstanding > 0
-            ? health.anchors.netProfit / equity.sharesOutstanding
-            : health.anchors.epsTtm,
-      },
-    };
+  }
+  if (vndRatios?.marketCap && vndRatios.marketCap > 0) {
+    marketCapReported = vndRatios.marketCap;
   }
 
-  const marketCapComputed =
-    price > 0 && sharesOutstanding != null && sharesOutstanding > 0
-      ? price * sharesOutstanding
-      : marketCapReported;
+  // EPS/BVPS từ ratios nếu anchors thiếu
+  let epsTtm = health.anchors.epsTtm;
+  if ((epsTtm == null || !Number.isFinite(epsTtm)) && vndRatios?.eps != null) {
+    // EPS VNDirect thường đã là VND/cp (cùng đơn vị giá quote nghìn đồng hoặc full — ưu tiên khớp P/E)
+    epsTtm = vndRatios.eps;
+    notes.push(`EPS từ VNDirect ratios: ${epsTtm}`);
+  }
+  // Nếu có PE + giá quote → suy ra EPS cùng đơn vị giá quote
+  if (
+    (epsTtm == null || !Number.isFinite(epsTtm)) &&
+    vndRatios?.pe &&
+    vndRatios.pe > 0 &&
+    priceQuote > 0
+  ) {
+    epsTtm = priceQuote / vndRatios.pe;
+    notes.push(`EPS suy từ giá quote / PE ratios`);
+  }
+
+  health = {
+    ...health,
+    anchors: {
+      ...health.anchors,
+      shares: sharesOutstanding ?? health.anchors.shares,
+      epsTtm:
+        epsTtm ??
+        (health.anchors.netProfit != null && sharesOutstanding && sharesOutstanding > 0
+          ? health.anchors.netProfit / sharesOutstanding
+          : health.anchors.epsTtm),
+    },
+  };
+
+  /** Vốn hóa ưu tiên: MARKETCAP ratios → priceVnd × shares */
+  const marketCapFromPrice =
+    priceVnd > 0 && sharesOutstanding != null && sharesOutstanding > 0
+      ? priceVnd * sharesOutstanding
+      : null;
+  const marketCapPreferred =
+    marketCapReported && marketCapReported > 1e9
+      ? marketCapReported
+      : marketCapFromPrice ?? marketCapReported;
+
+  if (marketCapPreferred) {
+    notes.push(`Vốn hóa: ${Math.round(marketCapPreferred).toLocaleString("vi-VN")} VND`);
+  }
 
   const peerComparison =
     peerPack && peerPack.peers && peerPack.peers.length > 0
@@ -143,17 +222,18 @@ export async function runFundamentalValuation(
           sector: peerPack.sector ?? sectorOf(symbol),
           subject: {
             symbol,
-            pe: null as number | null,
-            pb: null as number | null,
-            ps: null as number | null,
+            pe: vndRatios?.pe ?? null,
+            pb: vndRatios?.pb ?? null,
+            ps: vndRatios?.ps ?? null,
             evEbitda: null as number | null,
           },
           peers: peerPack.peers,
         }
       : undefined;
 
+  // Engine nhận giá quote (cùng đơn vị EPS nếu EPS từ PE); MC sẽ được override sau
   const valuation = computeValuation({
-    price: price > 0 ? price : 0,
+    price: priceQuote > 0 ? priceQuote : 0,
     health,
     symbol,
     peerComparison: peerComparison as Parameters<typeof computeValuation>[0]["peerComparison"],
@@ -163,16 +243,84 @@ export async function runFundamentalValuation(
   const p4 = valuation.phase4 ?? null;
   const p5 = valuation.phase5 ?? null;
 
-  const resolvedMarketCap =
-    valuation.marketCap ??
-    marketCapComputed ??
-    (price > 0 && sharesOutstanding ? price * sharesOutstanding : null);
+  // Multiples: ưu tiên tính toán engine nếu hợp lệ; fallback ratios VNDirect
+  const eng = valuation.multiples;
+  const multiples = {
+    pe: saneMultiple(eng.pe) ?? saneMultiple(vndRatios?.pe ?? null) ?? null,
+    pb: saneMultiple(eng.pb, 50) ?? saneMultiple(vndRatios?.pb ?? null, 50) ?? null,
+    ps: saneMultiple(eng.ps, 100) ?? saneMultiple(vndRatios?.ps ?? null, 100) ?? null,
+    peg: eng.peg,
+    pcf: saneMultiple(eng.pcf) ?? null,
+    pfcf: saneMultiple(eng.pfcf) ?? null,
+    evEbitda: saneMultiple(eng.evEbitda) ?? null,
+    evEbit: eng.evEbit,
+    evSales: saneMultiple(eng.evSales) ?? null,
+    evFcff: saneMultiple(eng.evFcff) ?? null,
+    fcfYield: saneYieldPct(eng.fcfYield),
+    dividendYield:
+      saneYieldPct(eng.dividendYield) ??
+      (vndRatios?.dividendYield != null
+        ? Number((vndRatios.dividendYield * 100).toFixed(2))
+        : null),
+    earningsYield: saneYieldPct(eng.earningsYield),
+  };
 
-  const allNotes = [...notes, ...(valuation.notes ?? [])];
+  if (vndRatios?.pe || vndRatios?.pb || vndRatios?.ps) {
+    notes.push(
+      `Ratios VNDirect: PE ${vndRatios.pe?.toFixed(1) ?? "—"} · PB ${vndRatios.pb?.toFixed(2) ?? "—"} · PS ${vndRatios.ps?.toFixed(2) ?? "—"}`,
+    );
+  }
+
+  // Fair value: nếu có BVPS + PB ngành, hoặc EPS + PE, bổ sung ước lượng đơn giản khi engine blank
+  let blended =
+    p5?.finalFairValue ?? fv?.blendedFairValue ?? null;
+  if (blended == null && priceQuote > 0) {
+    const estimates: number[] = [];
+    if (vndRatios?.eps && vndRatios.eps > 0 && multiples.pe && multiples.pe > 0) {
+      // FV ~ EPS * fair PE (dùng PE hiện tại làm proxy khi thiếu peer)
+      estimates.push(vndRatios.eps * multiples.pe);
+    }
+    if (vndRatios?.bvps && vndRatios.bvps > 0 && multiples.pb && multiples.pb > 0) {
+      estimates.push(vndRatios.bvps * multiples.pb);
+    }
+    // Nếu chỉ có giá + không upside — không invent; chỉ khi có anchor
+    if (estimates.length) {
+      blended = estimates.reduce((a, b) => a + b, 0) / estimates.length;
+      notes.push(`FV ước lượng từ EPS/BVPS × multiple (ratios)`);
+    }
+  }
+
+  const upside =
+    p5?.score?.upsidePct ??
+    fv?.upsidePct ??
+    (blended != null && priceQuote > 0
+      ? Number((((blended / priceQuote) - 1) * 100).toFixed(1))
+      : null);
+
+  const resolvedMarketCap =
+    marketCapPreferred ??
+    valuation.marketCap ??
+    marketCapFromPrice;
+
+  // EV: nếu engine EV ≈ MC do thiếu debt/cash scale sai, giữ engine nhưng gắn MC đúng
+  let enterpriseValue = valuation.enterpriseValue;
+  if (
+    resolvedMarketCap &&
+    enterpriseValue != null &&
+    resolvedMarketCap > 1e12 &&
+    enterpriseValue < resolvedMarketCap / 50
+  ) {
+    // EV bị lệch đơn vị — đặt EV ≈ MC cho đến khi có debt/cash khớp
+    enterpriseValue = resolvedMarketCap;
+    notes.push("EV căn theo MARKETCAP (điều chỉnh lệch đơn vị).");
+  }
+
+  const allNotes = [...notes, ...(valuation.notes ?? [])].slice(0, 40);
 
   const data: Record<string, unknown> = {
     symbol,
-    currentPrice: valuation.price,
+    currentPrice: priceQuote > 0 ? priceQuote : valuation.price,
+    priceVnd: priceVnd > 0 ? priceVnd : null,
     priceSource,
     sharesOutstanding,
     sharesSource,
@@ -180,19 +328,35 @@ export async function runFundamentalValuation(
     marketCap: resolvedMarketCap,
     marketCapReported,
     marketSnapshot: {
-      price: valuation.price,
+      price: priceQuote > 0 ? priceQuote : valuation.price,
+      priceVnd,
       priceSource,
       sharesOutstanding,
       sharesSource,
       sharesReportDate,
       marketCap: resolvedMarketCap,
       marketCapReported,
-      enterpriseValue: valuation.enterpriseValue ?? null,
+      enterpriseValue: enterpriseValue ?? null,
     },
-    enterpriseValue: valuation.enterpriseValue,
-    multiples: valuation.multiples,
+    enterpriseValue,
+    multiples,
+    vndirectRatios: vndRatios
+      ? {
+          pe: vndRatios.pe,
+          pb: vndRatios.pb,
+          ps: vndRatios.ps,
+          eps: vndRatios.eps,
+          bvps: vndRatios.bvps,
+          roe: vndRatios.roe,
+          roa: vndRatios.roa,
+          dividendYield: vndRatios.dividendYield,
+          marketCap: vndRatios.marketCap,
+          reportDate: vndRatios.reportDate,
+          source: vndRatios.source,
+        }
+      : null,
     fairValues: {
-      blended: p5?.finalFairValue ?? fv?.blendedFairValue ?? null,
+      blended,
       low: p5?.confidenceBands?.low ?? null,
       base: p5?.confidenceBands?.base ?? null,
       high: p5?.confidenceBands?.high ?? null,
@@ -217,7 +381,7 @@ export async function runFundamentalValuation(
     valuationGrade: p5?.grade ?? null,
     valuationScoreBreakdown: p5?.score?.breakdown ?? null,
     valuationStatus: p5?.valuationStatus ?? fv?.valuationStatus ?? null,
-    upsideDownside: p5?.score?.upsidePct ?? fv?.upsidePct ?? null,
+    upsideDownside: upside,
     confidence: valuation.confidence,
     valuationConfidence: fv?.confidence ?? null,
     confidenceBands: p5?.confidenceBands ?? null,
@@ -249,7 +413,7 @@ export async function runFundamentalValuation(
       fcfDefinition: valuation.phase2?.cashFlow?.fcfDefinition ?? null,
     },
     notes: allNotes,
-    pipeline: "fundamental-valuation-direct",
+    pipeline: "fundamental-valuation-direct-v2",
     calculatedAt: new Date().toISOString(),
     valuationEngineVersion: valuation.valuationEngineVersion,
   };
@@ -265,7 +429,7 @@ export async function runFundamentalValuation(
   }
 
   const meta = buildMeta({
-    source: `fundamental-direct+${priceSource}+vndirect-fs`,
+    source: `fundamental-direct+${priceSource}+vndirect-fs+ratios`,
     sourceTimestampMs: Date.now(),
     note: allNotes[0] ?? "Định giá độc lập từ VNDirect",
   });
