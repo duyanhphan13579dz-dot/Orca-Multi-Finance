@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { useApi } from "@/lib/hooks";
 import {
   Panel,
@@ -15,9 +15,7 @@ import {
 } from "@/components/ui";
 import { Calculator, Sparkles, ChevronDown, ChevronUp } from "lucide-react";
 import { ValuationMarketStrip } from "@/components/stocks/valuation-market-strip";
-
-/* Restored valuation panel — market strip + full engine UI.
- * Full source kept in repo history; this push restores from PLACEHOLDER. */
+import { DcfDetailPanel } from "@/components/stocks/dcf-detail-panel";
 
 export function ValuationPanel({
   symbol,
@@ -92,6 +90,12 @@ export function ValuationPanel({
   const sharesSource =
     typeof data.sharesSource === "string" ? data.sharesSource : null;
 
+  const dcfDetail = (data.dcfDetail ?? null) as {
+    scenarios?: unknown[];
+    sensitivity?: unknown;
+    costOfCapital?: unknown;
+  } | null;
+
   const fmtPrice = (n: number | null | undefined) =>
     n == null || !Number.isFinite(n) ? "—" : fmtNum(n, n >= 1000 ? 0 : 2);
 
@@ -158,10 +162,8 @@ export function ValuationPanel({
               {sharesOutstanding != null && (
                 <span title={sharesSource ?? undefined}>
                   CP LH {fmtCompact(sharesOutstanding)}
-                  {sharesSource ? ` · ${sharesSource}` : ""}
                 </span>
               )}
-              {priceSource && <span>src {priceSource}</span>}
             </div>
           </div>
 
@@ -183,6 +185,22 @@ export function ValuationPanel({
                 {multiples.fcfYield != null ? `${multiples.fcfYield.toFixed(1)}%` : "—"}
               </span>
             </div>
+            {(fv.dcfBase != null || fv.dcfBear != null || fv.dcfBull != null) && (
+              <div className="mt-2 grid grid-cols-3 gap-1 border-t border-line/40 pt-2 text-center text-[11px]">
+                <div>
+                  <div className="text-[10px] text-ink-3">DCF Bear</div>
+                  <div className="num font-medium">{fmtPrice(fv.dcfBear != null ? Number(fv.dcfBear) : null)}</div>
+                </div>
+                <div>
+                  <div className="text-[10px] text-ink-3">DCF Base</div>
+                  <div className="num font-semibold text-accent">{fmtPrice(fv.dcfBase != null ? Number(fv.dcfBase) : null)}</div>
+                </div>
+                <div>
+                  <div className="text-[10px] text-ink-3">DCF Bull</div>
+                  <div className="num font-medium">{fmtPrice(fv.dcfBull != null ? Number(fv.dcfBull) : null)}</div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
@@ -206,6 +224,13 @@ export function ValuationPanel({
           </div>
         )}
       </Panel>
+
+      <DcfDetailPanel
+        scenarios={(dcfDetail?.scenarios as never) ?? null}
+        sensitivity={(dcfDetail?.sensitivity as never) ?? null}
+        costOfCapital={(dcfDetail?.costOfCapital as never) ?? null}
+        currentPrice={currentPrice > 0 ? currentPrice : null}
+      />
 
       {showAnalyst && (
         <Panel
