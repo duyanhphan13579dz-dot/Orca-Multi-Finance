@@ -78,188 +78,217 @@ function filterByGrain<T extends { period: string }>(rows: T[], grain: Grain): T
   return sorted;
 }
 
-/** Độ rộng mỗi nhóm kỳ (px) — sát nhau, không trải full màn */
-function periodColWidth(seriesCount: number, periodCount: number): number {
-  const bar = seriesCount >= 3 ? 10 : 12;
-  const gap = 2;
-  const inner = seriesCount * bar + (seriesCount - 1) * gap + 8;
-  // Khi nhiều kỳ vẫn giữ compact; khi ít kỳ không phình ra
-  const base = Math.max(inner, 36);
-  if (periodCount <= 4) return Math.max(base, 44);
-  if (periodCount <= 8) return Math.max(base, 40);
-  return base;
-}
-
 function GroupedBarChart({
   points,
   series,
   format = "money",
-  chartHeight = 260,
+  chartHeight = 220,
 }: {
   points: { period: string; values: (number | null)[] }[];
   series: { label: string; color: string }[];
   format?: "money" | "pct";
   chartHeight?: number;
 }) {
-  const maxAbs = useMemo(() => {
-    let m = 0;
+  const { maxAbs, hasNeg, maxPos } = useMemo(() => {
+    let maxA = 0;
+    let maxP = 0;
+    let neg = false;
     for (const p of points) {
       for (const v of p.values) {
-        if (v != null && Number.isFinite(v)) m = Math.max(m, Math.abs(v));
+        if (v == null || !Number.isFinite(v)) continue;
+        maxA = Math.max(maxA, Math.abs(v));
+        if (v < 0) neg = true;
+        if (v > 0) maxP = Math.max(maxP, v);
       }
     }
-    return m > 0 ? m : 1;
+    return { maxAbs: maxA > 0 ? maxA : 1, hasNeg: neg, maxPos: maxP > 0 ? maxP : 1 };
   }, [points]);
+
+  const [showTable, setShowTable] = useState(false);
 
   if (!points.length) {
     return (
-      <p className="py-8 text-center text-[12px] text-text-muted">
+      <p className="py-6 text-center text-[12px] text-text-muted">
         Chưa đủ chuỗi kỳ BCTC để vẽ biểu đồ.
       </p>
     );
   }
 
   const fmt = (v: number | null) => (format === "pct" ? pct(v) : fmtCompact(v));
-  const half = chartHeight / 2;
-  const colW = periodColWidth(series.length, points.length);
-  const barW = series.length >= 3 ? 10 : 12;
+  // Khi toàn dương: baseline ở đáy → tận dụng chiều cao; có âm: chia đôi
+  const plotH = hasNeg ? chartHeight : chartHeight;
+  const zeroY = hasNeg ? plotH / 2 : plotH;
+  const scaleMax = hasNeg ? maxAbs : maxPos;
+  const nSeries = series.length;
 
   return (
-    <div className="space-y-3">
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-text-muted">
-        {series.map((s) => (
-          <span key={s.label} className="inline-flex items-center gap-1.5">
-            <span className="inline-block h-2.5 w-3 rounded-sm" style={{ background: s.color }} />
-            {s.label}
-          </span>
-        ))}
+    <div className="space-y-2.5">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-text-muted">
+          {series.map((s) => (
+            <span key={s.label} className="inline-flex items-center gap-1.5">
+              <span className="inline-block h-2.5 w-3 rounded-sm" style={{ background: s.color }} />
+              {s.label}
+            </span>
+          ))}
+        </div>
+        <button
+          type="button"
+          onClick={() => setShowTable((v) => !v)}
+          className="text-[11px] text-text-muted underline-offset-2 hover:text-text-primary hover:underline"
+        >
+          {showTable ? "Ẩn bảng số" : "Xem bảng số"}
+        </button>
       </div>
 
-      <div className="relative overflow-x-auto pb-1">
-        <div className="inline-flex min-w-full flex-col">
-          <div className="flex items-start gap-0">
-            {/* Trục Y */}
-            <div
-              className="sticky left-0 z-[1] flex w-11 shrink-0 flex-col justify-between bg-surface-elevated/80 pr-1 text-right text-[10px] text-text-muted/80 backdrop-blur-sm"
-              style={{ height: chartHeight }}
-            >
-              <span>{format === "pct" ? pct(maxAbs) : fmtCompact(maxAbs)}</span>
-              <span>0</span>
-              <span>{format === "pct" ? pct(-maxAbs) : fmtCompact(-maxAbs)}</span>
-            </div>
+      {/* Chart full width — mỗi kỳ flex-1 đều nhau */}
+      <div className="flex gap-2">
+        <div
+          className="flex w-10 shrink-0 flex-col justify-between py-0.5 text-right text-[10px] tabular-nums text-text-muted/80"
+          style={{ height: plotH }}
+        >
+          <span>{fmt(hasNeg ? maxAbs : maxPos)}</span>
+          {hasNeg ? <span>0</span> : null}
+          {hasNeg ? <span>{fmt(-maxAbs)}</span> : <span>0</span>}
+        </div>
 
-            {/* Cụm cột — sát nhau */}
-            <div className="flex items-stretch" style={{ height: chartHeight }}>
-              {points.map((p) => (
-                <div
-                  key={p.period}
-                  className="group relative flex shrink-0 flex-col items-center"
-                  style={{ width: colW }}
-                  title={p.period}
-                >
-                  <div className="relative flex h-full w-full items-end justify-center gap-[2px]">
-                    <div
-                      className="pointer-events-none absolute inset-x-0 border-t border-border-subtle/50"
-                      style={{ top: half }}
-                    />
-                    {p.values.map((v, vi) => {
-                      if (v == null || !Number.isFinite(v)) {
-                        return (
-                          <div
-                            key={vi}
-                            className="opacity-15"
-                            style={{ width: barW, height: 2, marginTop: half }}
-                          />
-                        );
-                      }
-                      const hPx = Math.max((Math.abs(v) / maxAbs) * (half - 4), 3);
-                      const positive = v >= 0;
+        <div className="min-w-0 flex-1">
+          <div className="relative flex w-full items-end" style={{ height: plotH }}>
+            {/* zero line */}
+            <div
+              className="pointer-events-none absolute inset-x-0 z-0 border-t border-border-subtle/60"
+              style={{ top: hasNeg ? "50%" : undefined, bottom: hasNeg ? undefined : 0 }}
+            />
+
+            {points.map((p) => (
+              <div
+                key={p.period}
+                className="group relative z-[1] flex h-full min-w-0 flex-1 flex-col items-center px-[1px] sm:px-0.5"
+              >
+                <div className="relative flex h-full w-full max-w-[48px] items-end justify-center gap-[2px] self-center">
+                  {p.values.map((v, vi) => {
+                    if (v == null || !Number.isFinite(v)) {
                       return (
                         <div
                           key={vi}
-                          className="relative flex flex-col items-center"
+                          className="flex-1 opacity-10"
                           style={{
-                            width: barW,
-                            height: chartHeight,
-                            justifyContent: positive ? "flex-end" : "flex-start",
-                            paddingBottom: positive ? half : undefined,
-                            paddingTop: positive ? undefined : half,
+                            maxWidth: nSeries >= 3 ? 8 : 12,
+                            height: 2,
+                            marginBottom: hasNeg ? zeroY - 1 : 0,
                           }}
+                        />
+                      );
+                    }
+                    const usable = hasNeg ? zeroY - 4 : plotH - 8;
+                    const hPx = Math.max((Math.abs(v) / scaleMax) * usable, 3);
+                    const positive = v >= 0;
+
+                    if (!hasNeg) {
+                      // Baseline đáy
+                      return (
+                        <div
+                          key={vi}
+                          className="relative flex flex-1 flex-col justify-end self-end"
+                          style={{ maxWidth: nSeries >= 3 ? 10 : 14, height: plotH }}
                         >
                           <div
-                            className="w-full transition-opacity"
+                            className="w-full rounded-t-[3px]"
                             style={{
                               height: hPx,
                               background: series[vi]?.color ?? "#64748b",
-                              borderRadius: positive ? "2px 2px 1px 1px" : "1px 1px 2px 2px",
                               opacity: 0.95,
                             }}
                             title={`${p.period} · ${series[vi]?.label}: ${fmt(v)}`}
                           />
-                          <span
-                            className={`pointer-events-none absolute left-1/2 z-10 hidden -translate-x-1/2 whitespace-nowrap rounded bg-surface-elevated px-1.5 py-0.5 text-[10px] font-medium text-text-primary shadow-md group-hover:block ${
-                              positive ? "bottom-[calc(50%+6px)]" : "top-[calc(50%+6px)]"
-                            }`}
-                          >
+                          <span className="pointer-events-none absolute bottom-full left-1/2 z-10 mb-1 hidden -translate-x-1/2 whitespace-nowrap rounded bg-surface-elevated px-1.5 py-0.5 text-[10px] font-medium text-text-primary shadow-md group-hover:block">
                             {fmt(v)}
                           </span>
                         </div>
                       );
-                    })}
-                  </div>
+                    }
+
+                    // Có âm — baseline giữa
+                    return (
+                      <div
+                        key={vi}
+                        className="relative flex flex-1 flex-col items-center"
+                        style={{
+                          maxWidth: nSeries >= 3 ? 10 : 14,
+                          height: plotH,
+                          justifyContent: positive ? "flex-end" : "flex-start",
+                          paddingBottom: positive ? zeroY : undefined,
+                          paddingTop: positive ? undefined : zeroY,
+                        }}
+                      >
+                        <div
+                          className="w-full"
+                          style={{
+                            height: hPx,
+                            background: series[vi]?.color ?? "#64748b",
+                            borderRadius: positive ? "3px 3px 1px 1px" : "1px 1px 3px 3px",
+                            opacity: 0.95,
+                          }}
+                          title={`${p.period} · ${series[vi]?.label}: ${fmt(v)}`}
+                        />
+                        <span
+                          className={`pointer-events-none absolute left-1/2 z-10 hidden -translate-x-1/2 whitespace-nowrap rounded bg-surface-elevated px-1.5 py-0.5 text-[10px] font-medium shadow-md group-hover:block ${
+                            positive ? "bottom-[calc(50%+4px)]" : "top-[calc(50%+4px)]"
+                          }`}
+                        >
+                          {fmt(v)}
+                        </span>
+                      </div>
+                    );
+                  })}
                 </div>
-              ))}
-            </div>
+              </div>
+            ))}
           </div>
 
-          {/* Nhãn kỳ sát dưới từng cột */}
-          <div className="mt-1 flex">
-            <div className="w-11 shrink-0" />
-            <div className="flex">
-              {points.map((p) => (
-                <div
-                  key={p.period}
-                  className="shrink-0 truncate text-center text-[10px] font-medium text-text-muted"
-                  style={{ width: colW }}
-                  title={p.period}
-                >
-                  {p.period.replace(/^20/, "'")}
-                </div>
-              ))}
-            </div>
+          {/* Nhãn kỳ full-width khớp cột */}
+          <div className="mt-1 flex w-full">
+            {points.map((p) => (
+              <div
+                key={p.period}
+                className="min-w-0 flex-1 truncate px-[1px] text-center text-[10px] font-medium text-text-muted sm:text-[11px]"
+                title={p.period}
+              >
+                {p.period.replace(/^20/, "'")}
+              </div>
+            ))}
           </div>
         </div>
       </div>
 
-      <div className="overflow-x-auto rounded-lg border border-border-subtle/60">
-        <table className="w-full min-w-[320px] text-left text-[11px]">
-          <thead>
-            <tr className="border-b border-border-subtle text-[10px] uppercase tracking-wide text-text-muted">
-              <th className="px-2 py-1.5 font-medium">Kỳ</th>
-              {series.map((s) => (
-                <th key={s.label} className="px-2 py-1.5 font-medium">
-                  <span className="inline-flex items-center gap-1">
-                    <span className="inline-block size-2 rounded-sm" style={{ background: s.color }} />
+      {showTable && (
+        <div className="overflow-x-auto rounded-lg border border-border-subtle/60">
+          <table className="w-full min-w-[280px] text-left text-[11px]">
+            <thead>
+              <tr className="border-b border-border-subtle text-[10px] uppercase text-text-muted">
+                <th className="px-2 py-1.5 font-medium">Kỳ</th>
+                {series.map((s) => (
+                  <th key={s.label} className="px-2 py-1.5 font-medium">
                     {s.label}
-                  </span>
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {[...points].reverse().map((p) => (
-              <tr key={p.period} className="border-b border-border-subtle/40 last:border-0">
-                <td className="px-2 py-1 font-medium text-text-primary">{p.period}</td>
-                {p.values.map((v, i) => (
-                  <td key={i} className="num px-2 py-1 text-text-secondary">
-                    {fmt(v)}
-                  </td>
+                  </th>
                 ))}
               </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+            </thead>
+            <tbody>
+              {[...points].reverse().map((p) => (
+                <tr key={p.period} className="border-b border-border-subtle/40 last:border-0">
+                  <td className="px-2 py-1 font-medium text-text-primary">{p.period}</td>
+                  {p.values.map((v, i) => (
+                    <td key={i} className="num px-2 py-1 text-text-secondary">
+                      {fmt(v)}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
@@ -267,7 +296,7 @@ function GroupedBarChart({
 function LinePctChart({
   points,
   series,
-  chartHeight = 240,
+  chartHeight = 200,
 }: {
   points: { period: string; values: (number | null)[] }[];
   series: { label: string; color: string }[];
@@ -285,107 +314,119 @@ function LinePctChart({
       }
     }
     if (lo === hi) hi = lo + 0.05;
-    const pad = (hi - lo) * 0.12;
+    const pad = (hi - lo) * 0.1;
     return { min: lo - pad, max: hi + pad };
   }, [points]);
 
+  const [showTable, setShowTable] = useState(false);
+
   if (!points.length) {
     return (
-      <p className="py-8 text-center text-[12px] text-text-muted">Chưa đủ dữ liệu tỷ lệ.</p>
+      <p className="py-6 text-center text-[12px] text-text-muted">Chưa đủ dữ liệu tỷ lệ.</p>
     );
   }
 
   const n = points.length;
-  // Nén trục X: điểm sát nhau hơn (padding 2% mỗi bên thay vì trải đều quá rộng khi ít điểm)
-  const padX = n <= 3 ? 18 : n <= 6 ? 10 : 6;
+  const padX = 4;
   const w = 100;
   const h = 100;
   const plotW = w - padX * 2;
-  const yScale = (v: number) => h - ((v - min) / (max - min)) * (h - 8) - 4;
+  const yScale = (v: number) => h - ((v - min) / (max - min)) * (h - 6) - 3;
   const xScale = (i: number) => (n <= 1 ? w / 2 : padX + (i / (n - 1)) * plotW);
 
-  // Chiều rộng vùng plot theo số kỳ — không full width khi ít điểm
-  const plotPx = Math.min(100, Math.max(28, n * 42));
-
   return (
-    <div className="space-y-3">
-      <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-text-muted">
-        {series.map((s) => (
-          <span key={s.label} className="inline-flex items-center gap-1.5">
-            <span className="inline-block size-2.5 rounded-full" style={{ background: s.color }} />
-            {s.label}
-          </span>
-        ))}
+    <div className="space-y-2.5">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-text-muted">
+          {series.map((s) => (
+            <span key={s.label} className="inline-flex items-center gap-1.5">
+              <span className="inline-block size-2.5 rounded-full" style={{ background: s.color }} />
+              {s.label}
+            </span>
+          ))}
+        </div>
+        <button
+          type="button"
+          onClick={() => setShowTable((v) => !v)}
+          className="text-[11px] text-text-muted underline-offset-2 hover:text-text-primary hover:underline"
+        >
+          {showTable ? "Ẩn bảng số" : "Xem bảng số"}
+        </button>
       </div>
 
-      <div className="overflow-x-auto">
-        <div className="inline-block min-w-full" style={{ minWidth: `${Math.max(plotPx, n * 40)}px` }}>
-          <div className="relative flex" style={{ height: chartHeight }}>
-            <div className="flex w-11 shrink-0 flex-col justify-between text-right text-[10px] text-text-muted/80">
-              <span>{pct(max)}</span>
-              <span>{pct(0)}</span>
-              <span>{pct(min)}</span>
-            </div>
-            <svg viewBox={`0 0 ${w} ${h}`} className="h-full flex-1" preserveAspectRatio="none">
-              <line
-                x1={0}
-                x2={w}
-                y1={yScale(0)}
-                y2={yScale(0)}
-                stroke="currentColor"
-                strokeOpacity={0.15}
-                strokeWidth={0.4}
-                vectorEffect="non-scaling-stroke"
-              />
-              {series.map((s, si) => {
-                const segs: string[] = [];
-                points.forEach((p, i) => {
-                  const v = p.values[si];
-                  if (v == null || !Number.isFinite(v)) return;
-                  segs.push(`${xScale(i).toFixed(2)},${yScale(v).toFixed(2)}`);
-                });
-                if (segs.length < 2) return null;
+      <div className="flex gap-2">
+        <div
+          className="flex w-10 shrink-0 flex-col justify-between text-right text-[10px] tabular-nums text-text-muted/80"
+          style={{ height: chartHeight }}
+        >
+          <span>{pct(max)}</span>
+          <span>{pct(0)}</span>
+          <span>{pct(min)}</span>
+        </div>
+        <div className="min-w-0 flex-1">
+          <svg
+            viewBox={`0 0 ${w} ${h}`}
+            className="w-full"
+            style={{ height: chartHeight }}
+            preserveAspectRatio="none"
+          >
+            <line
+              x1={0}
+              x2={w}
+              y1={yScale(0)}
+              y2={yScale(0)}
+              stroke="currentColor"
+              strokeOpacity={0.15}
+              strokeWidth={0.4}
+              vectorEffect="non-scaling-stroke"
+            />
+            {series.map((s, si) => {
+              const segs: string[] = [];
+              points.forEach((p, i) => {
+                const v = p.values[si];
+                if (v == null || !Number.isFinite(v)) return;
+                segs.push(`${xScale(i).toFixed(2)},${yScale(v).toFixed(2)}`);
+              });
+              if (segs.length < 2) return null;
+              return (
+                <polyline
+                  key={s.label}
+                  fill="none"
+                  stroke={s.color}
+                  strokeWidth={2.2}
+                  strokeLinejoin="round"
+                  strokeLinecap="round"
+                  points={segs.join(" ")}
+                  vectorEffect="non-scaling-stroke"
+                />
+              );
+            })}
+            {series.map((s, si) =>
+              points.map((p, i) => {
+                const v = p.values[si];
+                if (v == null || !Number.isFinite(v)) return null;
                 return (
-                  <polyline
-                    key={s.label}
-                    fill="none"
-                    stroke={s.color}
-                    strokeWidth={2.2}
-                    strokeLinejoin="round"
-                    strokeLinecap="round"
-                    points={segs.join(" ")}
+                  <circle
+                    key={`${si}-${i}`}
+                    cx={xScale(i)}
+                    cy={yScale(v)}
+                    r={2}
+                    fill={s.color}
                     vectorEffect="non-scaling-stroke"
-                  />
+                  >
+                    <title>
+                      {p.period} · {s.label}: {pct(v)}
+                    </title>
+                  </circle>
                 );
-              })}
-              {series.map((s, si) =>
-                points.map((p, i) => {
-                  const v = p.values[si];
-                  if (v == null || !Number.isFinite(v)) return null;
-                  return (
-                    <circle
-                      key={`${si}-${i}`}
-                      cx={xScale(i)}
-                      cy={yScale(v)}
-                      r={2.2}
-                      fill={s.color}
-                      vectorEffect="non-scaling-stroke"
-                    >
-                      <title>
-                        {p.period} · {s.label}: {pct(v)}
-                      </title>
-                    </circle>
-                  );
-                }),
-              )}
-            </svg>
-          </div>
-          <div className="ml-11 flex">
+              }),
+            )}
+          </svg>
+          <div className="mt-1 flex w-full">
             {points.map((p) => (
               <span
                 key={p.period}
-                className="shrink-0 truncate text-center text-[10px] font-medium text-text-muted"
-                style={{ width: `${100 / n}%`, minWidth: 36 }}
+                className="min-w-0 flex-1 truncate text-center text-[10px] font-medium text-text-muted sm:text-[11px]"
                 title={p.period}
               >
                 {p.period.replace(/^20/, "'")}
@@ -395,32 +436,34 @@ function LinePctChart({
         </div>
       </div>
 
-      <div className="overflow-x-auto rounded-lg border border-border-subtle/60">
-        <table className="w-full min-w-[280px] text-left text-[11px]">
-          <thead>
-            <tr className="border-b border-border-subtle text-[10px] uppercase text-text-muted">
-              <th className="px-2 py-1.5 font-medium">Kỳ</th>
-              {series.map((s) => (
-                <th key={s.label} className="px-2 py-1.5 font-medium">
-                  {s.label}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {[...points].reverse().map((p) => (
-              <tr key={p.period} className="border-b border-border-subtle/40 last:border-0">
-                <td className="px-2 py-1 font-medium text-text-primary">{p.period}</td>
-                {p.values.map((v, i) => (
-                  <td key={i} className="num px-2 py-1 text-text-secondary">
-                    {pct(v)}
-                  </td>
+      {showTable && (
+        <div className="overflow-x-auto rounded-lg border border-border-subtle/60">
+          <table className="w-full min-w-[260px] text-left text-[11px]">
+            <thead>
+              <tr className="border-b border-border-subtle text-[10px] uppercase text-text-muted">
+                <th className="px-2 py-1.5 font-medium">Kỳ</th>
+                {series.map((s) => (
+                  <th key={s.label} className="px-2 py-1.5 font-medium">
+                    {s.label}
+                  </th>
                 ))}
               </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+            </thead>
+            <tbody>
+              {[...points].reverse().map((p) => (
+                <tr key={p.period} className="border-b border-border-subtle/40 last:border-0">
+                  <td className="px-2 py-1 font-medium text-text-primary">{p.period}</td>
+                  {p.values.map((v, i) => (
+                    <td key={i} className="num px-2 py-1 text-text-secondary">
+                      {pct(v)}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
@@ -490,8 +533,8 @@ export function FundamentalTrendCharts({
   ];
 
   const grains: { key: Grain; label: string }[] = [
-    { key: "quarter", label: "Theo quý" },
-    { key: "year", label: "Theo năm" },
+    { key: "quarter", label: "Quý" },
+    { key: "year", label: "Năm" },
     { key: "all", label: "Tất cả" },
   ];
 
@@ -546,7 +589,7 @@ export function FundamentalTrendCharts({
             { label: "LN sau thuế", color: "#a78bfa" },
           ]}
           format="money"
-          chartHeight={280}
+          chartHeight={220}
         />
       )}
       {tab === "margins" && (
@@ -556,7 +599,7 @@ export function FundamentalTrendCharts({
             { label: "Biên gộp", color: "#34d399" },
             { label: "Biên ròng", color: "#f472b6" },
           ]}
-          chartHeight={260}
+          chartHeight={200}
         />
       )}
       {tab === "returns" && (
@@ -566,7 +609,7 @@ export function FundamentalTrendCharts({
             { label: "ROE", color: "#fbbf24" },
             { label: "ROA", color: "#60a5fa" },
           ]}
-          chartHeight={260}
+          chartHeight={200}
         />
       )}
       {tab === "cashflow" && (
@@ -578,7 +621,7 @@ export function FundamentalTrendCharts({
             { label: "CFI", color: "#94a3b8" },
           ]}
           format="money"
-          chartHeight={280}
+          chartHeight={220}
         />
       )}
     </Panel>
