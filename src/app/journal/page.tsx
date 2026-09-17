@@ -128,8 +128,6 @@ export default function JournalPage() {
     <div className="mx-auto max-w-4xl space-y-3">
       <PriceAlertsPanel />
 
-      <PortfolioAiPanel trades={trades} />
-
       <Panel pad={false}>
         <div className="flex items-center justify-between p-4">
           <div>
@@ -163,6 +161,8 @@ export default function JournalPage() {
           tone={stats.pnl != null ? (stats.pnl >= 0 ? "up" : "down") : undefined}
         />
       </div>
+
+      <PortfolioAiPanel trades={trades} />
 
       {showForm && (
         <Panel title="Lệnh mới">
