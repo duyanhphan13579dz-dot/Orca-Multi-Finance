@@ -1,19 +1,22 @@
 /**
- * Hiệu suất đầu tư — Beta / Sharpe / Alpha / TSR từ chuỗi giá đóng cửa.
- * Chỉ tính khi đủ mẫu; không bịa số.
+ * Hiệu suất đầu tư — Beta / Sharpe / Jensen Alpha / TSR.
+ * Alpha: hồi quy CAPM trên excess return (R − rf), OLS intercept annualized ×252.
  */
 
 export type PerformanceMetrics = {
   tsr: number | null;
-  /** ~1 năm lịch nếu đủ bar */
   tsr1y: number | null;
   beta: number | null;
   sharpe: number | null;
-  /** Alpha hàng năm (Jensen, rf ≈ 5%) */
+  /** Jensen alpha annualized (excess-return CAPM) */
   alpha: number | null;
-  /** Tỷ suất cổ tức (thập phân, vd 0.03 = 3%) */
+  /** R² của hồi quy CAPM (0–1) */
+  alphaR2: number | null;
+  /** Tracking error annualized */
+  trackingError: number | null;
+  /** Information ratio = alpha / TE */
+  informationRatio: number | null;
   dividendYield: number | null;
-  /** Payout ước tính (thập phân) nếu suy được */
   payoutRatio: number | null;
   sampleDays: number;
   indexSampleDays?: number;
@@ -64,25 +67,82 @@ function covariance(xs: number[], ys: number[]): number | null {
   return s / (n - 1);
 }
 
-/** Căn chỉnh 2 chuỗi theo độ dài chung (cùng số phiên gần nhất) */
 function alignTail(a: number[], b: number[]): [number[], number[]] {
   const n = Math.min(a.length, b.length);
   if (n < 3) return [[], []];
   return [a.slice(a.length - n), b.slice(b.length - n)];
 }
 
-const RF_ANNUAL = 0.05; // lãi phi rủi ro ước ~5%/năm VN
+/** Winsorize tại p1/p99 để giảm nhiễu phiên bất thường */
+function winsorize(xs: number[], pLo = 0.01, pHi = 0.99): number[] {
+  if (xs.length < 10) return xs.slice();
+  const sorted = [...xs].sort((a, b) => a - b);
+  const lo = sorted[Math.floor((sorted.length - 1) * pLo)]!;
+  const hi = sorted[Math.floor((sorted.length - 1) * pHi)]!;
+  return xs.map((x) => Math.min(hi, Math.max(lo, x)));
+}
+
+/**
+ * OLS: y = alpha + beta * x + e
+ * Trả intercept (alpha daily), slope (beta), R², residual stdev.
+ */
+function ols(y: number[], x: number[]): {
+  alpha: number;
+  beta: number;
+  r2: number;
+  residStd: number;
+} | null {
+  const n = Math.min(y.length, x.length);
+  if (n < 5) return null;
+  const yy = y.slice(0, n);
+  const xx = x.slice(0, n);
+  const my = mean(yy);
+  const mx = mean(xx);
+  if (my == null || mx == null) return null;
+  let sxx = 0;
+  let sxy = 0;
+  let syy = 0;
+  for (let i = 0; i < n; i++) {
+    const dx = xx[i]! - mx;
+    const dy = yy[i]! - my;
+    sxx += dx * dx;
+    sxy += dx * dy;
+    syy += dy * dy;
+  }
+  if (sxx < 1e-18) return null;
+  const beta = sxy / sxx;
+  const alpha = my - beta * mx;
+  const ssTot = syy;
+  let ssRes = 0;
+  for (let i = 0; i < n; i++) {
+    const e = yy[i]! - (alpha + beta * xx[i]!);
+    ssRes += e * e;
+  }
+  const r2 = ssTot > 1e-18 ? Math.max(0, Math.min(1, 1 - ssRes / ssTot)) : 0;
+  const residStd = n > 2 ? Math.sqrt(ssRes / (n - 2)) : Math.sqrt(ssRes / Math.max(1, n));
+  return { alpha, beta, r2, residStd };
+}
+
+/** rf năm mặc định; có thể override khi có lãi suất VN */
+const RF_ANNUAL_DEFAULT = 0.05;
+const TRADING_DAYS = 252;
 
 export function computeInvestmentPerformance(opts: {
   closes: number[];
   indexCloses?: number[] | null;
   dividendYield?: number | null;
-  /** LNST kỳ gần (VND) + DPS*shares nếu có — payout */
   netIncome?: number | null;
   annualDividendCash?: number | null;
+  /** Lãi phi rủi ro năm (vd 0.045 từ bảng lãi suất) */
+  riskFreeAnnual?: number | null;
 }): PerformanceMetrics {
   const closes = opts.closes.filter((c) => Number.isFinite(c) && c > 0);
   const idxRaw = (opts.indexCloses ?? []).filter((c) => Number.isFinite(c) && c > 0);
+  const rfAnn =
+    opts.riskFreeAnnual != null && opts.riskFreeAnnual >= 0 && opts.riskFreeAnnual < 0.25
+      ? opts.riskFreeAnnual
+      : RF_ANNUAL_DEFAULT;
+  const rfDaily = rfAnn / TRADING_DAYS;
 
   const empty: PerformanceMetrics = {
     tsr: null,
@@ -90,6 +150,9 @@ export function computeInvestmentPerformance(opts: {
     beta: null,
     sharpe: null,
     alpha: null,
+    alphaR2: null,
+    trackingError: null,
+    informationRatio: null,
     dividendYield: opts.dividendYield ?? null,
     payoutRatio: null,
     sampleDays: closes.length,
@@ -106,44 +169,65 @@ export function computeInvestmentPerformance(opts: {
   const tsr =
     closes[0]! > 0 ? (closes[closes.length - 1]! - closes[0]!) / closes[0]! : null;
 
-  // ~252 phiên ≈ 1 năm giao dịch
   let tsr1y: number | null = null;
   if (closes.length >= 40) {
-    const look = Math.min(252, closes.length - 1);
+    const look = Math.min(TRADING_DAYS, closes.length - 1);
     const a = closes[closes.length - 1 - look]!;
     const z = closes[closes.length - 1]!;
     if (a > 0) tsr1y = (z - a) / a;
   }
 
-  const rets = dailyReturns(closes);
+  const retsRaw = dailyReturns(closes);
+  const rets = winsorize(retsRaw);
   const mu = mean(rets);
   const sd = stdev(rets);
   let sharpe: number | null = null;
   if (mu != null && sd != null && sd > 1e-12 && rets.length >= 20) {
-    const excessAnn = mu * 252 - RF_ANNUAL;
-    sharpe = excessAnn / (sd * Math.sqrt(252));
+    sharpe = (mu * TRADING_DAYS - rfAnn) / (sd * Math.sqrt(TRADING_DAYS));
   }
 
   let beta: number | null = null;
   let alpha: number | null = null;
-  // Ngưỡng thấp hơn cho mã mới IPO (≥20 return pairs ≈ 21 phiên)
+  let alphaR2: number | null = null;
+  let trackingError: number | null = null;
+  let informationRatio: number | null = null;
+
   const minPairs = 20;
   if (idxRaw.length >= minPairs + 1 && closes.length >= minPairs + 1) {
     const [sc, ic] = alignTail(closes, idxRaw);
-    const rs = dailyReturns(sc);
-    const rm = dailyReturns(ic);
+    let rs = winsorize(dailyReturns(sc));
+    let rm = winsorize(dailyReturns(ic));
     const n = Math.min(rs.length, rm.length);
     if (n >= minPairs) {
-      const a = rs.slice(rs.length - n);
-      const b = rm.slice(rm.length - n);
-      const cov = covariance(a, b);
-      const varM = variance(b);
-      if (cov != null && varM != null && varM > 1e-14) {
-        beta = cov / varM;
-        const ms = mean(a);
-        const mm = mean(b);
-        if (ms != null && mm != null) {
-          alpha = (ms - RF_ANNUAL / 252 - beta * (mm - RF_ANNUAL / 252)) * 252;
+      rs = rs.slice(rs.length - n);
+      rm = rm.slice(rm.length - n);
+
+      // Excess returns (CAPM)
+      const ys = rs.map((r) => r - rfDaily);
+      const xs = rm.map((r) => r - rfDaily);
+
+      const fit = ols(ys, xs);
+      if (fit) {
+        beta = fit.beta;
+        // Jensen alpha daily → annual
+        alpha = fit.alpha * TRADING_DAYS;
+        alphaR2 = fit.r2;
+        // Tracking error ≈ residual vol annualized
+        trackingError = fit.residStd * Math.sqrt(TRADING_DAYS);
+        if (trackingError > 1e-8) {
+          informationRatio = alpha / trackingError;
+        }
+      } else {
+        // Fallback cov/var trên excess
+        const cov = covariance(ys, xs);
+        const varM = variance(xs);
+        if (cov != null && varM != null && varM > 1e-14) {
+          beta = cov / varM;
+          const ms = mean(ys);
+          const mm = mean(xs);
+          if (ms != null && mm != null) {
+            alpha = (ms - beta * mm) * TRADING_DAYS;
+          }
         }
       }
     }
@@ -164,7 +248,10 @@ export function computeInvestmentPerformance(opts: {
   notes.push(`${closes.length} phiên mã`);
   if (idxRaw.length) notes.push(`${idxRaw.length} phiên VNINDEX`);
   if (beta == null) notes.push("Beta/Alpha cần ≥20 phiên đồng thời với VNINDEX");
-  else notes.push(`rf≈${(RF_ANNUAL * 100).toFixed(0)}%`);
+  else {
+    notes.push(`CAPM excess · rf≈${(rfAnn * 100).toFixed(1)}%`);
+    if (alphaR2 != null) notes.push(`R²=${(alphaR2 * 100).toFixed(0)}%`);
+  }
   if (dy == null) notes.push("Chưa có DIVIDEND_YIELD từ ratios");
 
   return {
@@ -173,6 +260,9 @@ export function computeInvestmentPerformance(opts: {
     beta: clamp(beta, -3, 5),
     sharpe: clamp(sharpe, -5, 8),
     alpha: clamp(alpha, -2, 5),
+    alphaR2: alphaR2 != null ? Math.min(1, Math.max(0, alphaR2)) : null,
+    trackingError: clamp(trackingError, 0, 5),
+    informationRatio: clamp(informationRatio, -5, 5),
     dividendYield: dy != null && dy >= 0 && dy < 0.5 ? dy : null,
     payoutRatio: clamp(payoutRatio, 0, 2),
     sampleDays: closes.length,
