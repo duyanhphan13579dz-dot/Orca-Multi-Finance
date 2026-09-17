@@ -421,19 +421,19 @@ export async function listReports(type: string | null, limit = 30): Promise<Repo
     const { db } = await import("@/db");
     const { reports } = await import("@/db/schema");
     const { desc, eq } = await import("drizzle-orm");
-    let q = db.select().from(reports).orderBy(desc(reports.createdAt)).limit(limit);
+    let q = db.select().from(reports).orderBy(desc(reports.generatedAt)).limit(limit);
     if (type) {
       const rows = await db
         .select()
         .from(reports)
         .where(eq(reports.type, type))
-        .orderBy(desc(reports.createdAt))
+        .orderBy(desc(reports.generatedAt))
         .limit(limit);
       return rows.map((r) => ({
         id: r.id,
         type: r.type,
         title: r.title,
-        generatedAt: r.createdAt?.toISOString?.() ?? String(r.createdAt),
+        generatedAt: r.generatedAt?.toISOString?.() ?? String(r.generatedAt),
         marketDataTimestamp: r.marketDataTimestamp?.toISOString?.() ?? null,
         freshness: r.freshness,
       }));
@@ -443,7 +443,7 @@ export async function listReports(type: string | null, limit = 30): Promise<Repo
       id: r.id,
       type: r.type,
       title: r.title,
-      generatedAt: r.createdAt?.toISOString?.() ?? String(r.createdAt),
+      generatedAt: r.generatedAt?.toISOString?.() ?? String(r.generatedAt),
       marketDataTimestamp: r.marketDataTimestamp?.toISOString?.() ?? null,
       freshness: r.freshness,
     }));
@@ -458,7 +458,8 @@ export async function getReportById(id: string): Promise<DailyReport | null> {
     const { reports } = await import("@/db/schema");
     const { eq } = await import("drizzle-orm");
     const [row] = await db.select().from(reports).where(eq(reports.id, id)).limit(1);
-    return (row?.body as unknown as DailyReport) ?? null;
+    if (!row) return null;
+    return row.body as unknown as DailyReport;
   } catch {
     return null;
   }
