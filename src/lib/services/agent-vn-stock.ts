@@ -1,8 +1,14 @@
 import "server-only";
-import { vnstockConfigured } from "./stocks";
 import { getNews } from "./news";
 import { buildStockAnalysis } from "./intelligence";
-import type { FreshnessStatus } from "../types";
+import { getVnQuotes, getVnOhlcv } from "./stocks";
+import { fetchVndDchartHistory } from "../providers/vndirect-dchart";
+import { fetchVndirectFinancials, periodsToLegacyRows } from "../financial/vndirect-fs";
+import { getVndValuationRatios, getVndEquitySnapshot, getVndCompanyProfile } from "../providers/vndirect-company";
+import { computeFinancialHealth } from "../engines/fundamental";
+import { analyzeSeries, detectPatterns } from "../technical";
+import { computeInvestmentPerformance } from "../financial/investment-performance";
+import type { FreshnessStatus, OhlcvBar, Quote, TechnicalSnapshot } from "../types";
 
 type Persona = "stock_analyst" | "personal_finance" | "wealth";
 
@@ -16,230 +22,312 @@ interface Built {
   persona: Persona;
 }
 
-async function buildVn(symbol: string, deep: boolean): Promise<Built> {
-  if (!vnstockConfigured()) {
-    const news = await getNews({ symbol, limit: 3 });
-    const ctx: Record<string, unknown> = { asset: { symbol, asset_type: "stock" }, status: "vnstock_not_configured" };
-    if (news?.articles.length) ctx.news_context = news.articles.map((a) => ({ title: a.title, source: a.source }));
-    return { narrative: `${symbol}: chưa có VNSTOCK_API_KEY.` + (news?.articles.length ? `\n\nTin: ${news.articles.map((a) => a.title).join("; ")}.` : ""), contract: ctx, sectionsUsed: news?.articles.length ? ["news"] : [], symbols: [symbol], freshnesses: news ? [news.meta.freshness] : [], unavailable: true, persona: "stock_analyst" };
+function fmt(v: number | null | undefined, d = 2): string {
+  if (v == null || !Number.isFinite(v)) return "—";
+  return v.toLocaleString("vi-VN", { maximumFractionDigits: d });
+}
+
+function fmtPct(v: number | null | undefined, d = 2): string {
+  if (v == null || !Number.isFinite(v)) return "—";
+  return `${v >= 0 ? "+" : ""}${v.toFixed(d)}%`;
+}
+
+function fmtTy(v: number | null | undefined): string {
+  if (v == null || !Number.isFinite(v)) return "—";
+  return `${(v / 1e9).toFixed(1)} tỷ`;
+}
+
+async function loadBars(symbol: string): Promise<OhlcvBar[]> {
+  try {
+    const o = await getVnOhlcv(symbol, 260);
+    if (o?.bars?.length) return o.bars;
+  } catch {
+    /* */
   }
-  const analysis = await buildStockAnalysis(symbol);
-  if (!analysis) return { narrative: `Không lấy được dữ liệu ${symbol}.`, contract: { asset: { symbol, asset_type: "stock" }, error: "provider_unavailable" }, sectionsUsed: [], symbols: [symbol], freshnesses: [], unavailable: true, persona: "stock_analyst" };
+  try {
+    const d = await fetchVndDchartHistory(symbol, "D", 280);
+    if (d?.length) return d;
+  } catch {
+    /* */
+  }
+  return [];
+}
 
-  const c = analysis.contract;
-  const detail = analysis.detail;
-  const md = c.market_data;
-  const tech = c.technical_state as {
-    rsi14?: number | null;
-    macd_histogram?: number | null;
-    trend?: { score?: number; label?: string } | null;
-    sma?: { sma20?: number | null; sma50?: number | null; sma200?: number | null } | null;
-    support?: number[];
-    resistance?: number[];
-    signals?: string[];
-  } | null;
-  const ms = c.market_state as { labelVi?: string; strength?: number; state?: string } | null;
-  const fh = c.fundamental_state?.financial_health as {
-    scores?: { overall?: number | null; profitability?: number | null; leverage?: number | null; cashflow?: number | null; liquidity?: number | null; efficiency?: number | null };
-    coverage?: number;
-  } | null;
-  const v = c.fundamental_state?.valuation as {
-    multiples?: { pe?: number | null; pb?: number | null; evEbitda?: number | null };
-    confidence?: string;
-  } | null;
-  const risk = c.risk_metrics as { atr14?: number | null; volatility_30d?: number | null; max_drawdown_52w?: number | null } | null;
-  const patterns = (detail?.patterns ?? []) as { nameVi?: string; name?: string; type?: string; reliability?: string; description?: string }[];
-
-  const fmt = (n: number | null | undefined, d = 2) =>
-    n == null || !Number.isFinite(n) ? "—" : n.toLocaleString("vi-VN", { maximumFractionDigits: d, minimumFractionDigits: 0 });
-  const pct = (n: number | null | undefined) =>
-    n == null || !Number.isFinite(n) ? "—" : `${n >= 0 ? "+" : ""}${n.toFixed(2)}%`;
-
-  const bars = detail?.bars ?? [];
-  const recentBars = bars.slice(-20);
-  const avgVol =
-    recentBars.length >= 5
-      ? Math.round(recentBars.reduce((s, b) => s + (b.volume ?? 0), 0) / recentBars.length)
-      : null;
-  const sessionVol = md?.volume != null ? Number(md.volume) : null;
-
-  const trendLabelMap: Record<string, string> = {
-    "strong-up": "Tăng mạnh",
-    up: "Tăng",
-    sideways: "Đi ngang",
-    down: "Giảm",
-    "strong-down": "Giảm mạnh",
+/**
+ * Phân tích cổ phiếu VN — luôn kéo multi-source (không phụ thuộc VNSTOCK_API_KEY).
+ * Quote · OHLCV/dchart · BCTC · ratios · performance.
+ */
+async function buildVn(symbol: string, deep: boolean): Promise<Built> {
+  const sym = symbol.trim().toUpperCase();
+  const sectionsUsed: string[] = [];
+  const freshnesses: FreshnessStatus[] = [];
+  const contract: Record<string, unknown> = {
+    asset: { symbol: sym, asset_type: "stock" },
   };
-  const trendLabel = tech?.trend?.label ? trendLabelMap[tech.trend.label] ?? tech.trend.label : "—";
 
+  // 1) Thử pipeline intelligence đầy đủ
+  const analysis = await buildStockAnalysis(sym).catch(() => null);
+
+  // 2) Song song fallback trực tiếp VNDirect / multi-quote
+  const [quotePack, bars, fs, ratios, equity, profile, idxBars, news] = await Promise.all([
+    getVnQuotes([sym]).catch(() => null),
+    loadBars(sym),
+    fetchVndirectFinancials(sym, { limitPeriods: 12 }).catch(() => null),
+    getVndValuationRatios(sym).catch(() => null),
+    getVndEquitySnapshot(sym).catch(() => null),
+    getVndCompanyProfile(sym).catch(() => null),
+    fetchVndDchartHistory("VNINDEX", "D", 280).catch(() => [] as OhlcvBar[]),
+    getNews({ symbol: sym, limit: deep ? 5 : 3 }).catch(() => null),
+  ]);
+
+  let quote: Quote | null =
+    analysis?.detail?.quote ?? quotePack?.quotes?.[0] ?? null;
+  if (quotePack?.meta?.freshness) freshnesses.push(quotePack.meta.freshness);
+  if (analysis?.meta?.freshness) freshnesses.push(analysis.meta.freshness);
+
+  const name =
+    profile?.vnName ??
+    profile?.enName ??
+    analysis?.detail?.name ??
+    quote?.name ??
+    null;
+
+  // Technical
+  let technical: TechnicalSnapshot | null =
+    analysis?.detail?.technical ?? null;
+  let patterns = analysis?.detail?.patterns ?? [];
+  if ((!technical || bars.length > (analysis?.detail?.bars?.length ?? 0)) && bars.length >= 20) {
+    try {
+      technical = analyzeSeries(bars);
+      patterns = detectPatterns(bars);
+    } catch {
+      /* */
+    }
+  }
+  if (bars.length) sectionsUsed.push("ohlcv");
+  if (technical) sectionsUsed.push("technical");
+
+  // BCTC + health
+  let health = analysis?.detail?.financialHealth ?? null;
+  let income0: Record<string, unknown> = {};
+  if (fs?.periods?.length) {
+    sectionsUsed.push("bctc");
+    const rows = periodsToLegacyRows(fs.periods, sym);
+    income0 = (rows.income[0] ?? {}) as Record<string, unknown>;
+    if (!health) {
+      try {
+        health = computeFinancialHealth(
+          {
+            income: rows.income as Record<string, unknown>[],
+            balance: rows.balance as Record<string, unknown>[],
+            cashflow: rows.cashflow as Record<string, unknown>[],
+          },
+          { symbol: sym },
+        );
+      } catch {
+        /* */
+      }
+    }
+  } else if (analysis?.contract?.fundamental_state?.financial_health) {
+    health = analysis.contract.fundamental_state.financial_health as typeof health;
+  }
+  if (health) sectionsUsed.push("financial-health");
+
+  // Valuation
+  const pe = ratios?.pe ?? null;
+  const pb = ratios?.pb ?? null;
+  const ps = ratios?.ps ?? null;
+  const eps = ratios?.eps ?? null;
+  const dy = ratios?.dividendYield ?? null;
+  if (ratios) sectionsUsed.push("valuation-ratios");
+
+  // Performance
+  const closes = bars.map((b) => Number(b.close)).filter((c) => Number.isFinite(c) && c > 0);
+  const indexCloses = (idxBars ?? [])
+    .map((b) => Number(b.close))
+    .filter((c) => Number.isFinite(c) && c > 0);
+  const ni =
+    typeof income0.netIncome === "number"
+      ? income0.netIncome
+      : typeof income0.netProfit === "number"
+        ? income0.netProfit
+        : null;
+  const price = quote?.price ?? closes[closes.length - 1] ?? null;
+  const shares = equity?.sharesOutstanding ?? health?.anchors?.shares ?? null;
+  let annualDividendCash: number | null = null;
+  if (dy != null && dy > 0 && price != null && shares != null && shares > 0) {
+    const priceVnd = price < 500 ? price * 1000 : price;
+    annualDividendCash = dy * priceVnd * shares;
+  }
+  const perf = computeInvestmentPerformance({
+    closes,
+    indexCloses,
+    dividendYield: dy,
+    netIncome: typeof ni === "number" ? ni : null,
+    annualDividendCash,
+  });
+  if (perf.sampleDays >= 5) sectionsUsed.push("performance");
+
+  // —— Narrative ——
   const sections: string[] = [];
+  sections.push(`## ${sym}${name ? ` — ${name}` : ""}`);
 
-  {
-    const parts: string[] = [];
-    if (md?.price != null) {
-      parts.push(`## Giá & khối lượng`);
+  // Giá
+  if (quote?.price != null) {
+    sectionsUsed.push("quote");
+    const bits = [
+      `**Giá**: ${fmt(quote.price)}` +
+        (quote.changePercent != null ? ` (${fmtPct(quote.changePercent)})` : ""),
+    ];
+    if (quote.volume != null) bits.push(`**KL**: ${fmt(quote.volume, 0)}`);
+    if (quote.high != null || quote.low != null) {
+      bits.push(`**Cao/Thấp**: ${fmt(quote.high)} / ${fmt(quote.low)}`);
+    }
+    if (quote.referencePrice != null) bits.push(`**TC**: ${fmt(quote.referencePrice)}`);
+    sections.push(`## Giá & khối lượng\n${bits.join(" · ")}.`);
+  } else if (closes.length) {
+    sectionsUsed.push("quote");
+    sections.push(
+      `## Giá & khối lượng\n**Giá đóng gần nhất (dchart)**: ${fmt(closes[closes.length - 1])} · ${closes.length} phiên lịch sử.`,
+    );
+  } else {
+    sections.push(`## Giá & khối lượng\n${sym}: chưa lấy được quote realtime — đang thử lại từ multi-source.`);
+  }
+
+  // Kỹ thuật
+  if (technical) {
+    const parts: string[] = ["## Tín hiệu kỹ thuật"];
+    if (technical.trend?.label) {
       parts.push(
-        `**${symbol}**: giá **${fmt(md.price as number)}** (${pct(md.change_percent as number | null)})` +
-          (md.low != null && md.high != null ? ` · biên phiên ${fmt(md.low as number)}–${fmt(md.high as number)}` : "") +
+        `Xu hướng: **${technical.trend.label}**` +
+          (technical.trend.score != null ? ` (score ${technical.trend.score.toFixed(1)})` : "") +
           ".",
       );
-      if (sessionVol != null) parts.push(`Khối lượng phiên: **${sessionVol.toLocaleString("vi-VN")}**.`);
-      if (avgVol != null) parts.push(`Khối lượng TB 20 phiên: **${avgVol.toLocaleString("vi-VN")}**.`);
-      if (sessionVol != null && avgVol != null && avgVol > 0) {
-        const ratio = sessionVol / avgVol;
-        parts.push(
-          ratio >= 1.5
-            ? `Khối lượng phiên cao hơn TB (~${ratio.toFixed(1)}×) — dòng tiền tích cực.`
-            : ratio <= 0.6
-              ? `Khối lượng phiên thấp hơn TB (~${ratio.toFixed(1)}×) — thanh khoản yếu.`
-              : `Khối lượng phiên quanh mức trung bình (~${ratio.toFixed(1)}×).`,
-        );
-      }
-      sections.push(parts.join("\n"));
-    } else {
-      sections.push(`## Giá & khối lượng\n${symbol}: chưa có quote realtime.`);
     }
-  }
-
-  {
-    const parts: string[] = ["## Tín hiệu kỹ thuật"];
-    if (tech) {
-      parts.push(`Xu hướng: **${trendLabel}**${tech.trend?.score != null ? ` (score ${tech.trend.score})` : ""}.`);
-      if (tech.rsi14 != null) {
-        const r = tech.rsi14;
-        const zone = r >= 70 ? "quá mua — dễ rung lắc ngắn hạn" : r <= 30 ? "quá bán — khả năng hồi kỹ thuật" : "vùng cân bằng";
-        parts.push(`RSI(14): **${r.toFixed(1)}** — ${zone}.`);
-      }
-      if (tech.macd_histogram != null) {
-        parts.push(
-          `MACD histogram: **${tech.macd_histogram >= 0 ? "+" : ""}${tech.macd_histogram.toFixed(3)}** — ${
-            tech.macd_histogram > 0 ? "ủng hộ xu hướng tăng" : "nghiêng về áp lực bán"
-          }.`,
-        );
-      }
-      if (tech.sma) {
-        const s = tech.sma;
-        const maBits: string[] = [];
-        if (s.sma20 != null) maBits.push(`SMA20 ${fmt(s.sma20)}`);
-        if (s.sma50 != null) maBits.push(`SMA50 ${fmt(s.sma50)}`);
-        if (s.sma200 != null) maBits.push(`SMA200 ${fmt(s.sma200)}`);
-        if (maBits.length) parts.push(`Đường MA: ${maBits.join(" · ")}.`);
-        if (md?.price != null && s.sma50 != null) {
-          parts.push(
-            Number(md.price) > s.sma50
-              ? "Giá đang **trên SMA50** — xu hướng trung hạn còn nguyên."
-              : "Giá đang **dưới SMA50** — xu hướng trung hạn suy yếu.",
-          );
-        }
-      }
-      if (tech.support?.length || tech.resistance?.length) {
-        const sup = (tech.support ?? []).slice(0, 2).map((x) => fmt(x)).join(", ");
-        const res = (tech.resistance ?? []).slice(0, 2).map((x) => fmt(x)).join(", ");
-        if (sup) parts.push(`Hỗ trợ gần: ${sup}.`);
-        if (res) parts.push(`Kháng cự gần: ${res}.`);
-      }
-      if (tech.signals?.length) {
-        parts.push("Tín hiệu: " + tech.signals.slice(0, 4).join("; ") + ".");
-      }
-    } else {
-      parts.push("Chưa đủ chuỗi OHLCV để tính chỉ báo kỹ thuật.");
+    if (technical.rsi14 != null) {
+      const zone =
+        technical.rsi14 >= 70 ? "quá mua" : technical.rsi14 <= 30 ? "quá bán" : "trung tính";
+      parts.push(`RSI14: **${technical.rsi14.toFixed(1)}** (${zone}).`);
     }
-
+    if (technical.macd?.histogram != null) {
+      parts.push(
+        `MACD histogram: **${technical.macd.histogram >= 0 ? "+" : ""}${technical.macd.histogram.toFixed(3)}**.`,
+      );
+    }
+    if (technical.sma) {
+      const s = technical.sma;
+      const ma: string[] = [];
+      if (s.sma20 != null) ma.push(`SMA20 ${fmt(s.sma20)}`);
+      if (s.sma50 != null) ma.push(`SMA50 ${fmt(s.sma50)}`);
+      if (s.sma200 != null) ma.push(`SMA200 ${fmt(s.sma200)}`);
+      if (ma.length) parts.push(`MA: ${ma.join(" · ")}.`);
+    }
+    if (technical.support?.length) {
+      parts.push(`Hỗ trợ: ${technical.support.slice(0, 2).map((x) => fmt(x)).join(", ")}.`);
+    }
+    if (technical.resistance?.length) {
+      parts.push(`Kháng cự: ${technical.resistance.slice(0, 2).map((x) => fmt(x)).join(", ")}.`);
+    }
     if (patterns.length) {
-      const recent = patterns.slice(-4);
-      const patternLines = recent.map((p) => {
-        const tone =
-          p.type === "bullish" ? "đảo chiều / tiếp diễn tăng (bullish)" : p.type === "bearish" ? "đảo chiều / tiếp diễn giảm (bearish)" : "trung tính";
-        return `- **${p.nameVi ?? p.name}** (${tone}, độ tin cậy ${p.reliability ?? "—"})${p.description ? `: ${p.description}` : ""}`;
-      });
-      parts.push("Mẫu hình nến gần đây:\n" + patternLines.join("\n"));
-    } else if (deep) {
-      parts.push("Chưa phát hiện mẫu hình nến đáng chú ý trên khung hiện tại.");
+      parts.push(
+        "Mẫu nến gần: " +
+          patterns
+            .slice(-3)
+            .map((p) => ("name" in p ? String((p as { name?: string }).name ?? p) : String(p)))
+            .join("; ") +
+          ".",
+      );
     }
     sections.push(parts.join("\n"));
-  }
-
-  if (ms?.labelVi) {
+  } else {
     sections.push(
-      `## Trạng thái thị trường (Market State)\n**${ms.labelVi}** — strength **${ms.strength ?? "—"}/100**${ms.state ? ` (${ms.state})` : ""}.`,
+      `## Tín hiệu kỹ thuật\n${bars.length ? `Có ${bars.length} nến nhưng chưa đủ ≥20 phiên ổn định để tính chỉ báo.` : "Chưa đủ chuỗi OHLCV để tính chỉ báo kỹ thuật."}`,
     );
   }
 
+  // Sức khỏe TC
+  if (health?.scores) {
+    const sc = health.scores;
+    const parts = ["## Sức khỏe tài chính"];
+    if (sc.overall != null) parts.push(`Điểm tổng: **${Math.round(sc.overall)}/100**.`);
+    const sub: string[] = [];
+    if (sc.profitability != null) sub.push(`Sinh lời ${Math.round(sc.profitability)}`);
+    if (sc.leverage != null) sub.push(`Đòn bẩy ${Math.round(sc.leverage)}`);
+    if (sc.cashflow != null) sub.push(`Dòng tiền ${Math.round(sc.cashflow)}`);
+    if (sc.liquidity != null) sub.push(`Thanh khoản ${Math.round(sc.liquidity)}`);
+    if (sub.length) parts.push(sub.join(" · ") + ".");
+    if (typeof ni === "number") parts.push(`LNST kỳ gần (BCTC): **${fmtTy(ni)}**.`);
+    const rev =
+      typeof income0.netRevenue === "number"
+        ? income0.netRevenue
+        : typeof income0.revenue === "number"
+          ? income0.revenue
+          : null;
+    if (typeof rev === "number") parts.push(`Doanh thu kỳ gần: **${fmtTy(rev)}**.`);
+    sections.push(parts.join("\n"));
+  } else {
+    sections.push(
+      "## Sức khỏe tài chính\nChưa đủ BCTC chuẩn hóa để chấm điểm — đã thử kéo trực tiếp từ VNDirect.",
+    );
+  }
+
+  // Định giá
   {
-    const parts: string[] = ["## Sức khỏe tài chính"];
-    const overallScore = fh?.scores?.overall;
-    if (overallScore != null && Number.isFinite(overallScore)) {
-      const s = fh!.scores!;
-      parts.push(
-        `Financial Health: **${overallScore}/100**` +
-          (fh!.coverage != null ? ` (coverage ${(fh!.coverage * 100).toFixed(0)}%)` : "") +
-          ".",
-      );
-      parts.push(
-        `Chi tiết: Profitability ${s.profitability ?? "—"} · Liquidity ${s.liquidity ?? "—"} · Leverage ${s.leverage ?? "—"} · Cashflow ${s.cashflow ?? "—"} · Efficiency ${s.efficiency ?? "—"}.`,
-      );
-      if (overallScore >= 70) parts.push("Doanh nghiệp có nền tảng tài chính **vững** theo engine định lượng.");
-      else if (overallScore >= 45) parts.push("Sức khỏe tài chính **trung bình** — cần theo dõi thêm đòn bẩy và dòng tiền.");
-      else parts.push("Sức khỏe tài chính **yếu** theo engine — rủi ro cơ bản cao hơn.");
+    const parts = ["## Định giá"];
+    const has = pe != null || pb != null || ps != null || eps != null;
+    if (has) {
+      const bits: string[] = [];
+      if (pe != null) bits.push(`P/E **${pe.toFixed(1)}x**`);
+      if (pb != null) bits.push(`P/B **${pb.toFixed(2)}x**`);
+      if (ps != null) bits.push(`P/S **${ps.toFixed(2)}x**`);
+      if (eps != null) bits.push(`EPS **${fmt(eps)}**`);
+      if (dy != null) bits.push(`Tỷ suất cổ tức **${(dy * 100).toFixed(2)}%**`);
+      parts.push(bits.join(" · ") + ".");
     } else {
-      parts.push("Chưa đủ BCTC chuẩn hóa để chấm điểm sức khỏe tài chính.");
+      parts.push("Chưa đủ dữ liệu ratios (P/E, P/B…) từ VNDirect finfo.");
+    }
+    if (shares != null) parts.push(`SLCP lưu hành: **${fmt(shares, 0)}**.`);
+    if (price != null && shares != null) {
+      const mcap = price * shares * (price < 500 ? 1000 : 1);
+      parts.push(`Vốn hóa ước tính: **${fmtTy(mcap)}**.`);
     }
     sections.push(parts.join("\n"));
   }
 
-  {
-    const parts: string[] = ["## Định giá"];
-    if (v?.multiples) {
-      const m = v.multiples;
-      parts.push(
-        `P/E **${m.pe != null ? fmt(m.pe, 1) : "—"}x** · P/B **${m.pb != null ? fmt(m.pb, 1) : "—"}x**` +
-          (m.evEbitda != null ? ` · EV/EBITDA **${fmt(m.evEbitda, 1)}x**` : "") +
-          (v.confidence ? ` · confidence định giá: ${v.confidence}` : "") +
-          ".",
-      );
-    } else {
-      parts.push("Chưa đủ dữ liệu để tính multiples định giá (P/E, P/B…).");
-    }
+  // Hiệu suất
+  if (perf.sampleDays >= 5) {
+    const parts = ["## Hiệu suất đầu tư"];
+    if (perf.tsr1y != null) parts.push(`TSR ~12 tháng: **${(perf.tsr1y * 100).toFixed(1)}%**.`);
+    if (perf.beta != null) parts.push(`Beta vs VNINDEX: **${perf.beta.toFixed(2)}**.`);
+    if (perf.sharpe != null) parts.push(`Sharpe: **${perf.sharpe.toFixed(2)}**.`);
+    if (perf.alpha != null) parts.push(`Alpha (Jensen): **${(perf.alpha * 100).toFixed(1)}%**.`);
     sections.push(parts.join("\n"));
   }
 
-  if (risk && (risk.atr14 != null || risk.volatility_30d != null || risk.max_drawdown_52w != null)) {
-    const bits: string[] = [];
-    if (risk.atr14 != null) bits.push(`ATR14 ${fmt(risk.atr14)}`);
-    if (risk.volatility_30d != null) bits.push(`Biến động 30d ${(risk.volatility_30d * 100).toFixed(1)}%`);
-    if (risk.max_drawdown_52w != null) bits.push(`Max DD 52w ${(risk.max_drawdown_52w * 100).toFixed(1)}%`);
-    sections.push(`## Rủi ro kỹ thuật\n${bits.join(" · ")}.`);
-  }
-
+  // Tổng kết quant
   {
-    const parts: string[] = ["## Tổng kết & góc nhìn ORCA"];
     let score = 50;
     let factors = 0;
-    if (tech?.trend?.score != null) {
-      score += Math.max(-20, Math.min(20, tech.trend.score * 8));
+    if (technical?.trend?.score != null) {
+      score += Math.max(-20, Math.min(20, technical.trend.score * 8));
       factors++;
     }
-    if (tech?.rsi14 != null) {
-      if (tech.rsi14 >= 70) score -= 8;
-      else if (tech.rsi14 <= 30) score += 6;
-      else if (tech.rsi14 >= 55) score += 4;
-      else if (tech.rsi14 <= 45) score -= 4;
+    if (technical?.rsi14 != null) {
+      if (technical.rsi14 >= 70) score -= 8;
+      else if (technical.rsi14 <= 30) score += 6;
+      else if (technical.rsi14 >= 55) score += 4;
+      else if (technical.rsi14 <= 45) score -= 4;
       factors++;
     }
-    if (tech?.macd_histogram != null) {
-      score += tech.macd_histogram > 0 ? 6 : -6;
+    if (technical?.macd?.histogram != null) {
+      score += technical.macd.histogram > 0 ? 6 : -6;
       factors++;
     }
-    if (fh?.scores?.overall != null) {
-      score += (fh.scores.overall - 50) * 0.25;
-      factors++;
-    }
-    if (ms?.strength != null) {
-      score += (ms.strength - 50) * 0.15;
+    if (health?.scores?.overall != null) {
+      score += (health.scores.overall - 50) * 0.25;
       factors++;
     }
     score = Math.round(Math.max(5, Math.min(95, score)));
-
     let stance: string;
     if (score >= 68) stance = "Nghiêng **TÍCH CỰC / theo dõi mua** (research stance)";
     else if (score >= 55) stance = "Nghiêng **TRUNG LẬP — hơi tích cực**";
@@ -247,24 +335,64 @@ async function buildVn(symbol: string, deep: boolean): Promise<Built> {
     else if (score >= 32) stance = "Nghiêng **TRUNG LẬP — hơi thận trọng**";
     else stance = "Nghiêng **THẬN TRỌNG / giảm tỷ trọng** (research stance)";
 
-    parts.push(`${stance}.`);
-    parts.push(`Độ tin cậy tổng hợp (quant blend): **${score}%**${factors ? ` · dựa trên ${factors} nhóm tín hiệu` : ""}.`);
-    parts.push(
-      "Lưu ý: đây là góc nhìn định lượng từ dữ liệu tại thời điểm trả lời, phục vụ **nghiên cứu** — **không phải khuyến nghị mua/bán**.",
+    sections.push(
+      [
+        "## Tổng kết & góc nhìn ORCA",
+        stance + ".",
+        `Độ tin cậy định lượng: **${score}%**${factors ? ` · ${factors} nhóm tín hiệu` : ""}.`,
+        "Phục vụ **nghiên cứu** — **không phải khuyến nghị mua/bán**.",
+      ].join("\n"),
     );
-    if (deep && (c.news_context as unknown[])?.length) {
-      const news = c.news_context as { title?: string; source?: string }[];
-      parts.push("Tin liên quan: " + news.slice(0, 3).map((n) => n.title).filter(Boolean).join("; ") + ".");
-    }
-    sections.push(parts.join("\n"));
   }
+
+  if (news?.articles?.length) {
+    sectionsUsed.push("news");
+    sections.push(
+      "## Tin liên quan\n" +
+        news.articles
+          .slice(0, 3)
+          .map((a) => `- ${a.title}`)
+          .join("\n"),
+    );
+  }
+
+  contract.market_data = quote
+    ? {
+        price: quote.price,
+        change_percent: quote.changePercent,
+        high: quote.high,
+        low: quote.low,
+        volume: quote.volume,
+      }
+    : closes.length
+      ? { price: closes[closes.length - 1], source: "dchart-close" }
+      : null;
+  contract.technical_state = technical;
+  contract.fundamental_state = {
+    financial_health: health,
+    valuation: { pe, pb, ps, eps, dividendYield: dy },
+  };
+  contract.performance = perf;
+  contract.profile = profile
+    ? { vnName: profile.vnName, floor: profile.floor }
+    : null;
+  contract.bars_count = bars.length;
+
+  const hasAny =
+    quote?.price != null ||
+    closes.length > 0 ||
+    !!health ||
+    pe != null ||
+    pb != null ||
+    !!technical;
 
   return {
     narrative: sections.join("\n\n"),
-    contract: c as unknown as Record<string, unknown>,
-    sectionsUsed: ["vn-stock", "market-state-engine", "technical", "financial-health", "valuation"],
-    symbols: [symbol],
-    freshnesses: [analysis.meta.freshness],
+    contract,
+    sectionsUsed: [...new Set(sectionsUsed)],
+    symbols: [sym],
+    freshnesses,
+    unavailable: !hasAny,
     persona: "stock_analyst",
   };
 }
