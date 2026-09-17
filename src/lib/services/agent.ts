@@ -14,6 +14,7 @@ import {
   buildCryptoContext,
   type AgentBuilt,
 } from "./agent-context";
+import { buildVnMarketBriefing } from "./market-briefing";
 
 export interface AgentPrefs {
   depth?: "concise" | "standard" | "deep";
@@ -102,9 +103,21 @@ type Intent =
   | { kind: "wealth" }
   | { kind: "general" };
 
+/** Câu hỏi nhận định / tổng hợp diễn biến thị trường CK VN */
+function isVnMarketBriefingQuery(q: string): boolean {
+  return /thị trường đang diễn ra|nhận định thị trường|tổng hợp diễn biến thị trường|diễn biến thị trường hôm nay|thị trường hôm nay|tổng quan thị trường|thị trường chứng khoán hôm nay|phiên giao dịch hôm nay|thị trường đang thế nào|thị trường ra sao/i.test(
+    q,
+  );
+}
+
 function detectIntent(q: string): Intent {
   const upper = q.toUpperCase();
   const lower = q.toLowerCase();
+
+  // Ưu tiên nhận định thị trường CK VN (format 4 phần)
+  if (isVnMarketBriefingQuery(q)) {
+    return { kind: "vn-market", requestedDate: null };
+  }
 
   if (/lãi suất|interest rate|trái phiếu chính phủ|huy động|cho vay/i.test(q)) return { kind: "rates" };
   if (/vĩ mô|macro|gdp|cpi|lạm phát|thất nghiệp|fdi|xuất khẩu/i.test(q)) return { kind: "macro" };
@@ -158,7 +171,6 @@ function detectIntent(q: string): Intent {
       }
     }
   }
-  // Explicit 3-letter VN ticker not in static list (IPO mới)
   const mStock = upper.match(/\b([A-Z]{3})\b/);
   if (mStock && !KNOWN_CRYPTO.has(mStock[1]) && /cổ phiếu|mã|phân tích|định giá|ck |chứng khoán/i.test(q)) {
     return { kind: "vn-stock", symbol: mStock[1] };
@@ -175,7 +187,9 @@ function detectIntent(q: string): Intent {
   }
 
   if (/tin tức|news/i.test(q)) return { kind: "news" };
-  if (/thị trường|market|tổng quan|đa tài sản|toàn cảnh/i.test(q)) return { kind: "vn-market", requestedDate: null };
+  if (/thị trường|market|tổng quan|đa tài sản|toàn cảnh/i.test(q)) {
+    return { kind: "vn-market", requestedDate: null };
+  }
   return { kind: "general" };
 }
 
@@ -184,19 +198,30 @@ async function synthesizeWithLlm(
   built: AgentBuilt,
   prefs: AgentPrefs,
   history: AgentHistoryTurn[],
+  opts?: { forceBriefingFormat?: boolean },
 ): Promise<{ text: string; model: string } | null> {
   if (!llmConfigured()) return null;
   try {
+    const briefingRule = opts?.forceBriefingFormat
+      ? `
+BẮT BUỘC giữ đúng 4 phần (tiêu đề ##):
+1. Biến động chỉ số & cổ phiếu dẫn dắt
+2. Động thái khối ngoại
+3. Thanh khoản & độ rộng thị trường
+4. Tổng quan ngành & nguyên nhân vĩ mô
+Chỉ làm mượt câu chữ / bổ sung liên kết logic từ CONTEXT; KHÔNG đổi cấu trúc, KHÔNG bịa số liệu.`
+      : "";
+
     const system = `Bạn là ORCA Agent — trợ lý phân tích tài chính toàn diện của nền tảng ORCA Multi-Finance.
 Chỉ được dùng số liệu trong CONTEXT JSON và NARRATIVE đã tính sẵn từ hệ thống (chứng khoán VN, crypto, forex, hàng hóa, lãi suất, vĩ mô).
 KHÔNG bịa số, KHÔNG bịa nguồn. Nếu thiếu dữ liệu, nói rõ "chưa có trong hệ thống".
 Trả lời tiếng ${prefs.language === "en" ? "Anh" : "Việt"}, cấu trúc rõ (tiêu đề ##, gạch đầu dòng).
-Không đưa khuyến nghị mua/bán tuyệt đối; nhấn mạnh phục vụ nghiên cứu.`;
+Không đưa khuyến nghị mua/bán tuyệt đối; nhấn mạnh phục vụ nghiên cứu.${briefingRule}`;
 
     const user = `CÂU HỎI: ${question}
 
 NARRATIVE HỆ THỐNG:
-${built.narrative.slice(0, 6_000)}
+${built.narrative.slice(0, 7_000)}
 
 CONTEXT JSON (rút gọn):
 ${JSON.stringify(built.contract).slice(0, 8_000)}
@@ -206,8 +231,8 @@ Hãy tổng hợp phân tích chuyên sâu, bám số liệu trên.`;
     const r = await llmChat("analysis", {
       system,
       user,
-      temperature: 0.25,
-      maxTokens: prefs.depth === "deep" ? 1400 : 900,
+      temperature: opts?.forceBriefingFormat ? 0.15 : 0.25,
+      maxTokens: prefs.depth === "deep" || opts?.forceBriefingFormat ? 1600 : 900,
       history: history.slice(-8).map((h) => ({
         role: h.role === "assistant" || h.role === "agent" ? ("assistant" as const) : ("user" as const),
         content: h.content,
@@ -229,8 +254,13 @@ export async function answerQuestion(
   const deep = prefs.depth === "deep";
   let built: AgentBuilt;
   let persona: Persona = "stock_analyst";
+  let forceBriefingFormat = false;
 
-  if (intent.kind === "vn-stock") {
+  if (intent.kind === "vn-market" || intent.kind === "market") {
+    // Nhận định CK VN — format 4 phần chuẩn
+    built = await buildVnMarketBriefing();
+    forceBriefingFormat = true;
+  } else if (intent.kind === "vn-stock") {
     built = await buildVnStockFull(intent.symbol, deep);
   } else if (intent.kind === "crypto") {
     built = await buildCryptoContext(intent.symbol);
@@ -272,23 +302,56 @@ export async function answerQuestion(
       ...uni,
       narrative: `## Góc phân bổ gia sản\n\nBối cảnh đa tài sản:\n\n${uni.narrative}\n\nKhung tham chiếu (không phải lời khuyên): lõi phòng thủ (tiền gửi/trái phiếu) · tăng trưởng (cổ phiếu/ETF) · vệ tinh (crypto/hàng hóa) theo tỷ trọng phù hợp rủi ro và chân trời thời gian.`,
     };
+  } else if (intent.kind === "news") {
+    // Tin tức chung vẫn có thể kèm briefing ngắn nếu hỏi thị trường
+    built = isVnMarketBriefingQuery(question)
+      ? await buildVnMarketBriefing()
+      : await buildUniverseOverview();
+    forceBriefingFormat = isVnMarketBriefingQuery(question);
   } else {
-    // market / news / general → full universe
-    built = await buildUniverseOverview();
+    // general — nếu vẫn có từ khóa thị trường thì briefing, không thì universe
+    if (isVnMarketBriefingQuery(question) || /thị trường chứng khoán|vn-?index|hose/i.test(question)) {
+      built = await buildVnMarketBriefing();
+      forceBriefingFormat = true;
+    } else {
+      built = await buildUniverseOverview();
+    }
   }
 
   let mode: "deterministic" | "llm" = "deterministic";
   let model: string | null = null;
   let finalAnswer = built.narrative;
 
-  const llm = await synthesizeWithLlm(question, built, prefs, history);
-  if (llm) {
-    finalAnswer = llm.text;
-    mode = "llm";
-    model = llm.model;
+  // Briefing 4 phần: mặc định giữ narrative số liệu; LLM chỉ làm mượt khi depth=deep hoặc đã cấu hình
+  const useLlm =
+    !forceBriefingFormat || prefs.depth === "deep" || prefs.style === "analyst";
+  if (useLlm) {
+    const llm = await synthesizeWithLlm(question, built, prefs, history, {
+      forceBriefingFormat,
+    });
+    if (llm) {
+      // Với briefing: chỉ chấp nhận nếu còn đủ 4 heading
+      if (forceBriefingFormat) {
+        const ok =
+          /1\.\s*Biến động|## 1\./i.test(llm.text) &&
+          /2\.\s*Động thái|## 2\./i.test(llm.text) &&
+          /3\.\s*Thanh khoản|## 3\./i.test(llm.text) &&
+          /4\.\s*Tổng quan|## 4\./i.test(llm.text);
+        if (ok) {
+          finalAnswer = llm.text;
+          mode = "llm";
+          model = llm.model;
+        }
+        // else giữ deterministic
+      } else {
+        finalAnswer = llm.text;
+        mode = "llm";
+        model = llm.model;
+      }
+    }
   }
 
-  if (prefs.depth === "concise") {
+  if (prefs.depth === "concise" && !forceBriefingFormat) {
     finalAnswer = finalAnswer.split("\n\n").slice(0, 4).join("\n\n");
   }
 
@@ -308,7 +371,7 @@ export async function answerQuestion(
   });
 
   const meta = buildMeta({
-    source: mode === "llm" ? "orca-agent+llm" : "orca-agent",
+    source: mode === "llm" ? "orca-agent+llm" : forceBriefingFormat ? "orca-agent-market-briefing" : "orca-agent",
     sourceTimestampMs: Date.now(),
     note: `Persona: ${persona} · intent: ${intent.kind} · sections: ${built.sectionsUsed.join(",")}`,
   });
