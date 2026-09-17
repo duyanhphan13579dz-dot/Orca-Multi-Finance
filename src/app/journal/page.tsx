@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Badge, fmtNum, Panel } from "@/components/ui";
 import { NotebookPen, Plus, Trash2 } from "lucide-react";
 import { PriceAlertsPanel } from "@/components/journal/price-alerts-panel";
+import { PortfolioAiPanel } from "@/components/journal/portfolio-ai-panel";
 
 interface Trade {
   id: string;
@@ -127,13 +128,17 @@ export default function JournalPage() {
     <div className="mx-auto max-w-4xl space-y-3">
       <PriceAlertsPanel />
 
+      <PortfolioAiPanel trades={trades} />
+
       <Panel pad={false}>
         <div className="flex items-center justify-between p-4">
           <div>
             <h1 className="flex items-center gap-2 text-lg font-semibold">
               <NotebookPen className="size-5 text-accent" /> Nhật ký giao dịch
             </h1>
-            <p className="mt-0.5 text-[12px] text-ink-3">Ghi chép lệnh · tính PnL / R-multiple · lưu trên thiết bị</p>
+            <p className="mt-0.5 text-[12px] text-ink-3">
+              Ghi chép lệnh · tính PnL / R-multiple · lưu trên thiết bị
+            </p>
           </div>
           <button
             onClick={() => setShowForm((v) => !v)}
@@ -175,7 +180,15 @@ export default function JournalPage() {
                 <option value="commodity">Hàng hóa</option>
               </select>
             </label>
-            <F label="Mã" v={form.symbol} set={(v) => setForm({ ...form, symbol: v })} placeholder="BTCUSDT / VCB" />
+            <label>
+              <L>Mã</L>
+              <input
+                className="input"
+                value={form.symbol}
+                onChange={(e) => setForm({ ...form, symbol: e.target.value })}
+                placeholder="BTC / FPT / EURUSD"
+              />
+            </label>
             <label>
               <L>Phía</L>
               <select
@@ -187,158 +200,184 @@ export default function JournalPage() {
                 <option value="short">Short</option>
               </select>
             </label>
-            <F label="Entry" v={form.entry} set={(v) => setForm({ ...form, entry: v })} num />
-            <F label="Exit" v={form.exit} set={(v) => setForm({ ...form, exit: v })} num />
-            <F label="Stop loss" v={form.stopLoss} set={(v) => setForm({ ...form, stopLoss: v })} num />
-            <F label="Take profit" v={form.takeProfit} set={(v) => setForm({ ...form, takeProfit: v })} num />
-            <F label="Size" v={form.size} set={(v) => setForm({ ...form, size: v })} num />
-            <F label="Leverage" v={form.leverage} set={(v) => setForm({ ...form, leverage: v })} num />
-            <F label="Strategy" v={form.strategy} set={(v) => setForm({ ...form, strategy: v })} />
-            <F label="Emotion" v={form.emotion} set={(v) => setForm({ ...form, emotion: v })} />
-            <label className="sm:col-span-2 md:col-span-3">
-              <L>Notes</L>
+            <label>
+              <L>Entry</L>
               <input
+                className="input"
+                type="number"
+                value={form.entry}
+                onChange={(e) => setForm({ ...form, entry: e.target.value })}
+              />
+            </label>
+            <label>
+              <L>Exit (để trống nếu đang mở)</L>
+              <input
+                className="input"
+                type="number"
+                value={form.exit}
+                onChange={(e) => setForm({ ...form, exit: e.target.value })}
+              />
+            </label>
+            <label>
+              <L>Stop loss</L>
+              <input
+                className="input"
+                type="number"
+                value={form.stopLoss}
+                onChange={(e) => setForm({ ...form, stopLoss: e.target.value })}
+              />
+            </label>
+            <label>
+              <L>Take profit</L>
+              <input
+                className="input"
+                type="number"
+                value={form.takeProfit}
+                onChange={(e) => setForm({ ...form, takeProfit: e.target.value })}
+              />
+            </label>
+            <label>
+              <L>Size</L>
+              <input
+                className="input"
+                type="number"
+                value={form.size}
+                onChange={(e) => setForm({ ...form, size: e.target.value })}
+              />
+            </label>
+            <label>
+              <L>Leverage</L>
+              <input
+                className="input"
+                type="number"
+                value={form.leverage}
+                onChange={(e) => setForm({ ...form, leverage: e.target.value })}
+              />
+            </label>
+            <label>
+              <L>Chiến lược</L>
+              <input
+                className="input"
+                value={form.strategy}
+                onChange={(e) => setForm({ ...form, strategy: e.target.value })}
+              />
+            </label>
+            <label>
+              <L>Cảm xúc</L>
+              <input
+                className="input"
+                value={form.emotion}
+                onChange={(e) => setForm({ ...form, emotion: e.target.value })}
+              />
+            </label>
+            <label className="sm:col-span-2 md:col-span-3">
+              <L>Ghi chú</L>
+              <input
+                className="input"
                 value={form.notes}
                 onChange={(e) => setForm({ ...form, notes: e.target.value })}
-                className="input"
               />
             </label>
           </div>
-          <div className="mt-3 flex gap-2">
-            <button onClick={add} className="rounded-md bg-accent-primary px-3 py-1.5 text-[12px] font-semibold text-white">
-              Lưu
-            </button>
-            <button onClick={() => setShowForm(false)} className="rounded-md px-3 py-1.5 text-[12px] text-ink-3">
-              Hủy
-            </button>
-          </div>
+          <button
+            onClick={add}
+            className="mt-3 rounded-md bg-accent-primary/20 px-3 py-1.5 text-[12px] font-medium text-accent-primary"
+          >
+            Lưu lệnh
+          </button>
         </Panel>
       )}
 
-      <Panel title="Danh sách lệnh">
-        {trades.length === 0 ? (
-          <p className="text-[12px] text-ink-3">Chưa có lệnh — thêm lệnh để theo dõi PnL.</p>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[640px] text-left text-[12px]">
-              <thead>
-                <tr className="border-b border-line text-[10px] uppercase tracking-wider text-ink-3">
-                  <th className="py-2 pl-3.5 font-medium">Mã</th>
-                  <th className="py-2 font-medium">Phía</th>
-                  <th className="py-2 text-right font-medium">Entry</th>
-                  <th className="py-2 text-right font-medium">Exit</th>
-                  <th className="py-2 text-right font-medium">SL / TP</th>
-                  <th className="py-2 text-right font-medium">PnL</th>
-                  <th className="py-2 text-right font-medium">R</th>
-                  <th className="py-2 font-medium">Ghi chú</th>
-                  <th className="py-2 pr-3.5" />
-                </tr>
-              </thead>
-              <tbody>
-                {trades.map((t) => {
-                  const pnl = pnlOf(t);
-                  const r = rOf(t);
-                  return (
-                    <tr key={t.id} className="border-b border-line/60">
-                      <td className="py-2 pl-3.5">
-                        <span className="font-semibold">{t.symbol}</span>
-                        <span className="ml-1 text-[10px] font-normal text-ink-3">{t.assetType}</span>
-                      </td>
-                      <td className="py-2">
-                        <Badge tone={t.side === "long" ? "up" : "down"}>{t.side}</Badge>
-                      </td>
-                      <td className="num py-2 text-right">{fmtNum(t.entry, 4)}</td>
-                      <td className="num py-2 text-right">
-                        {t.exit != null ? fmtNum(t.exit, 4) : <Badge tone="accent">đang mở</Badge>}
-                      </td>
-                      <td className="num py-2 text-right text-ink-3">
-                        {t.stopLoss ?? "—"} / {t.takeProfit ?? "—"}
-                      </td>
-                      <td
-                        className={`num py-2 text-right ${
-                          pnl == null ? "text-ink-3" : pnl >= 0 ? "text-up" : "text-down"
-                        }`}
+      <Panel pad={false}>
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[640px] text-left text-[12px]">
+            <thead>
+              <tr className="border-b border-line text-[10px] uppercase tracking-wide text-ink-3">
+                <th className="py-2 pl-3.5 font-medium">Mã</th>
+                <th className="py-2 font-medium">Phía</th>
+                <th className="py-2 text-right font-medium">Entry</th>
+                <th className="py-2 text-right font-medium">Exit</th>
+                <th className="py-2 text-right font-medium">SL / TP</th>
+                <th className="py-2 text-right font-medium">PnL</th>
+                <th className="py-2 text-right font-medium">R</th>
+                <th className="py-2 font-medium">Ghi chú</th>
+                <th className="py-2 pr-3.5" />
+              </tr>
+            </thead>
+            <tbody>
+              {trades.map((t) => {
+                const pnl = pnlOf(t);
+                const r = rOf(t);
+                return (
+                  <tr key={t.id} className="border-b border-line/60">
+                    <td className="py-2 pl-3.5">
+                      <span className="font-semibold">{t.symbol}</span>
+                      <span className="ml-1 text-[10px] font-normal text-ink-3">{t.assetType}</span>
+                    </td>
+                    <td className="py-2">
+                      <Badge tone={t.side === "long" ? "up" : "down"}>{t.side}</Badge>
+                    </td>
+                    <td className="num py-2 text-right">{fmtNum(t.entry, 4)}</td>
+                    <td className="num py-2 text-right">
+                      {t.exit != null ? fmtNum(t.exit, 4) : <Badge tone="accent">đang mở</Badge>}
+                    </td>
+                    <td className="num py-2 text-right text-ink-3">
+                      {t.stopLoss ?? "—"} / {t.takeProfit ?? "—"}
+                    </td>
+                    <td
+                      className={`num py-2 text-right ${
+                        pnl == null ? "text-ink-3" : pnl >= 0 ? "text-up" : "text-down"
+                      }`}
+                    >
+                      {pnl != null ? fmtNum(pnl, 2) : "—"}
+                    </td>
+                    <td className="num py-2 text-right">{r != null ? r.toFixed(2) : "—"}</td>
+                    <td className="max-w-40 truncate py-2 text-ink-3" title={t.notes}>
+                      {t.strategy || "—"}
+                      {t.emotion ? ` · ${t.emotion}` : ""}
+                    </td>
+                    <td className="py-2 pr-3.5 text-right">
+                      <button
+                        onClick={() => persist(trades.filter((x) => x.id !== t.id))}
+                        className="text-ink-3 hover:text-down"
+                        aria-label="Xóa"
                       >
-                        {pnl != null ? fmtNum(pnl, 2) : "—"}
-                      </td>
-                      <td className="num py-2 text-right">{r != null ? r.toFixed(2) : "—"}</td>
-                      <td className="max-w-40 truncate py-2 text-ink-3" title={t.notes}>
-                        {t.strategy || "—"}
-                        {t.emotion ? ` · ${t.emotion}` : ""}
-                      </td>
-                      <td className="py-2 pr-3.5 text-right">
-                        <button
-                          onClick={() => persist(trades.filter((x) => x.id !== t.id))}
-                          className="text-ink-3 hover:text-down"
-                          aria-label="Xóa"
-                        >
-                          <Trash2 className="size-4" />
-                        </button>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
+                        <Trash2 className="size-4" />
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+              {!trades.length && (
+                <tr>
+                  <td colSpan={9} className="py-8 text-center text-ink-3">
+                    Chưa có lệnh — bấm Thêm lệnh để ghi nhật ký.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
       </Panel>
-
-      <style jsx global>{`
-        .input {
-          width: 100%;
-          border-radius: 8px;
-          border: 1px solid var(--color-line);
-          background: var(--color-panel-2);
-          padding: 7px 10px;
-          font-size: 12px;
-          color: var(--color-ink);
-        }
-      `}</style>
     </div>
   );
 }
 
-function L({ children }: { children: React.ReactNode }) {
-  return <span className="mb-0.5 block text-[10px] uppercase tracking-wider text-ink-3">{children}</span>;
-}
-function F({
-  label,
-  v,
-  set,
-  placeholder,
-  num,
-}: {
-  label: string;
-  v: string;
-  set: (s: string) => void;
-  placeholder?: string;
-  num?: boolean;
-}) {
-  return (
-    <label>
-      <L>{label}</L>
-      <input
-        value={v}
-        onChange={(e) => set(e.target.value)}
-        placeholder={placeholder}
-        inputMode={num ? "decimal" : undefined}
-        className="input"
-      />
-    </label>
-  );
-}
 function Stat({ label, value, tone }: { label: string; value: string; tone?: "up" | "down" }) {
   return (
-    <div className="panel p-3">
-      <div className="text-[10px] uppercase tracking-wider text-ink-3">{label}</div>
+    <div className="rounded-lg border border-line/70 bg-bg-2/40 px-3 py-2">
+      <div className="text-[10px] uppercase tracking-wide text-ink-3">{label}</div>
       <div
-        className={`num mt-1 text-[16px] font-semibold ${
-          tone === "up" ? "text-up" : tone === "down" ? "text-down" : ""
+        className={`mt-0.5 text-[16px] font-semibold tabular-nums ${
+          tone === "up" ? "text-up" : tone === "down" ? "text-down" : "text-ink"
         }`}
       >
         {value}
       </div>
     </div>
   );
+}
+
+function L({ children }: { children: React.ReactNode }) {
+  return <span className="mb-0.5 block text-[10px] uppercase tracking-wide text-ink-3">{children}</span>;
 }
