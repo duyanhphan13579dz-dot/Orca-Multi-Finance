@@ -1,13 +1,19 @@
 import "server-only";
-import { env } from "../env";
 import { buildMeta, worstFreshness } from "../freshness";
-import { getCryptoDetail } from "./crypto";
-import { buildMarketSnapshot } from "./market";
 import { computeConfidence, type Confidence } from "./intelligence";
 import { VN_TICKERS } from "../providers/news";
 import type { FreshnessStatus, Meta } from "../types";
 import type { HistoryTurn } from "./agent-memory";
-import { buildVn } from "./agent-vn-stock";
+import { llmChat, llmConfigured } from "../ai/gateway";
+import {
+  buildUniverseOverview,
+  buildForexContext,
+  buildCommodityContext,
+  buildRatesMacroContext,
+  buildVnStockFull,
+  buildCryptoContext,
+  type AgentBuilt,
+} from "./agent-context";
 
 export interface AgentPrefs {
   depth?: "concise" | "standard" | "deep";
@@ -16,7 +22,6 @@ export interface AgentPrefs {
   riskDisclosure?: "standard" | "detailed" | "off";
 }
 
-/** Conversation history turn accepted by the agent API route. */
 export type AgentHistoryTurn = HistoryTurn;
 
 type Persona = "stock_analyst" | "personal_finance" | "wealth";
@@ -33,27 +38,54 @@ interface AgentAnswer {
   context: { sectionsUsed: string[]; symbols: string[] };
 }
 
-interface Built {
-  narrative: string;
-  contract: Record<string, unknown>;
-  sectionsUsed: string[];
-  symbols: string[];
-  freshnesses: FreshnessStatus[];
-  unavailable?: boolean;
-  persona: Persona;
-}
-
 const KNOWN_CRYPTO = new Set([
-  "BTC", "ETH", "SOL", "BNB", "XRP", "DOGE", "ADA", "TON", "AVAX", "LINK", "DOT", "TRX",
-  "LTC", "BCH", "NEAR", "SUI", "APT", "ARB", "OP", "INJ", "TIA", "SEI", "PEPE", "SHIB",
-  "UNI", "ATOM", "FIL", "ETC", "AAVE", "MKR", "ALGO", "VET", "ICP", "FET", "RENDER",
-  "WLD", "JUP", "ENA", "ONDO", "POL", "XLM", "HBAR", "KAS", "TAO", "IP", "PI", "ZEC",
-  "STRK", "PAXG",
+  "BTC",
+  "ETH",
+  "SOL",
+  "BNB",
+  "XRP",
+  "DOGE",
+  "ADA",
+  "TON",
+  "AVAX",
+  "LINK",
+  "DOT",
+  "TRX",
+  "LTC",
+  "BCH",
+  "NEAR",
+  "SUI",
+  "APT",
+  "ARB",
+  "OP",
+  "INJ",
+  "TIA",
+  "SEI",
+  "PEPE",
+  "SHIB",
+  "UNI",
+  "ATOM",
+  "FIL",
+  "ETC",
+  "AAVE",
+  "MKR",
+  "ALGO",
+  "VET",
+  "ICP",
+  "FET",
+  "RENDER",
+  "WLD",
+  "JUP",
+  "ENA",
+  "ONDO",
+  "POL",
+  "XLM",
+  "HBAR",
+  "KAS",
+  "TAO",
+  "STRK",
+  "PAXG",
 ]);
-const FX_PAIRS = [
-  "EURUSD", "GBPUSD", "USDJPY", "USDCHF", "AUDUSD", "USDCAD", "NZDUSD",
-  "EURJPY", "EURGBP", "GBPJPY", "AUDJPY", "USDVND",
-];
 
 type Intent =
   | { kind: "vn-market"; requestedDate: string | null }
@@ -64,84 +96,128 @@ type Intent =
   | { kind: "market" }
   | { kind: "compare"; a: string; b: string }
   | { kind: "news"; query?: string }
+  | { kind: "rates" }
+  | { kind: "macro" }
   | { kind: "personal_finance" }
   | { kind: "wealth" }
   | { kind: "general" };
 
 function detectIntent(q: string): Intent {
   const upper = q.toUpperCase();
-  if (/gia sản|danh mục.*tỷ|phân bổ tài sản|private wealth|family office/i.test(q)) return { kind: "wealth" };
-  if (/ngân sách|chi tiêu|tiết kiệm|quỹ dự phòng|lương|tiêu trong/i.test(q)) return { kind: "personal_finance" };
-  if (/chứng khoán|thị trường.*(việt|vn)|vn-?index|vn30|hnx|upcom|phiên giao dịch/i.test(q))
-    return { kind: "vn-market", requestedDate: null };
-  if (/so sánh|compare|\bvs\b/i.test(q)) {
-    const tokens = upper.match(/\b[A-Z]{2,10}\b/g) ?? [];
-    const meaningful = tokens.filter(
-      (t) => KNOWN_CRYPTO.has(t) || VN_TICKERS.includes(t) || FX_PAIRS.includes(t),
+  const lower = q.toLowerCase();
+
+  if (/lãi suất|interest rate|trái phiếu chính phủ|huy động|cho vay/i.test(q)) return { kind: "rates" };
+  if (/vĩ mô|macro|gdp|cpi|lạm phát|thất nghiệp|fdi|xuất khẩu/i.test(q)) return { kind: "macro" };
+  if (/tài chính cá nhân|tiết kiệm|ngân sách|chi tiêu gia đình/i.test(q)) return { kind: "personal_finance" };
+  if (/gia sản|tài sản ròng|phân bổ danh mục|wealth/i.test(q)) return { kind: "wealth" };
+
+  if (/vàng|gold|bạc|silver|dầu|oil|cà phê|commodity|hàng hóa/i.test(q)) {
+    return { kind: "commodity", query: q };
+  }
+
+  for (const p of [
+    "EURUSD",
+    "GBPUSD",
+    "USDJPY",
+    "USDCHF",
+    "AUDUSD",
+    "USDCAD",
+    "NZDUSD",
+    "EURJPY",
+    "EURGBP",
+    "GBPJPY",
+    "AUDJPY",
+    "USDVND",
+  ]) {
+    if (upper.includes(p) || upper.replace("/", "").includes(p)) return { kind: "forex", pair: p };
+  }
+  if (/\b(eur\/usd|gbp\/usd|usd\/jpy|usd\/vnd|forex|ngoại hối|tỷ giá)\b/i.test(q)) {
+    if (/usd\/vnd|usd\s*vnd|đô.*việt/i.test(q)) return { kind: "forex", pair: "USDVND" };
+    if (/eur/i.test(q)) return { kind: "forex", pair: "EURUSD" };
+    if (/gbp|bảng/i.test(q)) return { kind: "forex", pair: "GBPUSD" };
+    if (/jpy|yên/i.test(q)) return { kind: "forex", pair: "USDJPY" };
+    return { kind: "forex", pair: "EURUSD" };
+  }
+
+  const usdt = upper.match(/\b([A-Z]{2,12})USDT\b/);
+  if (usdt) return { kind: "crypto", symbol: `${usdt[1]}USDT` };
+  for (const t of upper.match(/\b[A-Z]{2,5}\b/g) ?? []) {
+    if (KNOWN_CRYPTO.has(t)) return { kind: "crypto", symbol: `${t}USDT` };
+  }
+
+  const tickers = upper.match(/\b[A-Z]{3}\b/g) ?? [];
+  for (const t of tickers) {
+    if (VN_TICKERS.includes(t) || /^[A-Z]{3}$/.test(t)) {
+      if (!KNOWN_CRYPTO.has(t) && t !== "USD" && t !== "EUR" && t !== "GBP" && t !== "JPY") {
+        if (VN_TICKERS.includes(t) || /cổ phiếu|mã|phân tích|định giá|pe|pb/i.test(q) || tickers.length === 1) {
+          if (VN_TICKERS.includes(t) || /\b(fpt|vcb|tcb|hpg|mwg|ssi|vnindex)\b/i.test(lower)) {
+            return { kind: "vn-stock", symbol: t === "VNINDEX" ? "VNINDEX" : t };
+          }
+          if (VN_TICKERS.includes(t)) return { kind: "vn-stock", symbol: t };
+        }
+      }
+    }
+  }
+  // Explicit 3-letter VN ticker not in static list (IPO mới)
+  const mStock = upper.match(/\b([A-Z]{3})\b/);
+  if (mStock && !KNOWN_CRYPTO.has(mStock[1]) && /cổ phiếu|mã|phân tích|định giá|ck |chứng khoán/i.test(q)) {
+    return { kind: "vn-stock", symbol: mStock[1] };
+  }
+  for (const t of tickers) {
+    if (VN_TICKERS.includes(t)) return { kind: "vn-stock", symbol: t };
+  }
+
+  if (/so sánh|vs\b|đối chiếu/i.test(q)) {
+    const meaningful = (upper.match(/\b[A-Z]{2,5}\b/g) ?? []).filter(
+      (t) => t.length >= 2 && t !== "USDT" && t !== "VS",
     );
     if (meaningful.length >= 2) return { kind: "compare", a: meaningful[0], b: meaningful[1] };
   }
-  const usdt = upper.match(/\b([A-Z]{2,12})USDT\b/);
-  if (usdt) return { kind: "crypto", symbol: `${usdt[1]}USDT` };
-  for (const t of upper.match(/\b[A-Z]{2,5}\b/g) ?? [])
-    if (KNOWN_CRYPTO.has(t)) return { kind: "crypto", symbol: `${t}USDT` };
-  for (const t of upper.match(/\b[A-Z]{3}\b/g) ?? [])
-    if (VN_TICKERS.includes(t)) return { kind: "vn-stock", symbol: t };
-  if (/vàng|gold|bạc|dầu|oil|cà phê/i.test(q)) return { kind: "commodity", query: "gold" };
-  if (/thị trường|market|tổng quan/i.test(q)) return { kind: "vn-market", requestedDate: null };
+
   if (/tin tức|news/i.test(q)) return { kind: "news" };
+  if (/thị trường|market|tổng quan|đa tài sản|toàn cảnh/i.test(q)) return { kind: "vn-market", requestedDate: null };
   return { kind: "general" };
 }
 
-async function buildCrypto(symbol: string): Promise<Built> {
-  const r = await getCryptoDetail(symbol);
-  const sym = symbol.replace(/USDT$/, "");
-  if (!r) {
-    return {
-      narrative: `${sym}: dữ liệu không khả dụng từ Binance.`,
-      contract: { asset: { symbol: sym, asset_type: "crypto" }, error: "unavailable" },
-      sectionsUsed: [],
-      symbols: [symbol],
-      freshnesses: [],
-      unavailable: true,
-      persona: "stock_analyst",
-    };
-  }
-  const ticker = r.detail.ticker;
-  const tech = r.detail.technical;
-  const funding = r.detail.funding;
-  const narrative = [
-    `${sym} — giá ${ticker.price.toLocaleString("en-US")} USDT, 24h ${
-      ticker.changePercent != null ? ticker.changePercent.toFixed(2) + "%" : "?"
-    }.`,
-    tech
-      ? `Kỹ thuật: xu hướng ${tech.trend?.label ?? "?"}, RSI14 ${tech.rsi14?.toFixed(1) ?? "?"}.`
-      : "Chưa đủ chuỗi chỉ báo.",
-    funding ? `Futures: funding ${(funding.fundingRate * 100).toFixed(4)}%.` : "Futures: không khả dụng.",
-  ]
-    .filter(Boolean)
-    .join("\n\n");
-  return {
-    narrative,
-    contract: { asset: { symbol: sym }, market_data: ticker },
-    sectionsUsed: ["crypto"],
-    symbols: [symbol],
-    freshnesses: [r.meta.freshness],
-    persona: "stock_analyst",
-  };
-}
+async function synthesizeWithLlm(
+  question: string,
+  built: AgentBuilt,
+  prefs: AgentPrefs,
+  history: AgentHistoryTurn[],
+): Promise<{ text: string; model: string } | null> {
+  if (!llmConfigured()) return null;
+  try {
+    const system = `Bạn là ORCA Agent — trợ lý phân tích tài chính toàn diện của nền tảng ORCA Multi-Finance.
+Chỉ được dùng số liệu trong CONTEXT JSON và NARRATIVE đã tính sẵn từ hệ thống (chứng khoán VN, crypto, forex, hàng hóa, lãi suất, vĩ mô).
+KHÔNG bịa số, KHÔNG bịa nguồn. Nếu thiếu dữ liệu, nói rõ "chưa có trong hệ thống".
+Trả lời tiếng ${prefs.language === "en" ? "Anh" : "Việt"}, cấu trúc rõ (tiêu đề ##, gạch đầu dòng).
+Không đưa khuyến nghị mua/bán tuyệt đối; nhấn mạnh phục vụ nghiên cứu.`;
 
-async function buildMarket(): Promise<Built> {
-  const snap = await buildMarketSnapshot();
-  const p = snap.snapshot.pulse;
-  return {
-    narrative: `${p.headline}.\n\n${p.body.join("\n\n")}`,
-    contract: { scope: "market_snapshot", pulse: p },
-    sectionsUsed: ["market-snapshot"],
-    symbols: [],
-    freshnesses: Object.values(snap.meta.sections ?? {}),
-    persona: "stock_analyst",
-  };
+    const user = `CÂU HỎI: ${question}
+
+NARRATIVE HỆ THỐNG:
+${built.narrative.slice(0, 6_000)}
+
+CONTEXT JSON (rút gọn):
+${JSON.stringify(built.contract).slice(0, 8_000)}
+
+Hãy tổng hợp phân tích chuyên sâu, bám số liệu trên.`;
+
+    const r = await llmChat("analysis", {
+      system,
+      user,
+      temperature: 0.25,
+      maxTokens: prefs.depth === "deep" ? 1400 : 900,
+      history: history.slice(-8).map((h) => ({
+        role: h.role === "assistant" || h.role === "agent" ? ("assistant" as const) : ("user" as const),
+        content: h.content,
+      })),
+    });
+    if (!r?.text?.trim()) return null;
+    return { text: r.text.trim(), model: r.model };
+  } catch {
+    return null;
+  }
 }
 
 export async function answerQuestion(
@@ -151,54 +227,74 @@ export async function answerQuestion(
 ): Promise<{ result: AgentAnswer; meta: Meta }> {
   const intent = detectIntent(question);
   const deep = prefs.depth === "deep";
-  let built: Built;
+  let built: AgentBuilt;
+  let persona: Persona = "stock_analyst";
 
   if (intent.kind === "vn-stock") {
-    built = await buildVn(intent.symbol, deep);
+    built = await buildVnStockFull(intent.symbol, deep);
   } else if (intent.kind === "crypto") {
-    built = await buildCrypto(intent.symbol);
-  } else if (
-    intent.kind === "vn-market" ||
-    intent.kind === "market" ||
-    intent.kind === "general" ||
-    intent.kind === "news"
-  ) {
-    built = await buildMarket();
+    built = await buildCryptoContext(intent.symbol);
+  } else if (intent.kind === "forex") {
+    built = await buildForexContext(intent.pair);
+  } else if (intent.kind === "commodity") {
+    built = await buildCommodityContext(intent.query);
+  } else if (intent.kind === "rates") {
+    built = await buildRatesMacroContext("rates");
+  } else if (intent.kind === "macro") {
+    built = await buildRatesMacroContext("macro");
   } else if (intent.kind === "compare") {
-    const A =
-      KNOWN_CRYPTO.has(intent.a.replace(/USDT$/, "")) || intent.a.endsWith("USDT")
-        ? await buildCrypto(intent.a.endsWith("USDT") ? intent.a : `${intent.a}USDT`)
-        : await buildVn(intent.a, false);
-    const B =
-      KNOWN_CRYPTO.has(intent.b.replace(/USDT$/, "")) || intent.b.endsWith("USDT")
-        ? await buildCrypto(intent.b.endsWith("USDT") ? intent.b : `${intent.b}USDT`)
-        : await buildVn(intent.b, false);
+    const isCrypto = (x: string) =>
+      KNOWN_CRYPTO.has(x.replace(/USDT$/, "")) || x.endsWith("USDT");
+    const A = isCrypto(intent.a)
+      ? await buildCryptoContext(intent.a.endsWith("USDT") ? intent.a : `${intent.a}USDT`)
+      : await buildVnStockFull(intent.a, false);
+    const B = isCrypto(intent.b)
+      ? await buildCryptoContext(intent.b.endsWith("USDT") ? intent.b : `${intent.b}USDT`)
+      : await buildVnStockFull(intent.b, false);
     built = {
-      narrative: `Đối chiếu:\n\n${A.narrative}\n\n${B.narrative}`,
+      narrative: `## Đối chiếu ${intent.a} vs ${intent.b}\n\n${A.narrative}\n\n---\n\n${B.narrative}`,
       contract: { compare: [A.contract, B.contract] },
       sectionsUsed: [...new Set([...A.sectionsUsed, ...B.sectionsUsed])],
       symbols: [intent.a, intent.b],
       freshnesses: [...A.freshnesses, ...B.freshnesses],
-      persona: "stock_analyst",
+    };
+  } else if (intent.kind === "personal_finance") {
+    persona = "personal_finance";
+    const uni = await buildUniverseOverview();
+    built = {
+      ...uni,
+      narrative: `## Góc tài chính cá nhân\n\nDựa trên bối cảnh thị trường hiện tại:\n\n${uni.narrative}\n\nGợi ý khung: quỹ dự phòng 3–6 tháng chi tiêu · ưu tiên nợ lãi cao · chỉ đầu tư số tiền chấp nhận biến động được · đa dạng hóa theo khẩu vị rủi ro.`,
+    };
+  } else if (intent.kind === "wealth") {
+    persona = "wealth";
+    const uni = await buildUniverseOverview();
+    built = {
+      ...uni,
+      narrative: `## Góc phân bổ gia sản\n\nBối cảnh đa tài sản:\n\n${uni.narrative}\n\nKhung tham chiếu (không phải lời khuyên): lõi phòng thủ (tiền gửi/trái phiếu) · tăng trưởng (cổ phiếu/ETF) · vệ tinh (crypto/hàng hóa) theo tỷ trọng phù hợp rủi ro và chân trời thời gian.`,
     };
   } else {
-    built = {
-      narrative:
-        "Mình có thể hỗ trợ phân tích cổ phiếu VN, crypto, thị trường và tài chính cá nhân. Hãy nêu mã hoặc câu hỏi cụ thể.",
-      contract: {},
-      sectionsUsed: [],
-      symbols: [],
-      freshnesses: ["LIVE"],
-      persona: "stock_analyst",
-    };
+    // market / news / general → full universe
+    built = await buildUniverseOverview();
   }
 
+  let mode: "deterministic" | "llm" = "deterministic";
+  let model: string | null = null;
   let finalAnswer = built.narrative;
-  if (prefs.depth === "concise") finalAnswer = finalAnswer.split("\n\n").slice(0, 3).join("\n\n");
 
-  if (built.persona === "stock_analyst" && prefs.riskDisclosure !== "off") {
+  const llm = await synthesizeWithLlm(question, built, prefs, history);
+  if (llm) {
+    finalAnswer = llm.text;
+    mode = "llm";
+    model = llm.model;
+  }
+
+  if (prefs.depth === "concise") {
+    finalAnswer = finalAnswer.split("\n\n").slice(0, 4).join("\n\n");
+  }
+
+  if (prefs.riskDisclosure !== "off") {
     finalAnswer +=
-      "\n\n— Phân tích định lượng từ dữ liệu thật, phục vụ nghiên cứu; không phải khuyến nghị đầu tư.";
+      "\n\n— Phân tích từ dữ liệu thật trên ORCA (CK VN · Crypto · Forex · Hàng hóa · Lãi suất · Vĩ mô); phục vụ nghiên cứu, không phải khuyến nghị đầu tư.";
   }
 
   const dataFreshness = built.freshnesses.length
@@ -208,29 +304,28 @@ export async function answerQuestion(
       : "LIVE";
   const confidence = computeConfidence({
     freshness: built.freshnesses,
-    coverage: built.unavailable ? 0 : 1,
+    coverage: built.unavailable ? 0 : Math.min(1, built.sectionsUsed.length / 3),
   });
+
   const meta = buildMeta({
-    source: "orca-agent (deterministic)",
+    source: mode === "llm" ? "orca-agent+llm" : "orca-agent",
     sourceTimestampMs: Date.now(),
-    note: `Persona: ${built.persona} · topic: ${intent.kind}`,
+    note: `Persona: ${persona} · intent: ${intent.kind} · sections: ${built.sectionsUsed.join(",")}`,
   });
   meta.freshness = dataFreshness;
 
   return {
     result: {
       answer: finalAnswer,
-      mode: "deterministic",
+      mode,
       intent: intent.kind,
-      persona: built.persona,
-      model: null,
+      persona,
+      model,
       confidence,
-      dataQuality: built.unavailable ? "LOW" : "HIGH",
+      dataQuality: built.unavailable ? "LOW" : built.sectionsUsed.length >= 3 ? "HIGH" : "MEDIUM",
       dataFreshness,
       context: { sectionsUsed: built.sectionsUsed, symbols: built.symbols },
     },
     meta,
   };
 }
-
-export { env };
