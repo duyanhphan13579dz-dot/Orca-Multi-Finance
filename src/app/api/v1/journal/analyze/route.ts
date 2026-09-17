@@ -22,16 +22,22 @@ export async function POST(req: Request) {
     }
     if (trades.length > 300) return badRequest("Tối đa 300 lệnh mỗi lần phân tích");
 
+    const numOrNull = (v: unknown): number | null => {
+      if (v == null || v === "") return null;
+      const n = Number(v);
+      return Number.isFinite(n) ? n : null;
+    };
+
     const cleaned: JournalTradeInput[] = trades.map((t) => ({
       assetType: String(t.assetType ?? "stock").slice(0, 20),
       symbol: String(t.symbol ?? "").toUpperCase().slice(0, 20),
       side: t.side === "short" ? "short" : "long",
       entry: Number(t.entry),
-      exit: t.exit != null && t.exit !== "" ? Number(t.exit) : null,
-      stopLoss: t.stopLoss != null && t.stopLoss !== "" ? Number(t.stopLoss) : null,
-      takeProfit: t.takeProfit != null && t.takeProfit !== "" ? Number(t.takeProfit) : null,
-      size: t.size != null && t.size !== "" ? Number(t.size) : null,
-      leverage: t.leverage != null && t.leverage !== "" ? Number(t.leverage) : null,
+      exit: numOrNull(t.exit),
+      stopLoss: numOrNull(t.stopLoss),
+      takeProfit: numOrNull(t.takeProfit),
+      size: numOrNull(t.size),
+      leverage: numOrNull(t.leverage),
       strategy: String(t.strategy ?? "").slice(0, 80),
       emotion: String(t.emotion ?? "").slice(0, 40),
       notes: String(t.notes ?? "").slice(0, 200),

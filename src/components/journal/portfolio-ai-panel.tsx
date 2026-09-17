@@ -54,7 +54,6 @@ function renderMarkdownLite(text: string) {
       );
     }
     if (!t) return <div key={i} className="h-1.5" />;
-    // bold **x**
     const parts = t.split(/(\*\*[^*]+\*\*)/g);
     return (
       <p key={i} className="mt-1 text-[12.5px] leading-relaxed text-ink-2">
@@ -147,7 +146,7 @@ export function PortfolioAiPanel({ trades }: { trades: TradeLite[] }) {
             {s.profitFactor != null && <Badge tone="accent">PF {s.profitFactor.toFixed(2)}</Badge>}
             {s.avgR != null && <Badge tone="accent">Avg R {s.avgR.toFixed(2)}</Badge>}
             {s.totalPnl != null && (
-              <Badge tone={s.totalPnl >= 0 ? "up" : "down">PnL {s.totalPnl.toFixed(1)}</Badge>
+              <Badge tone={s.totalPnl >= 0 ? "up" : "down"}>PnL {s.totalPnl.toFixed(1)}</Badge>
             )}
           </div>
           <div className="rounded-lg border border-line/50 bg-bg-2/30 px-3 py-2">
