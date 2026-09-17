@@ -10,6 +10,7 @@ import { computeInvestmentPerformance } from "../financial/investment-performanc
 import { fetchVndDchartHistory } from "../providers/vndirect-dchart";
 import { getVndValuationRatios, getVndEquitySnapshot } from "../providers/vndirect-company";
 import { buildVn } from "./agent-vn-stock";
+import type { EconomicSnapshot } from "../economic-data";
 import type { FreshnessStatus } from "../types";
 
 export type AgentBuilt = {
@@ -29,6 +30,10 @@ function fmtPct(v: number | null | undefined, d = 2): string {
 function fmtNum(v: number | null | undefined, d = 2): string {
   if (v == null || !Number.isFinite(v)) return "—";
   return v.toLocaleString("en-US", { maximumFractionDigits: d });
+}
+
+function economicRows(snap: EconomicSnapshot | null | undefined) {
+  return (snap?.rows ?? []).filter((r) => r.current?.value != null);
 }
 
 /** Tổng quan đa tài sản — dùng cho câu hỏi thị trường / general */
@@ -87,7 +92,9 @@ export async function buildUniverseOverview(): Promise<AgentBuilt> {
   }
 
   if (fx?.data?.rows?.length) {
-    const majors = fx.data.rows.filter((r) => r.group === "major" || /USD|EUR|JPY|GBP/.test(r.pair)).slice(0, 8);
+    const majors = fx.data.rows
+      .filter((r) => r.group === "major" || /USD|EUR|JPY|GBP/.test(r.pair))
+      .slice(0, 8);
     const lines = majors.map((r) => `- **${r.pair}**: ${fmtNum(r.price, 5)} (${fmtPct(r.changePercent)})`);
     sections.push(`### Forex\n${lines.join("\n")}`);
     sectionsUsed.push("forex");
@@ -99,58 +106,51 @@ export async function buildUniverseOverview(): Promise<AgentBuilt> {
     }));
   }
 
-  if (cmd?.data) {
-    const items = (cmd.data.items ?? cmd.data.rows ?? []) as {
-      symbol?: string;
-      name?: string;
-      price?: number;
-      changePercent?: number | null;
-    }[];
-    if (items.length) {
-      const lines = items.slice(0, 8).map((r) => {
-        const name = r.name ?? r.symbol ?? "?";
-        return `- **${name}**: ${fmtNum(r.price, 2)} (${fmtPct(r.changePercent ?? null)})`;
-      });
-      sections.push(`### Hàng hóa\n${lines.join("\n")}`);
-      sectionsUsed.push("commodities");
-      if (cmd.meta?.freshness) freshnesses.push(cmd.meta.freshness);
-      contract.commodities = items.slice(0, 8);
-    }
+  if (cmd?.data?.rows?.length) {
+    const items = cmd.data.rows;
+    const lines = items.slice(0, 8).map((r) => {
+      const name = r.name ?? r.symbol ?? "?";
+      return `- **${name}**: ${fmtNum(r.price, 2)} (${fmtPct(r.changePercent ?? null)})`;
+    });
+    sections.push(`### Hàng hóa\n${lines.join("\n")}`);
+    sectionsUsed.push("commodities");
+    if (cmd.meta?.freshness) freshnesses.push(cmd.meta.freshness);
+    contract.commodities = items.slice(0, 8).map((r) => ({
+      symbol: r.symbol,
+      name: r.name,
+      price: r.price,
+      changePercent: r.changePercent,
+    }));
   }
 
-  if (rates?.data) {
-    const rows = (rates.data as { indicators?: { name: string; period: string; current: { value: number | null } }[] })
-      .indicators ??
-      (Array.isArray(rates.data) ? rates.data : []);
-    const list = Array.isArray(rows) ? rows : [];
-    const pick = list
-      .filter((r: { current?: { value?: number | null } }) => r?.current?.value != null)
-      .slice(0, 10) as { name: string; period: string; current: { value: number | null } }[];
-    if (pick.length) {
-      const lines = pick.map((r) => `- **${r.name}**: ${fmtNum(r.current.value, 2)} (${r.period || "—"})`);
-      sections.push(`### Lãi suất & tỷ giá (VietnamBiz)\n${lines.join("\n")}`);
-      sectionsUsed.push("currency-interest-rate");
-      if (rates.meta?.freshness) freshnesses.push(rates.meta.freshness);
-      contract.rates = pick.map((r) => ({ name: r.name, value: r.current.value, period: r.period }));
-    }
+  const rateRows = economicRows(rates?.data);
+  if (rateRows.length) {
+    const lines = rateRows
+      .slice(0, 10)
+      .map((r) => `- **${r.name}**: ${fmtNum(r.current.value, 2)} (${r.period || "—"})`);
+    sections.push(`### Lãi suất & tỷ giá (VietnamBiz)\n${lines.join("\n")}`);
+    sectionsUsed.push("currency-interest-rate");
+    if (rates?.meta?.freshness) freshnesses.push(rates.meta.freshness);
+    contract.rates = rateRows.slice(0, 10).map((r) => ({
+      name: r.name,
+      value: r.current.value,
+      period: r.period,
+    }));
   }
 
-  if (macro?.data) {
-    const rows =
-      (macro.data as { indicators?: { name: string; period: string; current: { value: number | null } }[] })
-        .indicators ??
-      (Array.isArray(macro.data) ? macro.data : []);
-    const list = Array.isArray(rows) ? rows : [];
-    const pick = list
-      .filter((r: { current?: { value?: number | null } }) => r?.current?.value != null)
-      .slice(0, 10) as { name: string; period: string; current: { value: number | null } }[];
-    if (pick.length) {
-      const lines = pick.map((r) => `- **${r.name}**: ${fmtNum(r.current.value, 2)} (${r.period || "—"})`);
-      sections.push(`### Kinh tế vĩ mô VN\n${lines.join("\n")}`);
-      sectionsUsed.push("macro-economic");
-      if (macro.meta?.freshness) freshnesses.push(macro.meta.freshness);
-      contract.macro = pick.map((r) => ({ name: r.name, value: r.current.value, period: r.period }));
-    }
+  const macroRows = economicRows(macro?.data);
+  if (macroRows.length) {
+    const lines = macroRows
+      .slice(0, 10)
+      .map((r) => `- **${r.name}**: ${fmtNum(r.current.value, 2)} (${r.period || "—"})`);
+    sections.push(`### Kinh tế vĩ mô VN\n${lines.join("\n")}`);
+    sectionsUsed.push("macro-economic");
+    if (macro?.meta?.freshness) freshnesses.push(macro.meta.freshness);
+    contract.macro = macroRows.slice(0, 10).map((r) => ({
+      name: r.name,
+      value: r.current.value,
+      period: r.period,
+    }));
   }
 
   if (sections.length <= 1) {
@@ -190,17 +190,28 @@ export async function buildForexContext(pair: string): Promise<AgentBuilt> {
     };
   }
   const d = r.detail;
+  const cur = d.current;
   const tech = d.technical;
+  const price = cur?.price ?? null;
+  const chg = cur?.changePercent ?? null;
   const narrative = [
     `## ${d.pair ?? pair}`,
-    `Giá: **${fmtNum(d.price, 5)}** · Biến động: ${fmtPct(d.changePercent)}`,
+    `Giá: **${fmtNum(price, 5)}** · Biến động: ${fmtPct(chg)}`,
     tech
       ? `Kỹ thuật: xu hướng ${tech.trend?.label ?? "—"} · RSI14 ${tech.rsi14 != null ? tech.rsi14.toFixed(1) : "—"}`
       : "Chưa đủ chuỗi chỉ báo.",
-  ].join("\n\n");
+    d.referenceNote ? `Nguồn: ${d.referenceNote}` : null,
+  ]
+    .filter(Boolean)
+    .join("\n\n");
   return {
     narrative,
-    contract: { pair: d.pair, price: d.price, changePercent: d.changePercent, technical: tech },
+    contract: {
+      pair: d.pair,
+      price,
+      changePercent: chg,
+      technical: tech,
+    },
     sectionsUsed: ["forex-detail"],
     symbols: [pair],
     freshnesses: [r.meta.freshness],
@@ -209,7 +220,7 @@ export async function buildForexContext(pair: string): Promise<AgentBuilt> {
 
 export async function buildCommodityContext(query: string): Promise<AgentBuilt> {
   const r = await getCommodityMarket().catch(() => null);
-  if (!r?.data) {
+  if (!r?.data?.rows?.length) {
     return {
       narrative: "Chưa lấy được bảng hàng hóa.",
       contract: {},
@@ -219,12 +230,7 @@ export async function buildCommodityContext(query: string): Promise<AgentBuilt> 
       unavailable: true,
     };
   }
-  const items = (r.data.items ?? r.data.rows ?? []) as {
-    symbol?: string;
-    name?: string;
-    price?: number;
-    changePercent?: number | null;
-  }[];
+  const items = r.data.rows;
   const q = query.toLowerCase();
   const focused =
     items.find((i) => {
@@ -232,10 +238,12 @@ export async function buildCommodityContext(query: string): Promise<AgentBuilt> 
       if (/vàng|gold|xau/.test(q)) return /gold|vàng|xau/i.test(hay);
       if (/bạc|silver|xag/.test(q)) return /silver|bạc|xag/i.test(hay);
       if (/dầu|oil|wti|brent/.test(q)) return /oil|wti|brent|dầu/i.test(hay);
-      return true;
+      return false;
     }) ?? items[0];
 
-  const lines = items.slice(0, 10).map((i) => `- **${i.name ?? i.symbol}**: ${fmtNum(i.price, 2)} (${fmtPct(i.changePercent ?? null)})`);
+  const lines = items
+    .slice(0, 10)
+    .map((i) => `- **${i.name ?? i.symbol}**: ${fmtNum(i.price, 2)} (${fmtPct(i.changePercent ?? null)})`);
   const narrative = [
     "## Hàng hóa",
     focused
@@ -250,17 +258,19 @@ export async function buildCommodityContext(query: string): Promise<AgentBuilt> 
     narrative,
     contract: { items: items.slice(0, 12), focus: focused },
     sectionsUsed: ["commodities"],
-    symbols: focused?.symbol ? [focused.symbol] : [],
+    symbols: focused?.symbol ? [String(focused.symbol)] : [],
     freshnesses: r.meta?.freshness ? [r.meta.freshness] : [],
   };
 }
 
 export async function buildRatesMacroContext(kind: "rates" | "macro" | "both"): Promise<AgentBuilt> {
   const jobs: Promise<Awaited<ReturnType<typeof getEconomicData>> | null>[] = [];
-  if (kind === "rates" || kind === "both") jobs.push(getEconomicData("currency-interest-rate").catch(() => null));
-  else jobs.push(Promise.resolve(null));
-  if (kind === "macro" || kind === "both") jobs.push(getEconomicData("macro-economic").catch(() => null));
-  else jobs.push(Promise.resolve(null));
+  if (kind === "rates" || kind === "both") {
+    jobs.push(getEconomicData("currency-interest-rate").catch(() => null));
+  } else jobs.push(Promise.resolve(null));
+  if (kind === "macro" || kind === "both") {
+    jobs.push(getEconomicData("macro-economic").catch(() => null));
+  } else jobs.push(Promise.resolve(null));
 
   const [rates, macro] = await Promise.all(jobs);
   const sections: string[] = [];
@@ -271,21 +281,21 @@ export async function buildRatesMacroContext(kind: "rates" | "macro" | "both"): 
   const pack = (
     title: string,
     key: string,
-    pack: Awaited<ReturnType<typeof getEconomicData>> | null,
+    packRes: Awaited<ReturnType<typeof getEconomicData>> | null,
   ) => {
-    if (!pack?.data) return;
-    const rows =
-      (pack.data as { indicators?: { name: string; period: string; current: { value: number | null } }[] })
-        .indicators ?? (Array.isArray(pack.data) ? pack.data : []);
-    const list = (Array.isArray(rows) ? rows : []).filter(
-      (r: { current?: { value?: number | null } }) => r?.current?.value != null,
-    ) as { name: string; period: string; current: { value: number | null } }[];
+    const list = economicRows(packRes?.data);
     if (!list.length) return;
-    const lines = list.slice(0, 12).map((r) => `- **${r.name}**: ${fmtNum(r.current.value, 2)} (${r.period || "—"})`);
+    const lines = list
+      .slice(0, 12)
+      .map((r) => `- **${r.name}**: ${fmtNum(r.current.value, 2)} (${r.period || "—"})`);
     sections.push(`## ${title}\n${lines.join("\n")}`);
     sectionsUsed.push(key);
-    if (pack.meta?.freshness) freshnesses.push(pack.meta.freshness);
-    contract[key] = list.slice(0, 12).map((r) => ({ name: r.name, value: r.current.value, period: r.period }));
+    if (packRes?.meta?.freshness) freshnesses.push(packRes.meta.freshness);
+    contract[key] = list.slice(0, 12).map((r) => ({
+      name: r.name,
+      value: r.current.value,
+      period: r.period,
+    }));
   };
 
   pack("Lãi suất & tỷ giá", "currency-interest-rate", rates);
@@ -323,7 +333,9 @@ export async function enrichVnStockPerformance(symbol: string): Promise<string> 
     ]);
 
     const closes = (bars ?? []).map((b) => Number(b.close)).filter((c) => Number.isFinite(c) && c > 0);
-    const indexCloses = (idxBars ?? []).map((b) => Number(b.close)).filter((c) => Number.isFinite(c) && c > 0);
+    const indexCloses = (idxBars ?? [])
+      .map((b) => Number(b.close))
+      .filter((c) => Number.isFinite(c) && c > 0);
 
     let ni: number | null = null;
     let rev: number | null = null;
@@ -336,7 +348,12 @@ export async function enrichVnStockPerformance(symbol: string): Promise<string> 
           : typeof i0.netProfit === "number"
             ? i0.netProfit
             : null;
-      rev = typeof i0.netRevenue === "number" ? i0.netRevenue : typeof i0.revenue === "number" ? i0.revenue : null;
+      rev =
+        typeof i0.netRevenue === "number"
+          ? i0.netRevenue
+          : typeof i0.revenue === "number"
+            ? i0.revenue
+            : null;
     }
 
     const quote = await getVnQuotes([symbol]).catch(() => null);
@@ -362,8 +379,10 @@ export async function enrichVnStockPerformance(symbol: string): Promise<string> 
     if (perf.beta != null) bits.push(`Beta vs VNINDEX: **${perf.beta.toFixed(2)}**`);
     if (perf.sharpe != null) bits.push(`Sharpe: **${perf.sharpe.toFixed(2)}**`);
     if (perf.alpha != null) bits.push(`Alpha (Jensen, năm): **${(perf.alpha * 100).toFixed(1)}%**`);
-    if (perf.dividendYield != null) bits.push(`Tỷ suất cổ tức: **${(perf.dividendYield * 100).toFixed(2)}%**`);
-    if (perf.payoutRatio != null) bits.push(`Payout ước tính: **${(perf.payoutRatio * 100).toFixed(0)}%**`);
+    if (perf.dividendYield != null)
+      bits.push(`Tỷ suất cổ tức: **${(perf.dividendYield * 100).toFixed(2)}%**`);
+    if (perf.payoutRatio != null)
+      bits.push(`Payout ước tính: **${(perf.payoutRatio * 100).toFixed(0)}%**`);
     if (ratios?.pe != null) bits.push(`P/E: **${ratios.pe.toFixed(1)}x**`);
     if (ratios?.pb != null) bits.push(`P/B: **${ratios.pb.toFixed(2)}x**`);
     if (rev != null) bits.push(`DT kỳ gần (BCTC): **${(rev / 1e9).toFixed(1)} tỷ**`);
