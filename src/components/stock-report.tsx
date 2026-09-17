@@ -21,11 +21,12 @@ import {
 } from "lucide-react";
 
 function esc(s: string): string {
+  const a = String.fromCharCode(38); // &
   return s
-    .replace(/&/g, "&")
-    .replace(/</g, "<")
-    .replace(/>/g, ">")
-    .replace(/"/g, """);
+    .replace(/&/g, a + "amp;")
+    .replace(/</g, a + "lt;")
+    .replace(/>/g, a + "gt;")
+    .replace(/"/g, a + "quot;");
 }
 
 function boldHtml(text: string): string {
