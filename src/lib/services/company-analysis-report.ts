@@ -33,7 +33,6 @@ export type CompanyAnalysisReport = {
     valueChain: { input: string[]; process: string[]; output: string[] } | null;
     businessResults: string[];
     technical: string[];
-    /** Chuỗi giá đóng cửa cho biểu đồ đường */
     priceSeries: ChartPoint[];
     valuation: string[];
     projection: string[];
@@ -132,31 +131,16 @@ export async function generateCompanyAnalysisReport(
   }
 
   const research = buildDeterministicResearch({
-    profile: profile
-      ? {
-          code: profile.code ?? sym,
-          vnName: profile.vnName,
-          enName: profile.enName,
-          floor: profile.floor,
-          foundDate: profile.foundDate,
-          employees: profile.employees,
-          website: profile.website,
-          vnSummary: profile.vnSummary,
-        }
-      : null,
-    shareholders: (shareholders ?? []).slice(0, 8).map((s) => ({
-      name: s.name,
-      ownershipPct: s.ownershipPct,
-      shares: s.shares,
-    })),
+    symbol: sym,
+    profile,
+    shareholders: shareholders ?? [],
     income,
     balance,
     cashflow,
   });
 
   const industryHint =
-    profile?.vnSummary?.slice(0, 80) ??
-    (floor ? `Niêm yết ${floor}` : null);
+    profile?.vnSummary?.slice(0, 80) ?? (floor ? `Niêm yết ${floor}` : null);
 
   let valueChain = research?.valueChain ?? intel?.valueChain ?? null;
   if (!valueChain) {
@@ -183,8 +167,10 @@ export async function generateCompanyAnalysisReport(
   const revPrev = n(i1.netRevenue) ?? n(i1.revenue);
   const ni = n(i0.netIncome) ?? n(i0.netProfit) ?? n(i0.netIncomeParent);
   const niPrev = n(i1.netIncome) ?? n(i1.netProfit);
-  const revYoy = rev != null && revPrev != null && revPrev !== 0 ? (rev - revPrev) / Math.abs(revPrev) : null;
-  const niYoy = ni != null && niPrev != null && niPrev !== 0 ? (ni - niPrev) / Math.abs(niPrev) : null;
+  const revYoy =
+    rev != null && revPrev != null && revPrev !== 0 ? (rev - revPrev) / Math.abs(revPrev) : null;
+  const niYoy =
+    ni != null && niPrev != null && niPrev !== 0 ? (ni - niPrev) / Math.abs(niPrev) : null;
 
   const dy = ratios?.dividendYield ?? null;
   let annualDividendCash: number | null = null;
@@ -200,7 +186,6 @@ export async function generateCompanyAnalysisReport(
     annualDividendCash,
   });
 
-  // —— Sections ——
   const intro: string[] = [];
   intro.push(
     name
@@ -213,14 +198,19 @@ export async function generateCompanyAnalysisReport(
   if (profile?.vnSummary) {
     intro.push(profile.vnSummary.slice(0, 900) + (profile.vnSummary.length > 900 ? "…" : ""));
   } else {
-    intro.push("Hồ sơ doanh nghiệp rút gọn từ nguồn VNDirect profile (nếu có)." );
+    intro.push("Hồ sơ doanh nghiệp rút gọn từ nguồn VNDirect profile (nếu có).");
   }
   if (shareholders?.length) {
     intro.push(
       "Cổ đông lớn: " +
         shareholders
           .slice(0, 5)
-          .map((s) => `${s.name}${s.ownershipPct != null ? ` (${(s.ownershipPct * (s.ownershipPct > 1 ? 1 : 100)).toFixed(1)}%)` : ""}`)
+          .map((s) => {
+            const pct = s.ownershipPct;
+            const pctLabel =
+              pct == null ? "" : ` (${pct > 1 ? pct.toFixed(1) : (pct * 100).toFixed(1)}%)`;
+            return `${s.name}${pctLabel}`;
+          })
           .join("; ") +
         ".",
     );
@@ -231,9 +221,11 @@ export async function generateCompanyAnalysisReport(
     moat.push("Yếu tố tạo lợi thế cạnh tranh (từ BCTC/profile):");
     moat.push(...research.swot.strengths.slice(0, 6).map((s) => `• ${s}`));
   } else if (intel?.swot?.strengths?.length) {
-    moat.push(...intel.swot.strengths.slice(0, 6).map((s) => `• ${s.content ?? s}`));
+    moat.push(...intel.swot.strengths.slice(0, 6).map((s) => `• ${s.text}`));
   } else {
-    moat.push("Chưa đủ dữ liệu định lượng để khẳng định moat bền vững — cần theo dõi biên lợi nhuận, ROE và thị phần ngành.");
+    moat.push(
+      "Chưa đủ dữ liệu định lượng để khẳng định moat bền vững — cần theo dõi biên lợi nhuận, ROE và thị phần ngành.",
+    );
   }
   if (health?.scores?.profitability != null) {
     moat.push(`Điểm sinh lời (engine): ${Math.round(health.scores.profitability)}/100.`);
@@ -245,7 +237,8 @@ export async function generateCompanyAnalysisReport(
       ? `Doanh nghiệp niêm yết trên **${floor}**, chịu khung pháp lý và chu kỳ thanh khoản của sàn này.`
       : "Ngành hoạt động suy từ hồ sơ và mô hình doanh thu (khi có BCTC).",
   );
-  if (rev != null) industry.push(`Quy mô doanh thu kỳ gần: **${fmtTy(rev)}** — phản ánh vị thế trong chuỗi cung ứng ngành.`);
+  if (rev != null)
+    industry.push(`Quy mô doanh thu kỳ gần: **${fmtTy(rev)}** — phản ánh vị thế trong chuỗi cung ứng ngành.`);
   if (research?.swot?.opportunities?.length) {
     industry.push("Cơ hội ngành/doanh nghiệp: " + research.swot.opportunities.slice(0, 3).join("; ") + ".");
   }
@@ -270,7 +263,10 @@ export async function generateCompanyAnalysisReport(
   const b0 = balance[0] ?? {};
   const equityV = n(b0.equity);
   const assets = n(b0.totalAssets);
-  if (equityV != null) businessResults.push(`Vốn CSH: **${fmtTy(equityV)}**` + (assets != null ? ` · Tổng tài sản ${fmtTy(assets)}` : "") + ".");
+  if (equityV != null)
+    businessResults.push(
+      `Vốn CSH: **${fmtTy(equityV)}**` + (assets != null ? ` · Tổng tài sản ${fmtTy(assets)}` : "") + ".",
+    );
   const c0 = cashflow[0] ?? {};
   const ocf = n(c0.operatingCashFlow);
   if (ocf != null) businessResults.push(`Dòng tiền HĐKD (OCF): **${fmtTy(ocf)}**.`);
@@ -306,10 +302,7 @@ export async function generateCompanyAnalysisReport(
     technicalLines.push("Chưa đủ chuỗi nến để tính đầy đủ chỉ báo kỹ thuật.");
   }
 
-  const priceSeries: ChartPoint[] = bars.slice(-180).map((b) => ({
-    t: b.time,
-    c: b.close,
-  }));
+  const priceSeries: ChartPoint[] = bars.slice(-180).map((b) => ({ t: b.time, c: b.close }));
 
   const valuation: string[] = [];
   if (ratios) {
@@ -325,7 +318,8 @@ export async function generateCompanyAnalysisReport(
     const mcap = price * shares * (price < 500 ? 1000 : 1);
     valuation.push(`Vốn hóa ước tính: **${fmtTy(mcap)}** (SLCP ${fmt(shares, 0)}).`);
   }
-  if (perf.beta != null) valuation.push(`Beta vs VNINDEX: **${perf.beta.toFixed(2)}** · Sharpe ${perf.sharpe != null ? perf.sharpe.toFixed(2) : "—"}.`);
+  if (perf.beta != null)
+    valuation.push(`Beta vs VNINDEX: **${perf.beta.toFixed(2)}** · Sharpe ${perf.sharpe != null ? perf.sharpe.toFixed(2) : "—"}.`);
   if (!valuation.length) valuation.push("Chưa đủ ratios định giá từ finfo VNDirect.");
 
   const projection: string[] = [];
@@ -349,22 +343,20 @@ export async function generateCompanyAnalysisReport(
   );
 
   const catalysts: string[] = [];
-  const catSrc = [
-    ...(research?.catalysts ?? []),
-    ...(intel?.catalysts?.map((c) => (typeof c === "string" ? c : (c as { content?: string }).content ?? "")) ?? []),
-  ].filter(Boolean);
+  const catSrc = [...(research?.catalysts ?? []), ...(intel?.catalysts?.map((c) => c.text) ?? [])].filter(Boolean);
   if (catSrc.length) catalysts.push(...catSrc.slice(0, 8).map((c) => `• ${c}`));
   else {
     catalysts.push("• Biến động doanh thu theo chu kỳ ngành và nhu cầu đầu cuối.");
     catalysts.push("• Biên lợi nhuận gộp / chi phí hoạt động ảnh hưởng LNST.");
-    if (revYoy != null && revYoy > 0.05) catalysts.push("• Đà tăng doanh thu gần đây có thể tiếp tục nếu nhu cầu ổn định.");
   }
-  catalysts.push("Các yếu tố trên tác động trực tiếp tới **doanh thu** (khối lượng × giá bán) và **lợi nhuận** (biên × đòn bẩy chi phí)." );
+  catalysts.push(
+    "Các yếu tố trên tác động trực tiếp tới **doanh thu** (khối lượng × giá bán) và **lợi nhuận** (biên × đòn bẩy chi phí).",
+  );
 
   const risks: string[] = [];
   const riskSrc = [
     ...(research?.risks ?? []),
-    ...(intel?.risks?.map((r) => (typeof r === "string" ? r : (r as { content?: string }).content ?? "")) ?? []),
+    ...(intel?.risks?.map((r) => r.text) ?? []),
     ...(research?.swot?.threats ?? []),
   ].filter(Boolean);
   if (riskSrc.length) risks.push(...riskSrc.slice(0, 8).map((r) => `• ${r}`));
@@ -374,33 +366,24 @@ export async function generateCompanyAnalysisReport(
   }
 
   const vsIndustry: string[] = [];
-  if (perf.tsr1y != null) {
-    vsIndustry.push(`Hiệu suất giá ~12 tháng của mã: **${fmtPct(perf.tsr1y * 100)}** (so với VNINDEX qua beta/alpha khi đủ mẫu).`);
-  }
-  if (perf.alpha != null) {
-    vsIndustry.push(`Alpha (Jensen, năm): **${fmtPct(perf.alpha * 100)}** — phản ánh phần vượt/trễ benchmark sau điều chỉnh beta.`);
-  }
+  if (perf.tsr1y != null)
+    vsIndustry.push(`Hiệu suất giá ~12 tháng của mã: **${fmtPct(perf.tsr1y * 100)}**.`);
+  if (perf.alpha != null)
+    vsIndustry.push(`Alpha (Jensen, năm): **${fmtPct(perf.alpha * 100)}**.`);
   if (health?.scores?.overall != null) {
     vsIndustry.push(
       health.scores.overall >= 60
-        ? "Sức khỏe tài chính nghiêng trên trung bình — tiềm năng tương đối tốt hơn peer yếu cân đối kế toán (cần so P/E ngành khi có)."
-        : "Sức khỏe tài chính trung bình/yếu hơn — cần thận trọng khi so tiềm năng với peer cùng ngành.",
+        ? "Sức khỏe tài chính nghiêng trên trung bình so với mức trung tính."
+        : "Sức khỏe tài chính trung bình/yếu hơn — thận trọng khi so peer.",
     );
   }
-  vsIndustry.push("So sánh peer chi tiết (P/E ngành, ROE ngành) phụ thuộc bộ dữ liệu ngành đầy đủ; báo cáo này dùng chỉ số mã + benchmark VNINDEX.");
+  vsIndustry.push("So sánh peer chi tiết cần P/E·ROE ngành; báo cáo dùng mã + benchmark VNINDEX.");
 
   const macro: string[] = [];
-  macro.push("Lãi suất và tỷ giá ảnh hưởng chi phí vốn và nhu cầu tín dụng/tiêu dùng liên quan ngành.");
-  macro.push("Thanh khoản thị trường chứng khoán và dòng vốn khối ngoại có thể khuếch đại biến động giá ngắn hạn.");
+  macro.push("Lãi suất và tỷ giá ảnh hưởng chi phí vốn và nhu cầu liên quan ngành.");
+  macro.push("Thanh khoản TTCK và dòng vốn khối ngoại khuếch đại biến động giá ngắn hạn.");
   if (news?.articles?.length) {
-    macro.push(
-      "Tin gần đây: " +
-        news.articles
-          .slice(0, 3)
-          .map((a) => a.title)
-          .join("; ") +
-        ".",
-    );
+    macro.push("Tin gần đây: " + news.articles.slice(0, 3).map((a) => a.title).join("; ") + ".");
   }
 
   const overall: string[] = [];
@@ -423,11 +406,10 @@ export async function generateCompanyAnalysisReport(
     score >= 65 ? "Nghiêng tích cực (research)" : score >= 45 ? "Trung lập" : "Thận trọng (research)";
   overall.push(`**Nhận định tổng hợp:** ${stance} · điểm định lượng ~**${score}**/100 (${factors} nhóm tín hiệu).`);
   overall.push(
-    "Báo cáo tổng hợp dữ liệu thị trường + BCTC + hồ sơ DN từ pipeline ORCA tại thời điểm tạo — phục vụ nghiên cứu, **không phải khuyến nghị mua/bán**." ,
+    "Báo cáo tổng hợp dữ liệu thị trường + BCTC + hồ sơ DN từ pipeline ORCA — phục vụ nghiên cứu, **không phải khuyến nghị mua/bán**.",
   );
 
-  const coverage =
-    [quote, bars.length, income.length, ratios, profile].filter(Boolean).length;
+  const coverage = [quote, bars.length, income.length, ratios, profile].filter(Boolean).length;
   const dataQuality: CompanyAnalysisReport["dataQuality"] =
     coverage >= 4 ? "HIGH" : coverage >= 2 ? "MEDIUM" : "LOW";
 
@@ -442,11 +424,7 @@ export async function generateCompanyAnalysisReport(
       moat,
       industry,
       valueChain: valueChain
-        ? {
-            input: valueChain.input ?? [],
-            process: valueChain.process ?? [],
-            output: valueChain.output ?? [],
-          }
+        ? { input: valueChain.input ?? [], process: valueChain.process ?? [], output: valueChain.output ?? [] }
         : null,
       businessResults,
       technical: technicalLines,
