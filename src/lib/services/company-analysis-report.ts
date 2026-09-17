@@ -77,6 +77,19 @@ async function loadBars(symbol: string): Promise<OhlcvBar[]> {
   }
 }
 
+type VC = { input: string[]; process: string[]; output: string[] };
+
+function pickVc(
+  v: { input?: string[]; process?: string[]; output?: string[] } | null | undefined,
+): VC | null {
+  if (!v) return null;
+  return {
+    input: Array.isArray(v.input) ? v.input : [],
+    process: Array.isArray(v.process) ? v.process : [],
+    output: Array.isArray(v.output) ? v.output : [],
+  };
+}
+
 export async function generateCompanyAnalysisReport(
   symbol: string,
 ): Promise<{ report: CompanyAnalysisReport; meta: Meta } | null> {
@@ -142,10 +155,10 @@ export async function generateCompanyAnalysisReport(
   const industryHint =
     profile?.vnSummary?.slice(0, 80) ?? (floor ? `Niêm yết ${floor}` : null);
 
-  let valueChain = research?.valueChain ?? intel?.valueChain ?? null;
-  if (!valueChain) {
-    valueChain = resolveValueChain(industryHint);
-  }
+  const valueChain: VC | null =
+    pickVc(research?.valueChain) ??
+    pickVc(intel?.valueChain) ??
+    pickVc(resolveValueChain(industryHint));
 
   let technical = analysis?.detail?.technical ?? null;
   if (!technical && bars.length >= 20) {
@@ -423,9 +436,7 @@ export async function generateCompanyAnalysisReport(
       intro,
       moat,
       industry,
-      valueChain: valueChain
-        ? { input: valueChain.input ?? [], process: valueChain.process ?? [], output: valueChain.output ?? [] }
-        : null,
+      valueChain,
       businessResults,
       technical: technicalLines,
       priceSeries,
