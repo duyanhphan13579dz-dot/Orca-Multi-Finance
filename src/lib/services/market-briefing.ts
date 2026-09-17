@@ -20,8 +20,7 @@ function fmtPts(v: number | null | undefined, d = 2): string {
 
 function fmtPct(v: number | null | undefined, d = 2): string {
   if (v == null || !Number.isFinite(v)) return "—";
-  const s = `${v >= 0 ? "+" : ""}${v.toFixed(d)}%`;
-  return s;
+  return `${v >= 0 ? "+" : ""}${v.toFixed(d)}%`;
 }
 
 /** Giá trị VND → tỷ đồng */
@@ -30,13 +29,6 @@ function fmtTy(v: number | null | undefined): string {
   const ty = v / 1e9;
   if (Math.abs(ty) >= 1000) return `${(ty / 1000).toFixed(2)} nghìn tỷ`;
   return `${ty.toFixed(1)} tỷ`;
-}
-
-function fmtVol(v: number | null | undefined): string {
-  if (v == null || !Number.isFinite(v)) return "—";
-  if (v >= 1e9) return `${(v / 1e9).toFixed(2)} tỷ CP`;
-  if (v >= 1e6) return `${(v / 1e6).toFixed(2)} triệu CP`;
-  return v.toLocaleString("vi-VN");
 }
 
 /**
@@ -118,8 +110,7 @@ export async function buildVnMarketBriefing(): Promise<MarketBriefingBuilt> {
           pos
             .map((c) => {
               symbols.push(c.symbol);
-              const chg =
-                c.changePercent != null ? fmtPct(c.changePercent) : "";
+              const chg = c.changePercent != null ? fmtPct(c.changePercent) : "";
               return `${c.symbol}${chg ? ` ${chg}` : ""}`;
             })
             .join(", ") +
@@ -132,8 +123,7 @@ export async function buildVnMarketBriefing(): Promise<MarketBriefingBuilt> {
           neg
             .map((c) => {
               symbols.push(c.symbol);
-              const chg =
-                c.changePercent != null ? fmtPct(c.changePercent) : "";
+              const chg = c.changePercent != null ? fmtPct(c.changePercent) : "";
               return `${c.symbol}${chg ? ` ${chg}` : ""}`;
             })
             .join(", ") +
@@ -224,18 +214,11 @@ export async function buildVnMarketBriefing(): Promise<MarketBriefingBuilt> {
   const part3: string[] = ["## 3. Thanh khoản & độ rộng thị trường"];
   sectionsUsed.push("liquidity", "breadth");
 
-  const val =
-    idxStats?.value ??
-    intel.liquidity.valueTraded ??
-    null;
-  const vol = idxStats?.volume ?? null;
+  const val = idxStats?.value ?? intel.liquidity.valueTraded ?? null;
   if (val != null) {
     part3.push(`**Giá trị khớp lệnh (tham chiếu VN-Index board):** khoảng **${fmtTy(val)}**.`);
   } else {
     part3.push(intel.liquidity.note || "Chưa có tổng giá trị giao dịch phiên.");
-  }
-  if (vol != null) {
-    part3.push(`**Khối lượng giao dịch:** ${fmtVol(vol)}.`);
   }
 
   const { advancers, decliners, unchanged } = intel.breadth;
@@ -280,7 +263,6 @@ export async function buildVnMarketBriefing(): Promise<MarketBriefingBuilt> {
     }
   }
 
-  // Phân hóa từ contributors / quotes proxy ngành đơn giản
   if (boardQuotes?.quotes?.length) {
     const banks = boardQuotes.quotes.filter((q) =>
       ["VCB", "BID", "CTG", "TCB", "MBB", "VPB", "ACB", "HDB"].includes(q.symbol),
@@ -343,7 +325,7 @@ export async function buildVnMarketBriefing(): Promise<MarketBriefingBuilt> {
           }
         : { net: intel.flow.foreignNet },
       breadth: intel.breadth,
-      liquidity: { valueTraded: val, volume: vol },
+      liquidity: { valueTraded: val },
       condition: intel.condition,
     },
     sectionsUsed: [...new Set(sectionsUsed)],
