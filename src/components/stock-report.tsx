@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import type { CompanyAnalysisReport, ChartPoint } from "@/lib/services/company-analysis-report";
 import type { ApiResponse } from "@/lib/types";
 import { Badge, FreshnessDot, Loading, MetaLine, Panel } from "@/components/ui";
+import { OrcaMark } from "@/components/logo";
 import {
   Building2,
   Factory,
@@ -37,6 +38,35 @@ function sectionHtml(title: string, lines: string[]): string {
   if (!lines?.length) return "";
   const body = lines.map((l) => `<p>${boldHtml(l)}</p>`).join("");
   return `<h2>${esc(title)}</h2>${body}`;
+}
+
+/** Tách dòng **tiêu đề nhóm** thành các khối con độc lập (dùng cho Catalyst / Vĩ mô). */
+function groupedSectionHtml(title: string, lines: string[], tone: "catalyst" | "macro"): string {
+  if (!lines?.length) return "";
+  const groups: { head: string | null; items: string[] }[] = [];
+  let cur: { head: string | null; items: string[] } = { head: null, items: [] };
+  for (const line of lines) {
+    const m = line.match(/^\*\*(.+?)\*\*$/);
+    if (m) {
+      if (cur.head || cur.items.length) groups.push(cur);
+      cur = { head: m[1], items: [] };
+    } else {
+      cur.items.push(line);
+    }
+  }
+  if (cur.head || cur.items.length) groups.push(cur);
+  const border = tone === "catalyst" ? "#c2410c" : "#1d4ed8";
+  const bg = tone === "catalyst" ? "#fff7ed" : "#eff6ff";
+  const blocks = groups
+    .map((g) => {
+      const h = g.head
+        ? `<div class="grp-h" style="color:${border}">${esc(g.head)}</div>`
+        : "";
+      const body = g.items.map((l) => `<p>${boldHtml(l)}</p>`).join("");
+      return `<div class="grp" style="border-left:3px solid ${border};background:${bg}">${h}${body}</div>`;
+    })
+    .join("");
+  return `<h2>${esc(title)}</h2>${blocks}`;
 }
 
 function valueChainHtml(vc: { input: string[]; process: string[]; output: string[] } | null): string {
@@ -105,11 +135,14 @@ function printCompanyReport(report: CompanyAnalysisReport) {
   const when = new Date(report.generatedAt).toLocaleString("vi-VN", {
     timeZone: "Asia/Ho_Chi_Minh",
   });
+  const origin = typeof window !== "undefined" ? window.location.origin : "";
+  const orcaLogoSrc = `${origin}/brand/orca-mark.svg`;
   const s = report.sections;
   const body = `
   <div class="wrap">
     <div class="hd">
-      <div style="width:44px;height:44px;border-radius:10px;background:#123f7c;color:#fff;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:14px">OR</div>
+      <img class="logo-orca" src="${orcaLogoSrc}" alt="ORCA" width="44" height="44" />
+      ${report.companyLogo ? `<img class="logo-co" src="${esc(report.companyLogo)}" alt="${esc(report.symbol)}" width="44" height="44" onerror="this.style.display='none'" />` : ""}
       <div style="flex:1">
         <h1>${esc(report.title)}</h1>
         <p>ORCA Company Report · ${esc(report.symbol)}${report.floor ? ` · ${esc(report.floor)}` : ""} · Data ${esc(report.dataQuality)}</p>
@@ -128,10 +161,10 @@ function printCompanyReport(report: CompanyAnalysisReport) {
     ${chartSvgHtml(s.priceSeries, report.symbol)}
     ${sectionHtml("7. Định giá", s.valuation)}
     ${sectionHtml("8. Dự phóng KQKD & định giá", s.projection)}
-    ${sectionHtml("9. Catalyst tăng trưởng", s.catalysts)}
+    ${groupedSectionHtml("9. Catalyst tăng trưởng (độc lập)", s.catalysts, "catalyst")}
     ${sectionHtml("10. Rủi ro doanh nghiệp", s.risks)}
     ${sectionHtml("11. Tiềm năng so với ngành", s.vsIndustry)}
-    ${sectionHtml("12. Yếu tố vĩ mô", s.macro)}
+    ${groupedSectionHtml("12. Phân tích vĩ mô (độc lập)", s.macro, "macro")}
     ${sectionHtml("13. Nhận xét đánh giá chung", s.overall)}
 
     <div class="assump">
@@ -149,11 +182,15 @@ function printCompanyReport(report: CompanyAnalysisReport) {
       body{font-family:-apple-system,"Segoe UI",Roboto,Arial,sans-serif;color:#0c1a33;margin:0;padding:0;line-height:1.6;font-size:12.5px}
       .wrap{max-width:180mm;margin:0 auto}
       .hd{display:flex;align-items:center;gap:12px;border-bottom:3px solid #123;padding-bottom:12px;margin-bottom:14px}
+      .logo-orca,.logo-co{width:44px;height:44px;border-radius:10px;object-fit:contain;background:#fff;border:1px solid #ccd}
       .hd h1{font-size:17px;margin:0;color:#0c1a33}
       .hd p{margin:2px 0 0;color:#5a6b8c;font-size:11px}
       .bd{border:1px solid #ccd;border-radius:8px;padding:3px 10px;font-size:9.5px;color:#134078;font-weight:700;letter-spacing:.12em;white-space:nowrap}
       h2{font-size:12.5px;color:#123f7c;margin:14px 0 6px;border-left:3px solid #123f7c;padding-left:8px}
       p{margin:4px 0;font-size:12px}
+      .grp{margin:8px 0;padding:8px 10px;border-radius:6px}
+      .grp-h{font-size:11px;font-weight:700;letter-spacing:.04em;margin-bottom:4px}
+      .grp p{margin:3px 0;font-size:11.5px}
       .scen{display:table;border-collapse:collapse;width:100%;margin:8px 0}
       .scen>div{display:table-cell;border:1px solid #ccd;padding:8px;width:33%;vertical-align:top}
       .scen b{display:block;font-size:10.5px;letter-spacing:.08em;margin-bottom:4px}
@@ -228,7 +265,7 @@ export function StockReportSection() {
     >
       <div className="p-4">
         <p className="text-[12px] text-text-muted">
-          Báo cáo chi tiết · KQKD 2 kỳ (QoQ/YoY) · PDF lề A4. Xuất PDF cùng format Morning Brief.
+          Báo cáo chi tiết · KQKD 2 kỳ (QoQ/YoY) · Catalyst & Vĩ mô tách độc lập · PDF lề A4 + logo.
         </p>
         <div className="mt-3 flex gap-2">
           <input
@@ -258,13 +295,28 @@ export function StockReportSection() {
         )}
         {report && !busy && active && (
           <article className="mt-4 border-t border-border-subtle pt-4">
-            <div className="flex flex-wrap items-center gap-2">
-              <h2 className="text-[16px] font-semibold text-text-primary">{report.title}</h2>
-              <Badge tone={report.dataQuality === "HIGH" ? "up" : report.dataQuality === "MEDIUM" ? "warn" : "down"}>
-                Data {report.dataQuality}
-              </Badge>
-              {report.floor && <Badge tone="accent">{report.floor}</Badge>}
-              {meta && <FreshnessDot status={meta.freshness} ageMs={meta.ageMs} />}
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="flex items-center gap-2">
+                <OrcaMark size={40} className="rounded-lg border border-border-subtle bg-white" />
+                {report.companyLogo ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={report.companyLogo}
+                    alt={report.symbol}
+                    className="size-10 rounded-lg border border-border-subtle bg-white object-contain"
+                  />
+                ) : null}
+              </div>
+              <div className="min-w-0 flex-1">
+                <h2 className="text-[16px] font-semibold text-text-primary">{report.title}</h2>
+                <div className="mt-1 flex flex-wrap items-center gap-2">
+                  <Badge tone={report.dataQuality === "HIGH" ? "up" : report.dataQuality === "MEDIUM" ? "warn" : "down"}>
+                    Data {report.dataQuality}
+                  </Badge>
+                  {report.floor && <Badge tone="accent">{report.floor}</Badge>}
+                  {meta && <FreshnessDot status={meta.freshness} ageMs={meta.ageMs} />}
+                </div>
+              </div>
             </div>
 
             <Sec icon={<Building2 className="size-4" />} title="1. Giới thiệu doanh nghiệp" lines={report.sections.intro} />
@@ -281,10 +333,24 @@ export function StockReportSection() {
             </Sec>
             <Sec icon={<Scale className="size-4" />} title="7. Định giá" lines={report.sections.valuation} />
             <Sec icon={<TrendingUp className="size-4" />} title="8. Dự phóng KQKD & định giá" lines={report.sections.projection} />
-            <Sec icon={<Sparkles className="size-4" />} title="9. Catalyst tăng trưởng" lines={report.sections.catalysts} />
+
+            <div className="mt-4 grid gap-3 lg:grid-cols-2">
+              <GroupedSec
+                icon={<Sparkles className="size-4" />}
+                title="9. Catalyst tăng trưởng"
+                lines={report.sections.catalysts}
+                tone="catalyst"
+              />
+              <GroupedSec
+                icon={<Globe2 className="size-4" />}
+                title="12. Phân tích vĩ mô"
+                lines={report.sections.macro}
+                tone="macro"
+              />
+            </div>
+
             <Sec icon={<Target className="size-4" />} title="10. Rủi ro doanh nghiệp" lines={report.sections.risks} />
             <Sec icon={<GitBranch className="size-4" />} title="11. Tiềm năng so với ngành" lines={report.sections.vsIndustry} />
-            <Sec icon={<Globe2 className="size-4" />} title="12. Yếu tố vĩ mô" lines={report.sections.macro} />
             <Sec icon={<FileSearch className="size-4" />} title="13. Nhận xét đánh giá chung" lines={report.sections.overall} />
 
             <div className="mt-4 flex items-center justify-between border-t border-line pt-3">
@@ -329,6 +395,69 @@ function Sec({
         ))}
       </div>
       {children}
+    </div>
+  );
+}
+
+/** Khối độc lập cho Catalyst / Vĩ mô — tách nhóm con theo dòng **tiêu đề**. */
+function GroupedSec({
+  icon,
+  title,
+  lines,
+  tone,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  lines: string[];
+  tone: "catalyst" | "macro";
+}) {
+  if (!lines?.length) return null;
+  const groups: { head: string | null; items: string[] }[] = [];
+  let cur: { head: string | null; items: string[] } = { head: null, items: [] };
+  for (const line of lines) {
+    const m = line.match(/^\*\*(.+?)\*\*$/);
+    if (m) {
+      if (cur.head || cur.items.length) groups.push(cur);
+      cur = { head: m[1], items: [] };
+    } else {
+      cur.items.push(line);
+    }
+  }
+  if (cur.head || cur.items.length) groups.push(cur);
+
+  const shell =
+    tone === "catalyst"
+      ? "border-orange-500/30 bg-orange-500/5"
+      : "border-blue-500/30 bg-blue-500/5";
+  const headTone =
+    tone === "catalyst" ? "text-orange-600 dark:text-orange-400" : "text-blue-600 dark:text-blue-400";
+  const subBorder =
+    tone === "catalyst" ? "border-orange-500/40" : "border-blue-500/40";
+
+  return (
+    <div className={`rounded-lg border p-3 ${shell}`}>
+      <div className={`mb-2 flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] ${headTone}`}>
+        {icon} {title}
+        <span className="ml-auto rounded px-1.5 py-0.5 text-[9px] font-medium normal-case tracking-normal text-text-muted opacity-80">
+          độc lập
+        </span>
+      </div>
+      <div className="space-y-2.5">
+        {groups.map((g, gi) => (
+          <div key={gi} className={`rounded-md border-l-[3px] ${subBorder} bg-surface-elevated/50 pl-2.5 pr-1 py-1.5`}>
+            {g.head && (
+              <div className={`mb-1 text-[11px] font-semibold ${headTone}`}>{g.head}</div>
+            )}
+            <div className="space-y-1 text-[12.5px] leading-relaxed text-text-secondary">
+              {g.items.map((line, i) => (
+                <p key={i} className="whitespace-pre-wrap">
+                  {renderBold(line)}
+                </p>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
