@@ -64,7 +64,7 @@ export async function buildUniverseOverview(): Promise<AgentBuilt> {
   if (indices?.items?.length) {
     const lines = indices.items.slice(0, 6).map((i) => {
       const chg = i.changePercent != null ? fmtPct(i.changePercent) : "—";
-      return `- **${i.code}**: ${fmtNum(i.price, 2)} (${chg})`;
+      return `- **${i.code}**: ${fmtNum(i.value, 2)} (${chg})`;
     });
     sections.push(`### Chỉ số VN\n${lines.join("\n")}`);
     sectionsUsed.push("vn-indices");
