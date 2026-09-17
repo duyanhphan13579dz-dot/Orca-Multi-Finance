@@ -112,10 +112,10 @@ export function composeMorningFramework(
   });
 
   const newsItems = snap.news ?? [];
-  const macroNews = newsItems.filter((n) => n.category === "macro" || n.category === "policy").slice(0, 4);
+  const macroNews = newsItems.filter((n) => n.category === "macro" || n.category === "market").slice(0, 4);
   const corpNews = newsItems.filter((n) => n.category === "corporate").slice(0, 4);
   const otherNews = newsItems
-    .filter((n) => n.category !== "macro" && n.category !== "policy" && n.category !== "corporate")
+    .filter((n) => n.category !== "macro" && n.category !== "market" && n.category !== "corporate")
     .slice(0, 3);
   const macroParas: string[] = [];
   if (macroNews.length) {
@@ -126,7 +126,7 @@ export function composeMorningFramework(
       );
     }
   } else {
-    macroParas.push("Chưa có tin vĩ mô/policy đạt ngưỡng nguồn trong cửa sổ gần — không bịa headline.");
+    macroParas.push("Chưa có tin vĩ mô/market đạt ngưỡng nguồn trong cửa sổ gần — không bịa headline.");
   }
   if (corpNews.length) {
     macroParas.push("**Trong nước / doanh nghiệp:**");
