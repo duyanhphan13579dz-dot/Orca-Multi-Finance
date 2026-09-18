@@ -7,17 +7,21 @@ import { useApi } from "@/lib/hooks";
 import { VN_SECTOR_MAP, sectorOf } from "@/lib/vn/master";
 import type { CryptoMarketRow, Quote, IndexQuote } from "@/lib/types";
 import { WyckoffScreener } from "@/components/wyckoff-screener";
+import { CanslimScreener } from "@/components/canslim-screener";
 import { Chg, fmtCompact, fmtNum, FreshnessDot, Loading, MetaLine, Panel, priceDigits, Unavailable } from "@/components/ui";
 import { FlatsIcon, Play } from "@/components/screener-icons";
 
 type StocksData = { indices: IndexQuote[] | null; quotes: Quote[] | null };
+type Universe = "stocks" | "crypto" | "wyckoff" | "canslim";
 
 const VN_BOARD = "VCB,BID,CTG,TCB,MBB,VPB,ACB,STB,HDB,VIB,LPB,SHB,FPT,HPG,VNM,VIC,VHM,VRE,NVL,PDR,GAS,PLX,MSN,MWG,SSI,VND,HCM,VCI,SHS,BSR,POW,REE,KDH,DXG,DCM,DPM,DGC,VHC,SAB,PNJ,GMD";
 
 function ScreenerInner() {
   const params = useSearchParams();
   const rawU = params.get("universe");
-  const [universe, setUniverse] = useState<"stocks" | "crypto" | "wyckoff">(rawU === "crypto" ? "crypto" : rawU === "wyckoff" ? "wyckoff" : "stocks");
+  const initial: Universe =
+    rawU === "crypto" ? "crypto" : rawU === "wyckoff" ? "wyckoff" : rawU === "canslim" ? "canslim" : "stocks";
+  const [universe, setUniverse] = useState<Universe>(initial);
   return (
     <div className="space-y-3">
       <Panel pad={false}>
@@ -30,12 +34,21 @@ function ScreenerInner() {
           </p>
           <div className="seg mt-3">
             <button data-active={universe === "stocks"} onClick={() => setUniverse("stocks")}>Cổ phiếu VN ⭐</button>
+            <button data-active={universe === "canslim"} onClick={() => setUniverse("canslim")}>CANSLIM</button>
             <button data-active={universe === "wyckoff"} onClick={() => setUniverse("wyckoff")}>Wyckoff</button>
             <button data-active={universe === "crypto"} onClick={() => setUniverse("crypto")}>Crypto</button>
           </div>
         </div>
       </Panel>
-      {universe === "crypto" ? <CryptoScreener /> : universe === "wyckoff" ? <WyckoffScreener defaultSector={params.get("sector")} /> : <VnScreener defaultSector={params.get("sector")} />}
+      {universe === "crypto" ? (
+        <CryptoScreener />
+      ) : universe === "wyckoff" ? (
+        <WyckoffScreener defaultSector={params.get("sector")} />
+      ) : universe === "canslim" ? (
+        <CanslimScreener defaultSector={params.get("sector")} />
+      ) : (
+        <VnScreener defaultSector={params.get("sector")} />
+      )}
     </div>
   );
 }
@@ -51,7 +64,6 @@ function VnScreener({ defaultSector }: { defaultSector: string | null }) {
   const [pressed, setPressed] = useState(false);
   const [flash, setFlash] = useState(false);
 
-  // Ô tìm mã: lọc live ngay khi gõ (nhạy); các lọc khác áp khi bấm nút
   const rows = useMemo(() => {
     let list = data?.quotes ?? [];
     if (applied.sector) list = list.filter((row) => sectorOf(row.symbol) === applied.sector);
@@ -183,8 +195,12 @@ function VnScreener({ defaultSector }: { defaultSector: string | null }) {
         </div>
         <div className="border-t border-line px-3.5 py-2"><MetaLine meta={meta} /></div>
       </Panel>
-      <Panel title="Wyckoff">
-        <div className="text-[12px] leading-relaxed text-ink-2">Mở tab Wyckoff để quét Spring / UTAD / SOS / SOW trên rổ thanh khoản. Heuristic nghiên cứu — không phải tín hiệu mua bán.</div>
+      <Panel title="CANSLIM & Wyckoff">
+        <div className="text-[12px] leading-relaxed text-ink-2 space-y-1">
+          <div>Tab <strong>CANSLIM</strong>: quét growth leaders (EPS/ROE/RS/new high) theo O'Neil.</div>
+          <div>Tab <strong>Wyckoff</strong>: quét Spring / UTAD / SOS / SOW trên rổ thanh khoản.</div>
+          <div className="text-text-muted">Cả hai đều là heuristic nghiên cứu — không phải tín hiệu mua bán.</div>
+        </div>
       </Panel>
     </>
   );
