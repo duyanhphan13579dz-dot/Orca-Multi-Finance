@@ -17,7 +17,7 @@ export function Dashboard() {
       <div className="space-y-3">
         <Loading rows={6} />
         <Loading rows={8} />
-        <p className="text-center text-[11px] text-text-muted">Đang dựng Market Intelligence từ VNDirect…</p>
+        <p className="text-center text-[11px] text-text-muted">Đang dựng tổng quan thị trường từ VNDirect…</p>
       </div>
     );
   }
@@ -25,7 +25,7 @@ export function Dashboard() {
     return (
       <div className="space-y-3">
         <Unavailable
-          title="Market Intelligence Engine đang kết nối lại"
+          title="Tổng quan thị trường đang kết nối lại"
           note={
             error
               ? "Mất kết nối tạm thời tới provider — tự thử lại sau vài giây. Hoặc mở /system."
@@ -73,7 +73,7 @@ function IntelView({ intel, meta }: { intel: MarketIntel; meta: Meta | null }) {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
-            <h1 className="text-lg font-semibold tracking-tight text-text-primary">Market Intelligence</h1>
+            <h1 className="text-lg font-semibold tracking-tight text-text-primary">TỔNG QUAN THỊ TRƯỜNG</h1>
             <Badge tone={intel.session.trading ? "up" : "neutral"}>{intel.session.labelVi}</Badge>
             {meta && <FreshnessDot status={meta.freshness} ageMs={meta.ageMs} />}
           </div>
