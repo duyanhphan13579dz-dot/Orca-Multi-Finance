@@ -4,6 +4,7 @@ import { sql } from "drizzle-orm";
 import { ok } from "@/lib/envelope";
 import { getProviderHealth } from "@/lib/health";
 import { getLastNetworkLatency, probeNetworkLatency } from "@/lib/network-latency";
+import { ensureHeartbeatStarted, processHeartbeat } from "@/lib/realtime/heartbeat";
 import { cacheStats, redisStatus } from "@/lib/cache";
 
 export const dynamic = "force-dynamic";
@@ -38,11 +39,13 @@ export async function GET() {
   const healthy = providers.filter((p) => p.status === "healthy").length;
   const down = providers.filter((p) => p.status === "down").length;
 
+  ensureHeartbeatStarted();
   // Non-blocking network latency: use cache if warm, else kick a background probe
   let network = getLastNetworkLatency();
   if (!network) {
     void probeNetworkLatency({ timeoutMs: 4_000 }).catch(() => null);
   }
+  const heartbeat = processHeartbeat.stats();
 
   return ok(
     {
@@ -50,6 +53,7 @@ export async function GET() {
       runtime: { uptimeSec: Math.round((Date.now() - startedAt) / 1000), serverTime: new Date().toISOString() },
       database: { configured: dbConfigured, connected: dbOk, latencyMs: dbLatencyMs },
       redis,
+      heartbeat,
       networkLatency: network
         ? {
             summary: network.summary,
