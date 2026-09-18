@@ -258,7 +258,7 @@ export function MinerviniScreener({ defaultSector }: { defaultSector: string | n
                 {rows.map((row) => (
                   <tr key={row.symbol} className="border-b border-border/60 hover:bg-surface-2/40">
                     <td className="py-1.5 pr-2 font-medium">
-                      <Link href={`/stocks/${row.symbol}` as `/stocks/${string}`} className="text-accent hover:underline">
+                      <Link href={`/stocks/${row.symbol}`} className="text-accent hover:underline">
                         {row.symbol}
                       </Link>
                       {row.passAll && (

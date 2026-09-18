@@ -109,7 +109,7 @@ function VnScreener({ defaultSector }: { defaultSector: string | null }) {
   }, [flash]);
 
   const filters = (
-    <div className={`flex flex-wrap items-end gap-2 rounded-md p-0.5 transition-shadow duration-300 ${flash ? "ring-2 ring-accent-primary/50" : ""}`}>
+    <div className={`flex flex-wrap items-end gap-2 rounded-md p-0.5 transition-shadow duration-300 ${flash ? "ring-2 ring-accent-primary/50" : ""`}>
       <label>
         <span className="mb-0.5 block text-[10px] uppercase tracking-wider text-text-muted">Tìm mã (live)</span>
         <input
@@ -173,7 +173,7 @@ function VnScreener({ defaultSector }: { defaultSector: string | null }) {
         right={filters}
         pad={false}
       >
-        <div className={`overflow-x-auto transition-opacity duration-200 ${isValidating ? "opacity-70" : "opacity-100"}`}>
+        <div className={`overflow-x-auto transition-opacity duration-200 ${isValidating ? "opacity-70" : "opacity-100"`}>
           <table className="w-full min-w-[560px] text-[12px]">
             <thead>
               <tr className="border-b border-line text-left text-[10px] uppercase tracking-wider text-ink-3">
@@ -194,7 +194,7 @@ function VnScreener({ defaultSector }: { defaultSector: string | null }) {
               ) : (
                 rows.map((row) => (
                   <tr key={row.symbol} className="row-hover border-b border-line/40">
-                    <td className="px-3.5 py-2"><Link href={`/stocks/${row.symbol}` as `/stocks/${string}`} className="font-semibold hover:text-accent">{row.symbol}</Link></td>
+                    <td className="px-3.5 py-2"><Link href={`/stocks/${row.symbol}`} className="font-semibold hover:text-accent">{row.symbol}</Link></td>
                     <td className="py-2 text-[11px] text-text-muted">{sectorOf(row.symbol)}</td>
                     <td className="num py-2 text-right">{fmtNum(row.price, 2)}</td>
                     <td className="py-2 text-right"><Chg value={row.changePercent} arrow={false} /></td>
@@ -307,7 +307,7 @@ function CryptoScreener() {
               <tbody>
                 {data.rows.map((r) => (
                   <tr key={r.symbol} className="row-hover border-b border-line/40">
-                    <td className="px-3.5 py-2"><Link href={`/crypto/${r.baseAsset || r.symbol}` as `/crypto/${string}`} className="font-semibold hover:text-accent">{r.baseAsset}</Link></td>
+                    <td className="px-3.5 py-2"><Link href={`/crypto/${r.symbol}`} className="font-semibold hover:text-accent">{r.baseAsset}</Link></td>
                     <td className="num py-2 text-right">{fmtNum(r.price, priceDigits(r.price))}</td>
                     <td className="py-2 text-right"><Chg value={r.changePercent} arrow={false} /></td>
                     <td className="num py-2 text-right text-ink-3">{fmtNum(r.low, priceDigits(r.price))}–{fmtNum(r.high, priceDigits(r.price))}</td>
