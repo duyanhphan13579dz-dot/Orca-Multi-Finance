@@ -156,14 +156,42 @@ async function persistQuotes(rows: CommodityRow[]) {
   }
 }
 
-export async function refreshCommodityMarket(): Promise<{ ok: boolean; count: number; error?: string }> {
+export async function refreshCommodityMarket(): Promise<{
+  ok: boolean;
+  count: number;
+  durationMs: number;
+  sourceTimestamp: string | null;
+  errors: string[];
+  error?: string;
+}> {
+  const t0 = Date.now();
   try {
     invalidate(CACHE_KEY);
     const res = await cached(CACHE_KEY, { ttlMs: TTL_MS, staleMs: STALE_MS, producer: fetchAll });
     void persistQuotes(res.value.rows);
-    return { ok: true, count: res.value.rows.length };
+    let latestTs: number | null = null;
+    for (const r of res.value.rows) {
+      if (!r.updatedAt) continue;
+      const t = Date.parse(r.updatedAt);
+      if (t > (latestTs ?? 0)) latestTs = t;
+    }
+    return {
+      ok: true,
+      count: res.value.rows.length,
+      durationMs: Date.now() - t0,
+      sourceTimestamp: latestTs != null ? new Date(latestTs).toISOString() : new Date().toISOString(),
+      errors: res.value.errors ?? [],
+    };
   } catch (e) {
-    return { ok: false, count: 0, error: e instanceof Error ? e.message : String(e) };
+    const msg = e instanceof Error ? e.message : String(e);
+    return {
+      ok: false,
+      count: 0,
+      durationMs: Date.now() - t0,
+      sourceTimestamp: null,
+      errors: [msg],
+      error: msg,
+    };
   }
 }
 
