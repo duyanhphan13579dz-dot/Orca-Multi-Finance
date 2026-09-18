@@ -12,7 +12,6 @@ export type LatencyProbeTarget = {
   id: string;
   label: string;
   domain: "vn-stock" | "global" | "infra" | "news";
-  /** Full URL used for the probe (GET, short timeout). */
   url: string;
 };
 
@@ -43,7 +42,6 @@ export type NetworkLatencyReport = {
   durationMs: number;
 };
 
-/** Critical public hosts ORCA depends on for live VN + global data. */
 export const DEFAULT_TARGETS: LatencyProbeTarget[] = [
   {
     id: "vps-datafeed",
@@ -87,6 +85,18 @@ export const DEFAULT_TARGETS: LatencyProbeTarget[] = [
     domain: "news",
     url: "https://cafef.vn/thi-truong-chung-khoan.rss",
   },
+  {
+    id: "vietnambiz-goods",
+    label: "VietnamBiz goods (HTML)",
+    domain: "vn-stock",
+    url: "https://data.vietnambiz.vn/goods",
+  },
+  {
+    id: "vietnambiz-goods-json",
+    label: "VietnamBiz goods (Next data)",
+    domain: "vn-stock",
+    url: "https://data.vietnambiz.vn/_next/data/4rZHofl9s0ftfNuzY0Phf/goods.json",
+  },
 ];
 
 const CACHE_TTL_MS = 12_000;
@@ -117,19 +127,15 @@ async function probeOne(t: LatencyProbeTarget, timeoutMs: number): Promise<Probe
       signal: ctrl.signal,
       cache: "no-store",
       redirect: "follow",
-      headers: {
-        Accept: "*/*",
-        "User-Agent": "Orca-Network-Probe/1.0",
-      },
+      headers: { Accept: "*/*", "User-Agent": "Orca-Network-Probe/1.0" },
     });
     try {
       await res.arrayBuffer();
     } catch {
-      /* ignore body errors */
+      /* ignore */
     }
     const latencyMs = Math.round(performance.now() - started);
     const ok = res.status > 0 && res.status < 500;
-    // recordSuccess(provider, latencyMs, domain); recordFailure(provider, error, domain)
     if (ok) recordSuccess(`net:${t.id}`, latencyMs, t.domain);
     else recordFailure(`net:${t.id}`, `http_${res.status}`, t.domain);
     return {
@@ -214,7 +220,6 @@ export async function probeNetworkLatency(opts?: {
   return report;
 }
 
-/** Last cached report without probing (null if never run). */
 export function getLastNetworkLatency(): NetworkLatencyReport | null {
   return cached?.report ?? null;
 }
