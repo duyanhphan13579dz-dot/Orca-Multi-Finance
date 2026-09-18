@@ -96,14 +96,14 @@ export function calcWacc(input: {
 export interface DcfAssumptions {
   forecastYears: number;
   /** Số năm tăng trưởng cao (giai đoạn 1); phần còn lại fade về terminal */
-  highGrowthYears: number;
+  highGrowthYears?: number;
   growthY1toN: number;
   terminalGrowth: number;
   discountRate: number;
   cashFlowType: "fcff" | "fcfe" | "fcf_proxy";
   /** Gordon (g) hoặc exit multiple trên FCF năm cuối */
-  terminalMethod: "gordon" | "exit_multiple";
-  exitMultiple: number | null;
+  terminalMethod?: "gordon" | "exit_multiple";
+  exitMultiple?: number | null;
   label: "Bear" | "Base" | "Bull" | "Custom";
 }
 
@@ -386,7 +386,9 @@ export function buildSensitivityMatrix(input: {
       (x) => round(Math.max(0.06, x), 4)!,
     );
   const growthAxis =
-    input.growthAxis ?? [0.015, 0.02, 0.025, 0.03, 0.035].map((x) => round(x, 4)!);
+    input.growthAxis ??
+    [baseGrowth - 0.01, baseGrowth - 0.005, baseGrowth, baseGrowth + 0.005, Math.max(baseGrowth + 0.01, baseWacc)]
+      .map((x) => round(Math.max(-0.2, x), 4)!);
 
   const cells: SensitivityCell[][] = [];
   for (const g of growthAxis) {

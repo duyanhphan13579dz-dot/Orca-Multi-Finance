@@ -2,7 +2,8 @@ import "server-only";
 import { cached } from "../cache";
 import { buildMeta } from "../freshness";
 import { computeFinancialHealth } from "../engines/fundamental";
-import { fetchVndirectFinancials, periodsToLegacyRows } from "../financial/vndirect-fs";
+import { periodsToLegacyRows } from "../financial/vndirect-fs";
+import { getFinancialPackage } from "../financial/service";
 import { getVnQuotes } from "./stocks";
 import { sectorOf } from "../vn/master";
 import { DEFAULT_SYMBOLS } from "./valuation-screener";
@@ -34,9 +35,9 @@ export async function screenFundamental(opts: { symbols?: string[]; sector?: str
       const quotes = await getVnQuotes(symbols).catch(() => null);
       const quoteMap = new Map((quotes?.quotes ?? []).map((q) => [q.symbol, q]));
       const rows = (await Promise.all(symbols.map(async (symbol): Promise<FundamentalScreenRow | null> => {
-        const fs = await fetchVndirectFinancials(symbol, { limitPeriods: 12 }).catch(() => null);
-        if (!fs?.periods?.length) return null;
-        const legacy = periodsToLegacyRows(fs.periods, symbol);
+        const financial = await getFinancialPackage(symbol).catch(() => null);
+        if (!financial?.pkg.periods?.length) return null;
+        const legacy = periodsToLegacyRows(financial.pkg.periods, symbol);
         const health = computeFinancialHealth({ income: legacy.income as Record<string, unknown>[], balance: legacy.balance as Record<string, unknown>[], cashflow: legacy.cashflow as Record<string, unknown>[] }, { symbol });
         const roe = pct(health.groups.profitability.roe);
         const roa = pct(health.groups.profitability.roa);
@@ -49,7 +50,7 @@ export async function screenFundamental(opts: { symbols?: string[]; sector?: str
       return { rows, scanned: symbols.length, skipped: symbols.length - rows.length };
     },
   });
-  return { ...result.value, meta: buildMeta({ source: "vndirect-financials", cached: result.cached, stale: result.stale, note: "ROE, ROA, ROS và ROIC tính từ BCTC; ROIC dùng NOPAT xấp xỉ 80% EBIT." }) };
+  return { ...result.value, meta: buildMeta({ source: "financial-source-router", cached: result.cached, stale: result.stale, note: "ROE, ROA, ROS và ROIC tính từ BCTC qua financial source router; ROIC dùng NOPAT xấp xỉ 80% EBIT." }) };
 }
 
 export { DEFAULT_SYMBOLS };

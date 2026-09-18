@@ -3,12 +3,17 @@ import { listFinancialProviders } from "./providers-registry";
 import { getFinancialMonitorSnapshot } from "./monitor";
 import { vnProviderLayout } from "./index";
 import { ssiFcConfigured } from "../providers/ssi-fcdata";
+import { getMarketSourceStats, getMarketSourceStatus, type MarketSourceId } from "../realtime/market-source-monitor";
 
 export interface MarketSourceHealthRow {
-  provider: "ssi-fcdata" | "vndirect";
+  provider: "ssi-fcdata" | "vndirect" | "vps" | "ssi-iboard" | "vietcap";
   configured: boolean;
   role: "primary" | "fallback";
   status: "healthy" | "degraded" | "down" | "not_configured";
+  attempts: number;
+  successRate: number | null;
+  avgLatencyMs: number | null;
+  lastSuccessAt: string | null;
 }
 
 /** Đổi primary/fallback cho market data. Mặc định: vndirect primary, ssi-fcdata fallback nếu có cấu hình. */
@@ -89,21 +94,25 @@ export function getMarketSourceHealth(): MarketSourceHealth {
   const layout = vnProviderLayout().market;
   // VNDIRECT luôn primary, SSI chỉ fallback khi có cấu hình.
   const ssiConfigured = layout.fallback === "ssi-fcdata";
-  return {
-    layout,
-    rows: [
-      {
-        provider: "ssi-fcdata",
-        configured: ssiConfigured,
-        role: "fallback",
-        status: ssiConfigured ? "healthy" : "not_configured",
-      },
-      {
-        provider: "vndirect",
-        configured: true,
-        role: "primary",
-        status: "healthy",
-      },
-    ],
-  };
+  const rows = ([
+    ["vndirect", true, "primary"],
+    ["vps", true, "fallback"],
+    ["ssi-iboard", true, "fallback"],
+    ["ssi-fcdata", ssiConfigured, "fallback"],
+    ["vietcap", true, "fallback"],
+  ] as const).map(([provider, configured, role]) => {
+    const source = provider as MarketSourceId;
+    const stats = getMarketSourceStats(source);
+    return {
+      provider,
+      configured,
+      role,
+      status: getMarketSourceStatus(source, configured),
+      attempts: stats.attempts,
+      successRate: stats.successRate == null ? null : Number(stats.successRate.toFixed(3)),
+      avgLatencyMs: stats.avgLatencyMs,
+      lastSuccessAt: stats.lastSuccessAt ? new Date(stats.lastSuccessAt).toISOString() : null,
+    };
+  });
+  return { layout, rows };
 }
