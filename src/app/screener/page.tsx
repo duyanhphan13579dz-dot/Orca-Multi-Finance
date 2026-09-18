@@ -10,11 +10,12 @@ import { WyckoffScreener } from "@/components/wyckoff-screener";
 import { CanslimScreener } from "@/components/canslim-screener";
 import { MinerviniScreener } from "@/components/minervini-screener";
 import { ElliottScreener } from "@/components/elliott-screener";
+import { ValuationScreener } from "@/components/valuation-screener";
 import { Chg, fmtCompact, fmtNum, FreshnessDot, Loading, MetaLine, Panel, priceDigits, Unavailable } from "@/components/ui";
 import { FlatsIcon, Play } from "@/components/screener-icons";
 
 type StocksData = { indices: IndexQuote[] | null; quotes: Quote[] | null };
-type Universe = "stocks" | "crypto" | "wyckoff" | "canslim" | "minervini" | "elliott";
+type Universe = "stocks" | "crypto" | "wyckoff" | "canslim" | "minervini" | "elliott" | "valuation";
 
 const VN_BOARD = "VCB,BID,CTG,TCB,MBB,VPB,ACB,STB,HDB,VIB,LPB,SHB,FPT,HPG,VNM,VIC,VHM,VRE,NVL,PDR,GAS,PLX,MSN,MWG,SSI,VND,HCM,VCI,SHS,BSR,POW,REE,KDH,DXG,DCM,DPM,DGC,VHC,SAB,PNJ,GMD";
 
@@ -30,9 +31,11 @@ function ScreenerInner() {
           ? "canslim"
           : rawU === "minervini"
             ? "minervini"
-            : rawU === "elliott"
-              ? "elliott"
-              : "stocks";
+              : rawU === "elliott"
+                ? "elliott"
+                : rawU === "valuation"
+                  ? "valuation"
+                  : "stocks";
   const [universe, setUniverse] = useState<Universe>(initial);
   return (
     <div className="space-y-3">
@@ -50,6 +53,7 @@ function ScreenerInner() {
             <button data-active={universe === "minervini"} onClick={() => setUniverse("minervini")}>Minervini</button>
             <button data-active={universe === "wyckoff"} onClick={() => setUniverse("wyckoff")}>Wyckoff</button>
             <button data-active={universe === "elliott"} onClick={() => setUniverse("elliott")}>Elliott Wave</button>
+            <button data-active={universe === "valuation"} onClick={() => setUniverse("valuation")}>Định giá P</button>
             <button data-active={universe === "crypto"} onClick={() => setUniverse("crypto")}>Crypto</button>
           </div>
         </div>
@@ -64,6 +68,8 @@ function ScreenerInner() {
         <MinerviniScreener defaultSector={params.get("sector")} />
       ) : universe === "elliott" ? (
         <ElliottScreener defaultSector={params.get("sector")} />
+      ) : universe === "valuation" ? (
+        <ValuationScreener defaultSector={params.get("sector")} />
       ) : (
         <VnScreener defaultSector={params.get("sector")} />
       )}
