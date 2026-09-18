@@ -4,10 +4,58 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useApi } from "@/lib/hooks";
 import { VN_SECTOR_MAP } from "@/lib/vn/master";
-import type { CanslimScreenRow, CanslimCoverageStats } from "@/lib/services/canslim-screener";
-import type { CanslimLetter } from "@/lib/engines/canslim";
 import { Badge, Chg, fmtNum, FreshnessDot, Loading, MetaLine, Panel, Unavailable } from "@/components/ui";
 import { Play } from "@/components/screener-icons";
+
+/** Local types — tránh import từ module server-only (canslim-screener.ts). */
+type CanslimLetter = "C" | "A" | "N" | "S" | "L" | "I" | "M";
+
+type CanslimLetterScore = {
+  letter: CanslimLetter;
+  pass: boolean;
+  score: number;
+  detail: string;
+  value: number | null;
+};
+
+type CanslimScreenRow = {
+  symbol: string;
+  name: string | null;
+  sector: string | null;
+  price: number | null;
+  changePercent: number | null;
+  volume: number | null;
+  score: number;
+  grade: "A" | "B" | "C" | "D" | "F";
+  gradeVi: string;
+  passCount: number;
+  passLetters: CanslimLetter[];
+  letters: CanslimLetterScore[];
+  metrics: {
+    epsYoyPct: number | null;
+    revenueYoyPct: number | null;
+    epsQoqPct?: number | null;
+    roePct: number | null;
+    annualGrowthPct: number | null;
+    pctFromHigh: number | null;
+    rsRank: number | null;
+    volRatio: number | null;
+    foreignNet: number | null;
+    foreignNet5d?: number | null;
+    sharesOutstanding?: number | null;
+  };
+  flags: string[];
+  notes: string[];
+};
+
+type CanslimCoverageStats = {
+  withBars: number;
+  withGrowth: number;
+  withHealth: number;
+  withForeign: number;
+  withRatios: number;
+  withEquity: number;
+};
 
 type CanslimData = {
   rows: CanslimScreenRow[];
@@ -25,6 +73,29 @@ function gradeTone(g: string): "up" | "down" | "warn" | "neutral" {
   if (g === "D" || g === "F") return "down";
   if (g === "C") return "warn";
   return "neutral";
+}
+
+function marketToneClass(bullish: boolean | null | undefined): string {
+  if (bullish === true) return "text-[11px] font-medium text-emerald-500";
+  if (bullish === false) return "text-[11px] font-medium text-amber-500";
+  return "text-[11px] font-medium text-text-muted";
+}
+
+function letterBtnClass(active: boolean): string {
+  if (active) return "rounded px-2 py-0.5 text-[11px] font-semibold border border-accent-primary bg-accent-primary/20 text-accent-primary";
+  return "rounded px-2 py-0.5 text-[11px] font-semibold border border-line bg-panel-2 text-ink-2 hover:border-accent-primary/40";
+}
+
+function passChipClass(hit: boolean): string {
+  if (hit) return "inline-block rounded px-1 text-[10px] font-bold bg-emerald-500/20 text-emerald-400";
+  return "inline-block rounded px-1 text-[10px] font-bold bg-panel-2 text-ink-3";
+}
+
+function searchBtnClass(pressed: boolean): string {
+  const base =
+    "flex items-center gap-1.5 rounded-md px-3.5 py-1.5 text-[12px] font-semibold text-white transition-all duration-150 active:scale-95";
+  if (pressed) return base + " scale-95 bg-accent-primary ring-2 ring-white/40";
+  return base + " bg-accent-primary/90 hover:bg-accent-primary";
 }
 
 function buildQs(opts: {
@@ -95,26 +166,22 @@ export function CanslimScreener({ defaultSector }: { defaultSector: string | nul
 
   const busy = isLoading || isValidating;
   const cov = data?.coverage;
+  const panelClass = flash
+    ? "space-y-2 p-4 transition-shadow duration-300 ring-2 ring-accent-primary/60"
+    : "space-y-2 p-4 transition-shadow duration-300";
+  const tableClass = isValidating ? "overflow-x-auto transition-opacity opacity-70" : "overflow-x-auto transition-opacity";
 
   return (
     <>
       <Panel pad={false}>
-        <div className={`space-y-2 p-4 transition-shadow duration-300 ${flash ? "ring-2 ring-accent-primary/60" : ""`}>
+        <div className={panelClass}>
           <div className="text-[13px] font-medium">Bộ lọc CAN SLIM — growth leaders VN</div>
           <p className="text-[12px] leading-relaxed text-text-muted">
             Pipeline thật: BCTC (C/A) · VNDirect ratios/ROE · OHLCV (N/S/L) · NN 5 phiên (I) · VNINDEX MA50+3M (M).
             Heuristic nghiên cứu — không phải tín hiệu mua bán.
           </p>
           {data?.marketDetail ? (
-            <div
-              className={`text-[11px] font-medium ${
-                data.marketBullish === true
-                  ? "text-emerald-500"
-                  : data.marketBullish === false
-                    ? "text-amber-500"
-                    : "text-text-muted"
-              }`}
-            >
+            <div className={marketToneClass(data.marketBullish)}>
               M · {data.marketDetail}
             </div>
           ) : null}
@@ -134,11 +201,7 @@ export function CanslimScreener({ defaultSector }: { defaultSector: string | nul
                 key={L}
                 type="button"
                 onClick={() => toggleLetter(L)}
-                className={`rounded px-2 py-0.5 text-[11px] font-semibold border transition-colors ${
-                  letters.includes(L)
-                    ? "border-accent-primary bg-accent-primary/20 text-accent-primary"
-                    : "border-line bg-panel-2 text-ink-2 hover:border-accent-primary/40"
-                }`}
+                className={letterBtnClass(letters.includes(L))}
                 title={`Bắt buộc pass chữ ${L}`}
               >
                 {L}
@@ -149,18 +212,30 @@ export function CanslimScreener({ defaultSector }: { defaultSector: string | nul
           <div className="flex flex-wrap items-end gap-2 pt-1">
             <label>
               <span className="mb-0.5 block text-[10px] uppercase tracking-wider text-text-muted">Điểm ≥</span>
-              <input value={minScore} onChange={(e) => setMinScore(e.target.value)} inputMode="decimal" className="num input !w-20 !py-1.5 text-[12px]" />
+              <input
+                value={minScore}
+                onChange={(e) => setMinScore(e.target.value)}
+                inputMode="decimal"
+                className="num input !w-20 !py-1.5 text-[12px]"
+              />
             </label>
             <label>
               <span className="mb-0.5 block text-[10px] uppercase tracking-wider text-text-muted">Pass ≥</span>
-              <input value={minPass} onChange={(e) => setMinPass(e.target.value)} inputMode="numeric" className="num input !w-16 !py-1.5 text-[12px]" />
+              <input
+                value={minPass}
+                onChange={(e) => setMinPass(e.target.value)}
+                inputMode="numeric"
+                className="num input !w-16 !py-1.5 text-[12px]"
+              />
             </label>
             <label>
               <span className="mb-0.5 block text-[10px] uppercase tracking-wider text-text-muted">Ngành</span>
               <select value={sector} onChange={(e) => setSector(e.target.value)} className="input !w-40 !py-1.5 text-[12px]">
                 <option value="">Tất cả ({VN_SECTOR_MAP.length})</option>
                 {VN_SECTOR_MAP.map((s) => (
-                  <option key={s.name} value={s.name}>{s.name}</option>
+                  <option key={s.name} value={s.name}>
+                    {s.name}
+                  </option>
                 ))}
               </select>
             </label>
@@ -181,13 +256,7 @@ export function CanslimScreener({ defaultSector }: { defaultSector: string | nul
                 spellCheck={false}
               />
             </label>
-            <button
-              type="button"
-              onClick={run}
-              className={`flex items-center gap-1.5 rounded-md px-3.5 py-1.5 text-[12px] font-semibold text-white transition-all duration-150
-                ${pressed ? "scale-95 bg-accent-primary ring-2 ring-white/40" : "bg-accent-primary/90 hover:bg-accent-primary"}
-                active:scale-95`}
-            >
+            <button type="button" onClick={run} className={searchBtnClass(pressed)}>
               {busy ? (
                 <span className="inline-block size-3.5 animate-spin rounded-full border-2 border-white/30 border-t-white" />
               ) : (
@@ -196,7 +265,9 @@ export function CanslimScreener({ defaultSector }: { defaultSector: string | nul
               {busy ? "Đang quét…" : "Tìm kiếm"}
             </button>
           </div>
-          {flash && <div className="text-[11px] font-medium text-accent-primary animate-pulse">Đã áp dụng bộ lọc CANSLIM…</div>}
+          {flash ? (
+            <div className="text-[11px] font-medium text-accent-primary animate-pulse">Đã áp dụng bộ lọc CANSLIM…</div>
+          ) : null}
         </div>
       </Panel>
 
@@ -215,7 +286,7 @@ export function CanslimScreener({ defaultSector }: { defaultSector: string | nul
           }
           pad={false}
         >
-          <div className={`overflow-x-auto transition-opacity ${isValidating ? "opacity-70" : ""}`}>
+          <div className={tableClass}>
             <table className="w-full min-w-[820px] text-[12px]">
               <thead>
                 <tr className="border-b border-line text-left text-[10px] uppercase tracking-wider text-ink-3">
@@ -241,7 +312,9 @@ export function CanslimScreener({ defaultSector }: { defaultSector: string | nul
                   rows.map((r) => (
                     <tr key={r.symbol} className="row-hover border-b border-line/40 align-top">
                       <td className="px-3.5 py-2">
-                        <Link href={`/stocks/${r.symbol}`} className="font-semibold hover:text-accent">{r.symbol}</Link>
+                        <Link href={`/stocks/${r.symbol}`} className="font-semibold hover:text-accent">
+                          {r.symbol}
+                        </Link>
                         <div className="text-[10px] text-text-muted">{r.sector ?? "—"}</div>
                       </td>
                       <td className="py-2">
@@ -253,12 +326,9 @@ export function CanslimScreener({ defaultSector }: { defaultSector: string | nul
                         <div className="flex flex-wrap gap-0.5">
                           {ALL_LETTERS.map((L) => {
                             const hit = r.passLetters.includes(L);
+                            const detail = r.letters.find((x) => x.letter === L)?.detail;
                             return (
-                              <span
-                                key={L}
-                                className={`inline-block rounded px-1 text-[10px] font-bold ${hit ? "bg-emerald-500/20 text-emerald-400" : "bg-panel-2 text-ink-3"}`}
-                                title={r.letters.find((x) => x.letter === L)?.detail}
-                              >
+                              <span key={L} className={passChipClass(hit)} title={detail}>
                                 {L}
                               </span>
                             );
@@ -272,18 +342,20 @@ export function CanslimScreener({ defaultSector }: { defaultSector: string | nul
                       <td className="num py-2 text-right">
                         {r.metrics.roePct != null ? `${r.metrics.roePct.toFixed(1)}%` : "—"}
                       </td>
-                      <td className="num py-2 text-right">
-                        {r.metrics.rsRank != null ? r.metrics.rsRank : "—"}
-                      </td>
+                      <td className="num py-2 text-right">{r.metrics.rsRank != null ? r.metrics.rsRank : "—"}</td>
                       <td className="num py-2 text-right">{fmtNum(r.price, 2)}</td>
-                      <td className="py-2 pr-3.5 text-right"><Chg value={r.changePercent} arrow={false} /></td>
+                      <td className="py-2 pr-3.5 text-right">
+                        <Chg value={r.changePercent} arrow={false} />
+                      </td>
                     </tr>
                   ))
                 )}
               </tbody>
             </table>
           </div>
-          <div className="border-t border-line px-3.5 py-2"><MetaLine meta={meta} /></div>
+          <div className="border-t border-line px-3.5 py-2">
+            <MetaLine meta={meta} />
+          </div>
         </Panel>
       )}
     </>
