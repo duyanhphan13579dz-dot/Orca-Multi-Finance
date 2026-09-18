@@ -173,20 +173,15 @@ function composeIntraday(ctx: DailyCtx): { sections: DailyReport["sections"]; as
       ],
     },
     {
-      heading: "Kịch bản phần còn lại của phiên",
+      heading: "Dự kiến phiên chiều",
       tone: "neutral",
       paragraphs: [
-        "Kịch bản cơ sở: thị trường dao động phân hóa, dòng tiền tiếp tục chọn lọc và chỉ số cần giữ nền buổi sáng để tránh áp lực bán cuối phiên.",
-        "Kịch bản tích cực: độ rộng mở rộng, thanh khoản tăng hợp lý và nhóm vốn hóa lớn cùng xác nhận sẽ nâng xác suất kéo chỉ số về vùng cao trong ngày.",
-        "Kịch bản rủi ro: mất nền buổi sáng kèm bán lan tỏa; khi đó ưu tiên giảm giao dịch theo cảm xúc và chờ dữ liệu đóng cửa xác nhận.",
-      ],
-    },
-    {
-      heading: "Hành động và rủi ro cần theo dõi",
-      tone: "neutral",
-      paragraphs: [
-        "Hành động nghiên cứu: theo dõi nhóm dẫn dắt có thanh khoản thực, đặt ngưỡng vô hiệu hóa trước khi mở vị thế và không dùng bản tin này thay thế khẩu vị rủi ro cá nhân.",
-        "Rủi ro chính: dữ liệu giữa phiên có thể thay đổi nhanh, độ trễ nguồn cung cấp và biến động bất ngờ từ tin doanh nghiệp/vĩ mô. Không có dữ liệu đủ tin cậy thì không kết luận định lượng.",
+        index
+          ? `Kịch bản cơ sở: VN-Index quanh ${index.value.toLocaleString("vi-VN")} (${pct(index.changePercent)} buổi sáng) — phiên chiều nghiêng phân hóa, dòng tiền chọn lọc. Chỉ số cần giữ nền buổi sáng để hạn chế áp lực bán cuối phiên.`
+          : "Kịch bản cơ sở: phiên chiều nghiêng phân hóa, dòng tiền chọn lọc. Cần dữ liệu chỉ số LIVE để neo vùng tham chiếu — không suy diễn điểm số khi nguồn thiếu.",
+        "Điều kiện xác nhận: thanh khoản chiều không suy yếu so với buổi sáng và độ rộng không thu hẹp khi chỉ số tăng. Nếu giá tăng nhưng KL yếu → ưu tiên coi là nhịp hồi kỹ thuật, tránh đuổi.",
+        "Vô hiệu hóa kịch bản cơ sở: mất nền buổi sáng kèm bán lan tỏa → giảm giao dịch theo cảm xúc, chờ đóng cửa xác nhận thay vì bắt đáy giữa phiên.",
+        "Hành động: theo dõi nhóm dẫn dắt có KL thực; đặt ngưỡng cắt trước khi mở vị thế. Bản tin mang tính tham khảo, không phải khuyến nghị đầu tư.",
       ],
     },
   ];
@@ -345,7 +340,7 @@ export async function generateDailyReport(
 ): Promise<{ report: DailyReport; meta: Meta }> {
   const ctx = await buildCtx();
   const { sections, assumptions } = COMPOSERS[type](ctx);
-  const scenarios = buildScenarios(ctx);
+  const scenarios = type === "intraday_brief" ? [] : buildScenarios(ctx);
   const report: DailyReport = {
     type,
     title: `${type === "morning_brief" ? morningTitle() : TITLES[type]} — ${ctx.dateVi}`,
