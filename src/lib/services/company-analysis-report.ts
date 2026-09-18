@@ -671,7 +671,7 @@ export async function generateCompanyAnalysisReport(
   }
 
   overall.push(
-    `**[KẾT LUẬN]**   ${sym} — ${stanceShort} · Giá mục tiêu ${targetLabel}${upsideLabel} · Conviction: ${conviction}`,
+    `**${sym}** — quan điểm research: **${stanceShort}**, conviction ${conviction}. Giá mục tiêu minh họa ${targetLabel}${upsideLabel}.`,
   );
 
   const whyBits: string[] = [];
@@ -695,7 +695,9 @@ export async function generateCompanyAnalysisReport(
     whyBits.push(`health ${Math.round(health.scores.overall)}/100`);
   }
   overall.push(
-    `**[VÌ SAO]**     ${whyBits.length ? whyBits.join("; ") : "Chưa đủ tín hiệu định lượng để tóm tắt — xem các mục BCTC/định giá/kỹ thuật phía trên"}.`,
+    whyBits.length
+      ? `Cơ sở: ${whyBits.join("; ")}.`
+      : "Cơ sở định lượng còn mỏng — ưu tiên đọc lại BCTC, định giá và kỹ thuật phía trên.",
   );
 
   let riskMain =
@@ -709,7 +711,7 @@ export async function generateCompanyAnalysisReport(
       }`;
     }
   }
-  overall.push(`**[RỦI RO CHÍNH]** ${riskMain}`);
+  overall.push(`Rủi ro chính: ${riskMain}.`);
 
   const sups = (technical?.support ?? []).slice(0, 2).map((x) => fmt(x, 0));
   const action =
@@ -718,38 +720,39 @@ export async function generateCompanyAnalysisReport(
       : sups.length === 1
         ? `Chờ về vùng hỗ trợ ~${sups[0]} hoặc xác nhận kỹ thuật trước khi giải ngân`
         : "Chờ xác nhận độ rộng + thanh khoản và vùng hỗ trợ kỹ thuật trước khi giải ngân";
-  overall.push(`**[HÀNH ĐỘNG]**  ${action}`);
+  overall.push(`Hành động: ${action}.`);
 
   const sma50v = technical?.sma?.sma50;
   const res1 = technical?.resistance?.[0];
   const upgrade =
     sma50v != null
-      ? `Nâng hạng nếu vượt SMA50 (${fmt(sma50v, 0)})${res1 != null ? ` hoặc ${fmt(res1, 0)}` : ""} kèm KL tăng`
+      ? `nâng hạng nếu vượt SMA50 (${fmt(sma50v, 0)})${res1 != null ? ` hoặc ${fmt(res1, 0)}` : ""} kèm KL tăng`
       : res1 != null
-        ? `Nâng hạng nếu vượt kháng cự ${fmt(res1, 0)} kèm KL tăng`
-        : "Nâng hạng nếu giá vượt kháng cự gần kèm độ rộng/KL cải thiện";
-  let downgrade = "Hạ hạng nếu mất hỗ trợ chính kèm bán lan tỏa";
+        ? `nâng hạng nếu vượt kháng cự ${fmt(res1, 0)} kèm KL tăng`
+        : "nâng hạng nếu giá vượt kháng cự gần kèm độ rộng/KL cải thiện";
+  let downgrade = "hạ hạng nếu mất hỗ trợ chính kèm bán lan tỏa";
   if (debtLike != null && eqForLev != null && eqForLev > 0) {
     const levPct = (debtLike / eqForLev) * 100;
     if (levPct >= 60) {
-      downgrade = `Hạ hạng nếu nợ/VCSH >${Math.round(levPct + 10)}% hoặc mất hỗ trợ chính`;
+      downgrade = `hạ hạng nếu nợ/VCSH >${Math.round(levPct + 10)}% hoặc mất hỗ trợ chính`;
     }
   }
-  overall.push(`**[THEO DÕI]**   ${upgrade}; ${downgrade}`);
+  overall.push(`Theo dõi: ${upgrade}; ${downgrade}.`);
+
+  overall.push(
+    `Điểm tổng hợp ~**${score}**/100 từ ${factors} nhóm tín hiệu (kỹ thuật / health / alpha) — chỉ mang tính research, không phải khuyến nghị mua/bán.`,
+  );
 
   const dataNotes: string[] = [];
-  if (!ratios) dataNotes.push("thiếu bộ ratios (P/E·P/B·EPS)");
-  if (!income.length) dataNotes.push("thiếu BCTC để đo QoQ/YoY");
-  if (!technical) dataNotes.push("chuỗi nến chưa đủ cho MA/RSI đầy đủ");
-  if (health?.scores?.overall == null) dataNotes.push("chưa tính Financial Health engine");
-  if (!dataNotes.length) {
-    dataNotes.push(
-      "dữ liệu từ pipeline ORCA (quote/BCTC/ratios/kỹ thuật) — số mục tiêu mang tính minh họa research, không phải khuyến nghị mua/bán",
-    );
-  } else {
-    dataNotes.push("ưu tiên số đã verify; không nội suy khi thiếu nguồn");
-  }
-  overall.push(`**[LƯU Ý DỮ LIỆU]** ${dataNotes.join("; ")}.`);
+  if (!ratios) dataNotes.push("thiếu ratios");
+  if (!income.length) dataNotes.push("thiếu BCTC 2 kỳ");
+  if (!technical) dataNotes.push("chuỗi nến chưa đủ");
+  if (health?.scores?.overall == null) dataNotes.push("chưa có Financial Health");
+  overall.push(
+    dataNotes.length
+      ? `Lưu ý dữ liệu: ${dataNotes.join("; ")} — ưu tiên số đã verify, không nội suy khi thiếu nguồn.`
+      : "Dữ liệu từ pipeline ORCA (quote / BCTC / ratios / kỹ thuật); giá mục tiêu là minh họa research.",
+  );
 
   const coverage = [quote, bars.length, income.length, ratios, profile].filter(Boolean).length;
   const dataQuality: CompanyAnalysisReport["dataQuality"] =
