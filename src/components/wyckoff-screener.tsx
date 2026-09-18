@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useApi } from "@/lib/hooks";
 import { VN_SECTOR_MAP } from "@/lib/vn/master";
 import type { WyckoffScreenRow } from "@/lib/services/wyckoff-screener";
@@ -61,7 +61,7 @@ function phaseTone(phase: string): "up" | "down" | "warn" | "neutral" {
   return "neutral";
 }
 
-function buildQs(opts: { phase: string; setup: string; minConf: string; sector: string; symbols: string }) {
+function buildQs(opts: { phase: string; setup: string; minConf: string; sector: string; symbols: string; bust?: number }) {
   const qs = new URLSearchParams({
     phase: opts.phase,
     setup: opts.setup,
@@ -74,6 +74,8 @@ function buildQs(opts: { phase: string; setup: string; minConf: string; sector: 
     .map((s) => s.trim().toUpperCase())
     .filter(Boolean);
   if (symbols.length) qs.set("symbols", symbols.join(","));
+  // cache-bust khi user bấm Tìm kiếm lại cùng bộ lọc
+  if (opts.bust) qs.set("_", String(opts.bust));
   return qs.toString();
 }
 
@@ -86,22 +88,47 @@ export function WyckoffScreener({ defaultSector }: { defaultSector: string | nul
   const [query, setQuery] = useState(() =>
     buildQs({ phase: "all", setup: "all", minConf: "40", sector: defaultSector ?? "", symbols: "" }),
   );
-  const { res, data, meta, isLoading } = useApi<WyckoffData>(`/api/v1/screener/wyckoff?${query}`, {
+  const [pressed, setPressed] = useState(false);
+  const [flash, setFlash] = useState(false);
+  const { res, data, meta, isLoading, isValidating, mutate } = useApi<WyckoffData>(`/api/v1/screener/wyckoff?${query}`, {
     refreshInterval: 60_000,
   });
 
-  const run = () => {
-    setQuery(buildQs({ phase, setup, minConf, sector, symbols }));
-  };
+  const run = useCallback(() => {
+    setPressed(true);
+    setFlash(true);
+    const next = buildQs({ phase, setup, minConf, sector, symbols, bust: Date.now() });
+    setQuery(next);
+    // force SWR revalidate ngay cả khi key giống
+    void mutate();
+    window.setTimeout(() => setPressed(false), 180);
+  }, [phase, setup, minConf, sector, symbols, mutate]);
+
+  useEffect(() => {
+    if (!flash) return;
+    const t = window.setTimeout(() => setFlash(false), 900);
+    return () => window.clearTimeout(t);
+  }, [flash]);
+
+  // Lọc live theo ô mã trên kết quả đang có (nhạy, không chờ API)
+  const liveNeedle = symbols.trim().toUpperCase();
+  const rows = useMemo(() => {
+    const list = data?.rows ?? [];
+    if (!liveNeedle) return list;
+    const parts = liveNeedle.split(/[\s,;]+/).filter(Boolean);
+    if (!parts.length) return list;
+    return list.filter((r) => parts.some((p) => r.symbol.includes(p) || (r.name ?? "").toUpperCase().includes(p) || (r.sector ?? "").toUpperCase().includes(p)));
+  }, [data, liveNeedle]);
+
+  const busy = isLoading || isValidating;
 
   return (
     <>
       <Panel pad={false}>
-        <div className="space-y-2 p-4">
+        <div className={`space-y-2 p-4 transition-shadow duration-300 ${flash ? "ring-2 ring-accent-primary/60 shadow-[0_0_0_3px_rgba(59,130,246,0.15)]" : ""}`}>
           <div className="text-[13px] font-medium">Bộ lọc Wyckoff — rổ thanh khoản VN</div>
           <p className="text-[12px] leading-relaxed text-text-muted">
-            Đọc chu kỳ Composite Man trên nến ngày: Phase A dừng xu hướng cũ, B xây nguyên nhân, C test (Spring / UTAD),
-            D xác nhận (SOS / SOW), E rời range. Spring không bắt buộc. Đổi lọc rồi bấm Tìm kiếm để quét lại.
+            Đọc chu kỳ Composite Man trên nến ngày. Gõ mã để lọc nhanh kết quả; đổi phase/setup/ngành rồi bấm <strong>Tìm kiếm</strong> để quét lại toàn rổ.
           </p>
           <div className="flex flex-wrap items-end gap-2 pt-1">
             <label>
@@ -123,25 +150,45 @@ export function WyckoffScreener({ defaultSector }: { defaultSector: string | nul
             <VnFilterSelect sector={sector} setSector={setSector} />
             <Field label="Tin cậy ≥" value={minConf} onChange={setMinConf} small />
             <label>
-              <span className="mb-0.5 block text-[10px] uppercase tracking-wider text-text-muted">Mã (tùy chọn)</span>
+              <span className="mb-0.5 block text-[10px] uppercase tracking-wider text-text-muted">Mã (live)</span>
               <input
                 value={symbols}
                 onChange={(e) => setSymbols(e.target.value)}
                 onKeyDown={(e) => {
-                  if (e.key === "Enter") run();
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    run();
+                  }
                 }}
                 placeholder="VCB, HPG, FPT"
-                className="input !w-40 !py-1.5 text-[12px]"
+                className="input !w-44 !py-1.5 text-[12px] focus:ring-2 focus:ring-accent-primary/50"
+                autoComplete="off"
+                spellCheck={false}
               />
             </label>
             <button
               type="button"
               onClick={run}
-              className="flex items-center gap-1.5 rounded-md bg-accent-primary/90 px-3 py-1.5 text-[12px] font-semibold text-white"
+              disabled={busy && pressed}
+              aria-busy={busy}
+              className={`flex items-center gap-1.5 rounded-md px-3.5 py-1.5 text-[12px] font-semibold text-white transition-all duration-150
+                ${pressed ? "scale-95 bg-accent-primary ring-2 ring-white/40" : "bg-accent-primary/90 hover:bg-accent-primary"}
+                ${busy ? "opacity-90" : ""}
+                active:scale-95 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-primary`}
             >
-              <Play className="size-3.5" /> Tìm kiếm
+              {busy ? (
+                <span className="inline-block size-3.5 animate-spin rounded-full border-2 border-white/30 border-t-white" aria-hidden />
+              ) : (
+                <Play className="size-3.5" />
+              )}
+              {busy ? "Đang quét…" : "Tìm kiếm"}
             </button>
           </div>
+          {flash && (
+            <div className="text-[11px] font-medium text-accent-primary animate-pulse">
+              Đã áp dụng bộ lọc — đang tải kết quả…
+            </div>
+          )}
         </div>
       </Panel>
 
@@ -153,13 +200,14 @@ export function WyckoffScreener({ defaultSector }: { defaultSector: string | nul
         <Panel
           title={
             <span>
-              {data.rows.length} mã · quét {data.scanned} · bỏ {data.skipped} thiếu nến{" "}
+              {rows.length} mã{liveNeedle ? ` (lọc “${liveNeedle}”)` : ""} · quét {data.scanned} · bỏ {data.skipped} thiếu nến{" "}
               <FreshnessDot status={meta?.freshness} ageMs={meta?.ageMs} />
+              {isValidating ? <span className="ml-1.5 text-[10px] text-accent-primary">· đang cập nhật</span> : null}
             </span>
           }
           pad={false}
         >
-          <div className="overflow-x-auto">
+          <div className={`overflow-x-auto transition-opacity duration-200 ${isValidating ? "opacity-70" : "opacity-100"}`}>
             <table className="w-full min-w-[720px] text-[12px]">
               <thead>
                 <tr className="border-b border-line text-left text-[10px] uppercase tracking-wider text-ink-3">
@@ -173,24 +221,32 @@ export function WyckoffScreener({ defaultSector }: { defaultSector: string | nul
                 </tr>
               </thead>
               <tbody>
-                {data.rows.map((r) => (
-                  <tr key={r.symbol} className="row-hover border-b border-line/40 align-top">
-                    <td className="px-3.5 py-2">
-                      <Link href={`/stocks/${r.symbol}`} className="font-semibold hover:text-accent">{r.symbol}</Link>
-                      <div className="text-[10px] text-text-muted">{r.sector ?? "—"}</div>
-                    </td>
-                    <td className="py-2">
-                      <Badge tone={phaseTone(r.phase)}>{r.phaseVi}{r.subPhase ? ` · ${r.subPhase}` : ""}</Badge>
-                    </td>
-                    <td className="py-2 text-ink-2">{r.setupVi}</td>
-                    <td className="num py-2 text-right">{r.confidence}%</td>
-                    <td className="num py-2 text-right">{fmtNum(r.price, 2)}</td>
-                    <td className="py-2 text-right"><Chg value={r.changePercent} arrow={false} /></td>
-                    <td className="max-w-[280px] py-2 pr-3.5 text-[11px] leading-snug text-ink-2">
-                      {r.events[0] ?? r.notes[0] ?? "—"}
+                {rows.length === 0 ? (
+                  <tr>
+                    <td colSpan={7} className="px-3.5 py-6 text-center text-text-muted">
+                      Không có mã khớp. Thử xóa ô mã hoặc nới lọc phase/setup rồi bấm Tìm kiếm.
                     </td>
                   </tr>
-                ))}
+                ) : (
+                  rows.map((r) => (
+                    <tr key={r.symbol} className="row-hover border-b border-line/40 align-top">
+                      <td className="px-3.5 py-2">
+                        <Link href={`/stocks/${r.symbol}`} className="font-semibold hover:text-accent">{r.symbol}</Link>
+                        <div className="text-[10px] text-text-muted">{r.sector ?? "—"}</div>
+                      </td>
+                      <td className="py-2">
+                        <Badge tone={phaseTone(r.phase)}>{r.phaseVi}{r.subPhase ? ` · ${r.subPhase}` : ""}</Badge>
+                      </td>
+                      <td className="py-2 text-ink-2">{r.setupVi}</td>
+                      <td className="num py-2 text-right">{r.confidence}%</td>
+                      <td className="num py-2 text-right">{fmtNum(r.price, 2)}</td>
+                      <td className="py-2 text-right"><Chg value={r.changePercent} arrow={false} /></td>
+                      <td className="max-w-[280px] py-2 pr-3.5 text-[11px] leading-snug text-ink-2">
+                        {r.events[0] ?? r.notes[0] ?? "—"}
+                      </td>
+                    </tr>
+                  ))
+                )}
               </tbody>
             </table>
           </div>
