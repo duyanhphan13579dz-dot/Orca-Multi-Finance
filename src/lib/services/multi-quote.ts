@@ -24,9 +24,7 @@ export type MultiQuoteResult = {
   quotes: Quote[];
   sources: string[];
   sourceTs: number | null;
-  /** latency từng nguồn (ms) */
   latencies: Record<string, number>;
-  /** số mã có lệch giá > tolerance giữa 2 nguồn top */
   conflicts: number;
 };
 
@@ -40,7 +38,6 @@ const PRICE_PRIORITY: Record<string, number> = {
 
 const rank = (src: string) => PRICE_PRIORITY[src] ?? 0;
 
-/** Lệch tương đối > 1.5% hoặc tuyệt đối > 200 VND coi là conflict (log only) */
 const CONFLICT_PCT = 0.015;
 const CONFLICT_ABS = 200;
 
@@ -105,7 +102,6 @@ function pickPrice(
   const er = rank(existing._src);
   const ir = rank(src);
 
-  // Giá: nguồn ưu tiên cao hơn LUÔN thắng — không trung bình
   let price = existing.price;
   let priceSrc = existing._src;
   if (ir > er && incoming.price != null && incoming.price > 0) {
@@ -116,7 +112,6 @@ function pickPrice(
     priceSrc = src;
   }
 
-  // Change/% theo cùng nguồn giá nếu có, else fill null
   const preferIncomingForChg = priceSrc === src;
   const change = preferIncomingForChg
     ? (incoming.change ?? existing.change)
@@ -125,7 +120,6 @@ function pickPrice(
     ? (incoming.changePercent ?? existing.changePercent)
     : (existing.changePercent ?? incoming.changePercent);
 
-  // Field phụ: chỉ fill khi null — không ghi đè giá trị đã có từ nguồn cao hơn
   const fill = <T>(a: T | null | undefined, b: T | null | undefined): T | null =>
     a != null && a !== ("" as unknown) ? (a as T) : b != null ? (b as T) : null;
 
@@ -184,32 +178,30 @@ function countConflicts(batches: SourceBatch[]): number {
 }
 
 export async function getMultiQuotes(symbols: string[]): Promise<MultiQuoteResult> {
-  const uniq = [...new Set(symbols.map((s) => s.toUpperCase()).filter(Boolean))].slice(0, 40);
+  const uniq = [...new Set(symbols.map((s) => s.toUpperCase()).filter(Boolean))].slice(0, 80);
   if (!uniq.length) {
     return { quotes: [], sources: [], sourceTs: null, latencies: {}, conflicts: 0 };
   }
 
   /**
    * Latency strategy:
-   * - Tier A (fast, primary): vndirect + vps — timeout 5s, song song
-   * - Tier B (board): ssi-iboard — timeout 5s
-   * - Tier C (optional): ssi-fc / vietcap — timeout 3.5s, chỉ chờ nếu còn mã thiếu giá
-   *
-   * Early exit: nếu Tier A đã cover đủ mọi symbol → không chờ Tier C.
+   * - Tier A: vndirect + vps — timeout 7s, parallel
+   * - Tier B: ssi-iboard — timeout 6.5s
+   * - Tier C: ssi-fc / vietcap — timeout 5–5.5s if symbols still missing
    */
 
   const tierA = Promise.all([
-    runSource("vndirect", () => vndirect.getVndQuotes(uniq), 5_000),
-    runSource("vps", () => getVpsQuotes(uniq), 5_000),
+    runSource("vndirect", () => vndirect.getVndQuotes(uniq), 7_000),
+    runSource("vps", () => getVpsQuotes(uniq), 7_000),
   ]);
 
-  const tierB = runSource("ssi-iboard", () => getSsiIboardQuotes(uniq), 5_000);
+  const tierB = runSource("ssi-iboard", () => getSsiIboardQuotes(uniq), 6_500);
 
   const tierCTasks: Promise<SourceBatch>[] = [
-    runSource("vietcap", () => getVietcapQuotes(uniq), 3_500),
+    runSource("vietcap", () => getVietcapQuotes(uniq), 5_000),
   ];
   if (ssiFcConfigured()) {
-    tierCTasks.push(runSource("ssi-fcdata", () => getSsiQuotes(uniq), 4_000));
+    tierCTasks.push(runSource("ssi-fcdata", () => getSsiQuotes(uniq), 5_500));
   }
 
   const tierCPromise = Promise.all(tierCTasks);
