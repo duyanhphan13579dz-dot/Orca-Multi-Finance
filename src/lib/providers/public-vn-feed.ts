@@ -87,8 +87,7 @@ export async function getPublicOhlcv(
     provider: "entrade",
     timeoutMs: 10_000,
     retries: 1,
-    headers: { Accept: "application/json", "User-Agent": "Orca-Multi-Finance/1.0" },
-  });
+    headers: { Accept: "application/json", "User-Agent": "Orca-Multi-Finance/1.0" });
   if (!res.ok || !res.data?.t?.length) {
     throw new ProviderError(`entrade ohlcv ${sym}: ${res.error ?? "empty"}`, PUBLIC_VN);
   }
@@ -114,17 +113,24 @@ export async function getPublicOhlcv(
 
 /** Liquid universe for board fallback (not full HOSE). */
 export const LIQUID_BOARD = [
-  "VCB", "BID", "CTG", "TCB", "MBB", "VPB", "ACB", "STB", "HDB", "VIB", "TPB", "SHB", "MSB", "OCB", "LPB", "EIB",
-  "VIC", "VHM", "VRE", "NVL", "PDR", "DXG", "KDH", "NLG", "DIG", "CEO", "HDG",
-  "HPG", "HSG", "NKG", "SMC",
-  "FPT", "CMG", "ELC",
-  "VNM", "MSN", "SAB", "MCH", "QNS", "DBC",
-  "MWG", "PNJ", "FRT", "DGW",
-  "GAS", "PLX", "PVD", "PVS", "BSR", "OIL",
-  "SSI", "VND", "HCM", "VCI", "SHS", "CTS", "BSI", "FTS",
-  "REE", "POW", "GEG", "PC1", "GEX",
-  "GVR", "PHR", "DPR",
-  "BCM", "KBC", "SZC", "IDC",
-  "BVH", "BMI", "PVI",
-  "VJC", "HVN",
+  // Ngân hàng
+  "VCB", "BID", "CTG", "TCB", "MBB", "VPB", "ACB", "STB", "HDB", "VIB", "TPB", "SHB", "MSB", "OCB", "LPB", "EIB", "SSB", "NAB",
+  // BĐS / Xây dựng
+  "VIC", "VHM", "VRE", "NVL", "PDR", "DXG", "KDH", "NLG", "DIG", "CEO", "HDG", "BCM", "KBC", "SZC", "IDC", "VGC",
+  // Thép / VLXD
+  "HPG", "HSG", "NKG", "SMC", "HT1", "BCC",
+  // Công nghệ
+  "FPT", "CMG", "ELC", "FOX",
+  // Tiêu dùng / Bán lẻ
+  "VNM", "MSN", "SAB", "MCH", "QNS", "DBC", "MWG", "PNJ", "FRT", "DGW", "PET",
+  // Dầu khí / Năng lượng
+  "GAS", "PLX", "PVD", "PVS", "BSR", "OIL", "POW", "REE", "GEG", "PC1", "GEX", "NT2",
+  // Chứng khoán
+  "SSI", "VND", "HCM", "VCI", "SHS", "CTS", "BSI", "FTS", "VIX", "ORS",
+  // Cao su / Nông nghiệp
+  "GVR", "PHR", "DPR", "HAG", "BAF",
+  // Bảo hiểm / Hàng không
+  "BVH", "BMI", "PVI", "MIG", "VJC", "HVN",
+  // Khác thanh khoản cao
+  "GMD", "VSC", "HAH", "DGC", "DPM", "DCM",
 ];
