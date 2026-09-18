@@ -8,11 +8,12 @@ import { VN_SECTOR_MAP, sectorOf } from "@/lib/vn/master";
 import type { CryptoMarketRow, Quote, IndexQuote } from "@/lib/types";
 import { WyckoffScreener } from "@/components/wyckoff-screener";
 import { CanslimScreener } from "@/components/canslim-screener";
+import { MinerviniScreener } from "@/components/minervini-screener";
 import { Chg, fmtCompact, fmtNum, FreshnessDot, Loading, MetaLine, Panel, priceDigits, Unavailable } from "@/components/ui";
 import { FlatsIcon, Play } from "@/components/screener-icons";
 
 type StocksData = { indices: IndexQuote[] | null; quotes: Quote[] | null };
-type Universe = "stocks" | "crypto" | "wyckoff" | "canslim";
+type Universe = "stocks" | "crypto" | "wyckoff" | "canslim" | "minervini";
 
 const VN_BOARD = "VCB,BID,CTG,TCB,MBB,VPB,ACB,STB,HDB,VIB,LPB,SHB,FPT,HPG,VNM,VIC,VHM,VRE,NVL,PDR,GAS,PLX,MSN,MWG,SSI,VND,HCM,VCI,SHS,BSR,POW,REE,KDH,DXG,DCM,DPM,DGC,VHC,SAB,PNJ,GMD";
 
@@ -20,7 +21,15 @@ function ScreenerInner() {
   const params = useSearchParams();
   const rawU = params.get("universe");
   const initial: Universe =
-    rawU === "crypto" ? "crypto" : rawU === "wyckoff" ? "wyckoff" : rawU === "canslim" ? "canslim" : "stocks";
+    rawU === "crypto"
+      ? "crypto"
+      : rawU === "wyckoff"
+        ? "wyckoff"
+        : rawU === "canslim"
+          ? "canslim"
+          : rawU === "minervini"
+            ? "minervini"
+            : "stocks";
   const [universe, setUniverse] = useState<Universe>(initial);
   return (
     <div className="space-y-3">
@@ -35,6 +44,7 @@ function ScreenerInner() {
           <div className="seg mt-3">
             <button data-active={universe === "stocks"} onClick={() => setUniverse("stocks")}>Cổ phiếu VN ⭐</button>
             <button data-active={universe === "canslim"} onClick={() => setUniverse("canslim")}>CANSLIM</button>
+            <button data-active={universe === "minervini"} onClick={() => setUniverse("minervini")}>Minervini</button>
             <button data-active={universe === "wyckoff"} onClick={() => setUniverse("wyckoff")}>Wyckoff</button>
             <button data-active={universe === "crypto"} onClick={() => setUniverse("crypto")}>Crypto</button>
           </div>
@@ -46,6 +56,8 @@ function ScreenerInner() {
         <WyckoffScreener defaultSector={params.get("sector")} />
       ) : universe === "canslim" ? (
         <CanslimScreener defaultSector={params.get("sector")} />
+      ) : universe === "minervini" ? (
+        <MinerviniScreener defaultSector={params.get("sector")} />
       ) : (
         <VnScreener defaultSector={params.get("sector")} />
       )}
@@ -195,11 +207,12 @@ function VnScreener({ defaultSector }: { defaultSector: string | null }) {
         </div>
         <div className="border-t border-line px-3.5 py-2"><MetaLine meta={meta} /></div>
       </Panel>
-      <Panel title="CANSLIM & Wyckoff">
+      <Panel title="CANSLIM · Minervini · Wyckoff">
         <div className="text-[12px] leading-relaxed text-ink-2 space-y-1">
           <div>Tab <strong>CANSLIM</strong>: quét growth leaders (EPS/ROE/RS/new high) theo O'Neil.</div>
+          <div>Tab <strong>Minervini</strong>: Trend Template 8 tiêu chí Stage 2 (SEPA).</div>
           <div>Tab <strong>Wyckoff</strong>: quét Spring / UTAD / SOS / SOW trên rổ thanh khoản.</div>
-          <div className="text-text-muted">Cả hai đều là heuristic nghiên cứu — không phải tín hiệu mua bán.</div>
+          <div className="text-text-muted">Cả ba đều là heuristic nghiên cứu — không phải tín hiệu mua bán.</div>
         </div>
       </Panel>
     </>
@@ -280,7 +293,7 @@ function CryptoScreener() {
         <Unavailable title="Screener không khả dụng" note={res && !res.success ? res.error.message : undefined} />
       ) : (
         <Panel title={`Kết quả: ${data.rows.length} mã${isValidating ? " · đang cập nhật" : ""}`} pad={false}>
-          <div className={`overflow-x-auto transition-opacity ${isValidating ? "opacity-70" : ""}`}>
+          <div className={`overflow-x-auto transition-opacity ${isValidating ? "opacity-70" : ""`}>
             <table className="w-full min-w-[560px] text-[12px]">
               <thead>
                 <tr className="border-b border-line text-left text-[10px] uppercase tracking-wider text-ink-3">
