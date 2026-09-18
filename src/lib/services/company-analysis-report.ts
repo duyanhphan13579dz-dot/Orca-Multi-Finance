@@ -743,17 +743,6 @@ export async function generateCompanyAnalysisReport(
     `Điểm tổng hợp ~**${score}**/100 từ ${factors} nhóm tín hiệu (kỹ thuật / health / alpha) — chỉ mang tính research, không phải khuyến nghị mua/bán.`,
   );
 
-  const dataNotes: string[] = [];
-  if (!ratios) dataNotes.push("thiếu ratios");
-  if (!income.length) dataNotes.push("thiếu BCTC 2 kỳ");
-  if (!technical) dataNotes.push("chuỗi nến chưa đủ");
-  if (health?.scores?.overall == null) dataNotes.push("chưa có Financial Health");
-  overall.push(
-    dataNotes.length
-      ? `Lưu ý dữ liệu: ${dataNotes.join("; ")} — ưu tiên số đã verify, không nội suy khi thiếu nguồn.`
-      : "Dữ liệu từ pipeline ORCA (quote / BCTC / ratios / kỹ thuật); giá mục tiêu là minh họa research.",
-  );
-
   const coverage = [quote, bars.length, income.length, ratios, profile].filter(Boolean).length;
   const dataQuality: CompanyAnalysisReport["dataQuality"] =
     coverage >= 4 ? "HIGH" : coverage >= 2 ? "MEDIUM" : "LOW";
