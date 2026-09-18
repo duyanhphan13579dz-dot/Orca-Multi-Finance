@@ -6,6 +6,8 @@ import { VN_SECTOR_MAP } from "../vn/master";
 import { llmConfigured } from "../ai/gateway";
 import type { FreshnessStatus, Meta } from "../types";
 import { composeMorningFramework } from "./morning-brief-composer";
+import { buildMarketIntel, type BreadthData } from "./market-intel";
+import { formatBreadthParagraphs } from "./breadth-utils";
 
 export type DailyReportType = "morning_brief" | "intraday_brief" | "market_summary" | "strategy";
 
@@ -36,10 +38,14 @@ interface DailyCtx {
   meta: Meta;
   sessionState: VnSessionState;
   dateVi: string;
+  breadth: BreadthData | null;
 }
 
 async function buildCtx(): Promise<DailyCtx> {
-  const s = await buildMarketSnapshot();
+  const [s, intelRes] = await Promise.all([
+    buildMarketSnapshot(),
+    buildMarketIntel().catch(() => null),
+  ]);
   const session = getVnSession();
   const vnNow = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Ho_Chi_Minh" }));
   return {
@@ -52,6 +58,7 @@ async function buildCtx(): Promise<DailyCtx> {
       month: "2-digit",
       year: "numeric",
     }),
+    breadth: intelRes?.intel.breadth ?? null,
   };
 }
 
@@ -74,12 +81,10 @@ function buildScenarios(ctx: DailyCtx): ReportScenario[] {
   const baseP = Math.round(clamp(58 - Math.abs(pip) * 22, 30, 60));
   const bullP = Math.round(clamp(21 + (pip > 0 ? pip * 20 : 0), 10, 45));
   const bearP = Math.max(1, 100 - baseP - bullP);
-
   const idx = ctx.snap.indices?.[0];
   const zones = idx
     ? `VN-Index ${idx.value.toLocaleString("vi-VN")} — theo dõi phản ứng quanh ${(idx.value * 0.99).toFixed(0)}–${(idx.value * 1.01).toFixed(0)} điểm trong phiên`
     : "Vùng tham khảo kỹ thuật của VN-Index sẽ được định vị ngay khi VNStock kết nối (hệ thống không phác thảo vùng giá khi thiếu dữ liệu)";
-
   const cryptoDir = ctx.snap.crypto
     ? ctx.snap.crypto.summary.avgChangePercent >= 0
       ? "tích cực"
@@ -90,42 +95,34 @@ function buildScenarios(ctx: DailyCtx): ReportScenario[] {
     goldDir && goldDir.changePercent != null && goldDir.changePercent > 0.4
       ? "dòng tiền phòng thủ vào vàng tăng"
       : "dòng tiền phòng thủ chưa trội";
-
   return [
     {
       label: "Base",
       probabilityRange: `${baseP - 5}–${baseP + 5}%`,
       drivers: `Động lượng hiện tại duy trì: sắc thái crypto ${cryptoDir}, ${safeFlow}; không có cú sốc vĩ mô mới trong phiên.`,
       indexZones: zones,
-      sectorImpact:
-        "Dòng tiền chọn lọc theo nhóm ngành có câu chuyện riêng; blue chips giữ vai trò giằng điểm số.",
-      risks:
-        "Thanh khoản yếu có thể khiến biên dao động của từng mã bị phóng đại dù chỉ số chung biến động nhẹ.",
+      sectorImpact: "Dòng tiền chọn lọc theo nhóm ngành có câu chuyện riêng; blue chips giữ vai trò giằng điểm số.",
+      risks: "Thanh khoản yếu có thể khiến biên dao động của từng mã bị phóng đại dù chỉ số chung biến động nhẹ.",
     },
     {
       label: "Bull",
       probabilityRange: `${bullP - 4}–${bullP + 4}%`,
-      drivers:
-        "Risk-on đồng thuận: crypto vượt kháng cự ngắn hạn, USD dịu lại, hàng hóa đầu vào ổn định; tin doanh nghiệp tích cực lan sang tâm lý nhóm ngành.",
+      drivers: "Risk-on đồng thuận: crypto vượt kháng cự ngắn hạn, USD dịu lại, hàng hóa đầu vào ổn định; tin doanh nghiệp tích cực lan sang tâm lý nhóm ngành.",
       indexZones: idx
         ? `Xác nhận khi VN-Index vượt ${(idx.value * 1.005).toFixed(0)} kèm độ rộng mở rộng rõ rệt`
         : "Xác nhận cần một phiên tăng điểm với thanh khoản vượt trung bình 20 phiên",
-      sectorImpact:
-        "Nhóm beta cao (chứng khoán, bất động sản) thường dẫn; ngân hàng lớn cung cấp nền ổn định.",
+      sectorImpact: "Nhóm beta cao (chứng khoán, bất động sản) thường dẫn; ngân hàng lớn cung cấp nền ổn định.",
       risks: "Tăng nhanh nhưng thanh khoản không theo kịp — dễ hình thành nến rút chân chiều ngược lại.",
     },
     {
       label: "Bear",
       probabilityRange: `${bearP - 3}–${bearP + 3}%`,
-      drivers:
-        "Khủng hoảng bất ngờ vĩ mô/địa chính trị, USD bật mạnh, hoặc tin xấu doanh nghiệp lớn; hợp đồng phái sinh khuếch đại rung lắc.",
+      drivers: "Khủng hoảng bất ngờ vĩ mô/địa chính trị, USD bật mạnh, hoặc tin xấu doanh nghiệp lớn; hợp đồng phái sinh khuếch đại rung lắc.",
       indexZones: idx
         ? `Rủi ro khi mất ${(idx.value * 0.99).toFixed(0)} với bán chiếm ưu thế vượt rõ`
         : "Rủi ro khi diễn biến bán mở rộng ra toàn thị trường thay vì gói gọn trong một nhóm",
-      sectorImpact:
-        "Nhóm phòng thủ (tiêu dùng thiết yếu, dược) tương đối kháng; tài sản nhạy lãi suất/đòn bẩy chịu áp lực trước.",
-      risks:
-        "Khi rủi ro hệ thống khởi động, correlation tăng và đa dạng hóa ngành giảm hiệu quả bảo vệ.",
+      sectorImpact: "Nhóm phòng thủ (tiêu dùng thiết yếu, dược) tương đối kháng; tài sản nhạy lãi suất/đòn bẩy chịu áp lực trước.",
+      risks: "Khi rủi ro hệ thống khởi động, correlation tăng và đa dạng hóa ngành giảm hiệu quả bảo vệ.",
     },
   ];
 }
@@ -154,6 +151,11 @@ function composeIntraday(ctx: DailyCtx): { sections: DailyReport["sections"]; as
         ),
         "Độ rộng là bộ lọc quan trọng cho phiên chiều: chỉ số tăng nhưng số mã dẫn dắt thu hẹp cho thấy lực kéo tập trung; chỉ số đi ngang cùng độ rộng cải thiện thường là tín hiệu tích lũy lành mạnh hơn.",
       ],
+    },
+    {
+      heading: "Độ rộng thị trường",
+      tone: "neutral",
+      paragraphs: formatBreadthParagraphs(ctx.breadth),
     },
     {
       heading: "Dòng tiền, thanh khoản và nhóm dẫn dắt",
@@ -190,7 +192,7 @@ function composeIntraday(ctx: DailyCtx): { sections: DailyReport["sections"]; as
 
 function composeMorning(ctx: DailyCtx): { sections: DailyReport["sections"]; assumptions: string[] } {
   return composeMorningFramework(
-    { snap: ctx.snap, sessionState: ctx.sessionState, dateVi: ctx.dateVi },
+    { snap: ctx.snap, sessionState: ctx.sessionState, dateVi: ctx.dateVi, breadth: ctx.breadth },
     assumptionsNote(ctx),
   );
 }
@@ -214,6 +216,12 @@ function composeSummary(ctx: DailyCtx): { sections: DailyReport["sections"]; ass
       p.body[0] ?? "",
       p.body[1] ?? "",
     ],
+  });
+
+  sections.push({
+    heading: "Độ rộng thị trường VN",
+    tone: "neutral",
+    paragraphs: formatBreadthParagraphs(ctx.breadth),
   });
 
   if (snap.crypto) {
@@ -413,7 +421,6 @@ export async function listReports(type: string | null, limit = 30): Promise<Repo
     const { db } = await import("@/db");
     const { reports } = await import("@/db/schema");
     const { desc, eq } = await import("drizzle-orm");
-    let q = db.select().from(reports).orderBy(desc(reports.generatedAt)).limit(limit);
     if (type) {
       const rows = await db
         .select()
@@ -430,7 +437,7 @@ export async function listReports(type: string | null, limit = 30): Promise<Repo
         freshness: r.freshness ?? null,
       }));
     }
-    const rows = await q;
+    const rows = await db.select().from(reports).orderBy(desc(reports.generatedAt)).limit(limit);
     return rows.map((r) => ({
       id: r.id,
       type: r.type,
