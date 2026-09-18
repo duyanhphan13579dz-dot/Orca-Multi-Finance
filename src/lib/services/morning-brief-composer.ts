@@ -8,6 +8,16 @@ interface MorningCtx {
   snap: MarketSnapshot;
   sessionState: VnSessionState;
   dateVi: string;
+  breadth?: {
+    available: boolean;
+    advancers: number;
+    decliners: number;
+    unchanged: number;
+    adRatio?: number | null;
+    advancePct?: number | null;
+    netAdvances?: number | null;
+    regimeVi?: string | null;
+  } | null;
 }
 
 const clamp = (x: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, x));
@@ -243,6 +253,30 @@ export function composeMorningFramework(
       "VN-Index UNAVAILABLE — không suy diễn điểm số. Khi VNDirect/VNStock LIVE, block này đủ 10 trường (điểm, %, GTGD, breadth, top kéo/đè, range).",
     );
   }
+  const br = ctx.breadth;
+  if (br?.available) {
+    const ratio =
+      br.adRatio == null ? "—" : br.adRatio >= 10 ? ">10" : br.adRatio.toFixed(2);
+    const pctBr = br.advancePct != null ? `${br.advancePct.toFixed(1)}%` : "—";
+    const net =
+      br.netAdvances == null
+        ? "—"
+        : `${br.netAdvances >= 0 ? "+" : ""}${br.netAdvances}`;
+    mktParas.push(
+      `3.3 Độ rộng VN: ${br.advancers}↑ / ${br.decliners}↓ / ${br.unchanged}— · A/D ${ratio} · mã tăng ${pctBr} · net ${net}${br.regimeVi ? ` · ${br.regimeVi}` : ""}.`,
+    );
+    mktParas.push(
+      br.regimeVi?.includes("Mở") || br.regimeVi?.includes("tăng")
+        ? "Độ rộng ủng hộ nhịp tăng — xác nhận thêm KL đầu phiên trước khi nâng tỷ trọng."
+        : br.regimeVi?.includes("Thu") || br.regimeVi?.includes("giảm")
+          ? "Độ rộng nghiêng bán — chỉ số xanh dễ là lực kéo ít mã; tránh đuổi khi breadth thu hẹp."
+          : "Độ rộng trung tính — ưu tiên mã có KL thực hơn đánh chỉ số.",
+    );
+  } else {
+    mktParas.push(
+      "3.3 Độ rộng VN: chưa có session-stats tăng/giảm — không suy diễn A/D; ưu tiên quan sát 30 phút đầu phiên.",
+    );
+  }
   mktParas.push(
     `Pulse engine: score ${p.score >= 0 ? "+" : ""}${p.score.toFixed(2)} (−1..+1) · ${p.headline}`,
   );
@@ -265,7 +299,6 @@ export function composeMorningFramework(
       })
       .filter((x) => x.label && !/^han-[a-z0-9-]+$/i.test(x.label))
       .sort((a, b) => b.score - a.score);
-
     const shown = ranked.slice(0, 8);
     if (!shown.length) {
       for (const c of comms.slice(0, 8)) {
@@ -353,7 +386,7 @@ export function composeMorningFramework(
     tone,
     paragraphs: sanitizeParas([
       `TRẠNG THÁI: ${regime}`,
-      `ĐỘNG LƯỢNG: ${momentum}/100 (pulse score ${p.score >= 0 ? "+" : ""}${p.score.toFixed(2)}; cấu thành từ crypto breadth + cross-asset — chưa gộp đủ breadth/foreign VN cho tới khi session-stats LIVE).`,
+      `ĐỘNG LƯỢNG: ${momentum}/100 (pulse score ${p.score >= 0 ? "+" : ""}${p.score.toFixed(2)}; cấu thành từ crypto breadth + cross-asset + độ rộng VN khi LIVE).`,
       s1 != null
         ? `VÙNG KỸ THUẬT: Hỗ trợ S1 ≈ ${s1} (1% dưới đóng gần nhất) · S2 ≈ ${s2} · Kháng cự R1 ≈ ${r1} · R2 ≈ ${r2}. Cơ sở: % quanh giá đóng — thay bằng MA20/50/POC khi chuỗi nến đủ.`
         : "VÙNG KỸ THUẬT: Chưa định vị được vì thiếu VN-Index LIVE — không phác thảo vùng giá giả.",
