@@ -129,8 +129,9 @@ async function probeOne(t: LatencyProbeTarget, timeoutMs: number): Promise<Probe
     }
     const latencyMs = Math.round(performance.now() - started);
     const ok = res.status > 0 && res.status < 500;
-    if (ok) recordSuccess(`net:${t.id}`, latencyMs);
-    else recordFailure(`net:${t.id}`, `http_${res.status}`, latencyMs);
+    // recordSuccess(provider, latencyMs, domain); recordFailure(provider, error, domain)
+    if (ok) recordSuccess(`net:${t.id}`, latencyMs, t.domain);
+    else recordFailure(`net:${t.id}`, `http_${res.status}`, t.domain);
     return {
       id: t.id,
       label: t.label,
@@ -146,7 +147,7 @@ async function probeOne(t: LatencyProbeTarget, timeoutMs: number): Promise<Probe
     const latencyMs = Math.round(performance.now() - started);
     const msg = e instanceof Error ? e.message : String(e);
     const short = msg.includes("abort") || msg.includes("Abort") ? "timeout" : msg.slice(0, 120);
-    recordFailure(`net:${t.id}`, short, latencyMs);
+    recordFailure(`net:${t.id}`, short, t.domain);
     return {
       id: t.id,
       label: t.label,
