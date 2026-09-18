@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useSyncExternalStore } from "react";
+import { useRef, useSyncExternalStore } from "react";
 import useSWR from "swr";
 import type { ApiResponse } from "./types";
 import { getSettingsSnapshot, resolveRefresh } from "./settings";
@@ -11,6 +11,7 @@ import { getSettingsSnapshot, resolveRefresh } from "./settings";
  * liveUpdates off → no polling; lowDataMode → aggressively throttled;
  * backgroundRefresh → revalidate on window focus; autoReconnect → SWR retry.
  * Tab hidden → polling paused (saves battery + backend load).
+ * Adaptive: LIVE → tighter poll; STALE/UNAVAILABLE → back off.
  */
 
 const FETCH_TIMEOUT_MS = 22_000;
@@ -91,8 +92,17 @@ export function useApi<T>(url: string | null, opts?: { refreshInterval?: number;
   const visible = usePageVisible();
 
   const baseRefresh = resolveRefresh(opts?.refreshInterval);
-  // Pause polling in background tabs — big win on mobile battery & server load
-  const refreshInterval = visible && rt.liveUpdates ? baseRefresh : 0;
+  const freshnessRef = useRef<string | undefined>(undefined);
+
+  // Adaptive: LIVE → tighter poll; STALE/UNAVAILABLE → back off; pause in background tabs
+  const adaptiveBase = (() => {
+    const f = freshnessRef.current;
+    if (f === "STALE" || f === "UNAVAILABLE") return Math.max(baseRefresh, 28_000);
+    if (f === "DELAYED" || f === "DEGRADED") return Math.max(baseRefresh, 18_000);
+    if (f === "LIVE") return Math.max(8_000, Math.min(baseRefresh, 12_000));
+    return baseRefresh;
+  })();
+  const refreshInterval = visible && rt.liveUpdates ? adaptiveBase : 0;
 
   const { data, error, isLoading, isValidating, mutate } = useSWR<ApiResponse<T>>(
     url,
@@ -108,8 +118,18 @@ export function useApi<T>(url: string | null, opts?: { refreshInterval?: number;
       keepPreviousData: true,
       dedupingInterval: rt.lowDataMode ? 20_000 : 6_000,
       suspense: false,
+      onSuccess: (payload) => {
+        if (payload?.success && payload.meta?.freshness) {
+          freshnessRef.current = payload.meta.freshness;
+        }
+      },
     },
   );
+
+  // Keep ref in sync when data already present (hydration / cache)
+  if (data?.success && data.meta?.freshness && freshnessRef.current !== data.meta.freshness) {
+    freshnessRef.current = data.meta.freshness;
+  }
 
   return {
     res: data ?? null,
