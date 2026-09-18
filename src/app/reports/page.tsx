@@ -214,6 +214,7 @@ function ReportView({ report, meta, onPrint }: { report: DailyReport; meta: impo
             </section>
           ))}
 
+          {report.scenarios.length > 0 && (
           <section>
             <h2 className="mb-1.5 flex items-center gap-2 text-[14px] font-semibold">
               <span className="size-1.5 rounded-full bg-accent-primary" /> Kịch bản thị trường (Base / Bull / Bear)
@@ -233,6 +234,7 @@ function ReportView({ report, meta, onPrint }: { report: DailyReport; meta: impo
               ))}
             </div>
           </section>
+          )}
         </div>
 
         <footer className="assump mt-5 border-t border-dashed border-line pt-3 text-[10.5px] leading-relaxed text-text-muted">
