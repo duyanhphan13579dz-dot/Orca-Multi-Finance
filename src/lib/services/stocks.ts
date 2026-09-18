@@ -24,6 +24,12 @@ import {
 import { getVndSymbolForeignFlow } from "../providers/vndirect-foreign-symbol";
 import { getVnOrderBook, type VnOrderBook } from "./stock-orderbook";
 import { getMultiQuotes } from "./multi-quote";
+import {
+  getPublicIndices,
+  getPublicQuotes,
+  getPublicOhlcv,
+  LIQUID_BOARD,
+} from "../providers/public-vn-feed";
 
 const INDEX_PRIORITY = ["VNINDEX", "VN30", "HNX", "UPCOM", "HNX30", "VN100"];
 
@@ -75,25 +81,43 @@ export async function getVnIndices(): Promise<{ items: IndexQuote[]; meta: Meta 
   bootVndLive();
   try {
     const r = await vndirect.getVndIndices();
-    return {
-      items: sortIndices(r.items),
-      meta: buildMeta({ source: "vndirect", sourceTimestampMs: r.sourceTs ?? Date.now() }),
-    };
+    if (r.items?.length) {
+      return {
+        items: sortIndices(r.items),
+        meta: buildMeta({ source: "vndirect", sourceTimestampMs: r.sourceTs ?? Date.now() }),
+      };
+    }
   } catch (e) {
-    if (ssiFcConfigured()) {
-      try {
-        const ssi = await getSsiIndices();
+    console.warn("[getVnIndices] vndirect", e);
+  }
+  if (ssiFcConfigured()) {
+    try {
+      const ssi = await getSsiIndices();
+      if (ssi.items?.length) {
         return {
           items: sortIndices(ssi.items),
           meta: buildMeta({ source: "ssi-fcdata", sourceTimestampMs: ssi.sourceTs ?? undefined }),
         };
-      } catch {
-        /* */
       }
+    } catch (e) {
+      console.warn("[getVnIndices] ssi", e);
     }
-    console.warn("[getVnIndices]", e);
-    return null;
   }
+  try {
+    const pub = await getPublicIndices(["VNINDEX", "VN30", "HNX", "UPCOM"]);
+    return {
+      items: sortIndices(pub.items),
+      meta: buildMeta({
+        source: "yahoo-public",
+        sourceTimestampMs: pub.sourceTs ?? Date.now(),
+        note: "Fallback Yahoo public — chỉ số có thể trễ vài phút",
+        partial: true,
+      }),
+    };
+  } catch (e) {
+    console.warn("[getVnIndices] public", e);
+  }
+  return null;
 }
 
 export async function getVnQuotes(symbols: string[]): Promise<{ quotes: Quote[]; meta: Meta } | null> {
@@ -130,25 +154,45 @@ export async function getVnQuotes(symbols: string[]): Promise<{ quotes: Quote[];
   }
   try {
     const r = await vndirect.getVndQuotes(uniq);
-    return {
-      quotes: r.quotes,
-      meta: buildMeta({ source: "vndirect", sourceTimestampMs: r.sourceTs ?? Date.now() }),
-    };
+    if (r.quotes?.length) {
+      return {
+        quotes: r.quotes,
+        meta: buildMeta({ source: "vndirect", sourceTimestampMs: r.sourceTs ?? Date.now() }),
+      };
+    }
   } catch (e) {
-    if (ssiFcConfigured()) {
-      try {
-        const ssi = await getSsiQuotes(uniq);
+    console.warn("[getVnQuotes] vndirect", e);
+  }
+  if (ssiFcConfigured()) {
+    try {
+      const ssi = await getSsiQuotes(uniq);
+      if (ssi.quotes?.length) {
         return {
           quotes: ssi.quotes,
           meta: buildMeta({ source: "ssi-fcdata", sourceTimestampMs: ssi.sourceTs ?? undefined }),
         };
-      } catch {
-        /* */
       }
+    } catch (e) {
+      console.warn("[getVnQuotes] ssi", e);
     }
-    console.warn("[getVnQuotes]", e);
-    return null;
   }
+  try {
+    const pub = await getPublicQuotes(uniq);
+    if (pub.quotes.length) {
+      return {
+        quotes: pub.quotes,
+        meta: buildMeta({
+          source: "vps-public",
+          sourceTimestampMs: pub.sourceTs ?? Date.now(),
+          note: "Fallback VPS public datafeed (no key)",
+          partial: pub.quotes.length < uniq.length,
+        }),
+      };
+    }
+  } catch (e) {
+    console.warn("[getVnQuotes] vps", e);
+  }
+  return null;
 }
 
 export async function getVnOhlcv(
@@ -186,9 +230,24 @@ export async function getVnOhlcv(
       }),
     };
   } catch (e) {
-    console.warn("[getVnOhlcv]", e);
-    return null;
+    console.warn("[getVnOhlcv] primary", e);
   }
+  try {
+    const bars = await getPublicOhlcv(sym, limit, isIndex ? "index" : "stock");
+    if (bars.length) {
+      return {
+        bars,
+        meta: buildMeta({
+          source: "entrade-public",
+          sourceTimestampMs: Date.now(),
+          note: "Fallback Entrade public OHLCV",
+        }),
+      };
+    }
+  } catch (e2) {
+    console.warn("[getVnOhlcv] entrade", e2);
+  }
+  return null;
 }
 
 export async function getVnMarketBoard(): Promise<{
@@ -208,20 +267,48 @@ export async function getVnMarketBoard(): Promise<{
         sourceTs: null as number | null,
       })),
     ]);
-    return {
-      quotes: mq.quotes,
-      indices: sortIndices(idx.items),
-      universeSize: mq.quotes.length,
-      sessionDate: mq.sessionDate,
-      meta: buildMeta({
-        source: "vndirect",
-        sourceTimestampMs: mq.sourceTs ?? Date.now(),
-      }),
-    };
+    if (mq.quotes?.length) {
+      return {
+        quotes: mq.quotes,
+        indices: sortIndices(idx.items),
+        universeSize: mq.quotes.length,
+        sessionDate: mq.sessionDate,
+        meta: buildMeta({
+          source: "vndirect",
+          sourceTimestampMs: mq.sourceTs ?? Date.now(),
+        }),
+      };
+    }
   } catch (e) {
-    console.warn("[getVnMarketBoard]", e);
-    return null;
+    console.warn("[getVnMarketBoard] vndirect", e);
   }
+  try {
+    const [pubQ, pubI] = await Promise.all([
+      getPublicQuotes(LIQUID_BOARD),
+      getPublicIndices(["VNINDEX", "VN30", "HNX", "UPCOM"]).catch(() => ({
+        items: [] as IndexQuote[],
+        sourceTs: null as number | null,
+      })),
+    ]);
+    if (pubQ.quotes.length) {
+      const today = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Ho_Chi_Minh" });
+      return {
+        quotes: pubQ.quotes,
+        indices: sortIndices(pubI.items),
+        universeSize: pubQ.quotes.length,
+        sessionDate: today,
+        meta: buildMeta({
+          source: "vps-public+yahoo",
+          sourceTimestampMs: pubQ.sourceTs ?? Date.now(),
+          note: "Fallback bảng thanh khoản VPS — không phải full HOSE",
+          partial: true,
+        }),
+      };
+    }
+  } catch (e) {
+    console.warn("[getVnMarketBoard] public", e);
+  }
+  return null;
 }
 
 export async function getVnUniverseList(): Promise<{
