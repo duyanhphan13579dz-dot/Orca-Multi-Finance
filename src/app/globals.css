@@ -189,6 +189,55 @@ body {
   }
 }
 
+/* —— Responsive panel layout —— */
+.panel {
+  min-width: 0;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 10%);
+}
+.panel-header > :first-child {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.panel-actions {
+  min-width: 0;
+}
+.panel-actions > * {
+  min-width: 0;
+}
+@media (max-width: 767px) {
+  .panel {
+    border-radius: 10px;
+  }
+  .panel-header {
+    gap: 0.625rem;
+    padding: 0.6875rem 0.75rem 0.5rem;
+  }
+  .panel-title {
+    font-size: 0.75rem;
+  }
+  .panel-body {
+    padding: 0.75rem;
+  }
+  .panel-footer {
+    padding: 0.5rem 0.75rem 0.625rem;
+  }
+  .panel-header:has(.panel-actions) {
+    flex-wrap: wrap;
+  }
+  .panel-header:has(.panel-actions) .panel-actions {
+    flex: 1 1 100%;
+    width: 100%;
+  }
+  .panel-header:has(.panel-actions) .panel-actions > * {
+    max-width: 100%;
+  }
+}
+@media (min-width: 768px) {
+  .panel:hover {
+    border-color: color-mix(in srgb, var(--color-border-default) 72%, var(--color-border-subtle));
+  }
+}
+
 /* —— Ticker tape marquee —— */
 @keyframes ticker-marquee {
   from {
