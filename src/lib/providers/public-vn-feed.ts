@@ -87,7 +87,8 @@ export async function getPublicOhlcv(
     provider: "entrade",
     timeoutMs: 10_000,
     retries: 1,
-    headers: { Accept: "application/json", "User-Agent": "Orca-Multi-Finance/1.0" });
+    headers: { Accept: "application/json", "User-Agent": "Orca-Multi-Finance/1.0" },
+  });
   if (!res.ok || !res.data?.t?.length) {
     throw new ProviderError(`entrade ohlcv ${sym}: ${res.error ?? "empty"}`, PUBLIC_VN);
   }
