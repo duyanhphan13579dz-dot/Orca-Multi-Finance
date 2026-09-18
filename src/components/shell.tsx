@@ -231,9 +231,8 @@ export function AppShell({ children }: { children: ReactNode }) {
           <div className="page-scroll min-h-0 flex-1">{children}</div>
         </main>
         <footer className="border-t border-border-subtle px-3 py-2 text-[10px] leading-relaxed text-text-muted sm:px-4 sm:py-2.5 sm:text-[10.5px] pb-[max(8px,env(safe-area-inset-bottom))]">
-          <span className="sm:hidden">ORCA · nghiên cứu — không phải khuyến nghị · LIVE/FRESH/DELAYED/STALE</span>
-          <span className="hidden sm:inline">
-            ORCA Financial · dữ liệu phục vụ nghiên cứu — không phải khuyến nghị đầu tư · nguồn: VNStock · Binance · Biquote · Vietnambiz · Simplize · RSS · mọi dữ liệu gắn nhãn LIVE/FRESH/DELAYED/STALE/DEGRADED/UNAVAILABLE
+          <span>
+            ORCA FINANCIAL — Dữ liệu nghiên cứu. Không phải khuyến nghị đầu tư — Nhà đầu tư tự chịu trách nhiệm với các quyết định của mình.
           </span>
         </footer>
       </div>
@@ -273,7 +272,6 @@ function MarketChip() {
 
 function Clock() {
   const { settings } = useSettings();
-  // Keep the server and first client render deterministic; the live time starts after hydration.
   const [now, setNow] = useState<Date | null>(null);
   useEffect(() => {
     const initial = window.setTimeout(() => setNow(new Date()), 0);
@@ -372,7 +370,6 @@ function UserMenu() {
   const router = useRouter();
   const { settings } = useSettings();
   const [open, setOpen] = useState(false);
-  const [clockMs] = useState(() => Date.now());
   const ref = useRef<HTMLDivElement>(null);
   const { data: me, mutate } = useApi<{ user: { email: string; name: string | null } }>("/api/v1/auth/me");
 
@@ -407,39 +404,39 @@ function UserMenu() {
           {me?.user ? (
             <>
               <div className="border-b border-border-subtle px-3 py-2.5">
-                <div className="text-[13px] font-medium text-text-primary">{displayName}</div>
-                <div className="truncate text-[11px] text-text-muted">{me.user.email}</div>
+                <div className="truncate text-[12.5px] font-semibold text-text-primary">{displayName || me.user.email}</div>
+                <div className="truncate text-[10.5px] text-text-muted">{me.user.email}</div>
               </div>
-              <MenuLink href="/settings" label="Cài đặt" onClick={() => setOpen(false)} />
+              <Link
+                href="/settings"
+                onClick={() => setOpen(false)}
+                className="flex items-center gap-2 px-3 py-2.5 text-[12.5px] text-text-secondary hover:bg-surface-elevated hover:text-text-primary"
+              >
+                <Settings className="size-3.5" /> Cài đặt
+              </Link>
               <button
                 onClick={async () => {
-                  setOpen(false);
                   await fetch("/api/v1/auth/logout", { method: "POST" });
-                  mutate();
+                  void mutate();
+                  setOpen(false);
                   router.refresh();
                 }}
-                className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-[12.5px] text-negative hover:bg-surface-elevated"
+                className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-[12.5px] text-text-secondary hover:bg-surface-elevated hover:text-text-primary"
               >
                 <LogOut className="size-3.5" /> Đăng xuất
               </button>
             </>
           ) : (
-            <MenuLink href="/login" label="Đăng nhập" onClick={() => setOpen(false)} />
+            <Link
+              href="/login"
+              onClick={() => setOpen(false)}
+              className="block px-3 py-2.5 text-[12.5px] text-text-secondary hover:bg-surface-elevated hover:text-text-primary"
+            >
+              Đăng nhập
+            </Link>
           )}
         </div>
       )}
     </div>
-  );
-}
-
-function MenuLink({ href, label, onClick }: { href: string; label: string; onClick: () => void }) {
-  return (
-    <Link
-      href={href}
-      onClick={onClick}
-      className="block px-3 py-2.5 text-[12.5px] text-text-secondary transition-colors hover:bg-surface-elevated hover:text-text-primary"
-    >
-      {label}
-    </Link>
   );
 }
