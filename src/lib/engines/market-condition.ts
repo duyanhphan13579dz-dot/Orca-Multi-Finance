@@ -10,7 +10,7 @@ import "server-only";
  * Components (0..100, 50 = neutral):
  *   trend       — VN index momentum (fallback: cross-asset risk proxy)
  *   breadth     — advancers vs decliners participation
- *   liquidity   — traded value vs its own recent baseline
+ *   liquidity   — traded value vs its own recent baseline (or absolute bands)
  *   flow        — foreign/proprietary net flow direction
  *   globalRisk  — DXY (inverse) + US yields proxy + oil shock
  *   crossAsset  — BTC/Gold/Oil composite risk appetite
@@ -108,7 +108,7 @@ export function computeMarketCondition(inp: ConditionInputs): MarketConditionRes
   }
 
   /* -------------------------- 3. liquidity (0.16) ------------------------- */
-  if (inp.liquidity?.valueTraded != null && inp.liquidity.baseline) {
+  if (inp.liquidity?.valueTraded != null && inp.liquidity.valueTraded > 0 && inp.liquidity.baseline != null && inp.liquidity.baseline > 0) {
     const r = inp.liquidity.valueTraded / inp.liquidity.baseline;
     comps.push({
       key: "liquidity",
@@ -119,8 +119,30 @@ export function computeMarketCondition(inp: ConditionInputs): MarketConditionRes
       inputs: { value_traded: inp.liquidity.valueTraded, baseline_20d: inp.liquidity.baseline, ratio: round1(r) },
       available: true,
     });
+  } else if (inp.liquidity?.valueTraded != null && inp.liquidity.valueTraded > 0) {
+    // Không có baseline 20 phiên: chấm theo băng GTGD tuyệt đối (VND) — HOSE thường 10–30 nghìn tỷ/phiên
+    const v = inp.liquidity.valueTraded;
+    let scoreAbs: number;
+    if (v < 5e12) scoreAbs = 28;
+    else if (v < 8e12) scoreAbs = 36;
+    else if (v < 12e12) scoreAbs = 45;
+    else if (v < 16e12) scoreAbs = 52;
+    else if (v < 20e12) scoreAbs = 58;
+    else if (v < 25e12) scoreAbs = 65;
+    else if (v < 35e12) scoreAbs = 72;
+    else scoreAbs = 80;
+    comps.push({
+      key: "liquidity",
+      label: "Thanh khoản",
+      score: scoreAbs,
+      weight: 0.16,
+      formula: "băng GTGD tuyệt đối (VND) khi thiếu baseline 20 phiên",
+      inputs: { value_traded: v, baseline_20d: null },
+      available: true,
+      note: "Điểm theo GTGD tuyệt đối — chưa có baseline 20 phiên",
+    });
   } else {
-    comps.push({ key: "liquidity", label: "Thanh khoản", score: null, weight: 0.16, formula: "50 + (value/baseline − 1) × 60", inputs: {}, available: false, note: "Cần dữ liệu giá trị giao dịch từ VNStock" });
+    comps.push({ key: "liquidity", label: "Thanh khoản", score: null, weight: 0.16, formula: "50 + (value/baseline − 1) × 60", inputs: {}, available: false, note: "Cần dữ liệu giá trị giao dịch từ provider VN" });
   }
 
   /* ----------------------------- 4. flow (0.14) --------------------------- */
@@ -144,8 +166,8 @@ export function computeMarketCondition(inp: ConditionInputs): MarketConditionRes
   /* -------------------------- 5. global risk (0.12) ----------------------- */
   const ca = inp.crossAsset;
   if (ca && (ca.dxy != null || ca.wti != null)) {
-    const dxyPart = ca.dxy != null ? -ca.dxy * 12 : 0; // USD mạnh → áp lực lên EM
-    const oilShock = ca.wti != null ? -Math.max(0, Math.abs(ca.wti) - 3) * 3 : 0; // sốc giá dầu 2 chiều
+    const dxyPart = ca.dxy != null ? -ca.dxy * 12 : 0;
+    const oilShock = ca.wti != null ? -Math.max(0, Math.abs(ca.wti) - 3) * 3 : 0;
     comps.push({
       key: "globalRisk",
       label: "Rủi ro toàn cầu",
@@ -162,7 +184,7 @@ export function computeMarketCondition(inp: ConditionInputs): MarketConditionRes
   /* -------------------------- 6. cross-asset (0.10) ----------------------- */
   if (ca && (ca.btc != null || ca.gold != null)) {
     const btcPart = ca.btc != null ? ca.btc * 3 : 0;
-    const goldPart = ca.gold != null ? -ca.gold * 4 : 0; // vàng tăng mạnh = né rủi ro
+    const goldPart = ca.gold != null ? -ca.gold * 4 : 0;
     comps.push({
       key: "crossAsset",
       label: "Khẩu vị rủi ro liên tài sản",
@@ -199,7 +221,6 @@ export function computeMarketCondition(inp: ConditionInputs): MarketConditionRes
 
   const confidence: MarketConditionResult["confidence"] = coverage >= 0.7 ? "HIGH" : coverage >= 0.4 ? "MEDIUM" : "LOW";
 
-  /* cross-asset state (independent of VN availability) */
   let crossAssetState: MarketConditionResult["crossAssetState"] = "NEUTRAL";
   if (ca) {
     const riskOn = (ca.btc ?? 0) > 0.5 && (ca.dxy ?? 0) < 0.15;
@@ -207,12 +228,11 @@ export function computeMarketCondition(inp: ConditionInputs): MarketConditionRes
     crossAssetState = riskOn && !riskOff ? "RISK ON" : riskOff && !riskOn ? "RISK OFF" : riskOn && riskOff ? "MIXED" : "NEUTRAL";
   }
 
-  /* drivers & risks derived from component deviation from neutral */
   const sorted = [...active].sort((a, b) => Math.abs((b.score as number) - 50) - Math.abs((a.score as number) - 50));
   const drivers = sorted.filter((c) => (c.score as number) >= 53).slice(0, 3).map((c) => describe(c, true));
   const risks = sorted.filter((c) => (c.score as number) <= 47).slice(0, 3).map((c) => describe(c, false));
   if (!drivers.length) drivers.push("Chưa có cấu phần nào đủ mạnh để xem là động lực dẫn dắt — thị trường thiếu chất xúc tác rõ ràng.");
-  if (!risks.length) risks.push("Không có cấu phần nào ở vùng cảnh báo tại thờ điểm đánh giá.");
+  if (!risks.length) risks.push("Không có cấu phần nào ở vùng cảnh báo tại thời điểm đánh giá.");
   const missing = comps.filter((c) => !c.available);
   if (missing.length) risks.push(`Độ phủ dữ liệu ${(coverage * 100).toFixed(0)}% — thiếu: ${missing.map((m) => m.label.toLowerCase()).join(", ")}.`);
 
@@ -224,7 +244,7 @@ function describe(c: ScoreComponent, positive: boolean): string {
   const map: Record<ScoreComponent["key"], [string, string]> = {
     trend: ["Xu hướng chỉ số đang nghiêng tích cực", "Xu hướng chỉ số suy yếu"],
     breadth: ["Độ rộng mở rộng — nhịp tăng có sự tham gia rộng", "Độ rộng thu hẹp — nhịp vận động tập trung ở ít mã"],
-    liquidity: ["Thanh khoản cải thiện so với nền 20 phiên", "Thanh khoản suy giảm dưới nền 20 phiên"],
+    liquidity: ["Thanh khoản ở mức hỗ trợ nhịp vận động", "Thanh khoản mỏng — biên dao động dễ phóng đại"],
     flow: ["Dòng vốn ngoại/tự doanh nghiêng mua ròng", "Dòng vốn ngoại/tự doanh nghiêng bán ròng"],
     globalRisk: ["Bối cảnh quốc tế hỗ trợ (USD dịu, giá dầu ổn)", "Bối cảnh quốc tế gây áp lực (USD mạnh hoặc sốc giá dầu)"],
     crossAsset: ["Khẩu vị rủi ro liên tài sản tích cực", "Dòng tiền phòng thủ chiếm ưu thế trên các lớp tài sản"],
@@ -242,11 +262,6 @@ export interface ContributionRow {
   indexPoints: number | null;
 }
 
-/**
- * INDEX POINT CONTRIBUTION = index_value × weight × (price_change_% / 100)
- * Distinguishes "mã tăng mạnh nhất" from "mã đóng góp nhiều điểm nhất".
- * Requires index weights; without them the engine returns nulls (no guessing).
- */
 export function computeContributions(
   indexValue: number | null,
   rows: { symbol: string; changePercent: number | null; weightPct?: number | null }[],
