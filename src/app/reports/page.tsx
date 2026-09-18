@@ -225,7 +225,7 @@ function ReportView({ report, meta, onPrint }: { report: DailyReport; meta: impo
                     <span className={`text-[12px] font-bold tracking-wide ${sc.label === "Bull" ? "text-up" : sc.label === "Bear" ? "text-down" : "text-text-primary"}`}>{sc.label.toUpperCase()}</span>
                     <span className="num text-[11px] text-text-muted">{sc.probabilityRange}</span>
                   </div>
-                  <p className="mt-1.5 text-[11.5px] leading-relaxed text-text-secondary"><b>Drivers:</b> {sc.drivers}</p>
+                  <p className="mt-1.5 text-[11.5px] leading-relaxed text-text-secondary">{sc.drivers}</p>
                   <p className="mt-1 text-[11.5px] leading-relaxed text-text-secondary"><b>Vùng kỹ thuật:</b> {sc.indexZones}</p>
                   <p className="mt-1 text-[11.5px] leading-relaxed text-text-secondary"><b>Ngành:</b> {sc.sectorImpact}</p>
                   <p className="mt-1 text-[11.5px] leading-relaxed text-warn/90"><b>Rủi ro:</b> {sc.risks}</p>
