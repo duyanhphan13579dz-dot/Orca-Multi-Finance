@@ -1,0 +1,53 @@
+import "server-only";
+import { cached } from "../cache";
+import { buildMeta } from "../freshness";
+import { getVnQuotes } from "./stocks";
+import { getVndValuationRatios } from "../providers/vndirect-company";
+import { sectorOf } from "../vn/master";
+
+export type ValuationScreenRow = {
+  symbol: string;
+  sector: string | null;
+  price: number | null;
+  pe: number | null;
+  pb: number | null;
+  ps: number | null;
+  eps: number | null;
+  reportDate: string | null;
+  score: number;
+};
+
+const DEFAULT_SYMBOLS = "VCB,BID,CTG,TCB,MBB,VPB,ACB,STB,HDB,VIB,LPB,SHB,FPT,HPG,VNM,VIC,VHM,VRE,NVL,PDR,GAS,PLX,MSN,MWG,SSI,VND,HCM,VCI,SHS,BSR,POW,REE,KDH,DXG,DCM,DPM,DGC,VHC,SAB,PNJ,GMD";
+
+function positive(value: number | null | undefined, max: number): number | null {
+  return value != null && Number.isFinite(value) && value > 0 && value <= max ? value : null;
+}
+
+export async function screenValuation(opts: { symbols?: string[]; sector?: string; limit?: number }) {
+  const symbols = (opts.symbols?.length ? opts.symbols : DEFAULT_SYMBOLS.split(","))
+    .map((s) => s.trim().toUpperCase().replace(/[^A-Z0-9]/g, ""))
+    .filter((s, i, all) => s.length >= 3 && all.indexOf(s) === i)
+    .slice(0, 80);
+  const key = `screener:valuation:${symbols.join(",")}`;
+  const result = await cached(key, {
+    ttlMs: 5 * 60_000,
+    staleMs: 30 * 60_000,
+    producer: async () => {
+      const quotes = await getVnQuotes(symbols).catch(() => null);
+      const quoteMap = new Map((quotes?.quotes ?? []).map((q) => [q.symbol, q]));
+      const rows = (await Promise.all(symbols.map(async (symbol): Promise<ValuationScreenRow | null> => {
+        const ratios = await getVndValuationRatios(symbol).catch(() => null);
+        if (!ratios) return null;
+        const pe = positive(ratios.pe, 500);
+        const pb = positive(ratios.pb, 100);
+        const ps = positive(ratios.ps, 200);
+        if (pe == null && pb == null && ps == null) return null;
+        return { symbol, sector: sectorOf(symbol), price: quoteMap.get(symbol)?.price ?? null, pe, pb, ps, eps: ratios.eps ?? null, reportDate: ratios.reportDate ?? null, score: [pe, pb, ps].filter((v) => v != null).length } satisfies ValuationScreenRow;
+      }))).filter((row): row is ValuationScreenRow => row !== null);
+      return { rows, scanned: symbols.length, skipped: symbols.length - rows.length };
+    },
+  });
+  return { ...result.value, meta: buildMeta({ source: "vndirect-ratios", cached: result.cached, stale: result.stale }) };
+}
+
+export { DEFAULT_SYMBOLS };
