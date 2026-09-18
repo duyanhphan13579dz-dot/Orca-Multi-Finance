@@ -78,7 +78,6 @@ function IntelView({ intel, meta }: { intel: MarketIntel; meta: Meta | null }) {
             {meta && <FreshnessDot status={meta.freshness} ageMs={meta.ageMs} />}
           </div>
           <p className="mt-0.5 text-[12px] text-text-secondary">{intel.sessionHint}</p>
-          {intel.vnDataNote && <p className="mt-1 text-[11px] text-text-muted">{intel.vnDataNote}</p>}
         </div>
         {meta && <MetaLine meta={meta} />}
       </div>
