@@ -166,7 +166,6 @@ function countConflicts(batches: SourceBatch[]): number {
   let n = 0;
   for (const [sym, arr] of bySym) {
     if (arr.length < 2) continue;
-    // so sánh top-2 theo priority
     arr.sort((a, b) => rank(b.src) - rank(a.src));
     const a = arr[0]!;
     const b = arr[1]!;
@@ -192,7 +191,7 @@ export async function getMultiQuotes(symbols: string[]): Promise<MultiQuoteResul
 
   /**
    * Latency strategy:
-   * - Tier A (fast, primary): vndirect + vps — timeout 4s, song song
+   * - Tier A (fast, primary): vndirect + vps — timeout 5s, song song
    * - Tier B (board): ssi-iboard — timeout 5s
    * - Tier C (optional): ssi-fc / vietcap — timeout 3.5s, chỉ chờ nếu còn mã thiếu giá
    *
@@ -200,8 +199,8 @@ export async function getMultiQuotes(symbols: string[]): Promise<MultiQuoteResul
    */
 
   const tierA = Promise.all([
-    runSource("vndirect", () => vndirect.getVndQuotes(uniq), 4_000),
-    runSource("vps", () => getVpsQuotes(uniq), 3_500),
+    runSource("vndirect", () => vndirect.getVndQuotes(uniq), 5_000),
+    runSource("vps", () => getVpsQuotes(uniq), 5_000),
   ]);
 
   const tierB = runSource("ssi-iboard", () => getSsiIboardQuotes(uniq), 5_000);
@@ -213,7 +212,6 @@ export async function getMultiQuotes(symbols: string[]): Promise<MultiQuoteResul
     tierCTasks.push(runSource("ssi-fcdata", () => getSsiQuotes(uniq), 4_000));
   }
 
-  // Chạy A+B ngay; C song song nhưng có thể bỏ nếu A đủ
   const tierCPromise = Promise.all(tierCTasks);
   const [aBatches, bBatch] = await Promise.all([tierA, tierB]);
 
@@ -228,10 +226,8 @@ export async function getMultiQuotes(symbols: string[]): Promise<MultiQuoteResul
 
   let cBatches: SourceBatch[] = [];
   if (missing.length > 0) {
-    // Chỉ cần C nếu còn mã thiếu — nhưng vẫn lấy C nếu đã xong nhanh
     cBatches = await tierCPromise;
   } else {
-    // Không block: nếu C xong trong 200ms thì merge phụ, không thì bỏ
     cBatches = await Promise.race([
       tierCPromise,
       new Promise<SourceBatch[]>((r) => setTimeout(() => r([]), 200)),
@@ -258,10 +254,8 @@ export async function getMultiQuotes(symbols: string[]): Promise<MultiQuoteResul
 
   const quotes: Quote[] = [...bySym.values()].map(({ _src, _latencyMs, ...rest }) => ({
     ...rest,
-    // gắn source vào name note không — giữ Quote sạch; meta ở ngoài
   }));
 
-  // Gắn provider thắng vào updatedAt metadata nhẹ qua symbol order ổn định
   quotes.sort((a, b) => a.symbol.localeCompare(b.symbol));
 
   return {
