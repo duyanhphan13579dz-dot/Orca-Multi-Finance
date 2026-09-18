@@ -11,6 +11,8 @@ export type WyckoffPhase =
   | "re-distribution"
   | "unknown";
 
+export type WyckoffSubPhase = "A" | "B" | "C" | "D" | "E" | null;
+
 export type ElliottPattern =
   | "impulse-up"
   | "impulse-down"
@@ -29,9 +31,11 @@ export interface StructurePivot {
 export interface WyckoffSnapshot {
   phase: WyckoffPhase;
   phaseVi: string;
+  subPhase: WyckoffSubPhase;
   confidence: number;
   bias: "bullish" | "bearish" | "neutral";
   events: string[];
+  eventCodes: string[];
   volumeTrend: "rising" | "falling" | "flat";
   range: { high: number; low: number } | null;
   notes: string[];
@@ -108,101 +112,248 @@ function volumeTrend(bars: OhlcvBar[]): "rising" | "falling" | "flat" {
   return "flat";
 }
 
+function emptySnap(notes: string[]): WyckoffSnapshot {
+  return {
+    phase: "unknown",
+    phaseVi: PHASE_VI.unknown,
+    subPhase: null,
+    confidence: 0,
+    bias: "neutral",
+    events: [],
+    eventCodes: [],
+    volumeTrend: "flat",
+    range: null,
+    notes,
+  };
+}
+
 export function analyzeWyckoff(bars: OhlcvBar[]): WyckoffSnapshot {
   const events: string[] = [];
+  const eventCodes: string[] = [];
   const notes: string[] = [];
   if (bars.length < 40) {
-    return {
-      phase: "unknown",
-      phaseVi: PHASE_VI.unknown,
-      confidence: 0,
-      bias: "neutral",
-      events: [],
-      volumeTrend: "flat",
-      range: null,
-      notes: ["Cần ≥40 nến để đọc Wyckoff"],
-    };
+    return emptySnap(["Cần ≥40 nến để đọc Wyckoff"]);
   }
-  const slice = bars.slice(-80);
+
+  const slice = bars.slice(-90);
+  const n = slice.length;
   const closes = slice.map((b) => b.close);
   const highs = slice.map((b) => b.high);
   const lows = slice.map((b) => b.low);
-  const last = closes[closes.length - 1]!;
+  const vols = slice.map((b) => b.volume || 0);
+  const last = closes[n - 1]!;
   const first = closes[0]!;
   const ret = (last / first - 1) * 100;
   const hi = Math.max(...highs);
   const lo = Math.min(...lows);
-  const rangePct = ((hi - lo) / Math.max(lo, 1e-9)) * 100;
+  const span = hi - lo + 1e-12;
+  const rangePct = (span / Math.max(lo, 1e-9)) * 100;
   const vt = volumeTrend(slice);
-  const mid = Math.floor(slice.length / 2);
+  const mid = Math.floor(n / 2);
   const firstHalfRet = closes[mid]! / closes[0]! - 1;
   const secondHalfRet = last / closes[mid]! - 1;
-  const recent = slice.slice(-12);
+  const avgVol = avg(vols.filter((v) => v > 0)) || 1;
+
+  // Core range from the middle 60% of bars (ignore early trend + last climax)
+  const coreStart = Math.floor(n * 0.2);
+  const coreEnd = Math.max(coreStart + 8, n - 8);
+  const core = slice.slice(coreStart, coreEnd);
+  const rangeHigh = Math.max(...core.map((b) => b.high));
+  const rangeLow = Math.min(...core.map((b) => b.low));
+  const rangeSpan = rangeHigh - rangeLow + 1e-12;
+  const lastBar = slice[n - 1]!;
+  const posInRange = (lastBar.close - rangeLow) / rangeSpan;
+
+  const recent = slice.slice(-15);
   let upVol = 0;
   let downVol = 0;
   for (const b of recent) {
     if (b.close >= b.open) upVol += b.volume || 0;
     else downVol += b.volume || 0;
   }
-  const lastBar = slice[slice.length - 1]!;
-  const nearLow = (lastBar.low - lo) / (hi - lo + 1e-12) < 0.12;
-  const nearHigh = (hi - lastBar.high) / (hi - lo + 1e-12) < 0.12;
-  const recoveredFromLow = nearLow && lastBar.close > (lastBar.high + lastBar.low) / 2 && lastBar.close > lastBar.open;
-  const rejectedAtHigh = nearHigh && lastBar.close < (lastBar.high + lastBar.low) / 2 && lastBar.close < lastBar.open;
-  if (recoveredFromLow) events.push("Dạng Spring: thủng gần đáy rồi thu hồi");
-  if (rejectedAtHigh) events.push("Dạng Upthrust: xuyên gần đỉnh rồi bị đẩy xuống");
-  if (upVol > downVol * 1.25 && secondHalfRet > 0) events.push("Nỗ lực tăng: khối lượng nến tăng > nến giảm");
-  if (downVol > upVol * 1.25 && secondHalfRet < 0) events.push("Nỗ lực giảm: khối lượng nến giảm chiếm ưu thế");
-  let phase: WyckoffPhase = "unknown";
-  let confidence = 35;
-  let bias: WyckoffSnapshot["bias"] = "neutral";
-  const isRange = rangePct < 18 && Math.abs(ret) < 12;
+
+  const recentLow = Math.min(...recent.map((b) => b.low));
+  const recentHigh = Math.max(...recent.map((b) => b.high));
+  const recentLowBar = recent.reduce((a, b) => (b.low <= a.low ? b : a));
+  const recentHighBar = recent.reduce((a, b) => (b.high >= a.high ? b : a));
+
+  const spring =
+    recentLow < rangeLow * 0.998 &&
+    lastBar.close > rangeLow &&
+    lastBar.close > recentLowBar.close &&
+    lastBar.close > (recentLowBar.high + recentLowBar.low) / 2;
+  const utad =
+    recentHigh > rangeHigh * 1.002 &&
+    lastBar.close < rangeHigh &&
+    lastBar.close < recentHighBar.close &&
+    lastBar.close < (recentHighBar.high + recentHighBar.low) / 2;
+
+  const sos =
+    lastBar.close > rangeHigh &&
+    lastBar.close > lastBar.open &&
+    (lastBar.volume || 0) > avgVol * 1.15 &&
+    secondHalfRet > 0;
+  const sow =
+    lastBar.close < rangeLow &&
+    lastBar.close < lastBar.open &&
+    (lastBar.volume || 0) > avgVol * 1.15 &&
+    secondHalfRet < 0;
+
+  // Climaxes in first half of window
+  const early = slice.slice(0, mid);
+  const maxEarlyVol = Math.max(...early.map((b) => b.volume || 0), 0);
+  const scBar = early.reduce((a, b) => ((b.volume || 0) >= (a.volume || 0) && b.close < b.open ? b : a), early[0]!);
+  const bcBar = early.reduce((a, b) => ((b.volume || 0) >= (a.volume || 0) && b.close > b.open ? b : a), early[0]!);
+  const sc =
+    firstHalfRet < -0.03 &&
+    (scBar.volume || 0) > avgVol * 1.6 &&
+    scBar.close < scBar.open &&
+    (scBar.high - scBar.low) / Math.max(scBar.close, 1e-9) > 0.02;
+  const bc =
+    firstHalfRet > 0.03 &&
+    (bcBar.volume || 0) > avgVol * 1.6 &&
+    bcBar.close > bcBar.open &&
+    (bcBar.high - bcBar.low) / Math.max(bcBar.close, 1e-9) > 0.02;
+
+  if (sc) {
+    eventCodes.push("SC");
+    events.push("SC — bán cao điểm đầu cửa sổ, nghi dừng xuống");
+  }
+  if (bc) {
+    eventCodes.push("BC");
+    events.push("BC — mua cao điểm đầu cửa sổ, nghi dừng lên");
+  }
+  if (spring) {
+    eventCodes.push("SPRING");
+    events.push("Spring — thủng hỗ trợ rồi thu hồi vào range");
+  }
+  if (utad) {
+    eventCodes.push("UTAD");
+    events.push("UTAD — xuyên kháng cự rồi bị đẩy xuống");
+  }
+  if (sos) {
+    eventCodes.push("SOS");
+    events.push("SOS — đóng trên range kèm khối lượng");
+  }
+  if (sow) {
+    eventCodes.push("SOW");
+    events.push("SOW — đóng dưới range kèm khối lượng");
+  }
+  if (upVol > downVol * 1.25 && secondHalfRet > 0 && !sos) {
+    events.push("Nỗ lực tăng: KL nến tăng > nến giảm");
+  }
+  if (downVol > upVol * 1.25 && secondHalfRet < 0 && !sow) {
+    events.push("Nỗ lực giảm: KL nến giảm chiếm ưu thế");
+  }
+
+  const isRange = rangePct < 22 && Math.abs(ret) < 14;
   const strongUp = ret > 12 || (firstHalfRet > 0.03 && secondHalfRet > 0.03);
   const strongDown = ret < -12 || (firstHalfRet < -0.03 && secondHalfRet < -0.03);
-  if (isRange && firstHalfRet < -0.04) {
+
+  let phase: WyckoffPhase = "unknown";
+  let subPhase: WyckoffSubPhase = null;
+  let confidence = 35;
+  let bias: WyckoffSnapshot["bias"] = "neutral";
+
+  if (sos && (firstHalfRet < 0 || isRange)) {
+    phase = firstHalfRet < -0.04 ? "markup" : "re-accumulation";
+    subPhase = "E";
+    bias = "bullish";
+    confidence = 68;
+    notes.push("SOS rời range — Phase E markup nghiêng tích lũy");
+  } else if (sow && (firstHalfRet > 0 || isRange)) {
+    phase = firstHalfRet > 0.04 ? "markdown" : "re-distribution";
+    subPhase = "E";
+    bias = "bearish";
+    confidence = 68;
+    notes.push("SOW rời range — Phase E markdown nghiêng phân phối");
+  } else if (spring && isRange) {
+    phase = firstHalfRet < 0 ? "accumulation" : "re-accumulation";
+    subPhase = "C";
+    bias = "bullish";
+    confidence = 70;
+    notes.push("Phase C Spring — test nguồn cung còn lại");
+  } else if (utad && isRange) {
+    phase = firstHalfRet > 0 ? "distribution" : "re-distribution";
+    subPhase = "C";
+    bias = "bearish";
+    confidence = 70;
+    notes.push("Phase C UTAD — test nhu cầu còn lại");
+  } else if (isRange && firstHalfRet < -0.04) {
     phase = "accumulation";
     bias = "bullish";
-    confidence = recoveredFromLow ? 62 : 48;
-    notes.push("Đi ngang sau nhịp giảm — nghiêng tích lũy");
+    if (sc) {
+      subPhase = "A";
+      confidence = 55;
+      notes.push("Phase A — SC/AR đang dừng xuống");
+    } else if (posInRange > 0.62 && upVol > downVol) {
+      subPhase = "D";
+      confidence = 58;
+      notes.push("Phase D — giá ở nửa trên range, nghi SOS sắp tới");
+    } else {
+      subPhase = "B";
+      confidence = 48;
+      notes.push("Phase B — đi ngang sau giảm, đang xây nguyên nhân");
+    }
   } else if (isRange && firstHalfRet > 0.04) {
     phase = "distribution";
     bias = "bearish";
-    confidence = rejectedAtHigh ? 62 : 48;
-    notes.push("Đi ngang sau nhịp tăng — nghiêng phân phối");
+    if (bc) {
+      subPhase = "A";
+      confidence = 55;
+      notes.push("Phase A — BC/AR đang dừng lên");
+    } else if (posInRange < 0.38 && downVol > upVol) {
+      subPhase = "D";
+      confidence = 58;
+      notes.push("Phase D — giá ở nửa dưới range, nghi SOW sắp tới");
+    } else {
+      subPhase = "B";
+      confidence = 48;
+      notes.push("Phase B — đi ngang sau tăng, đang xây nguyên nhân");
+    }
   } else if (strongUp && !isRange) {
     phase = secondHalfRet > 0.02 && firstHalfRet > 0.02 ? "markup" : "re-accumulation";
+    subPhase = phase === "markup" ? "E" : "B";
     bias = "bullish";
     confidence = 58;
     notes.push("Đà tăng chiếm ưu thế — markup / tái tích lũy");
   } else if (strongDown && !isRange) {
     phase = secondHalfRet < -0.02 && firstHalfRet < -0.02 ? "markdown" : "re-distribution";
+    subPhase = phase === "markdown" ? "E" : "B";
     bias = "bearish";
     confidence = 58;
     notes.push("Đà giảm chiếm ưu thế — markdown / tái phân phối");
   } else if (ret > 3) {
     phase = "markup";
+    subPhase = "E";
     bias = "bullish";
     confidence = 42;
   } else if (ret < -3) {
     phase = "markdown";
+    subPhase = "E";
     bias = "bearish";
     confidence = 42;
   } else {
     notes.push("Biên độ hẹp / hỗn hợp — chờ phá vỡ kèm khối lượng");
   }
+
   if (vt === "rising" && (phase === "markup" || phase === "markdown")) confidence = Math.min(85, confidence + 8);
   if (vt === "falling" && (phase === "accumulation" || phase === "distribution")) {
     confidence = Math.min(80, confidence + 5);
     notes.push("Khối lượng co trong biên — đặc trưng giai đoạn cân bằng");
   }
+  if (spring || utad) confidence = Math.min(85, confidence + 6);
+
   return {
     phase,
     phaseVi: PHASE_VI[phase],
+    subPhase,
     confidence,
     bias,
     events: events.slice(0, 4),
+    eventCodes: [...new Set(eventCodes)].slice(0, 6),
     volumeTrend: vt,
-    range: { high: hi, low: lo },
+    range: { high: rangeHigh, low: rangeLow },
     notes: notes.slice(0, 4),
   };
 }
@@ -227,10 +378,11 @@ export function analyzeStructure(bars: OhlcvBar[]): StructureAnalysis | null {
   const pivots = findPivots(bars.slice(-120), 3);
   const wyckoff = analyzeWyckoff(bars);
   const elliott = analyzeElliott(bars);
+  const sub = wyckoff.subPhase ? ` Phase ${wyckoff.subPhase}` : "";
   return {
     wyckoff,
     elliott,
     pivots: pivots.slice(-8),
-    summary: `Wyckoff: ${wyckoff.phaseVi} (${wyckoff.confidence}%) · Elliott: ${elliott.patternVi}`,
+    summary: `Wyckoff: ${wyckoff.phaseVi}${sub} (${wyckoff.confidence}%) · Elliott: ${elliott.patternVi}`,
   };
 }
