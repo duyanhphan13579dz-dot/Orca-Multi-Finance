@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useApi } from "@/lib/hooks";
 import { VN_SECTOR_MAP } from "@/lib/vn/master";
-import type { CanslimScreenRow } from "@/lib/services/canslim-screener";
+import type { CanslimScreenRow, CanslimCoverageStats } from "@/lib/services/canslim-screener";
 import type { CanslimLetter } from "@/lib/engines/canslim";
 import { Badge, Chg, fmtNum, FreshnessDot, Loading, MetaLine, Panel, Unavailable } from "@/components/ui";
 import { Play } from "@/components/screener-icons";
@@ -14,6 +14,8 @@ type CanslimData = {
   scanned: number;
   skipped: number;
   marketBullish: boolean | null;
+  marketDetail?: string;
+  coverage?: CanslimCoverageStats;
 };
 
 const ALL_LETTERS: CanslimLetter[] = ["C", "A", "N", "S", "L", "I", "M"];
@@ -92,22 +94,40 @@ export function CanslimScreener({ defaultSector }: { defaultSector: string | nul
   }, [data, liveNeedle]);
 
   const busy = isLoading || isValidating;
+  const cov = data?.coverage;
 
   return (
     <>
       <Panel pad={false}>
-        <div className={`space-y-2 p-4 transition-shadow duration-300 ${flash ? "ring-2 ring-accent-primary/60" : ""}`}>
+        <div className={`space-y-2 p-4 transition-shadow duration-300 ${flash ? "ring-2 ring-accent-primary/60" : ""`}>
           <div className="text-[13px] font-medium">Bộ lọc CAN SLIM — growth leaders VN</div>
           <p className="text-[12px] leading-relaxed text-text-muted">
-            Theo William O'Neil: <strong>C</strong>urrent EPS/LN quý, <strong>A</strong>nnual/ROE, <strong>N</strong>ear 52W high,
-            <strong> S</strong>upply–Demand (volume), <strong>L</strong>eader (RS rank), <strong>I</strong>nstitutional (proxy NN),
-            <strong> M</strong>arket. Heuristic trên BCTC + nến ngày thật — không phải tín hiệu mua bán.
-            {data?.marketBullish === true ? (
-              <span className="ml-1 text-emerald-500">M: thị trường nghiêng tăng.</span>
-            ) : data?.marketBullish === false ? (
-              <span className="ml-1 text-amber-500">M: thị trường yếu — nên thận trọng.</span>
-            ) : null}
+            Pipeline thật: BCTC (C/A) · VNDirect ratios/ROE · OHLCV (N/S/L) · NN 5 phiên (I) · VNINDEX MA50+3M (M).
+            Heuristic nghiên cứu — không phải tín hiệu mua bán.
           </p>
+          {data?.marketDetail ? (
+            <div
+              className={`text-[11px] font-medium ${
+                data.marketBullish === true
+                  ? "text-emerald-500"
+                  : data.marketBullish === false
+                    ? "text-amber-500"
+                    : "text-text-muted"
+              }`}
+            >
+              M · {data.marketDetail}
+            </div>
+          ) : null}
+          {cov ? (
+            <div className="flex flex-wrap gap-2 text-[10px] text-text-muted">
+              <span className="rounded border border-line px-1.5 py-0.5">Nến {cov.withBars}</span>
+              <span className="rounded border border-line px-1.5 py-0.5">BCTC {cov.withGrowth}</span>
+              <span className="rounded border border-line px-1.5 py-0.5">Health {cov.withHealth}</span>
+              <span className="rounded border border-line px-1.5 py-0.5">Ratios {cov.withRatios}</span>
+              <span className="rounded border border-line px-1.5 py-0.5">NN {cov.withForeign}</span>
+              <span className="rounded border border-line px-1.5 py-0.5">CP LH {cov.withEquity}</span>
+            </div>
+          ) : null}
           <div className="flex flex-wrap gap-1.5">
             {ALL_LETTERS.map((L) => (
               <button
