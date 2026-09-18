@@ -289,7 +289,7 @@ function CryptoScreener() {
         <Unavailable title="Screener không khả dụng" note={res && !res.success ? res.error.message : undefined} />
       ) : (
         <Panel title={`Kết quả: ${data.rows.length} mã${isValidating ? " · đang cập nhật" : ""}`} pad={false}>
-          <div className={`overflow-x-auto transition-opacity ${isValidating ? "opacity-70" : ""`}>
+          <div className={`overflow-x-auto transition-opacity ${isValidating ? "opacity-70" : ""}`}>
             <table className="w-full min-w-[560px] text-[12px]">
               <thead>
                 <tr className="border-b border-line text-left text-[10px] uppercase tracking-wider text-ink-3">
