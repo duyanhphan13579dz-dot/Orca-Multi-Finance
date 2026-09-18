@@ -178,7 +178,7 @@ function countConflicts(batches: SourceBatch[]): number {
 }
 
 export async function getMultiQuotes(symbols: string[]): Promise<MultiQuoteResult> {
-  const uniq = [...new Set(symbols.map((s) => s.toUpperCase()).filter(Boolean))].slice(0, 80);
+  const uniq = [...new Set(symbols.map((s) => s.toUpperCase()).filter(Boolean))].slice(0, 100);
   if (!uniq.length) {
     return { quotes: [], sources: [], sourceTs: null, latencies: {}, conflicts: 0 };
   }
