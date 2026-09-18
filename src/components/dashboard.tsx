@@ -7,12 +7,6 @@ import type { Meta } from "@/lib/types";
 import { Badge, Chg, fmtCompact, fmtNum, FreshnessDot, Loading, MetaLine, Panel, Unavailable } from "@/components/ui";
 import { Activity, ArrowRight, BrainCircuit, Globe2, TrendingUp } from "lucide-react";
 
-/**
- * ORCA REAL-TIME MARKET INTELLIGENCE COMMAND CENTER
- * Vietnam market → condition engine → cross-asset context → breadth → flow →
- * contributors → analyst intelligence. Every widget shows source + freshness.
- */
-
 export function Dashboard() {
   const { data, meta, isLoading, isValidating, mutate, error } = useApi<MarketIntel>("/api/v1/market/intel", {
     refreshInterval: 12_000,
@@ -183,6 +177,10 @@ function IntelView({ intel, meta }: { intel: MarketIntel; meta: Meta | null }) {
               d={intel.breadth.decliners}
               u={intel.breadth.unchanged}
               source={intel.breadth.source}
+              adRatio={intel.breadth.adRatio}
+              advancePct={intel.breadth.advancePct}
+              netAdvances={intel.breadth.netAdvances}
+              regimeVi={intel.breadth.regimeVi}
             />
           ) : (
             <Unavailable title="Breadth chưa có" note={intel.breadth.note} />
@@ -343,10 +341,37 @@ function ScoreBar({ score }: { score: number }) {
   );
 }
 
-function BreadthView({ a, d, u, source }: { a: number; d: number; u: number; source: string }) {
+function BreadthView({
+  a,
+  d,
+  u,
+  source,
+  adRatio,
+  advancePct,
+  netAdvances,
+  regimeVi,
+}: {
+  a: number;
+  d: number;
+  u: number;
+  source: string;
+  adRatio?: number | null;
+  advancePct?: number | null;
+  netAdvances?: number | null;
+  regimeVi?: string | null;
+}) {
   const tot = Math.max(1, a + d + u);
+  const ratioLabel = adRatio == null ? "—" : adRatio >= 10 ? ">10" : adRatio.toFixed(2);
+  const pctLabel = advancePct != null ? `${advancePct.toFixed(1)}%` : "—";
+  const netLabel = netAdvances == null ? "—" : `${netAdvances >= 0 ? "+" : ""}${netAdvances}`;
+  const regimeTone =
+    regimeVi?.includes("Mở") || regimeVi?.includes("tăng")
+      ? "up"
+      : regimeVi?.includes("Thu") || regimeVi?.includes("giảm")
+        ? "down"
+        : "neutral";
   return (
-    <div className="space-y-2">
+    <div className="space-y-2.5">
       <div className="flex gap-2">
         <span className="flex-1 rounded-md bg-up/10 p-2 text-center text-[13px] text-up">
           ↑ <b className="num">{a}</b>
@@ -358,12 +383,39 @@ function BreadthView({ a, d, u, source }: { a: number; d: number; u: number; sou
           — <b className="num">{u}</b>
         </span>
       </div>
-      <div className="flex h-2 overflow-hidden rounded-full bg-surface-modal">
+      <div className="flex h-2.5 overflow-hidden rounded-full bg-surface-modal">
         <div className="bg-positive" style={{ width: `${(a / tot) * 100}%` }} />
         <div className="bg-border-default" style={{ width: `${(u / tot) * 100}%` }} />
         <div className="bg-negative" style={{ width: `${(d / tot) * 100}%` }} />
       </div>
-      <div className="text-[10px] text-text-muted">{source}</div>
+      <div className="grid grid-cols-3 gap-1.5 text-center">
+        <div className="rounded-md border border-border-subtle bg-surface-elevated px-1.5 py-1.5">
+          <div className="text-[9px] uppercase tracking-wider text-text-muted">A/D</div>
+          <div className="num text-[13px] font-semibold text-text-primary">{ratioLabel}</div>
+        </div>
+        <div className="rounded-md border border-border-subtle bg-surface-elevated px-1.5 py-1.5">
+          <div className="text-[9px] uppercase tracking-wider text-text-muted">% tăng</div>
+          <div className="num text-[13px] font-semibold text-text-primary">{pctLabel}</div>
+        </div>
+        <div className="rounded-md border border-border-subtle bg-surface-elevated px-1.5 py-1.5">
+          <div className="text-[9px] uppercase tracking-wider text-text-muted">Net</div>
+          <div
+            className={`num text-[13px] font-semibold ${
+              netAdvances == null ? "text-text-muted" : netAdvances >= 0 ? "text-up" : "text-down"
+            }`}
+          >
+            {netLabel}
+          </div>
+        </div>
+      </div>
+      {regimeVi ? (
+        <div className="flex items-center justify-between gap-2">
+          <Badge tone={regimeTone}>{regimeVi}</Badge>
+          <span className="text-[10px] text-text-muted">{source}</span>
+        </div>
+      ) : (
+        <div className="text-[10px] text-text-muted">{source}</div>
+      )}
     </div>
   );
 }
