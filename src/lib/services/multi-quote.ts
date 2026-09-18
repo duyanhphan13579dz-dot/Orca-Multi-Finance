@@ -5,6 +5,7 @@ import { getVpsQuotes } from "../providers/vps";
 import { getVietcapQuotes } from "../providers/vietcap";
 import { getSsiIboardQuotes } from "../providers/ssi-iboard";
 import { getSsiQuotes, ssiFcConfigured } from "../providers/ssi-fcdata";
+import { recordMarketSource } from "../realtime/market-source-monitor";
 
 /**
  * Reconciliation giá đa nguồn — KHÔNG trung bình.
@@ -74,19 +75,14 @@ async function runSource(
   const t0 = performance.now();
   try {
     const r = await withDeadline(fn(), timeoutMs);
-    return {
-      src,
-      quotes: r.quotes ?? [],
-      latencyMs: Math.round(performance.now() - t0),
-      ok: (r.quotes?.length ?? 0) > 0,
-    };
+    const ok = (r.quotes?.length ?? 0) > 0;
+    const latencyMs = Math.round(performance.now() - t0);
+    recordMarketSource(src as Parameters<typeof recordMarketSource>[0], ok, latencyMs);
+    return { src, quotes: r.quotes ?? [], latencyMs, ok };
   } catch {
-    return {
-      src,
-      quotes: [],
-      latencyMs: Math.round(performance.now() - t0),
-      ok: false,
-    };
+    const latencyMs = Math.round(performance.now() - t0);
+    recordMarketSource(src as Parameters<typeof recordMarketSource>[0], false, latencyMs);
+    return { src, quotes: [], latencyMs, ok: false };
   }
 }
 
