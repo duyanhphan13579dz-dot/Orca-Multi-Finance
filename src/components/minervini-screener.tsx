@@ -222,7 +222,10 @@ export function MinerviniScreener({ defaultSector }: { defaultSector: string | n
       </Panel>
 
       {isLoading && !data ? (
-        <Loading label="Đang quét Trend Template (OHLCV ≥200 phiên)…" />
+        <div className="space-y-2">
+          <p className="px-1 text-[12px] text-text-muted">Đang quét Trend Template (OHLCV ≥200 phiên)…</p>
+          <Loading rows={8} />
+        </div>
       ) : !res?.success && !data ? (
         <Unavailable title="Minervini screener không khả dụng" note={res && !res.success ? res.error.message : undefined} />
       ) : (
@@ -255,7 +258,7 @@ export function MinerviniScreener({ defaultSector }: { defaultSector: string | n
                 {rows.map((row) => (
                   <tr key={row.symbol} className="border-b border-border/60 hover:bg-surface-2/40">
                     <td className="py-1.5 pr-2 font-medium">
-                      <Link href={`/stocks/${row.symbol}`} className="text-accent hover:underline">
+                      <Link href={`/stocks/${row.symbol}` as `/stocks/${string}`} className="text-accent hover:underline">
                         {row.symbol}
                       </Link>
                       {row.passAll && (
