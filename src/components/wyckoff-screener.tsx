@@ -6,6 +6,7 @@ import { useApi } from "@/lib/hooks";
 import { VN_SECTOR_MAP } from "@/lib/vn/master";
 import type { WyckoffScreenRow } from "@/lib/services/wyckoff-screener";
 import { Badge, Chg, fmtNum, FreshnessDot, Loading, MetaLine, Panel, Unavailable } from "@/components/ui";
+import { Play } from "@/components/screener-icons";
 
 function VnFilterSelect({ sector, setSector }: { sector: string; setSector: (v: string) => void }) {
   return (
@@ -60,21 +61,38 @@ function phaseTone(phase: string): "up" | "down" | "warn" | "neutral" {
   return "neutral";
 }
 
+function buildQs(opts: { phase: string; setup: string; minConf: string; sector: string; symbols: string }) {
+  const qs = new URLSearchParams({
+    phase: opts.phase,
+    setup: opts.setup,
+    minConfidence: opts.minConf || "40",
+    limit: "40",
+  });
+  if (opts.sector) qs.set("sector", opts.sector);
+  const symbols = opts.symbols
+    .split(/[\s,;]+/)
+    .map((s) => s.trim().toUpperCase())
+    .filter(Boolean);
+  if (symbols.length) qs.set("symbols", symbols.join(","));
+  return qs.toString();
+}
+
 export function WyckoffScreener({ defaultSector }: { defaultSector: string | null }) {
   const [phase, setPhase] = useState("all");
   const [setup, setSetup] = useState("all");
   const [minConf, setMinConf] = useState("40");
   const [sector, setSector] = useState(defaultSector ?? "");
-  const qs = new URLSearchParams({
-    phase,
-    setup,
-    minConfidence: minConf || "40",
-    limit: "40",
-  });
-  if (sector) qs.set("sector", sector);
-  const { res, data, meta, isLoading } = useApi<WyckoffData>(`/api/v1/screener/wyckoff?${qs.toString()}`, {
+  const [symbols, setSymbols] = useState("");
+  const [query, setQuery] = useState(() =>
+    buildQs({ phase: "all", setup: "all", minConf: "40", sector: defaultSector ?? "", symbols: "" }),
+  );
+  const { res, data, meta, isLoading } = useApi<WyckoffData>(`/api/v1/screener/wyckoff?${query}`, {
     refreshInterval: 60_000,
   });
+
+  const run = () => {
+    setQuery(buildQs({ phase, setup, minConf, sector, symbols }));
+  };
 
   return (
     <>
@@ -83,7 +101,7 @@ export function WyckoffScreener({ defaultSector }: { defaultSector: string | nul
           <div className="text-[13px] font-medium">Bộ lọc Wyckoff — rổ thanh khoản VN</div>
           <p className="text-[12px] leading-relaxed text-text-muted">
             Đọc chu kỳ Composite Man trên nến ngày: Phase A dừng xu hướng cũ, B xây nguyên nhân, C test (Spring / UTAD),
-            D xác nhận (SOS / SOW), E rời range. Spring không bắt buộc. Kết quả heuristic, độ tin cậy kèm theo.
+            D xác nhận (SOS / SOW), E rời range. Spring không bắt buộc. Đổi lọc rồi bấm Tìm kiếm để quét lại.
           </p>
           <div className="flex flex-wrap items-end gap-2 pt-1">
             <label>
@@ -104,6 +122,25 @@ export function WyckoffScreener({ defaultSector }: { defaultSector: string | nul
             </label>
             <VnFilterSelect sector={sector} setSector={setSector} />
             <Field label="Tin cậy ≥" value={minConf} onChange={setMinConf} small />
+            <label>
+              <span className="mb-0.5 block text-[10px] uppercase tracking-wider text-text-muted">Mã (tùy chọn)</span>
+              <input
+                value={symbols}
+                onChange={(e) => setSymbols(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") run();
+                }}
+                placeholder="VCB, HPG, FPT"
+                className="input !w-40 !py-1.5 text-[12px]"
+              />
+            </label>
+            <button
+              type="button"
+              onClick={run}
+              className="flex items-center gap-1.5 rounded-md bg-accent-primary/90 px-3 py-1.5 text-[12px] font-semibold text-white"
+            >
+              <Play className="size-3.5" /> Tìm kiếm
+            </button>
           </div>
         </div>
       </Panel>

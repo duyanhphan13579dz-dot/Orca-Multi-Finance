@@ -10,7 +10,6 @@ import { WyckoffScreener } from "@/components/wyckoff-screener";
 import { Badge, Chg, fmtCompact, fmtNum, FreshnessDot, Loading, MetaLine, Panel, priceDigits, Unavailable } from "@/components/ui";
 import { FlatsIcon, Play } from "@/components/screener-icons";
 
-type CryptoRows = { rows: CryptoMarketRow[] };
 type StocksData = { indices: IndexQuote[] | null; quotes: Quote[] | null };
 
 const VN_BOARD = "VCB,BID,CTG,TCB,MBB,VPB,ACB,STB,HDB,VIB,LPB,SHB,FPT,HPG,VNM,VIC,VHM,VRE,NVL,PDR,GAS,PLX,MSN,MWG,SSI,VND,HCM,VCI,SHS,BSR,POW,REE,KDH,DXG,DCM,DPM,DGC,VHC,SAB,PNJ,GMD";
@@ -47,25 +46,50 @@ function VnScreener({ defaultSector }: { defaultSector: string | null }) {
   const [minChg, setMinChg] = useState("");
   const [maxChg, setMaxChg] = useState("");
   const [minVol, setMinVol] = useState("");
+  const [q, setQ] = useState("");
+  const [applied, setApplied] = useState({ sector: defaultSector ?? "", minChg: "", maxChg: "", minVol: "", q: "" });
   const rows = useMemo(() => {
     let list = data?.quotes ?? [];
-    if (sector) list = list.filter((q) => sectorOf(q.symbol) === sector);
-    if (minChg) list = list.filter((q) => (q.changePercent ?? 0) >= Number(minChg));
-    if (maxChg) list = list.filter((q) => (q.changePercent ?? 0) <= Number(maxChg));
-    if (minVol) list = list.filter((q) => (q.quoteVolume ?? q.volume ?? 0) >= Number(minVol) * 1_000_000);
+    if (applied.sector) list = list.filter((row) => sectorOf(row.symbol) === applied.sector);
+    if (applied.minChg) list = list.filter((row) => (row.changePercent ?? 0) >= Number(applied.minChg));
+    if (applied.maxChg) list = list.filter((row) => (row.changePercent ?? 0) <= Number(applied.maxChg));
+    if (applied.minVol) list = list.filter((row) => (row.quoteVolume ?? row.volume ?? 0) >= Number(applied.minVol) * 1_000_000);
+    if (applied.q) {
+      const needle = applied.q.trim().toUpperCase();
+      list = list.filter((row) => row.symbol.includes(needle) || (row.name ?? "").toUpperCase().includes(needle));
+    }
     return [...list].sort((a, b) => (b.quoteVolume ?? b.volume ?? 0) - (a.quoteVolume ?? a.volume ?? 0));
-  }, [data, sector, minChg, maxChg, minVol]);
+  }, [data, applied]);
+  const run = () => setApplied({ sector, minChg, maxChg, minVol, q });
+  const filters = (
+    <div className="flex flex-wrap items-end gap-2">
+      <label>
+        <span className="mb-0.5 block text-[10px] uppercase tracking-wider text-text-muted">Tìm mã</span>
+        <input
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") run();
+          }}
+          placeholder="VCB, FPT…"
+          className="input !w-28 !py-1.5 text-[12px]"
+        />
+      </label>
+      <VnFilterSelect sector={sector} setSector={setSector} />
+      <Field label="Δ% tối thiểu" value={minChg} onChange={setMinChg} small />
+      <Field label="Δ% tối đa" value={maxChg} onChange={setMaxChg} small />
+      <Field label="GT min (tỷ đ)" value={minVol} onChange={setMinVol} small />
+      <button type="button" onClick={run} className="flex items-center gap-1.5 rounded-md bg-accent-primary/90 px-3 py-1.5 text-[12px] font-semibold text-white">
+        <Play className="size-3.5" /> Tìm kiếm
+      </button>
+    </div>
+  );
   if (isLoading && !res) return <Loading rows={8} />;
   if (!res?.success) {
     return (
       <>
         <Panel title="Bộ lọc cổ phiếu Việt Nam" pad={false}>
-          <div className="flex flex-wrap items-end gap-2 p-3">
-            <VnFilterSelect sector={sector} setSector={setSector} />
-            <Field label="Δ% tối thiểu" value={minChg} onChange={setMinChg} />
-            <Field label="Δ% tối đa" value={maxChg} onChange={setMaxChg} />
-            <Field label="GT GD tối thiểu (tỷ đ)" value={minVol} onChange={setMinVol} />
-          </div>
+          <div className="p-3">{filters}</div>
         </Panel>
         <Unavailable title="VNStock chưa kết nối" note={res && !res.success ? res.error.message : undefined} />
       </>
@@ -73,7 +97,7 @@ function VnScreener({ defaultSector }: { defaultSector: string | null }) {
   }
   return (
     <>
-      <Panel title={<span>Kết quả: {rows.length} mã <FreshnessDot status={meta?.freshness} ageMs={meta?.ageMs} /></span>} right={<div className="flex flex-wrap items-center gap-1.5"><VnFilterSelect sector={sector} setSector={setSector} /><Field label="Δ% min" value={minChg} onChange={setMinChg} small /><Field label="Δ% max" value={maxChg} onChange={setMaxChg} small /><Field label="GT min (tr VNĐ)" value={minVol} onChange={setMinVol} small /></div>} pad={false}>
+      <Panel title={<span>Kết quả: {rows.length} mã <FreshnessDot status={meta?.freshness} ageMs={meta?.ageMs} /></span>} right={filters} pad={false}>
         <div className="overflow-x-auto">
           <table className="w-full min-w-[560px] text-[12px]">
             <thead>
@@ -86,13 +110,13 @@ function VnScreener({ defaultSector }: { defaultSector: string | null }) {
               </tr>
             </thead>
             <tbody>
-              {rows.map((q) => (
-                <tr key={q.symbol} className="row-hover border-b border-line/40">
-                  <td className="px-3.5 py-2"><Link href={`/stocks/${q.symbol}`} className="font-semibold hover:text-accent">{q.symbol}</Link></td>
-                  <td className="py-2 text-[11px] text-text-muted">{sectorOf(q.symbol)}</td>
-                  <td className="num py-2 text-right">{fmtNum(q.price, 2)}</td>
-                  <td className="py-2 text-right"><Chg value={q.changePercent} arrow={false} /></td>
-                  <td className="num py-2 pr-3.5 text-right text-ink-2">{fmtCompact(q.quoteVolume ?? q.volume)}</td>
+              {rows.map((row) => (
+                <tr key={row.symbol} className="row-hover border-b border-line/40">
+                  <td className="px-3.5 py-2"><Link href={`/stocks/${row.symbol}`} className="font-semibold hover:text-accent">{row.symbol}</Link></td>
+                  <td className="py-2 text-[11px] text-text-muted">{sectorOf(row.symbol)}</td>
+                  <td className="num py-2 text-right">{fmtNum(row.price, 2)}</td>
+                  <td className="py-2 text-right"><Chg value={row.changePercent} arrow={false} /></td>
+                  <td className="num py-2 pr-3.5 text-right text-ink-2">{fmtCompact(row.quoteVolume ?? row.volume)}</td>
                 </tr>
               ))}
             </tbody>
@@ -155,7 +179,7 @@ function CryptoScreener() {
             <Field label="Δ% tối đa" value={maxChange} onChange={setMaxChange} />
             <Field label="Vol tối thiểu ($M)" value={minVol} onChange={setMinVol} />
             <button onClick={run} className="flex items-center gap-1.5 rounded-md bg-accent-primary/90 px-3 py-1.5 text-[12px] font-semibold text-white">
-              <Play className="size-3.5" /> Chạy bộ lọc
+              <Play className="size-3.5" /> Tìm kiếm
             </button>
           </div>
         </div>
