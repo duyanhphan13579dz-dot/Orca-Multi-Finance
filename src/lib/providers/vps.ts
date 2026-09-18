@@ -11,7 +11,7 @@ import type { Quote } from "../types";
 
 const BASE = "https://bgapidatafeed.vps.com.vn";
 const CHUNK = 40;
-const MAX_SYMBOLS = 120;
+const MAX_SYMBOLS = 160;
 
 type VpsRow = {
   sym?: string;
