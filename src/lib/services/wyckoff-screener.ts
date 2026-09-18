@@ -50,11 +50,14 @@ const SETUP_VI: Record<WyckoffSetup, string> = {
 };
 
 function pickSetup(w: WyckoffSnapshot): WyckoffSetup {
-  const codes = new Set(w.eventCodes ?? []);
-  if (codes.has("SPRING")) return "spring";
-  if (codes.has("UTAD") || codes.has("UT")) return "upthrust";
-  if (codes.has("SOS") && (w.phase === "markup" || w.phase === "accumulation")) return "sos-breakout";
-  if (codes.has("SOW") && (w.phase === "markdown" || w.phase === "distribution")) return "sow-breakdown";
+  const codes = new Set((w.eventCodes ?? []).map((c) => c.toUpperCase()));
+  const blob = (w.events ?? []).join(" ").toLowerCase();
+  if (codes.has("SPRING") || blob.includes("spring")) return "spring";
+  if (codes.has("UTAD") || codes.has("UT") || blob.includes("utad") || blob.includes("upthrust")) return "upthrust";
+  if ((codes.has("SOS") || blob.includes("sos")) && (w.phase === "markup" || w.phase === "accumulation" || w.phase === "re-accumulation"))
+    return "sos-breakout";
+  if ((codes.has("SOW") || blob.includes("sow")) && (w.phase === "markdown" || w.phase === "distribution" || w.phase === "re-distribution"))
+    return "sow-breakdown";
   if (w.phase === "accumulation" || w.phase === "re-accumulation") return "accumulation-range";
   if (w.phase === "distribution" || w.phase === "re-distribution") return "distribution-range";
   if (w.phase === "markup") return "markup";
