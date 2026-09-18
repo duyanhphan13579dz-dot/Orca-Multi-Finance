@@ -360,17 +360,26 @@ export function analyzeWyckoff(bars: OhlcvBar[]): WyckoffSnapshot {
 
 export function analyzeElliott(bars: OhlcvBar[]): ElliottSnapshot {
   const pivots = findPivots(bars.slice(-120), 3);
-  return {
-    pattern: "unclear",
-    patternVi: ELLIOTT_VI.unclear,
-    degree: bars.length >= 90 ? "intermediate" : "minor",
-    confidence: pivots.length >= 5 ? 30 : 0,
-    bias: "neutral",
-    waves: [],
-    invalidation: null,
-    nextTarget: null,
-    notes: pivots.length < 4 ? ["Chưa đủ pivot để gắn nhãn sóng"] : ["Elliott heuristic rút gọn — xem Wyckoff làm trục chính"],
-  };
+  const alternating = pivots.filter((p, i) => i === 0 || p.kind !== pivots[i - 1]!.kind).slice(-7);
+  const degree = bars.length >= 90 ? "intermediate" : "minor";
+  if (alternating.length < 4) return { pattern: "unclear", patternVi: ELLIOTT_VI.unclear, degree, confidence: 0, bias: "neutral", waves: [], invalidation: null, nextTarget: null, notes: ["Chưa đủ pivot để gắn nhãn sóng; cần tối thiểu 4 pivot xác nhận"] };
+
+  const points = alternating.map((p) => p.price);
+  const direction = points[points.length - 1]! > points[0]! ? "up" : "down";
+  const legs = points.slice(1).map((p, i) => Math.abs(p - points[i]!));
+  const [a, b, c, d, e] = legs;
+  const impulse = legs.length >= 5 && a > 0 && b > 0 && c > 0 && d > 0 && e > 0 && c >= Math.min(a, e) && b < a && d < c;
+  const corrective = legs.length >= 3 && b < a * 0.9 && c >= b * 0.8;
+  const waves = alternating.slice(-Math.min(7, alternating.length)).map((p, i) => ({ label: i < 5 ? String(i + 1) : ["A", "B", "C"][i - 5]!, price: p.price, time: p.time }));
+  const last = points[points.length - 1]!;
+  const origin = points[0]!;
+  const span = Math.abs(last - origin);
+  const retrace = direction === "up" ? last - span * 0.382 : last + span * 0.382;
+  const pattern: ElliottPattern = impulse ? (direction === "up" ? "impulse-up" : "impulse-down") : corrective ? (direction === "up" ? "corrective-abc-up" : "corrective-abc-down") : "unclear";
+  const confidence = pattern === "unclear" ? 25 : Math.min(88, 48 + alternating.length * 5 + (impulse ? 15 : 0));
+  const bias = pattern === "unclear" ? "neutral" : direction === "up" ? "bullish" : "bearish";
+  const invalidation = direction === "up" ? Math.min(...points) : Math.max(...points);
+  return { pattern, patternVi: ELLIOTT_VI[pattern], degree, confidence, bias, waves, invalidation, nextTarget: pattern === "unclear" ? null : retrace, notes: ["Heuristic theo pivot OHLCV; không thay thế việc đếm sóng đa cấp độ thủ công", impulse ? "Đã kiểm tra 3 quy tắc xung lực: sóng 2, 3 và 4" : corrective ? "Mẫu điều chỉnh ABC sơ bộ, cần xác nhận thêm ở khung lớn" : "Cấu trúc chưa đạt đủ điều kiện xung lực hoặc điều chỉnh"] };
 }
 
 export function analyzeStructure(bars: OhlcvBar[]): StructureAnalysis | null {

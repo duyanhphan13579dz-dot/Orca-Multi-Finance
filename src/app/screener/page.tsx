@@ -9,11 +9,12 @@ import type { CryptoMarketRow, Quote, IndexQuote } from "@/lib/types";
 import { WyckoffScreener } from "@/components/wyckoff-screener";
 import { CanslimScreener } from "@/components/canslim-screener";
 import { MinerviniScreener } from "@/components/minervini-screener";
+import { ElliottScreener } from "@/components/elliott-screener";
 import { Chg, fmtCompact, fmtNum, FreshnessDot, Loading, MetaLine, Panel, priceDigits, Unavailable } from "@/components/ui";
 import { FlatsIcon, Play } from "@/components/screener-icons";
 
 type StocksData = { indices: IndexQuote[] | null; quotes: Quote[] | null };
-type Universe = "stocks" | "crypto" | "wyckoff" | "canslim" | "minervini";
+type Universe = "stocks" | "crypto" | "wyckoff" | "canslim" | "minervini" | "elliott";
 
 const VN_BOARD = "VCB,BID,CTG,TCB,MBB,VPB,ACB,STB,HDB,VIB,LPB,SHB,FPT,HPG,VNM,VIC,VHM,VRE,NVL,PDR,GAS,PLX,MSN,MWG,SSI,VND,HCM,VCI,SHS,BSR,POW,REE,KDH,DXG,DCM,DPM,DGC,VHC,SAB,PNJ,GMD";
 
@@ -29,7 +30,9 @@ function ScreenerInner() {
           ? "canslim"
           : rawU === "minervini"
             ? "minervini"
-            : "stocks";
+            : rawU === "elliott"
+              ? "elliott"
+              : "stocks";
   const [universe, setUniverse] = useState<Universe>(initial);
   return (
     <div className="space-y-3">
@@ -46,6 +49,7 @@ function ScreenerInner() {
             <button data-active={universe === "canslim"} onClick={() => setUniverse("canslim")}>CANSLIM</button>
             <button data-active={universe === "minervini"} onClick={() => setUniverse("minervini")}>Minervini</button>
             <button data-active={universe === "wyckoff"} onClick={() => setUniverse("wyckoff")}>Wyckoff</button>
+            <button data-active={universe === "elliott"} onClick={() => setUniverse("elliott")}>Elliott Wave</button>
             <button data-active={universe === "crypto"} onClick={() => setUniverse("crypto")}>Crypto</button>
           </div>
         </div>
@@ -58,6 +62,8 @@ function ScreenerInner() {
         <CanslimScreener defaultSector={params.get("sector")} />
       ) : universe === "minervini" ? (
         <MinerviniScreener defaultSector={params.get("sector")} />
+      ) : universe === "elliott" ? (
+        <ElliottScreener defaultSector={params.get("sector")} />
       ) : (
         <VnScreener defaultSector={params.get("sector")} />
       )}
