@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useMemo, useState } from "react";
+import { RefreshCw } from "lucide-react";
 import { useApi } from "@/lib/hooks";
 import { VN_SECTOR_MAP } from "@/lib/vn/master";
 import { Badge, Chg, fmtNum, FreshnessDot, Loading, MetaLine, Panel, Unavailable } from "@/components/ui";
@@ -202,12 +203,25 @@ export function MinerviniScreener({ defaultSector }: { defaultSector: string | n
               className="input !w-40 !py-1.5 text-[12px]"
             />
           </label>
-          <button type="button" onClick={run} className="btn btn-primary !py-1.5 !text-[12px]">
-            <Play className="mr-1 inline h-3.5 w-3.5" />
-            Quét
+          <button
+            type="button"
+            onClick={run}
+            disabled={isValidating}
+            aria-busy={isValidating}
+            className="group inline-flex items-center gap-1.5 rounded-md border border-accent-primary/70 bg-accent-primary px-3.5 py-1.5 text-[12px] font-semibold text-white shadow-[0_0_14px_rgb(59_130_246/0.22)] transition-all duration-200 hover:-translate-y-0.5 hover:bg-accent-primary/90 hover:shadow-[0_0_20px_rgb(59_130_246/0.38)] active:translate-y-0 active:scale-95 disabled:cursor-wait disabled:opacity-75"
+          >
+            {isValidating ? <RefreshCw className="size-3.5 animate-spin" aria-hidden /> : <Play className="size-3.5 transition-transform group-hover:translate-x-0.5" aria-hidden />}
+            {isValidating ? "Đang quét…" : "Quét dữ liệu"}
           </button>
-          <button type="button" onClick={() => mutate()} className="btn !py-1.5 !text-[12px]" disabled={isValidating}>
-            Làm mới
+          <button
+            type="button"
+            onClick={() => mutate()}
+            className="inline-flex items-center gap-1.5 rounded-md border border-line bg-panel-2 px-3 py-1.5 text-[12px] font-medium text-ink-2 transition-all duration-200 hover:-translate-y-0.5 hover:border-accent-primary/50 hover:bg-accent-primary/10 hover:text-accent-primary active:translate-y-0 active:scale-95 disabled:cursor-wait disabled:opacity-60"
+            disabled={isValidating}
+            aria-busy={isValidating}
+          >
+            <RefreshCw className={`size-3.5 ${isValidating ? "animate-spin" : ""}`} aria-hidden />
+            {isValidating ? "Đang làm mới…" : "Làm mới"}
           </button>
         </div>
         <div className="mt-2 flex flex-wrap items-center gap-3 text-[11px] text-text-muted">
