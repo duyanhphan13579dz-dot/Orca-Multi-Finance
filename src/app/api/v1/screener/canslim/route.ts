@@ -9,7 +9,7 @@ const LETTERS = new Set<CanslimLetter>(["C", "A", "N", "S", "L", "I", "M"]);
 
 /**
  * GET /api/v1/screener/canslim
- * Quét rổ thanh khoản VN theo heuristic CAN SLIM (O'Neil) trên BCTC + OHLCV thật.
+ * Pipeline: quotes + OHLCV + BCTC + VNDirect ratios/equity + foreign flow + VNINDEX M.
  */
 export async function GET(req: Request) {
   const url = new URL(req.url);
@@ -44,6 +44,8 @@ export async function GET(req: Request) {
       scanned: r.scanned,
       skipped: r.skipped,
       marketBullish: r.marketBullish,
+      marketDetail: r.marketDetail,
+      coverage: r.coverage,
     },
     r.meta,
   );

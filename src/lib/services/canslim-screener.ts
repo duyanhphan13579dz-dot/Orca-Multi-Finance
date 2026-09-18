@@ -5,8 +5,9 @@ import { getFinancialPackage } from "../financial/service";
 import { getVnIndices, getVnOhlcv, getVnQuotes } from "./stocks";
 import { LIQUID_BOARD } from "../providers/public-vn-feed";
 import { getVndSymbolForeignFlow } from "../providers/vndirect-foreign-symbol";
+import { getVndEquitySnapshot, getVndValuationRatios } from "../providers/vndirect-company";
 import { getSecurity, sectorOf } from "../vn/master";
-import type { Meta } from "../types";
+import type { Meta, OhlcvBar } from "../types";
 
 export interface CanslimScreenRow {
   symbol: string;
@@ -22,8 +23,18 @@ export interface CanslimScreenRow {
   passLetters: CanslimLetter[];
   letters: CanslimSnapshot["letters"];
   metrics: CanslimSnapshot["metrics"];
+  dataCoverage: CanslimSnapshot["dataCoverage"];
   flags: string[];
   notes: string[];
+}
+
+export interface CanslimCoverageStats {
+  withBars: number;
+  withGrowth: number;
+  withHealth: number;
+  withForeign: number;
+  withRatios: number;
+  withEquity: number;
 }
 
 async function mapPool<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
@@ -39,16 +50,82 @@ async function mapPool<T, R>(items: T[], limit: number, fn: (item: T) => Promise
   return out;
 }
 
-async function marketBullish(): Promise<boolean | null> {
+function sma(closes: number[], n: number): number | null {
+  if (closes.length < n) return null;
+  const slice = closes.slice(-n);
+  return slice.reduce((a, b) => a + b, 0) / n;
+}
+
+/** M: VNINDEX OHLCV — giá vs MA50 + đà 3 tháng + Δ% phiên. */
+async function resolveMarketDirection(): Promise<{
+  bullish: boolean | null;
+  detail: string;
+  source: string;
+}> {
   try {
-    const idx = await getVnIndices();
-    const vn = idx?.items?.find((x) => x.code === "VNINDEX" || x.code === "VN30");
-    if (!vn) return null;
-    // heuristic: Δ% phiên > -1 và không đang rơi mạnh
-    if (vn.changePercent != null) return vn.changePercent > -1.2;
-    return null;
+    const [idxPack, ohlcv] = await Promise.all([
+      getVnIndices().catch(() => null),
+      getVnOhlcv("VNINDEX", 120).catch(() => null),
+    ]);
+    const vn = idxPack?.items?.find((x) => x.code === "VNINDEX") ?? idxPack?.items?.find((x) => x.code === "VN30");
+    const bars = ohlcv?.bars ?? [];
+    const closes = bars.map((b) => b.close);
+    const ma50 = sma(closes, 50);
+    const last = closes[closes.length - 1];
+    const ret63 = bars.length >= 65 ? retPct(bars, 63) : null;
+
+    const parts: string[] = [];
+    let score = 0;
+    let votes = 0;
+
+    if (vn?.changePercent != null) {
+      votes += 1;
+      if (vn.changePercent > 0.3) {
+        score += 1;
+        parts.push(`phiên +${vn.changePercent.toFixed(1)}%`);
+      } else if (vn.changePercent < -1.2) {
+        score -= 1;
+        parts.push(`phiên ${vn.changePercent.toFixed(1)}%`);
+      } else {
+        parts.push(`phiên ${vn.changePercent.toFixed(1)}%`);
+      }
+    }
+
+    if (last != null && ma50 != null && ma50 > 0) {
+      votes += 1;
+      const vsMa = ((last - ma50) / ma50) * 100;
+      if (vsMa > 0) {
+        score += 1;
+        parts.push(`trên MA50 (+${vsMa.toFixed(1)}%)`);
+      } else {
+        score -= 1;
+        parts.push(`dưới MA50 (${vsMa.toFixed(1)}%)`);
+      }
+    }
+
+    if (ret63 != null) {
+      votes += 1;
+      if (ret63 > 3) {
+        score += 1;
+        parts.push(`3M +${ret63.toFixed(0)}%`);
+      } else if (ret63 < -5) {
+        score -= 1;
+        parts.push(`3M ${ret63.toFixed(0)}%`);
+      } else {
+        parts.push(`3M ${ret63.toFixed(0)}%`);
+      }
+    }
+
+    if (votes === 0) return { bullish: null, detail: "Chưa lấy được VNINDEX", source: "none" };
+
+    const bullish = score > 0 ? true : score < 0 ? false : vn?.changePercent != null ? vn.changePercent > -1 : null;
+    return {
+      bullish,
+      detail: `VNINDEX: ${parts.join(" · ") || "n/a"}`,
+      source: bars.length ? "vndirect-index-ohlcv+quote" : "vndirect-index-quote",
+    };
   } catch {
-    return null;
+    return { bullish: null, detail: "Lỗi nguồn chỉ số", source: "error" };
   }
 }
 
@@ -59,25 +136,27 @@ export async function screenCanslim(args?: {
   requireLetters?: CanslimLetter[];
   sector?: string;
   limit?: number;
-}): Promise<{ rows: CanslimScreenRow[]; scanned: number; skipped: number; marketBullish: boolean | null; meta: Meta } | null> {
+}): Promise<{
+  rows: CanslimScreenRow[];
+  scanned: number;
+  skipped: number;
+  marketBullish: boolean | null;
+  marketDetail: string;
+  coverage: CanslimCoverageStats;
+  meta: Meta;
+} | null> {
   const uniq = [
     ...new Set((args?.symbols?.length ? args.symbols : LIQUID_BOARD).map((s) => s.toUpperCase()).filter(Boolean)),
   ].slice(0, 48);
 
-  const [quotesPack, mBull] = await Promise.all([
-    getVnQuotes(uniq).catch(() => null),
-    marketBullish(),
-  ]);
+  const [quotesPack, market] = await Promise.all([getVnQuotes(uniq).catch(() => null), resolveMarketDirection()]);
   const quoteMap = new Map((quotesPack?.quotes ?? []).map((q) => [q.symbol, q]));
 
-  // Pass 1: OHLCV + returns for RS ranking
   let skipped = 0;
-  type Pack = {
-    symbol: string;
-    bars: Awaited<ReturnType<typeof getVnOhlcv>> extends { bars: infer B } | null ? B : never;
-    ret6: number | null;
-  };
-  const packs = await mapPool(uniq, 5, async (symbol): Promise<Pack | null> => {
+  type Pack = { symbol: string; bars: OhlcvBar[]; ret6: number | null };
+
+  // Pass 1 — OHLCV (pool 6)
+  const packs = await mapPool(uniq, 6, async (symbol): Promise<Pack | null> => {
     const ohlcv = await getVnOhlcv(symbol, 260).catch(() => null);
     const bars = ohlcv?.bars ?? [];
     if (bars.length < 40) {
@@ -87,7 +166,10 @@ export async function screenCanslim(args?: {
     return { symbol, bars, ret6: retPct(bars, 126) };
   });
   const valid = packs.filter((p): p is Pack => p != null);
-  const rets = valid.map((p) => p.ret6).filter((r): r is number => r != null).sort((a, b) => a - b);
+  const rets = valid
+    .map((p) => p.ret6)
+    .filter((r): r is number => r != null)
+    .sort((a, b) => a - b);
 
   function rsRankOf(r: number | null): number | null {
     if (r == null || !rets.length) return null;
@@ -96,21 +178,52 @@ export async function screenCanslim(args?: {
     return Math.round((below / rets.length) * 100);
   }
 
-  // Pass 2: financials + foreign + analyze
+  const coverage: CanslimCoverageStats = {
+    withBars: valid.length,
+    withGrowth: 0,
+    withHealth: 0,
+    withForeign: 0,
+    withRatios: 0,
+    withEquity: 0,
+  };
+
+  // Pass 2 — BCTC + ratios + equity + NN (pool 4)
   const analyzed = await mapPool(valid, 4, async (p) => {
-    const [fin, foreign] = await Promise.all([
+    const [fin, foreign, equity, ratios] = await Promise.all([
       getFinancialPackage(p.symbol).catch(() => null),
-      getVndSymbolForeignFlow(p.symbol, 5).catch(() => null),
+      getVndSymbolForeignFlow(p.symbol, 8).catch(() => null),
+      getVndEquitySnapshot(p.symbol).catch(() => null),
+      getVndValuationRatios(p.symbol).catch(() => null),
     ]);
+
+    const net1 = foreign?.latest?.netVal ?? null;
+    const hist = foreign?.history ?? [];
+    const net5 =
+      hist.length > 0
+        ? hist.slice(0, 5).reduce((s, d) => s + (d.netVal || 0), 0)
+        : null;
+
+    if (fin?.pkg.growth && (fin.pkg.growth.yoy.length || fin.pkg.growth.qoq.length)) coverage.withGrowth += 1;
+    if (fin?.health && fin.health.coverage > 0) coverage.withHealth += 1;
+    if (net1 != null || net5 != null) coverage.withForeign += 1;
+    if (ratios?.roe != null || ratios?.eps != null) coverage.withRatios += 1;
+    if (equity?.sharesOutstanding) coverage.withEquity += 1;
+
     const snap = analyzeCanslim({
       bars: p.bars,
       growth: fin?.pkg.growth ?? null,
       health: fin?.health ?? null,
       periods: fin?.pkg.periods ?? null,
-      foreignNetVal: foreign?.latest?.netVal ?? null,
-      marketBullish: mBull,
+      foreignNetVal: net1,
+      foreignNet5d: net5,
+      marketBullish: market.bullish,
+      marketDetail: market.detail,
       rsRank: rsRankOf(p.ret6),
+      ratiosRoePct: ratios?.roe ?? null,
+      ratiosEps: ratios?.eps ?? null,
+      sharesOutstanding: equity?.sharesOutstanding ?? null,
     });
+
     const q = quoteMap.get(p.symbol);
     const sec = getSecurity(p.symbol);
     const row: CanslimScreenRow = {
@@ -127,6 +240,7 @@ export async function screenCanslim(args?: {
       passLetters: snap.letters.filter((l) => l.pass).map((l) => l.letter),
       letters: snap.letters,
       metrics: snap.metrics,
+      dataCoverage: snap.dataCoverage,
       flags: snap.flags,
       notes: snap.notes,
     };
@@ -149,16 +263,20 @@ export async function screenCanslim(args?: {
 
   if (!rows.length && skipped === uniq.length) return null;
 
+  const covNote = `BCTC ${coverage.withGrowth}/${valid.length} · ROE/ratios ${coverage.withRatios} · NN ${coverage.withForeign} · CP ${coverage.withEquity} · nến ${coverage.withBars}`;
+
   return {
     rows,
     scanned: uniq.length,
     skipped,
-    marketBullish: mBull,
+    marketBullish: market.bullish,
+    marketDetail: market.detail,
+    coverage,
     meta: buildMeta({
-      source: quotesPack?.meta.source ?? "vndirect+bctc+ohlcv",
+      source: [quotesPack?.meta.source, "bctc", "vnd-ratios", "ohlcv", market.source].filter(Boolean).join("+") || "canslim-pipeline",
       sourceTimestampMs: Date.now(),
-      partial: skipped > 0,
-      note: `CANSLIM heuristic · quét ${uniq.length} mã · đủ nến ${uniq.length - skipped} · M=${mBull === true ? "bullish" : mBull === false ? "weak" : "n/a"} · không phải tín hiệu GD`,
+      partial: skipped > 0 || coverage.withGrowth < valid.length * 0.5,
+      note: `CANSLIM · quét ${uniq.length} · ${covNote} · ${market.detail} · không phải tín hiệu GD`,
     }),
   };
 }
