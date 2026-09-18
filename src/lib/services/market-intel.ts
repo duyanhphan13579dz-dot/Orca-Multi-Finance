@@ -4,6 +4,7 @@ import { buildMeta } from "../freshness";
 import { buildMarketSnapshot } from "./market";
 import { getCrossAsset, crossAssetChanges, type CrossAssetItem } from "./cross-asset";
 import { getVnQuotes, getVnMarketBoard, vnstockConfigured } from "./stocks";
+import { getNews } from "./news";
 import * as vndirect from "../providers/vndirect";
 import { getCafefPropFlow } from "../providers/cafef";
 import { computeMarketCondition, computeContributions, type MarketConditionResult, type ContributionRow } from "../engines/market-condition";
@@ -77,7 +78,7 @@ export interface MarketIntel {
 const VN30_BOARD = ["VCB", "BID", "CTG", "TCB", "MBB", "VPB", "ACB", "STB", "HDB", "VIC", "VHM", "VRE", "HPG", "FPT", "VNM", "MSN", "MWG", "GAS", "PLX", "SSI", "POW", "SAB", "BCM", "GVR", "SHB", "TPB", "BVH", "PDR", "KDH", "VJC"];
 
 export async function buildMarketIntel(): Promise<{ intel: MarketIntel; meta: Meta }> {
-  const res = await cached("market:intel:v5", {
+  const res = await cached("market:intel:v6", {
     ttlMs: 10_000,
     staleMs: 30 * 60_000,
     producer: async () => {
@@ -134,6 +135,7 @@ export async function buildMarketIntel(): Promise<{ intel: MarketIntel; meta: Me
             liquidity: "UNAVAILABLE",
             flow: "UNAVAILABLE",
             crossAsset: "UNAVAILABLE",
+            news: "UNAVAILABLE",
           },
           vnDataNote: "Payload suy giảm — đang kết nối lại VNDirect.",
         };
@@ -173,20 +175,23 @@ async function produceMarketIntel(): Promise<{ intel: MarketIntel; meta: Meta }>
     withTimeout(getVnQuotes(VN30_BOARD.slice(0, 20)), 6_000),
   ]);
 
-  const [snapRes, crossRes, foreignRes, etfRes, propRes, idxStats] = await Promise.all([
-    withTimeout(buildMarketSnapshot(), 7_000),
-    withTimeout(getCrossAsset(), 5_000),
-    withTimeout(vndirect.getVndForeignFlow(), 5_000),
-    withTimeout(vndirect.getVndEtfFlow(), 5_000),
-    withTimeout(
-      (async () => {
-        const date = await vndirect.getVndLatestSessionDate();
-        return getCafefPropFlow(date);
-      })(),
-      5_000,
-    ),
-    withTimeout(vndirect.getVndIndexSessionStats("VNINDEX"), 4_000),
-  ]);
+  const [snapRes, crossRes, foreignRes, etfRes, propRes, idxStats, marketBoardRes, newsPack] =
+    await Promise.all([
+      withTimeout(buildMarketSnapshot(), 10_000),
+      withTimeout(getCrossAsset(), 5_000),
+      withTimeout(vndirect.getVndForeignFlow(), 6_000),
+      withTimeout(vndirect.getVndEtfFlow(), 5_000),
+      withTimeout(
+        (async () => {
+          const date = await vndirect.getVndLatestSessionDate();
+          return getCafefPropFlow(date);
+        })(),
+        5_000,
+      ),
+      withTimeout(vndirect.getVndIndexSessionStats("VNINDEX"), 8_000),
+      withTimeout(getVnMarketBoard(), 8_000),
+      withTimeout(getNews({ limit: 20 }), 12_000),
+    ]);
 
   const indices =
     indicesPack?.items?.length
@@ -207,6 +212,18 @@ async function produceMarketIntel(): Promise<{ intel: MarketIntel; meta: Meta }>
       source: "vndirect vnmarket_prices",
       available: true,
       note: "Breadth từ VNDirect vnmarket_prices",
+    };
+  } else if (marketBoardRes?.quotes?.length) {
+    const qs = marketBoardRes.quotes;
+    const a = qs.filter((q) => (q.changePercent ?? 0) > 0).length;
+    const d = qs.filter((q) => (q.changePercent ?? 0) < 0).length;
+    breadth = {
+      advancers: a,
+      decliners: d,
+      unchanged: qs.length - a - d,
+      source: marketBoardRes.meta.source,
+      available: true,
+      note: `Breadth ước lượng từ ${qs.length} mã bảng giá`,
     };
   } else if (board?.quotes?.length) {
     const a = board.quotes.filter((q) => (q.changePercent ?? 0) > 0).length;
@@ -231,15 +248,40 @@ async function produceMarketIntel(): Promise<{ intel: MarketIntel; meta: Meta }>
 
   breadth = enrichBreadth(breadth);
 
-  const valueTraded =
-    idxStats?.value ?? board?.quotes?.reduce((sum, q) => sum + (q.quoteVolume ?? 0), 0) ?? null;
+  // Thanh khoản: ưu tiên GTGD chỉ số (session-stats) → cộng rổ full board → VN30 board → foreign turnover proxy
+  const boardSum =
+    board?.quotes?.reduce((sum, q) => sum + (q.quoteVolume ?? q.volume ?? 0), 0) ?? 0;
+  const fullBoardSum =
+    marketBoardRes?.quotes?.reduce((sum, q) => sum + (q.quoteVolume ?? q.volume ?? 0), 0) ?? 0;
+  let valueTraded: number | null =
+    idxStats?.value && idxStats.value > 0
+      ? idxStats.value
+      : fullBoardSum > 0
+        ? fullBoardSum
+        : boardSum > 0
+          ? boardSum
+          : null;
+  let liqNote =
+    idxStats?.value && idxStats.value > 0
+      ? "GTGD phiên từ VNDirect vnmarket_prices (VNINDEX)."
+      : fullBoardSum > 0
+        ? `GTGD ước lượng từ ${marketBoardRes?.quotes?.length ?? 0} mã bảng giá (cộng quoteVolume).`
+        : boardSum > 0
+          ? `GTGD ước lượng từ rổ VN30 theo dõi (${board?.quotes?.length ?? 0} mã).`
+          : "Chưa có GTGD phiên — session-stats/board chưa trả volume.";
+  // Proxy nhẹ: tổng mua+bán khối ngoại (không thay GTGD chính thức)
+  if ((valueTraded == null || valueTraded <= 0) && foreignRes && (foreignRes.buyVal > 0 || foreignRes.sellVal > 0)) {
+    const turnover = (foreignRes.buyVal ?? 0) + (foreignRes.sellVal ?? 0);
+    if (turnover > 0) {
+      valueTraded = turnover;
+      liqNote = `Proxy: tổng GT mua+bán khối ngoại phiên ${foreignRes.sessionDate} (không phải GTGD toàn sàn).`;
+    }
+  }
   const liquidity = {
     valueTraded: valueTraded && valueTraded > 0 ? valueTraded : null,
     baseline: null as number | null,
     available: Boolean(valueTraded && valueTraded > 0),
-    note: valueTraded
-      ? "Giá trị giao dịch phiên (chỉ số hoặc rổ theo dõi)."
-      : "Cần dữ liệu giá trị giao dịch từ provider VN.",
+    note: liqNote,
   };
 
   const foreign = foreignRes;
@@ -304,17 +346,31 @@ async function produceMarketIntel(): Promise<{ intel: MarketIntel; meta: Meta }>
       : null,
   });
 
-  const contribRows = (board?.quotes ?? []).map((q) => ({
-    symbol: q.symbol,
-    changePercent: q.changePercent ?? null,
-    weightPct: null as number | null,
-  }));
+  const contribSourceQuotes =
+    (marketBoardRes?.quotes?.length ? marketBoardRes.quotes : board?.quotes) ?? [];
+  const contribRows = contribSourceQuotes
+    .filter((q) => q.changePercent != null)
+    .sort((a, b) => Math.abs(b.changePercent ?? 0) - Math.abs(a.changePercent ?? 0))
+    .slice(0, 40)
+    .map((q) => ({
+      symbol: q.symbol,
+      changePercent: q.changePercent ?? null,
+      weightPct: null as number | null,
+    }));
   const contributors = {
     ...computeContributions(indices?.[0]?.value ?? null, contribRows),
     note: "Đóng góp ước lượng theo % biến động rổ theo dõi (chưa có tỷ trọng chính thức).",
   };
 
-  const news = snap?.snapshot?.news ?? [];
+  // Tin: ưu tiên getNews độc lập (timeout dài hơn snapshot) → fallback snapshot
+  const newsFromPack = newsPack?.articles ?? [];
+  const newsFromSnap = snap?.snapshot?.news ?? [];
+  const news =
+    newsFromPack.length > 0
+      ? newsFromPack
+      : newsFromSnap.length > 0
+        ? newsFromSnap
+        : [];
   const sections: Record<string, FreshnessStatus> = {
     indices: indicesAvailable
       ? (indicesPack?.meta.freshness ?? snap?.meta.freshness ?? "FRESH")
@@ -323,6 +379,7 @@ async function produceMarketIntel(): Promise<{ intel: MarketIntel; meta: Meta }>
     liquidity: liquidity.available ? "FRESH" : "UNAVAILABLE",
     flow: flow.available ? "FRESH" : "UNAVAILABLE",
     crossAsset: cross ? cross.meta.freshness : "UNAVAILABLE",
+    news: news.length > 0 ? (newsPack?.meta.freshness ?? "FRESH") : "UNAVAILABLE",
   };
 
   const intel: MarketIntel = {
@@ -349,9 +406,9 @@ async function produceMarketIntel(): Promise<{ intel: MarketIntel; meta: Meta }>
       source: flow.source,
       sourceTimestampMs: newest,
       note: flow.note,
-      partial: !indicesAvailable || !breadth.available,
+      partial: !indicesAvailable || !breadth.available || !liquidity.available || news.length === 0,
       degraded: !indicesAvailable && !board?.quotes?.length,
-      hasData: Boolean(indicesAvailable || board?.quotes?.length || cross?.items?.length),
+      hasData: Boolean(indicesAvailable || board?.quotes?.length || cross?.items?.length || news.length),
       slas: { liveSlaMs: 30_000, freshSlaMs: 120_000, delayedSlaMs: 600_000 },
     }),
   };
