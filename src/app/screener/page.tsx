@@ -109,7 +109,7 @@ function VnScreener({ defaultSector }: { defaultSector: string | null }) {
   }, [flash]);
 
   const filters = (
-    <div className={`flex flex-wrap items-end gap-2 rounded-md p-0.5 transition-shadow duration-300 ${flash ? "ring-2 ring-accent-primary/50" : ""`}>
+    <div className={`flex flex-wrap items-end gap-2 rounded-md p-0.5 transition-shadow duration-300 ${flash ? "ring-2 ring-accent-primary/50" : ""}`}>
       <label>
         <span className="mb-0.5 block text-[10px] uppercase tracking-wider text-text-muted">Tìm mã (live)</span>
         <input
@@ -134,9 +134,7 @@ function VnScreener({ defaultSector }: { defaultSector: string | null }) {
       <button
         type="button"
         onClick={run}
-        className={`flex items-center gap-1.5 rounded-md px-3.5 py-1.5 text-[12px] font-semibold text-white transition-all duration-150
-          ${pressed ? "scale-95 bg-accent-primary ring-2 ring-white/40" : "bg-accent-primary/90 hover:bg-accent-primary"}
-          active:scale-95 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-primary`}
+        className={`flex items-center gap-1.5 rounded-md px-3.5 py-1.5 text-[12px] font-semibold text-white transition-all duration-150 ${pressed ? "scale-95 bg-accent-primary ring-2 ring-white/40" : "bg-accent-primary/90 hover:bg-accent-primary"} active:scale-95 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-primary`}
       >
         {isValidating ? (
           <span className="inline-block size-3.5 animate-spin rounded-full border-2 border-white/30 border-t-white" aria-hidden />
@@ -173,7 +171,7 @@ function VnScreener({ defaultSector }: { defaultSector: string | null }) {
         right={filters}
         pad={false}
       >
-        <div className={`overflow-x-auto transition-opacity duration-200 ${isValidating ? "opacity-70" : "opacity-100"`}>
+        <div className={`overflow-x-auto transition-opacity duration-200 ${isValidating ? "opacity-70" : "opacity-100"}`}>
           <table className="w-full min-w-[560px] text-[12px]">
             <thead>
               <tr className="border-b border-line text-left text-[10px] uppercase tracking-wider text-ink-3">
@@ -274,9 +272,7 @@ function CryptoScreener() {
             <button
               type="button"
               onClick={run}
-              className={`flex items-center gap-1.5 rounded-md px-3.5 py-1.5 text-[12px] font-semibold text-white transition-all duration-150
-                ${pressed ? "scale-95 bg-accent-primary ring-2 ring-white/40" : "bg-accent-primary/90 hover:bg-accent-primary"}
-                active:scale-95`}
+              className={`flex items-center gap-1.5 rounded-md px-3.5 py-1.5 text-[12px] font-semibold text-white transition-all duration-150 ${pressed ? "scale-95 bg-accent-primary ring-2 ring-white/40" : "bg-accent-primary/90 hover:bg-accent-primary"} active:scale-95`}
             >
               {isValidating ? (
                 <span className="inline-block size-3.5 animate-spin rounded-full border-2 border-white/30 border-t-white" aria-hidden />
