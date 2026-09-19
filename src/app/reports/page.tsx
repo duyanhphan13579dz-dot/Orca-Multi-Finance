@@ -10,6 +10,7 @@ import { Badge, FreshnessDot, Loading, Panel, Unavailable } from "@/components/u
 import { BookOpenText, History, Play, Printer } from "lucide-react";
 import { printDailyReport } from "@/lib/report-print";
 import { ReportVnIndexWeeklyChart } from "@/components/report-vnindex-weekly-chart";
+import { cleanHeading, sectionToLines } from "@/lib/report-format";
 
 type Tab = "morning_brief" | "intraday_brief" | "market_summary" | "strategy" | "company";
 
@@ -29,9 +30,10 @@ export default function ReportCenterPage() {
         <div className="flex flex-wrap items-center gap-3 p-4">
           <OrcaMark size={34} />
           <div>
-            <h1 className="text-lg font-semibold">ORCA Report Center</h1>
-            <p className="text-[12px] text-text-muted">
-              Vietnam-first market & financial intelligence — dựng từ dữ liệu đã xác minh, có traceability đầy đủ.
+            <h1 className="text-lg font-semibold tracking-tight">ORCA Report Center</h1>
+            <p className="text-[12px] leading-relaxed text-text-muted">
+              Vietnam-first market & financial intelligence — dựng từ dữ liệu đã xác minh, có
+              traceability đầy đủ.
             </p>
           </div>
           <div className="ml-auto flex max-w-full gap-1 overflow-x-auto pb-0.5">
@@ -156,14 +158,15 @@ function DailyReportView({ type }: { type: Exclude<Tab, "company"> }) {
             </li>
           ))}
           {!history?.items.length && (
-            <li className="px-3 py-3 text-[11.5px] text-text-muted">
+            <li className="px-3 py-3 text-[11.5px] leading-relaxed text-text-muted">
               Chưa có bản nào trong kho — bấm “Tạo báo cáo mới”. Scheduler khuyến nghị Chủ Nhật
               18:00–20:00 VN (Weekly Strategy) hoặc 08:15 / 15:45 các ngày trong tuần khi bật.
             </li>
           )}
           {history?.items.length ? (
             <li className="border-t border-border-subtle px-3 py-2 text-[10px] text-text-muted">
-              {history.items.length}/7 bản · tạo bản thứ 8 sẽ xóa hết lịch sử loại này và chỉ giữ bản mới.
+              {history.items.length}/7 bản · tạo bản thứ 8 sẽ xóa hết lịch sử loại này và chỉ giữ bản
+              mới.
             </li>
           ) : null}
         </ul>
@@ -188,6 +191,65 @@ function isWeekOverviewHeading(heading: string): boolean {
   return /tổng quan diễn biến tuần/i.test(heading);
 }
 
+function SectionBody({ paragraphs }: { paragraphs: string[] }) {
+  const lines = sectionToLines(paragraphs);
+  if (!lines.length) return null;
+
+  const bullets = lines.filter((l) => l.kind === "bullet");
+  const prose = lines.filter((l) => l.kind === "prose");
+  // If majority are bullets, render all as one list when mixed; keep prose as paragraphs above/below
+  const mostlyBullets = bullets.length >= Math.max(1, prose.length);
+
+  if (mostlyBullets && bullets.length > 0) {
+    return (
+      <div className="mt-2.5 space-y-2">
+        {prose.map((l, i) => (
+          <p
+            key={`p-${i}`}
+            className="text-[12.5px] leading-[1.65] tracking-[0.01em] text-text-secondary"
+          >
+            {l.text}
+          </p>
+        ))}
+        <ul className="space-y-1.5 pl-0">
+          {bullets.map((l, i) => (
+            <li
+              key={`b-${i}`}
+              className="flex gap-2 text-[12.5px] leading-[1.65] tracking-[0.01em] text-text-secondary"
+            >
+              <span className="mt-[0.55em] size-1 shrink-0 rounded-full bg-accent-primary/70" />
+              <span className="min-w-0">{l.text}</span>
+            </li>
+          ))}
+        </ul>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-2.5 space-y-2">
+      {lines.map((l, i) =>
+        l.kind === "bullet" ? (
+          <div
+            key={i}
+            className="flex gap-2 text-[12.5px] leading-[1.65] tracking-[0.01em] text-text-secondary"
+          >
+            <span className="mt-[0.55em] size-1 shrink-0 rounded-full bg-accent-primary/70" />
+            <span className="min-w-0">{l.text}</span>
+          </div>
+        ) : (
+          <p
+            key={i}
+            className="text-[12.5px] leading-[1.65] tracking-[0.01em] text-text-secondary"
+          >
+            {l.text}
+          </p>
+        ),
+      )}
+    </div>
+  );
+}
+
 function ReportView({
   report,
   meta,
@@ -203,15 +265,15 @@ function ReportView({
         <div className="hd flex items-center gap-3 border-b border-line pb-3">
           <OrcaMark size={44} />
           <div className="min-w-0">
-            <h2 className="text-[19px] font-semibold leading-tight">{report.title}</h2>
-            <p className="text-[12px] text-text-muted">{report.subtitle}</p>
+            <h2 className="text-[19px] font-semibold leading-snug tracking-tight">{report.title}</h2>
+            <p className="mt-0.5 text-[12px] leading-relaxed text-text-muted">{report.subtitle}</p>
           </div>
           <span className="bd ml-auto shrink-0 text-[9.5px] tracking-[0.2em] text-accent-primary">
             ORCA RESEARCH
           </span>
         </div>
 
-        <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-text-muted">
+        <div className="mt-2.5 flex flex-wrap items-center gap-2 text-[11px] leading-relaxed text-text-muted">
           <span>
             Phát hành:{" "}
             {new Date(report.generatedAt).toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })}
@@ -229,7 +291,7 @@ function ReportView({
           </span>
           {meta && <FreshnessDot status={meta.freshness} ageMs={null} />}
         </div>
-        <div className="mt-1.5 flex flex-wrap gap-1.5">
+        <div className="mt-2 flex flex-wrap gap-1.5">
           {Object.entries(report.freshness).map(([k, v]) => (
             <Badge
               key={k}
@@ -240,44 +302,59 @@ function ReportView({
           ))}
         </div>
 
-        <div className="mt-4 space-y-4">
-          {report.sections.map((s) => (
-            <section key={s.heading}>
-              <h3
-                className={`text-[13px] font-semibold ${
-                  s.tone === "up"
-                    ? "text-up"
-                    : s.tone === "down"
-                      ? "text-down"
-                      : "text-text-primary"
-                }`}
+        <div className="mt-5 space-y-3">
+          {report.sections.map((s, idx) => {
+            const heading = cleanHeading(s.heading);
+            const toneBorder =
+              s.tone === "up"
+                ? "border-l-up/70"
+                : s.tone === "down"
+                  ? "border-l-down/70"
+                  : "border-l-accent-primary/50";
+            const toneTitle =
+              s.tone === "up"
+                ? "text-up"
+                : s.tone === "down"
+                  ? "text-down"
+                  : "text-text-primary";
+            return (
+              <section
+                key={`${heading}-${idx}`}
+                className={`rounded-xl border border-border-subtle/80 bg-surface-elevated/40 p-3.5 shadow-sm ring-1 ring-black/[0.03] border-l-[3px] ${toneBorder}`}
               >
-                {s.heading}
-              </h3>
-              <div className="mt-1.5 space-y-1.5 text-[12.5px] leading-relaxed text-text-secondary">
-                {s.paragraphs.map((p, i) => (
-                  <p key={i}>{p}</p>
-                ))}
-              </div>
-              {report.type === "strategy" && isWeekOverviewHeading(s.heading) && (
-                <ReportVnIndexWeeklyChart height={280} limit={120} />
-              )}
-            </section>
-          ))}
+                <h3 className={`text-[13px] font-semibold tracking-tight leading-snug ${toneTitle}`}>
+                  {heading}
+                </h3>
+                <SectionBody paragraphs={s.paragraphs} />
+                {report.type === "strategy" && isWeekOverviewHeading(s.heading) && (
+                  <div className="mt-3 overflow-hidden rounded-lg border border-border-subtle/60 bg-surface-base/50 p-1">
+                    <ReportVnIndexWeeklyChart height={280} limit={120} />
+                  </div>
+                )}
+              </section>
+            );
+          })}
         </div>
 
         {report.scenarios?.length > 0 && (
-          <div className="mt-5">
-            <h3 className="text-[13px] font-semibold">Kịch bản Base / Bull / Bear</h3>
-            <div className="mt-2 grid gap-2 md:grid-cols-3">
+          <div className="mt-4 rounded-xl border border-border-subtle/80 bg-surface-elevated/40 p-3.5 shadow-sm ring-1 ring-black/[0.03]">
+            <h3 className="text-[13px] font-semibold tracking-tight">Kịch bản Base / Bull / Bear</h3>
+            <div className="mt-2.5 grid gap-2.5 md:grid-cols-3">
               {report.scenarios.map((sc) => (
-                <div key={sc.label} className="rounded-lg border border-border-subtle p-3">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[12px] font-semibold">{sc.label}</span>
-                    <span className="text-[10px] text-text-muted">{sc.probabilityRange}</span>
+                <div
+                  key={sc.label}
+                  className="rounded-lg border border-border-subtle bg-surface-base/60 p-3 shadow-sm"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[12px] font-semibold tracking-tight">{sc.label}</span>
+                    <span className="text-[10px] tabular-nums text-text-muted">
+                      {sc.probabilityRange}
+                    </span>
                   </div>
-                  <p className="mt-1.5 text-[11px] text-text-secondary">{sc.drivers}</p>
-                  <p className="mt-1 text-[11px] text-text-muted">{sc.indexZones}</p>
+                  <p className="mt-1.5 text-[11.5px] leading-[1.6] tracking-[0.01em] text-text-secondary">
+                    {sc.drivers}
+                  </p>
+                  <p className="mt-1 text-[11px] leading-[1.55] text-text-muted">{sc.indexZones}</p>
                 </div>
               ))}
             </div>
