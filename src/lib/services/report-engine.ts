@@ -13,6 +13,7 @@ import {
 import { composeMarketSummaryFramework } from "./market-summary-composer";
 import { composeWeeklyStrategyFramework } from "./weekly-strategy-composer";
 import { buildMarketIntel, type BreadthData } from "./market-intel";
+import { enrichSnapshotForReports, pickCrossHighlights, resolveReportNews } from "./report-data";
 
 export { MAX_REPORTS_PER_TYPE } from "./report-retention";
 export type DailyReportType = "morning_brief" | "intraday_brief" | "market_summary" | "strategy";
@@ -118,6 +119,22 @@ async function buildCtx(): Promise<DailyCtx> {
   const sourcesLive = statuses.filter((x) => x === "LIVE" || x === "FRESH").length;
   const sourcesTotal = Math.max(statuses.length, 5);
 
+  const crossHighlights = pickCrossHighlights(intelRes?.intel.crossAsset, 8);
+  const mergedNews = resolveReportNews(
+    s.snapshot,
+    {
+      breadth: intelRes?.intel.breadth ?? null,
+      flow: intelRes?.intel.flow ?? null,
+      liquidity: intelRes?.intel.liquidity ?? null,
+      contributors: intelRes?.intel.contributors ?? null,
+      conditionScore: intelRes?.intel.condition?.score ?? null,
+      conditionRating: intelRes?.intel.condition?.rating ?? null,
+      news: intelRes?.intel.news ?? null,
+      crossHighlights,
+    },
+    30,
+  );
+
   const intel: MorningIntelSlice = {
     breadth: intelRes?.intel.breadth ?? null,
     flow: intelRes?.intel.flow ?? null,
@@ -125,11 +142,19 @@ async function buildCtx(): Promise<DailyCtx> {
     contributors: intelRes?.intel.contributors ?? null,
     conditionScore: intelRes?.intel.condition?.score ?? null,
     conditionRating: intelRes?.intel.condition?.rating ?? null,
+    news: mergedNews.length ? mergedNews : null,
+    crossHighlights: crossHighlights.length ? crossHighlights : null,
   };
 
+  const snap = enrichSnapshotForReports(s.snapshot, intel);
+
+  // Prefer richer freshness map (intel sections overlay snapshot sections)
+  const metaSections = { ...snapSections, ...intelSections } as Record<string, FreshnessStatus>;
+  const meta = { ...s.meta, sections: metaSections };
+
   return {
-    snap: s.snapshot,
-    meta: s.meta,
+    snap,
+    meta,
     sessionState: session.state,
     dateVi: vnNow.toLocaleDateString("vi-VN", {
       weekday: "long",
