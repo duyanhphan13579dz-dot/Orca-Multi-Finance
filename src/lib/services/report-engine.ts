@@ -11,8 +11,8 @@ import {
   detectIntradaySlot,
   type IntradaySlot,
 } from "./intraday-brief-composer";
+import { composeMarketSummaryFramework } from "./market-summary-composer";
 import { buildMarketIntel, type BreadthData } from "./market-intel";
-import { formatBreadthParagraphs } from "./breadth-utils";
 
 export { MAX_REPORTS_PER_TYPE } from "./report-retention";
 export type DailyReportType = "morning_brief" | "intraday_brief" | "market_summary" | "strategy";
@@ -66,21 +66,7 @@ async function loadLatestMorningBrief(): Promise<DailyReport | null> {
       .limit(1);
     const row = rows[0];
     if (!row?.body) return null;
-    const body = row.body as unknown as DailyReport;
-    // Prefer same calendar day VN
-    const gen = row.generatedAt ? new Date(row.generatedAt) : null;
-    if (gen) {
-      const vnToday = new Date(
-        new Date().toLocaleString("en-US", { timeZone: "Asia/Ho_Chi_Minh" }),
-      );
-      const sameDay =
-        gen.getFullYear() === vnToday.getFullYear() &&
-        gen.getMonth() === vnToday.getMonth() &&
-        gen.getDate() === vnToday.getDate();
-      // Still return latest morning even if previous day — better than nothing for anchoring
-      void sameDay;
-    }
-    return body;
+    return row.body as unknown as DailyReport;
   } catch {
     return null;
   }
@@ -136,13 +122,6 @@ async function buildCtx(): Promise<DailyCtx> {
 }
 
 const clamp = (x: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, x));
-const pct = (v: number | null | undefined, digits = 2) =>
-  v == null ? "—" : `${v > 0 ? "+" : ""}${v.toFixed(digits)}%`;
-const bigUsd = (v: number | null | undefined) => {
-  if (v == null) return "—";
-  if (v >= 1e9) return `$${(v / 1e9).toFixed(1)} tỷ`;
-  return `$${(v / 1e6).toFixed(0)} triệu`;
-};
 
 function vnSectionDataStatus(ctx: DailyCtx): "available" | "unavailable" {
   return ctx.snap.indices?.length ? "available" : "unavailable";
@@ -233,74 +212,16 @@ function composeMorning(ctx: DailyCtx): { sections: DailyReport["sections"]; ass
 }
 
 function composeSummary(ctx: DailyCtx): { sections: DailyReport["sections"]; assumptions: string[] } {
-  const { snap } = ctx;
-  const sections: DailyReport["sections"] = [];
-  const p = snap.pulse;
-
-  sections.push({
-    heading: "Tóm tắt điều hành — phiên hôm nay đã xảy ra gì?",
-    tone: p.score > 0.15 ? "up" : p.score < -0.15 ? "down" : "neutral",
-    paragraphs: [
-      ...(snap.indices?.length
-        ? [
-            `Kết phiên, VN-Index đóng cửa ${snap.indices[0].value.toLocaleString("vi-VN")} điểm (${pct(snap.indices[0].changePercent)}). Nhìn sâu hơn con số tuyệt đối, chất lượng phiên cần đọc qua độ rộng và thanh khoản — hai chiều cho thấy liệu nhịp diễn ra là lan tỏa hay tập trung ở ít mã.`,
-          ]
-        : [
-            "Hoạt động của các nhóm tài sản theo dõi được cho thấy bức tranh trọng tâm qua đêm/ngày. Dữ liệu VN-Index chưa kết nối nên tóm tắt này dựng trên các nguồn còn lại — không tái tạo tự do số liệu thị trường trong nước.",
-          ]),
-      p.body[0] ?? "",
-      p.body[1] ?? "",
-    ],
-  });
-
-  sections.push({
-    heading: "Độ rộng thị trường VN",
-    tone: "neutral",
-    paragraphs: formatBreadthParagraphs(ctx.breadth),
-  });
-
-  if (snap.crypto) {
-    const s = snap.crypto.summary;
-    sections.push({
-      heading: "Thanh khoản & độ rộng (proxy tài sản toàn cầu)",
-      tone: s.advancers > s.decliners ? "up" : "down",
-      paragraphs: [
-        `Dòng tiền vào tài sản rủi ro trên thế giới: khối lượng quy đổi crypto 24h ${bigUsd(s.totalQuoteVolume)}, độ rộng ${s.advancers}/${s.marketCount} mã xanh (${((s.advancers / Math.max(1, s.marketCount)) * 100).toFixed(0)}%) — ${
-          s.advancers > s.decliners ? "mở rộng tích cực" : "thu hẹp"
-        }. Khi dòng tiền trong nước khả dụng (VNStock), phần này sẽ chuyển sang giá trị giao dịch HOSE/HNX/UPCoM và breadth chính thống.`,
-      ],
-    });
-  }
-
-  if (snap.indices?.length) {
-    sections.push({
-      heading: "Đóng góp chỉ số & rotation",
-      tone: "neutral",
-      paragraphs: [
-        `Chi tiết top đóng góp VN-Index, rotation nhóm ngành và top gainers/losers sẽ được engine tính từ dữ liệu realtime đã reconciliation ngay khi VNStock kết nối — cùng taxonomy ${VN_SECTOR_MAP.length} nhóm ngành của Security Master.`,
-      ],
-    });
-  }
-
-  const news = (snap.news ?? []).slice(0, 5);
-  if (news.length) {
-    sections.push({
-      heading: "Tin tức tác động phiên nay",
-      tone: "neutral",
-      paragraphs: news.map((n) => `${n.title} — ${n.source}.`),
-    });
-  }
-
-  sections.push({
-    heading: "Triển vọng phiên tiếp theo",
-    tone: "neutral",
-    paragraphs: [
-      "Phiên tới ưu tiên quan sát phản ứng tại vùng hỗ trợ/kháng cự đã hình thành và chất lượng thanh khoản mở cửa.",
-      "Kịch bản Base/Bull/Bear (bảng dưới) được sinh từ pulse engine — xác suất model-derived, không phải cam kết.",
-    ],
-  });
-
-  return { sections, assumptions: assumptionsNote(ctx) };
+  return composeMarketSummaryFramework(
+    {
+      snap: ctx.snap,
+      sessionState: ctx.sessionState,
+      dateVi: ctx.dateVi,
+      intel: ctx.intel,
+      morningReport: ctx.morningReport,
+    },
+    assumptionsNote(ctx),
+  );
 }
 
 function composeStrategy(ctx: DailyCtx): { sections: DailyReport["sections"]; assumptions: string[] } {
@@ -398,6 +319,8 @@ export async function generateDailyReport(
 ): Promise<{ report: DailyReport; meta: Meta }> {
   const ctx = await buildCtx();
   const { sections, assumptions } = COMPOSERS[type](ctx);
+  // Intraday: no scenario table. Market summary carries draft scenarios in Block 9;
+  // still attach model scenarios for UI card consistency on morning/summary/strategy.
   const scenarios = type === "intraday_brief" ? [] : buildScenarios(ctx);
   const report: DailyReport = {
     type,
@@ -410,7 +333,7 @@ export async function generateDailyReport(
         : type === "intraday_brief"
           ? intradaySubtitle(ctx.slot)
           : type === "market_summary"
-            ? "Điều gì thực sự đã xảy ra trên thị trường — giải mã từ dữ liệu"
+            ? "Tổng kết phiên · scorecard kịch bản sáng · timeline · bàn giao Morning Brief mai · no-mock-data"
             : "Market view · drivers · levels · sector preferences · scenarios",
     generatedAt: new Date().toISOString(),
     sessionState: ctx.sessionState,
