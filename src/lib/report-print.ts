@@ -6,6 +6,7 @@
  */
 
 import type { DailyReport } from "@/lib/services/report-engine";
+import { cleanHeading, sectionToLines } from "@/lib/report-format";
 
 /** Escape for HTML text/attrs without embedding literal entity sequences in source. */
 function esc(s: string): string {
@@ -37,7 +38,8 @@ const PRINT_CSS = `
     color: #0c1a33;
     margin: 0;
     padding: 0;
-    line-height: 1.55;
+    line-height: 1.65;
+    letter-spacing: 0.01em;
     font-size: 11.5px;
     background: #fff;
   }
@@ -58,8 +60,8 @@ const PRINT_CSS = `
     background: #fff;
     flex-shrink: 0;
   }
-  .hd h1 { font-size: 16px; margin: 0; color: #0c1a33; line-height: 1.3; }
-  .hd .sub { margin: 3px 0 0; color: #5a6b8c; font-size: 10.5px; }
+  .hd h1 { font-size: 16px; margin: 0; color: #0c1a33; line-height: 1.35; letter-spacing: -0.01em; }
+  .hd .sub { margin: 4px 0 0; color: #5a6b8c; font-size: 10.5px; line-height: 1.5; }
   .badge {
     margin-left: auto;
     border: 1px solid #ccd;
@@ -79,8 +81,9 @@ const PRINT_CSS = `
     display: flex;
     flex-wrap: wrap;
     gap: 6px 12px;
+    line-height: 1.5;
   }
-  .tags { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 12px; }
+  .tags { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 14px; }
   .tag {
     font-size: 9px;
     border: 1px solid #d0d7e2;
@@ -89,34 +92,88 @@ const PRINT_CSS = `
     color: #334;
     background: #f4f7fb;
   }
-  h2 {
+  .chip {
+    border: 1px solid #d8dee8;
+    border-left: 3px solid #123f7c;
+    border-radius: 10px;
+    background: #f7f9fc;
+    padding: 10px 12px 11px;
+    margin: 0 0 10px;
+    page-break-inside: avoid;
+  }
+  .chip.up { border-left-color: #0a7a3e; }
+  .chip.down { border-left-color: #b42318; }
+  .chip h2 {
     font-size: 12px;
     color: #123f7c;
-    margin: 14px 0 5px;
-    border-left: 3px solid #123f7c;
-    padding-left: 8px;
-    page-break-after: avoid;
+    margin: 0 0 6px;
+    line-height: 1.35;
+    letter-spacing: -0.01em;
   }
-  h2.up { color: #0a7a3e; border-left-color: #0a7a3e; }
-  h2.down { color: #b42318; border-left-color: #b42318; }
-  p { margin: 3px 0; font-size: 11px; color: #1a2a40; }
-  .section { page-break-inside: avoid; margin-bottom: 4px; }
+  .chip.up h2 { color: #0a7a3e; }
+  .chip.down h2 { color: #b42318; }
+  .chip p {
+    margin: 0 0 5px;
+    font-size: 11px;
+    color: #1a2a40;
+    line-height: 1.65;
+  }
+  .chip p:last-child { margin-bottom: 0; }
+  .chip ul {
+    margin: 4px 0 0;
+    padding: 0 0 0 0;
+    list-style: none;
+  }
+  .chip li {
+    position: relative;
+    padding-left: 12px;
+    margin: 0 0 4px;
+    font-size: 11px;
+    color: #1a2a40;
+    line-height: 1.65;
+  }
+  .chip li::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 0.55em;
+    width: 4px;
+    height: 4px;
+    border-radius: 50%;
+    background: #123f7c;
+  }
+  .scenarios-wrap {
+    border: 1px solid #d8dee8;
+    border-radius: 10px;
+    background: #f7f9fc;
+    padding: 10px 12px;
+    margin: 4px 0 10px;
+    page-break-inside: avoid;
+  }
+  .scenarios-wrap > h2 {
+    font-size: 12px;
+    color: #123f7c;
+    margin: 0 0 8px;
+  }
   .scenarios {
     display: table;
     width: 100%;
-    border-collapse: collapse;
-    margin: 8px 0 4px;
+    border-collapse: separate;
+    border-spacing: 6px 0;
+    margin: 0 -6px;
   }
   .scenarios > div {
     display: table-cell;
     width: 33.33%;
     vertical-align: top;
     border: 1px solid #ccd;
+    border-radius: 8px;
     padding: 8px;
+    background: #fff;
   }
   .scenarios b { display: block; font-size: 11px; margin-bottom: 2px; }
   .scenarios .prob { font-size: 9.5px; color: #5a6b8c; }
-  .scenarios p { font-size: 10px; margin: 4px 0 0; color: #334; }
+  .scenarios p { font-size: 10px; margin: 4px 0 0; color: #334; line-height: 1.55; }
   .foot {
     margin-top: 16px;
     text-align: center;
@@ -128,6 +185,28 @@ const PRINT_CSS = `
     .no-print { display: none !important; }
   }
 `;
+
+function linesToHtml(paragraphs: string[]): string {
+  const lines = sectionToLines(paragraphs);
+  if (!lines.length) return "";
+  const bullets = lines.filter((l) => l.kind === "bullet");
+  const prose = lines.filter((l) => l.kind === "prose");
+  const mostlyBullets = bullets.length >= Math.max(1, prose.length);
+
+  const proseHtml = prose.map((l) => `<p>${esc(l.text)}</p>`).join("");
+  const bulletHtml =
+    bullets.length > 0
+      ? `<ul>${bullets.map((l) => `<li>${esc(l.text)}</li>`).join("")}</ul>`
+      : "";
+
+  if (mostlyBullets) return proseHtml + bulletHtml;
+
+  return lines
+    .map((l) =>
+      l.kind === "bullet" ? `<ul><li>${esc(l.text)}</li></ul>` : `<p>${esc(l.text)}</p>`,
+    )
+    .join("");
+}
 
 /**
  * Open a print-ready A4 document for a daily report and trigger print dialog.
@@ -142,16 +221,15 @@ export function printDailyReport(report: DailyReport): void {
   const sectionsHtml = (report.sections ?? [])
     .map((s) => {
       const toneClass = s.tone === "up" ? "up" : s.tone === "down" ? "down" : "";
-      const paras = (s.paragraphs ?? [])
-        .map((p) => `<p>${esc(p)}</p>`)
-        .join("");
-      return `<div class="section"><h2 class="${toneClass}">${esc(s.heading)}</h2>${paras}</div>`;
+      const heading = cleanHeading(s.heading);
+      const body = linesToHtml(s.paragraphs ?? []);
+      return `<div class="chip ${toneClass}"><h2>${esc(heading)}</h2>${body}</div>`;
     })
     .join("");
 
   const scenariosHtml =
     report.scenarios?.length > 0
-      ? `<h2>Kịch bản Base / Bull / Bear</h2>
+      ? `<div class="scenarios-wrap"><h2>Kịch bản Base / Bull / Bear</h2>
          <div class="scenarios">${report.scenarios
            .map(
              (sc) =>
@@ -159,7 +237,7 @@ export function printDailyReport(report: DailyReport): void {
                 <p>${esc(sc.drivers)}</p>
                 <p style="color:#5a6b8c">${esc(sc.indexZones)}</p></div>`,
            )
-           .join("")}</div>`
+           .join("")}</div></div>`
       : "";
 
   const freshnessTags = Object.entries(report.freshness ?? {})
