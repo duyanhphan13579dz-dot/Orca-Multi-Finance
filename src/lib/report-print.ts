@@ -112,15 +112,6 @@ const PRINT_CSS = `
   .scenarios b { display: block; font-size: 11px; margin-bottom: 2px; }
   .scenarios .prob { font-size: 9.5px; color: #5a6b8c; }
   .scenarios p { font-size: 10px; margin: 4px 0 0; color: #334; }
-  .assump {
-    border-top: 1px dashed #ccd;
-    margin-top: 14px;
-    padding-top: 8px;
-    font-size: 9.5px;
-    color: #5a6b8c;
-  }
-  .assump ul { margin: 4px 0 0; padding-left: 16px; }
-  .assump li { margin: 2px 0; }
   .foot {
     margin-top: 16px;
     text-align: center;
@@ -166,14 +157,6 @@ export function printDailyReport(report: DailyReport): void {
            .join("")}</div>`
       : "";
 
-  // Weekly Strategy: no assumptions footer
-  const assumptionsHtml =
-    report.type !== "strategy" && report.assumptions?.length > 0
-      ? `<div class="assump"><b>Giả định & giới hạn</b><ul>${report.assumptions
-          .map((a) => `<li>${esc(a)}</li>`)
-          .join("")}</ul></div>`
-      : "";
-
   const freshnessTags = Object.entries(report.freshness ?? {})
     .map(([k, v]) => `<span class="tag">${esc(k)}: ${esc(String(v))}</span>`)
     .join("");
@@ -196,7 +179,6 @@ export function printDailyReport(report: DailyReport): void {
     ${freshnessTags ? `<div class="tags">${freshnessTags}</div>` : ""}
     ${sectionsHtml}
     ${scenariosHtml}
-    ${assumptionsHtml}
     <div class="foot">ORCA Financial — Generated from verified market data · không phải khuyến nghị đầu tư</div>
   </div>`;
 
