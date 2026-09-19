@@ -16,6 +16,8 @@ export type FundamentalScreenRow = {
   roa: number | null;
   ros: number | null;
   roic: number | null;
+  grossMargin: number | null;
+  netMargin: number | null;
   reportDate: string | null;
   score: number;
 };
@@ -56,9 +58,11 @@ export async function screenFundamental(opts: { symbols?: string[]; sector?: str
         const roa = pct(health.groups.profitability.roa);
         const ros = pct(health.groups.profitability.netMargin);
         const roic = pct(health.groups.profitability.roic);
-        const metrics = [roe, roa, ros, roic];
+        const grossMargin = pct(health.groups.profitability.grossMargin);
+        const netMargin = pct(health.groups.profitability.netMargin);
+        const metrics = [roe, roa, ros, roic, grossMargin, netMargin];
         if (metrics.every((v) => v == null)) return null;
-        return { symbol, sector: sectorOf(symbol), price: quoteMap.get(symbol)?.price ?? null, roe, roa, ros, roic, reportDate: financial.pkg.meta.latestPeriod ?? null, score: metrics.filter((v) => v != null).length };
+        return { symbol, sector: sectorOf(symbol), price: quoteMap.get(symbol)?.price ?? null, roe, roa, ros, roic, grossMargin, netMargin, reportDate: financial.pkg.meta.latestPeriod ?? null, score: metrics.filter((v) => v != null).length };
       })).filter((row): row is FundamentalScreenRow => row !== null);
       rows.sort((a, b) => b.score - a.score || a.symbol.localeCompare(b.symbol));
       return { rows, scanned: symbols.length, skipped: symbols.length - rows.length };

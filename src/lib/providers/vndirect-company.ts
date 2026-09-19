@@ -46,6 +46,7 @@ export interface VndValuationRatios {
   pe: number | null;
   pb: number | null;
   ps: number | null;
+  evEbitda: number | null;
   eps: number | null;
   bvps: number | null;
   roe: number | null;
@@ -219,6 +220,8 @@ export async function getVndValuationRatios(symbol: string): Promise<VndValuatio
     "PRICE_TO_EARNINGS",
     "PRICE_TO_BOOK",
     "PRICE_TO_SALES",
+    "EV_TO_EBITDA",
+    "ENTERPRISE_VALUE_TO_EBITDA",
     "EPS",
     "BVPS",
     "ROE",
@@ -247,6 +250,7 @@ export async function getVndValuationRatios(symbol: string): Promise<VndValuatio
     const pe = pick("PRICE_TO_EARNINGS");
     const pb = pick("PRICE_TO_BOOK");
     const ps = pick("PRICE_TO_SALES");
+    const evEbitda = pick("EV_TO_EBITDA") ?? pick("ENTERPRISE_VALUE_TO_EBITDA");
     const eps = pick("EPS");
     const bvps = pick("BVPS");
     const roe = pick("ROE");
@@ -254,7 +258,7 @@ export async function getVndValuationRatios(symbol: string): Promise<VndValuatio
     const dy = pick("DIVIDEND_YIELD");
     const mcap = pick("MARKETCAP") ?? pick("MARKET_CAP");
 
-    if (!pe && !pb && !ps && !mcap && !eps) return null;
+    if (!pe && !pb && !ps && !evEbitda && !mcap && !eps) return null;
 
     const reportDate =
       pe?.d ?? pb?.d ?? ps?.d ?? mcap?.d ?? eps?.d ?? bvps?.d ?? null;
@@ -263,6 +267,7 @@ export async function getVndValuationRatios(symbol: string): Promise<VndValuatio
       pe: pe && pe.v > 0 ? pe.v : null,
       pb: pb && pb.v > 0 ? pb.v : null,
       ps: ps && ps.v > 0 ? ps.v : null,
+      evEbitda: evEbitda && evEbitda.v > 0 ? evEbitda.v : null,
       eps: eps ? eps.v : null,
       bvps: bvps && bvps.v > 0 ? bvps.v : null,
       roe: roe ? roe.v : null,

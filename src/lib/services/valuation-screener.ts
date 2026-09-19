@@ -12,6 +12,7 @@ export type ValuationScreenRow = {
   pe: number | null;
   pb: number | null;
   ps: number | null;
+  evEbitda: number | null;
   eps: number | null;
   reportDate: string | null;
   score: number;
@@ -54,8 +55,9 @@ export async function screenValuation(opts: { symbols?: string[]; sector?: strin
         const pe = positive(ratios.pe, 500);
         const pb = positive(ratios.pb, 100);
         const ps = positive(ratios.ps, 200);
-        if (pe == null && pb == null && ps == null) return null;
-        return { symbol, sector: sectorOf(symbol), price: quoteMap.get(symbol)?.price ?? null, pe, pb, ps, eps: ratios.eps ?? null, reportDate: ratios.reportDate ?? null, score: [pe, pb, ps].filter((v) => v != null).length } satisfies ValuationScreenRow;
+        const evEbitda = positive(ratios.evEbitda, 200);
+        if (pe == null && pb == null && ps == null && evEbitda == null) return null;
+        return { symbol, sector: sectorOf(symbol), price: quoteMap.get(symbol)?.price ?? null, pe, pb, ps, evEbitda, eps: ratios.eps ?? null, reportDate: ratios.reportDate ?? null, score: [pe, pb, ps, evEbitda].filter((v) => v != null).length } satisfies ValuationScreenRow;
       })).filter((row): row is ValuationScreenRow => row !== null);
       rows.sort((a, b) => b.score - a.score || a.symbol.localeCompare(b.symbol));
       return { rows, scanned: symbols.length, skipped: symbols.length - rows.length };
@@ -68,7 +70,7 @@ export async function screenValuation(opts: { symbols?: string[]; sector?: strin
       cached: result.cached,
       stale: result.stale,
       partial: result.value.skipped > 0,
-      note: `P/E/P/B/P/S · ${result.value.rows.length}/${result.value.scanned} mã có ratios · tối đa 6 kết nối song song`,
+      note: `P/E/P/B/P/S/EV-EBITDA · ${result.value.rows.length}/${result.value.scanned} mã có ratios · tối đa 6 kết nối song song`,
     }),
   };
 }
