@@ -18,28 +18,30 @@ import { FlatsIcon, Play } from "@/components/screener-icons";
 type StocksData = { indices: IndexQuote[] | null; quotes: Quote[] | null };
 type Universe = "stocks" | "crypto" | "wyckoff" | "canslim" | "minervini" | "elliott" | "valuation" | "fundamental";
 
-const VN_BOARD = "VCB,BID,CTG,TCB,MBB,VPB,ACB,STB,HDB,VIB,LPB,SHB,FPT,HPG,VNM,VIC,VHM,VRE,NVL,PDR,GAS,PLX,MSN,MWG,SSI,VND,HCM,VCI,SHS,BSR,POW,REE,KDH,DXG,DCM,DPM,DGC,VHC,SAB,PNJ,GMD";
+const VN_BOARD =
+  "VCB,BID,CTG,TCB,MBB,VPB,ACB,STB,HDB,VIB,LPB,SHB,FPT,HPG,VNM,VIC,VHM,VRE,NVL,PDR,GAS,PLX,MSN,MWG,SSI,VND,HCM,VCI,SHS,BSR,POW,REE,KDH,DXG,DCM,DPM,DGC,VHC,SAB,PNJ,GMD";
+
+const UNIVERSE_TABS: { id: Universe; label: string }[] = [
+  { id: "stocks", label: "Cổ phiếu VN ⭐" },
+  { id: "canslim", label: "CANSLIM" },
+  { id: "minervini", label: "Minervini" },
+  { id: "wyckoff", label: "Wyckoff" },
+  { id: "elliott", label: "Elliott Wave" },
+  { id: "valuation", label: "Định giá P" },
+  { id: "fundamental", label: "Chỉ số cơ bản" },
+  { id: "crypto", label: "Crypto" },
+];
+
+function parseUniverse(raw: string | null): Universe {
+  const allowed = new Set(UNIVERSE_TABS.map((t) => t.id));
+  if (raw && allowed.has(raw as Universe)) return raw as Universe;
+  return "stocks";
+}
 
 function ScreenerInner() {
   const params = useSearchParams();
-  const rawU = params.get("universe");
-  const initial: Universe =
-    rawU === "crypto"
-      ? "crypto"
-      : rawU === "wyckoff"
-        ? "wyckoff"
-        : rawU === "canslim"
-          ? "canslim"
-          : rawU === "minervini"
-            ? "minervini"
-              : rawU === "elliott"
-                ? "elliott"
-                : rawU === "valuation"
-                  ? "valuation"
-                  : rawU === "fundamental"
-                    ? "fundamental"
-                    : "stocks";
-  const [universe, setUniverse] = useState<Universe>(initial);
+  const [universe, setUniverse] = useState<Universe>(() => parseUniverse(params.get("universe")));
+
   return (
     <div className="space-y-3">
       <Panel pad={false}>
@@ -48,18 +50,30 @@ function ScreenerInner() {
             <FlatsIcon /> Asset Screener
           </h1>
           <p className="mt-1 text-[12px] text-text-muted">
-            Ưu tiên thị trường chứng khoán Việt Nam — chạy hoàn toàn trên dữ liệu thật mới nhất, không minh họa bằng dữ liệu giả.
+            Ưu tiên thị trường chứng khoán Việt Nam — chạy hoàn toàn trên dữ liệu thật mới nhất, không minh họa bằng dữ
+            liệu giả.
           </p>
-          <div className="seg mt-3">
-            <button data-active={universe === "stocks"} onClick={() => setUniverse("stocks")}>Cổ phiếu VN ⭐</button>
-            <button data-active={universe === "canslim"} onClick={() => setUniverse("canslim")}>CANSLIM</button>
-            <button data-active={universe === "minervini"} onClick={() => setUniverse("minervini")}>Minervini</button>
-            <button data-active={universe === "wyckoff"} onClick={() => setUniverse("wyckoff")}>Wyckoff</button>
-            <button data-active={universe === "elliott"} onClick={() => setUniverse("elliott")}>Elliott Wave</button>
-            <button data-active={universe === "valuation"} onClick={() => setUniverse("valuation")}>Định giá P</button>
-            <button data-active={universe === "fundamental"} onClick={() => setUniverse("fundamental")}>Chỉ số cơ bản</button>
-            <button data-active={universe === "crypto"} onClick={() => setUniverse("crypto")}>Crypto</button>
+          {/* seg-scroll: constrained width + fade hint so mobile can swipe to Định giá / Chỉ số cơ bản */}
+          <div className="seg-scroll mt-3">
+            <div className="seg" role="tablist" aria-label="Chọn bộ lọc screener">
+              {UNIVERSE_TABS.map((tab) => (
+                <button
+                  key={tab.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={universe === tab.id}
+                  data-active={universe === tab.id}
+                  onClick={() => setUniverse(tab.id)}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
           </div>
+          <p className="mt-1.5 hidden text-[10px] text-text-muted sm:block md:hidden">
+            Vuốt ngang để xem thêm bộ lọc (Định giá P, Chỉ số cơ bản…)
+          </p>
+          <p className="mt-1.5 text-[10px] text-text-muted sm:hidden">← Vuốt ngang để chọn thêm bộ lọc →</p>
         </div>
       </Panel>
       {universe === "crypto" ? (
@@ -84,7 +98,9 @@ function ScreenerInner() {
 }
 
 function VnScreener({ defaultSector }: { defaultSector: string | null }) {
-  const { res, data, meta, isLoading, isValidating, mutate } = useApi<StocksData>(`/api/v1/stocks?symbols=${VN_BOARD}`, { refreshInterval: 20_000 });
+  const { res, data, meta, isLoading, isValidating, mutate } = useApi<StocksData>(`/api/v1/stocks?symbols=${VN_BOARD}`, {
+    refreshInterval: 20_000,
+  });
   const [sector, setSector] = useState(defaultSector ?? "");
   const [minChg, setMinChg] = useState("");
   const [maxChg, setMaxChg] = useState("");
@@ -99,13 +115,17 @@ function VnScreener({ defaultSector }: { defaultSector: string | null }) {
     if (applied.sector) list = list.filter((row) => sectorOf(row.symbol) === applied.sector);
     if (applied.minChg) list = list.filter((row) => (row.changePercent ?? 0) >= Number(applied.minChg));
     if (applied.maxChg) list = list.filter((row) => (row.changePercent ?? 0) <= Number(applied.maxChg));
-    if (applied.minVol) list = list.filter((row) => (row.quoteVolume ?? row.volume ?? 0) >= Number(applied.minVol) * 1_000_000);
+    if (applied.minVol)
+      list = list.filter((row) => (row.quoteVolume ?? row.volume ?? 0) >= Number(applied.minVol) * 1_000_000);
     const needle = (q || applied.q).trim().toUpperCase();
     if (needle) {
       const parts = needle.split(/[\s,;]+/).filter(Boolean);
       list = list.filter((row) =>
         parts.some(
-          (p) => row.symbol.includes(p) || (row.name ?? "").toUpperCase().includes(p) || (sectorOf(row.symbol) ?? "").toUpperCase().includes(p),
+          (p) =>
+            row.symbol.includes(p) ||
+            (row.name ?? "").toUpperCase().includes(p) ||
+            (sectorOf(row.symbol) ?? "").toUpperCase().includes(p),
         ),
       );
     }
@@ -127,7 +147,11 @@ function VnScreener({ defaultSector }: { defaultSector: string | null }) {
   }, [flash]);
 
   const filters = (
-    <div className={`flex flex-wrap items-end gap-2 rounded-md p-0.5 transition-shadow duration-300 ${flash ? "ring-2 ring-accent-primary/50" : ""}`}>
+    <div
+      className={`flex flex-wrap items-end gap-2 rounded-md p-0.5 transition-shadow duration-300 ${
+        flash ? "ring-2 ring-accent-primary/50" : ""
+      }`}
+    >
       <label>
         <span className="mb-0.5 block text-[10px] uppercase tracking-wider text-text-muted">Tìm mã (live)</span>
         <input
@@ -152,7 +176,9 @@ function VnScreener({ defaultSector }: { defaultSector: string | null }) {
       <button
         type="button"
         onClick={run}
-        className={`flex items-center gap-1.5 rounded-md px-3.5 py-1.5 text-[12px] font-semibold text-white transition-all duration-150 ${pressed ? "scale-95 bg-accent-primary ring-2 ring-white/40" : "bg-accent-primary/90 hover:bg-accent-primary"} active:scale-95 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-primary`}
+        className={`flex items-center gap-1.5 rounded-md px-3.5 py-1.5 text-[12px] font-semibold text-white transition-all duration-150 ${
+          pressed ? "scale-95 bg-accent-primary ring-2 ring-white/40" : "bg-accent-primary/90 hover:bg-accent-primary"
+        } active:scale-95 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-primary`}
       >
         {isValidating ? (
           <span className="inline-block size-3.5 animate-spin rounded-full border-2 border-white/30 border-t-white" aria-hidden />
@@ -210,24 +236,40 @@ function VnScreener({ defaultSector }: { defaultSector: string | null }) {
               ) : (
                 rows.map((row) => (
                   <tr key={row.symbol} className="row-hover border-b border-line/40">
-                    <td className="px-3.5 py-2"><Link href={`/stocks/${row.symbol}`} className="font-semibold hover:text-accent">{row.symbol}</Link></td>
+                    <td className="px-3.5 py-2">
+                      <Link href={`/stocks/${row.symbol}`} className="font-semibold hover:text-accent">
+                        {row.symbol}
+                      </Link>
+                    </td>
                     <td className="py-2 text-[11px] text-text-muted">{sectorOf(row.symbol)}</td>
                     <td className="num py-2 text-right">{fmtNum(row.price, 2)}</td>
-                    <td className="py-2 text-right"><Chg value={row.changePercent} arrow={false} /></td>
-                    <td className="num py-2 pr-3.5 text-right text-ink-2">{fmtCompact(row.quoteVolume ?? row.volume)}</td>
+                    <td className="py-2 text-right">
+                      <Chg value={row.changePercent} arrow={false} />
+                    </td>
+                    <td className="num py-2 pr-3.5 text-right text-ink-2">
+                      {fmtCompact(row.quoteVolume ?? row.volume)}
+                    </td>
                   </tr>
                 ))
               )}
             </tbody>
           </table>
         </div>
-        <div className="border-t border-line px-3.5 py-2"><MetaLine meta={meta} /></div>
+        <div className="border-t border-line px-3.5 py-2">
+          <MetaLine meta={meta} />
+        </div>
       </Panel>
       <Panel title="CANSLIM · Minervini · Wyckoff">
-        <div className="text-[12px] leading-relaxed text-ink-2 space-y-1">
-          <div>Tab <strong>CANSLIM</strong>: quét growth leaders (EPS/ROE/RS/new high) theo O'Neil.</div>
-          <div>Tab <strong>Minervini</strong>: Trend Template 8 tiêu chí Stage 2 (SEPA).</div>
-          <div>Tab <strong>Wyckoff</strong>: quét Spring / UTAD / SOS / SOW trên rổ thanh khoản.</div>
+        <div className="space-y-1 text-[12px] leading-relaxed text-ink-2">
+          <div>
+            Tab <strong>CANSLIM</strong>: quét growth leaders (EPS/ROE/RS/new high) theo O'Neil.
+          </div>
+          <div>
+            Tab <strong>Minervini</strong>: Trend Template 8 tiêu chí Stage 2 (SEPA).
+          </div>
+          <div>
+            Tab <strong>Wyckoff</strong>: quét Spring / UTAD / SOS / SOW trên rổ thanh khoản.
+          </div>
           <div className="text-text-muted">Cả ba đều là heuristic nghiên cứu — không phải tín hiệu mua bán.</div>
         </div>
       </Panel>
@@ -241,7 +283,11 @@ function VnFilterSelect({ sector, setSector }: { sector: string; setSector: (v: 
       <span className="mb-0.5 block text-[10px] uppercase tracking-wider text-text-muted">Ngành</span>
       <select value={sector} onChange={(e) => setSector(e.target.value)} className="input !w-40 !py-1.5 text-[12px]">
         <option value="">Tất cả ({VN_SECTOR_MAP.length} ngành)</option>
-        {VN_SECTOR_MAP.map((s) => <option key={s.name} value={s.name}>{s.name} ({s.symbols.length})</option>)}
+        {VN_SECTOR_MAP.map((s) => (
+          <option key={s.name} value={s.name}>
+            {s.name} ({s.symbols.length})
+          </option>
+        ))}
       </select>
     </label>
   );
@@ -259,7 +305,9 @@ function CryptoScreener() {
   const [maxChange, setMaxChange] = useState("");
   const [minVol, setMinVol] = useState("");
   const [pressed, setPressed] = useState(false);
-  const { res, data, meta, isLoading, isValidating, mutate } = useApi<{ universe: string; rows: CryptoMarketRow[] }>(url, { refreshInterval: 30_000 });
+  const { res, data, meta, isLoading, isValidating, mutate } = useApi<{ universe: string; rows: CryptoMarketRow[] }>(url, {
+    refreshInterval: 30_000,
+  });
   const run = () => {
     setPressed(true);
     const p = new URLSearchParams({ universe: "crypto", limit: "40" });
@@ -277,7 +325,11 @@ function CryptoScreener() {
         <div className="p-4">
           <div className="mb-3 flex flex-wrap items-end gap-2">
             {PRESETS.map((p) => (
-              <button key={p.name} onClick={() => setUrl(`/api/v1/screener?universe=crypto&limit=40&${p.params}&_=${Date.now()}`)} className="hover-lift rounded-md border border-line bg-panel-2 px-3 py-2 text-left">
+              <button
+                key={p.name}
+                onClick={() => setUrl(`/api/v1/screener?universe=crypto&limit=40&${p.params}&_=${Date.now()}`)}
+                className="hover-lift rounded-md border border-line bg-panel-2 px-3 py-2 text-left"
+              >
                 <div className="text-[12px] font-medium text-accent">{p.name}</div>
                 <div className="text-[10px] text-ink-3">{p.desc}</div>
               </button>
@@ -290,7 +342,9 @@ function CryptoScreener() {
             <button
               type="button"
               onClick={run}
-              className={`flex items-center gap-1.5 rounded-md px-3.5 py-1.5 text-[12px] font-semibold text-white transition-all duration-150 ${pressed ? "scale-95 bg-accent-primary ring-2 ring-white/40" : "bg-accent-primary/90 hover:bg-accent-primary"} active:scale-95`}
+              className={`flex items-center gap-1.5 rounded-md px-3.5 py-1.5 text-[12px] font-semibold text-white transition-all duration-150 ${
+                pressed ? "scale-95 bg-accent-primary ring-2 ring-white/40" : "bg-accent-primary/90 hover:bg-accent-primary"
+              } active:scale-95`}
             >
               {isValidating ? (
                 <span className="inline-block size-3.5 animate-spin rounded-full border-2 border-white/30 border-t-white" aria-hidden />
@@ -301,9 +355,13 @@ function CryptoScreener() {
             </button>
           </div>
         </div>
-        <div className="border-t border-line px-4 py-2"><MetaLine meta={meta} /></div>
+        <div className="border-t border-line px-4 py-2">
+          <MetaLine meta={meta} />
+        </div>
       </Panel>
-      {isLoading && !res ? <Loading rows={8} /> : !data ? (
+      {isLoading && !res ? (
+        <Loading rows={8} />
+      ) : !data ? (
         <Unavailable title="Screener không khả dụng" note={res && !res.success ? res.error.message : undefined} />
       ) : (
         <Panel title={`Kết quả: ${data.rows.length} mã${isValidating ? " · đang cập nhật" : ""}`} pad={false}>
@@ -321,10 +379,18 @@ function CryptoScreener() {
               <tbody>
                 {data.rows.map((r) => (
                   <tr key={r.symbol} className="row-hover border-b border-line/40">
-                    <td className="px-3.5 py-2"><Link href={`/crypto/${r.symbol}`} className="font-semibold hover:text-accent">{r.baseAsset}</Link></td>
+                    <td className="px-3.5 py-2">
+                      <Link href={`/crypto/${r.symbol}`} className="font-semibold hover:text-accent">
+                        {r.baseAsset}
+                      </Link>
+                    </td>
                     <td className="num py-2 text-right">{fmtNum(r.price, priceDigits(r.price))}</td>
-                    <td className="py-2 text-right"><Chg value={r.changePercent} arrow={false} /></td>
-                    <td className="num py-2 text-right text-ink-3">{fmtNum(r.low, priceDigits(r.price))}–{fmtNum(r.high, priceDigits(r.price))}</td>
+                    <td className="py-2 text-right">
+                      <Chg value={r.changePercent} arrow={false} />
+                    </td>
+                    <td className="num py-2 text-right text-ink-3">
+                      {fmtNum(r.low, priceDigits(r.price))}–{fmtNum(r.high, priceDigits(r.price))}
+                    </td>
                     <td className="num py-2 pr-3.5 text-right text-ink-2">${fmtCompact(r.quoteVolume)}</td>
                   </tr>
                 ))}
@@ -341,7 +407,12 @@ function Field({ label, value, onChange, small }: { label: string; value: string
   return (
     <label>
       <span className="mb-0.5 block text-[10px] uppercase tracking-wider text-text-muted">{label}</span>
-      <input value={value} onChange={(e) => onChange(e.target.value)} inputMode="decimal" className={`num input ${small ? "!w-24" : "w-28"} !py-1.5 text-[12px]`} />
+      <input
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        inputMode="decimal"
+        className={`num input ${small ? "!w-24" : "w-28"} !py-1.5 text-[12px]`}
+      />
     </label>
   );
 }

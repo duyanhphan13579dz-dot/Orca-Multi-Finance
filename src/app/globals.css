@@ -97,7 +97,6 @@ html {
   overflow-x: clip;
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
-  /* Native controls (select popup, scrollbars, date) follow theme */
   color-scheme: dark;
 }
 
@@ -128,7 +127,6 @@ body {
 
 /* ==========================================================================
  * Form controls — sync with panel / navy surface (desktop + mobile)
- * Prevents OS white/glare dropdowns on dark theme.
  * ========================================================================== */
 .input,
 input.input,
@@ -201,7 +199,6 @@ select.input:disabled {
   cursor: not-allowed;
 }
 
-/* Dropdown list items — browsers that honor option styling */
 select.input option,
 select option {
   background-color: var(--color-surface-elevated);
@@ -215,14 +212,12 @@ select option:checked {
   color: var(--color-text-primary);
 }
 
-/* Checkbox / radio align with theme */
 input[type="checkbox"],
 input[type="radio"] {
   accent-color: var(--color-accent-primary);
   color-scheme: inherit;
 }
 
-/* Filter chips used on screeners — soft navy surface, no glare */
 .filter-chip {
   display: flex;
   min-width: 7.5rem;
@@ -255,25 +250,70 @@ input[type="radio"] {
   border-color: var(--color-border-default);
 }
 
-/* Compact control groups */
+/* ==========================================================================
+ * Segmented control / universe tabs — MUST scroll on mobile portrait
+ * Bug was: inline-flex grew past parent → clipped by .panel overflow:hidden
+ * ========================================================================== */
+.seg-scroll {
+  position: relative;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.seg-scroll::after {
+  content: "";
+  pointer-events: none;
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 1.75rem;
+  border-radius: 0 0.625rem 0.625rem 0;
+  background: linear-gradient(to right, transparent, var(--color-surface-primary) 90%);
+  opacity: 0.95;
+}
+
+@media (min-width: 768px) {
+  .seg-scroll::after {
+    display: none;
+  }
+}
+
 .seg {
-  display: inline-flex;
+  display: flex;
+  flex-wrap: nowrap;
   align-items: center;
   gap: 0.125rem;
-  min-height: 2rem;
-  padding: 0.1875rem;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  min-height: 2.25rem;
+  padding: 0.25rem;
   overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-x;
   border: 1px solid var(--color-border-subtle);
   border-radius: 0.625rem;
   background: color-mix(in srgb, var(--color-surface-primary) 82%, transparent);
-  scrollbar-width: none;
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border-default) transparent;
 }
+
 .seg::-webkit-scrollbar {
-  display: none;
+  height: 4px;
 }
+.seg::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--color-border-default) 70%, transparent);
+  border-radius: 999px;
+}
+
 .seg > button {
-  min-height: 1.5rem;
-  padding: 0.25rem 0.625rem;
+  flex: 0 0 auto;
+  min-height: 1.75rem;
+  padding: 0.35rem 0.7rem;
   border: 1px solid transparent;
   border-radius: 0.375rem;
   color: var(--color-text-muted);
@@ -284,16 +324,19 @@ input[type="radio"] {
   white-space: nowrap;
   transition: color 140ms ease, background-color 140ms ease, border-color 140ms ease;
 }
+
 .seg > button:hover {
   color: var(--color-text-primary);
   background: var(--color-surface-elevated);
 }
+
 .seg > button[data-active="true"] {
   border-color: color-mix(in srgb, var(--color-accent-primary) 42%, transparent);
   color: var(--color-text-primary);
   background: color-mix(in srgb, var(--color-accent-primary) 16%, var(--color-surface-elevated));
   box-shadow: 0 1px 2px rgb(0 0 0 / 14%);
 }
+
 .chart-control-group {
   display: flex;
   min-width: 0;
@@ -309,18 +352,17 @@ input[type="radio"] {
   text-transform: uppercase;
 }
 .chart-control-group .seg {
-  width: max-content;
+  width: 100%;
   max-width: 100%;
 }
 @media (max-width: 640px) {
   .chart-control-group {
     flex: 1 1 100%;
   }
-  .chart-control-group .seg {
-    width: 100%;
-  }
-  .chart-control-group .seg > button {
-    flex: 1 0 auto;
+  .seg > button {
+    min-height: 2rem;
+    padding: 0.4rem 0.75rem;
+    font-size: 0.75rem;
   }
 }
 
@@ -373,7 +415,6 @@ input[type="radio"] {
   }
 }
 
-/* —— Ticker tape marquee —— */
 @keyframes ticker-marquee {
   from {
     transform: translate3d(0, 0, 0);
@@ -410,7 +451,6 @@ input[type="radio"] {
   }
 }
 
-/* —— Panel system —— */
 .panel {
   border: 1px solid var(--color-border-subtle);
   background: var(--color-surface-primary);
@@ -504,7 +544,6 @@ input[type="radio"] {
   color: var(--color-warn);
 }
 
-/* Primary vertical scroller */
 .page-scroll {
   flex: 1 1 0%;
   min-height: 0;
@@ -554,7 +593,6 @@ input[type="radio"] {
   word-break: break-word;
 }
 
-/* Vietnam stock workspace rhythm */
 .stock-workspace {
   width: 100%;
   max-width: 1440px;
@@ -770,5 +808,11 @@ input[type="radio"] {
   a,
   [role="button"] {
     touch-action: manipulation;
+  }
+  /* Allow horizontal swipe on tab strips without fighting vertical page scroll */
+  .seg,
+  .seg-scroll,
+  .stock-tabs-scroll {
+    touch-action: pan-x;
   }
 }
