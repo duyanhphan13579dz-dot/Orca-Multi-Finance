@@ -133,6 +133,7 @@ async function buildCtx(): Promise<DailyCtx> {
     contributors: intelRes?.intel.contributors ?? null,
     conditionScore: intelRes?.intel.condition?.score ?? null,
     conditionRating: intelRes?.intel.condition?.rating ?? null,
+    news: mergedNews.length ? mergedNews : null,
   };
 
   // Overlay richer news (intel deep fetch + snapshot, deduped) onto snapshot for all composers
