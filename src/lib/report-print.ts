@@ -9,10 +9,10 @@ import type { DailyReport } from "@/lib/services/report-engine";
 
 function esc(s: string): string {
   return String(s ?? "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
+    .replace(/&/g, "&")
+    .replace(/</g, "<")
+    .replace(/>/g, ">")
+    .replace(/"/g, """);
 }
 
 function fmtWhen(iso: string | null | undefined): string {
@@ -166,8 +166,9 @@ export function printDailyReport(report: DailyReport): void {
            .join("")}</div>`
       : "";
 
+  // Weekly Strategy: no assumptions footer
   const assumptionsHtml =
-    report.assumptions?.length > 0
+    report.type !== "strategy" && report.assumptions?.length > 0
       ? `<div class="assump"><b>Giả định & giới hạn</b><ul>${report.assumptions
           .map((a) => `<li>${esc(a)}</li>`)
           .join("")}</ul></div>`
@@ -201,7 +202,6 @@ export function printDailyReport(report: DailyReport): void {
 
   const w = window.open("", "_blank", "width=900,height=1200");
   if (!w) {
-    // Popup blocked — fallback: still avoid printing the whole app chrome
     alert("Trình duyệt chặn cửa sổ xuất PDF. Cho phép popup rồi thử lại.");
     return;
   }
