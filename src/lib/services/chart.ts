@@ -163,7 +163,7 @@ async function cryptoCandles(symbol: string, tf: string, limit: number): Promise
   return { candles: bars.map(toCandle), source: "binance" };
 }
 
-/** Yahoo futures tickers for commodity chart symbols used by the UI. */
+/** Primary Yahoo futures ticker for a UI commodity symbol. */
 function yahooCommoditySymbol(symbol: string): string | null {
   const s = symbol.toUpperCase().replace(/[^A-Z0-9]/g, "");
   const exact: Record<string, string> = {
@@ -182,7 +182,6 @@ function yahooCommoditySymbol(symbol: string): string | null {
     COPPER: "HG=F",
     PLATINUM: "PL=F",
     PALLADIUM: "PA=F",
-    // Softs / ags — frequently first in VN catalog; must resolve or chart stays empty
     COFFEE: "KC=F",
     KC: "KC=F",
     SUGAR: "SB=F",
@@ -190,7 +189,6 @@ function yahooCommoditySymbol(symbol: string): string | null {
     SOYBEAN: "ZS=F",
     SOY: "ZS=F",
     WHEAT: "ZW=F",
-    // Iron ore proxy (SGX TSI) — often used when catalog has thép/quặng
     IRON: "TIO=F",
     IRONORE: "TIO=F",
   };
@@ -199,9 +197,45 @@ function yahooCommoditySymbol(symbol: string): string | null {
   return null;
 }
 
+/**
+ * Ordered Yahoo ticker candidates for a commodity key.
+ * Primary first, then close substitutes.
+ */
+function yahooCommodityCandidates(symbol: string): string[] {
+  const s = symbol.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  const primary =
+    yahooCommoditySymbol(s) ?? (s.startsWith("XAU") ? "GC=F" : s.startsWith("XAG") ? "SI=F" : null);
+  const alts: Record<string, string[]> = {
+    COFFEE: ["KC=F"],
+    KC: ["KC=F"],
+    SUGAR: ["SB=F"],
+    CORN: ["ZC=F", "ZS=F"],
+    SOYBEAN: ["ZS=F", "ZM=F"],
+    SOY: ["ZS=F"],
+    WHEAT: ["ZW=F", "KE=F"],
+    IRON: ["TIO=F", "HG=F"],
+    IRONORE: ["TIO=F", "HG=F"],
+    BRENT: ["BZ=F", "CL=F"],
+    WTI: ["CL=F", "BZ=F"],
+    OIL: ["CL=F", "BZ=F"],
+    CRUDE: ["CL=F", "BZ=F"],
+    NATGAS: ["NG=F"],
+    COPPER: ["HG=F"],
+    GOLD: ["GC=F"],
+    XAUUSD: ["GC=F"],
+    XAU: ["GC=F"],
+    SILVER: ["SI=F"],
+    XAGUSD: ["SI=F"],
+    PLATINUM: ["PL=F", "GC=F"],
+    PALLADIUM: ["PA=F", "PL=F"],
+  };
+  const list = [...(primary ? [primary] : []), ...(alts[s] ?? [])];
+  return [...new Set(list.filter(Boolean))];
+}
+
 export function isChartableCommodity(symbol: string): boolean {
   if (symbol === "XAUUSD" || symbol === "GOLD" || symbol === "XAU") return true;
-  return yahooCommoditySymbol(symbol) != null;
+  return yahooCommoditySymbol(symbol) != null || yahooCommodityCandidates(symbol).length > 0;
 }
 
 /** Map EURUSD / USDJPY → Yahoo FX symbol */
@@ -211,11 +245,6 @@ function yahooForexSymbol(pair: string): string {
   return `${s}=X`;
 }
 
-/**
- * Forex chart:
- * - Kim loại/năng lượng (XAUUSD…) → Yahoo futures GC=F
- * - Cặp tiền → Yahoo FX → Frankfurter ECB
- */
 async function forexCandles(pair: string, tf: string, limit: number): Promise<CandleSeriesResult> {
   const norm = pair.toUpperCase().replace(/[^A-Z0-9]/g, "");
   if (
@@ -433,59 +462,115 @@ async function stockCandles(symbol: string, tf: string, limit: number): Promise<
   };
 }
 
+async function fetchYahooCommodity(
+  ySym: string,
+  tf: string,
+  limit: number,
+): Promise<CandleSeriesResult | null> {
+  try {
+    const cfg =
+      yahooIntervalFor(
+        tf === "12M" ? "1M" : tf === "1w" ? "1w" : tf === "1M" ? "1M" : tf === "4h" ? "4h" : tf,
+      ) ?? { interval: "1d", range: "max" };
+    const y = await getYahooChart(ySym, cfg.interval, cfg.range);
+    let candles = y.candles as ChartCandle[];
+    if (cfg.aggregate4h || tf === "4h") candles = aggregateCandles(candles, TF_MS["4h"]);
+    if (tf === "12M") candles = aggregateCandles(candles, TF_MS["12M"]);
+    candles = candles.slice(-limit);
+    if (candles.length >= 5) {
+      return {
+        candles,
+        source: `yahoo-finance (${ySym})`,
+        note: `Commodity OHLC · ${tf} · ${candles.length} nen`,
+      };
+    }
+  } catch {
+    /* next candidate */
+  }
+  return null;
+}
+
+async function fetchBinancePaxg(tf: string, limit: number): Promise<CandleSeriesResult | null> {
+  try {
+    const iv = ["1m", "5m", "15m", "30m", "1h", "4h", "1d", "1w"].includes(tf)
+      ? binanceInterval(tf === "4h" ? "1h" : tf)
+      : "1h";
+    const bars = await binance.getKlinesDeep(
+      "PAXGUSDT",
+      iv,
+      Math.min(limit * (tf === "4h" ? 4 : 1), 3000),
+    );
+    let candles = bars.map(toCandle);
+    if (tf === "4h") candles = aggregateCandles(candles, TF_MS["4h"]);
+    if (tf === "1M" || tf === "12M") candles = aggregateCandles(candles, TF_MS[tf]);
+    candles = candles.slice(-limit);
+    if (candles.length >= 5) {
+      return { candles, source: "binance (PAXG approx XAU)", note: "Vang PAXG" };
+    }
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+
+/**
+ * Commodity history with layered fallback:
+ *  1) Yahoo primary + alternate tickers at requested TF
+ *  2) Same tickers at daily TF (intraday often empty outside session)
+ *  3) Binance PAXG for gold family
+ *  4) Last resort: GOLD (GC=F / PAXG) so UI never stays blank
+ */
 async function commodityCandles(symbol: string, tf: string, limit: number): Promise<CandleSeriesResult> {
   const s = symbol.toUpperCase().replace(/[^A-Z0-9]/g, "");
-  const ySym =
-    yahooCommoditySymbol(s) ?? (s.startsWith("XAU") ? "GC=F" : s.startsWith("XAG") ? "SI=F" : null);
+  const candidates = yahooCommodityCandidates(s);
+  const isGoldFamily =
+    s === "XAUUSD" || s === "GOLD" || s === "XAU" || s.includes("VANG") || candidates[0] === "GC=F";
 
-  // 1) Yahoo futures first (stable; Binance often geo-blocked)
-  if (ySym) {
-    try {
-      const cfg =
-        yahooIntervalFor(
-          tf === "12M" ? "1M" : tf === "1w" ? "1w" : tf === "1M" ? "1M" : tf === "4h" ? "4h" : tf,
-        ) ?? { interval: "1d", range: "max" };
-      const y = await getYahooChart(ySym, cfg.interval, cfg.range);
-      let candles = y.candles as ChartCandle[];
-      if (cfg.aggregate4h || tf === "4h") candles = aggregateCandles(candles, TF_MS["4h"]);
-      if (tf === "12M") candles = aggregateCandles(candles, TF_MS["12M"]);
-      candles = candles.slice(-limit);
-      if (candles.length >= 5) {
+  // 1) Requested timeframe across ticker candidates
+  for (const ySym of candidates) {
+    const hit = await fetchYahooCommodity(ySym, tf, limit);
+    if (hit) return hit;
+  }
+
+  // 2) Degrade to daily if intraday/weekly failed (session gaps on futures)
+  if (tf !== "1d") {
+    for (const ySym of candidates) {
+      const hit = await fetchYahooCommodity(ySym, "1d", limit);
+      if (hit) {
         return {
-          candles,
-          source: `yahoo-finance (${ySym})`,
-          note: `Commodity OHLC · ${tf} · ${candles.length} nen`,
+          ...hit,
+          note: `${hit.note ?? ""} · fallback 1d (khong co ${tf})`.replace(/^ · /, ""),
         };
       }
-    } catch {
-      /* try binance */
     }
   }
 
-  // 2) Binance PAXG approx XAU when region allows
-  if (s === "XAUUSD" || s === "GOLD" || s === "XAU" || s.includes("VANG") || ySym === "GC=F") {
-    try {
-      const iv = ["1m", "5m", "15m", "30m", "1h", "4h", "1d", "1w"].includes(tf)
-        ? binanceInterval(tf === "4h" ? "1h" : tf)
-        : "1h";
-      const bars = await binance.getKlinesDeep(
-        "PAXGUSDT",
-        iv,
-        Math.min(limit * (tf === "4h" ? 4 : 1), 3000),
-      );
-      let candles = bars.map(toCandle);
-      if (tf === "4h") candles = aggregateCandles(candles, TF_MS["4h"]);
-      if (tf === "1M" || tf === "12M") candles = aggregateCandles(candles, TF_MS[tf]);
-      candles = candles.slice(-limit);
-      if (candles.length >= 5) {
-        return { candles, source: "binance (PAXG approx XAU)", note: "Vang PAXG" };
-      }
-    } catch {
-      /* fall through */
+  // 3) Binance PAXG for gold
+  if (isGoldFamily) {
+    const paxg = await fetchBinancePaxg(tf, limit);
+    if (paxg) return paxg;
+    if (tf !== "1d") {
+      const paxgD = await fetchBinancePaxg("1d", limit);
+      if (paxgD) return { ...paxgD, note: "Vang PAXG · fallback 1d" };
     }
   }
 
-  if (!ySym) throw new Error("commodity_history_unavailable");
+  // 4) Ultimate fallback → GOLD so commodity page always has a drawable series
+  if (!isGoldFamily) {
+    const gold = await fetchYahooCommodity("GC=F", tf !== "1d" ? "1d" : tf, limit);
+    if (gold) {
+      return {
+        ...gold,
+        note: `Fallback Vang (GC=F) — ${s} khong co chuoi gia`,
+      };
+    }
+    const paxg = await fetchBinancePaxg("1d", limit);
+    if (paxg) {
+      return { ...paxg, note: `Fallback Vang PAXG — ${s} khong co chuoi gia` };
+    }
+  }
+
+  if (!candidates.length) throw new Error("commodity_history_unavailable");
   throw new Error("commodity_history_empty");
 }
 

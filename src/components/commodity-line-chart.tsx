@@ -3,7 +3,7 @@
 /**
  * Biểu đồ đường đơn giản cho trang Hàng hóa — không nến, không indicator.
  * Lazy: chỉ dynamic-import lightweight-charts và fetch history khi vào viewport.
- * Default ưu tiên GOLD; nếu series trống → tự chuyển sang option kế tiếp có dữ liệu.
+ * Fallback: ưu tiên GOLD trong options; nếu series trống → chuyển 1 lần sang option kế tiếp.
  */
 import { useEffect, useRef, useState } from "react";
 import { useApi } from "@/lib/hooks";
@@ -11,6 +11,9 @@ import { TF_LABEL, type ChartMarketData } from "@/lib/chart-const";
 import { Loading } from "@/components/ui";
 
 const COMMODITY_TFS = ["1h", "4h", "1d", "1w", "1M"] as const;
+
+/** Prefer these when options list has no explicit order. */
+const PREFERRED_DEFAULT = ["GOLD", "SILVER", "WTI", "BRENT", "COPPER"] as const;
 
 export interface CommodityChartOption {
   chartSymbol: string;
@@ -22,11 +25,23 @@ interface Props {
   height?: number;
 }
 
+function pickDefaultSymbol(options: CommodityChartOption[]): string {
+  if (!options.length) return "";
+  for (const p of PREFERRED_DEFAULT) {
+    const hit = options.find((o) => o.chartSymbol === p);
+    if (hit) return hit.chartSymbol;
+  }
+  return options[0]!.chartSymbol;
+}
+
 export function CommodityLineChart({ options, height = 320 }: Props) {
   const shellRef = useRef<HTMLElement>(null);
   const [visible, setVisible] = useState(false);
-  const [chartSymbol, setChartSymbol] = useState(options[0]?.chartSymbol ?? "");
+  const [chartSymbol, setChartSymbol] = useState(() => pickDefaultSymbol(options));
   const [tf, setTf] = useState<string>("1d");
+  const [fallbackNote, setFallbackNote] = useState<string | null>(null);
+  /** Only auto-switch once per mount / option-set so user choice is respected. */
+  const autoSwitched = useRef(false);
   const triedEmpty = useRef<Set<string>>(new Set());
 
   useEffect(() => {
@@ -48,37 +63,58 @@ export function CommodityLineChart({ options, height = 320 }: Props) {
     return () => io.disconnect();
   }, []);
 
+  // Reset when catalog options change identity
   useEffect(() => {
     if (!options.length) {
       window.setTimeout(() => setChartSymbol(""), 0);
       return;
     }
     if (!options.some((o) => o.chartSymbol === chartSymbol)) {
-      window.setTimeout(() => setChartSymbol(options[0]!.chartSymbol), 0);
+      autoSwitched.current = false;
+      triedEmpty.current.clear();
+      setFallbackNote(null);
+      window.setTimeout(() => setChartSymbol(pickDefaultSymbol(options)), 0);
     }
   }, [options, chartSymbol]);
 
   const active = options.find((o) => o.chartSymbol === chartSymbol) ?? options[0] ?? null;
   const histLimit = tf === "1d" || tf === "1w" || tf === "1M" ? 1000 : 800;
-  const { data, meta, isLoading } = useApi<ChartMarketData>(
+  const { res, data, meta, isLoading, error } = useApi<ChartMarketData>(
     visible && active
       ? `/api/v1/chart/history?symbol=${encodeURIComponent(active.chartSymbol)}&assetType=commodity&timeframe=${tf}&limit=${histLimit}`
       : null,
   );
-  // Auto-fallback: empty series → next option (prefer GOLD path already sorted upstream)
+
+  // Auto-fallback once: empty / upstream unavailable → next preferred option
   useEffect(() => {
-    if (!visible || isLoading || !active) return;
-    const empty = data != null && !(data.candles?.length);
-    if (!empty) return;
+    if (!visible || isLoading || !active || autoSwitched.current) return;
+    const upstreamFail = Boolean(error) || (res != null && res.success === false);
+    const emptySeries = data != null && !(data.candles?.length);
+    const failed = upstreamFail || emptySeries;
+    if (!failed) return;
+
     triedEmpty.current.add(active.chartSymbol);
-    const next = options.find((o) => !triedEmpty.current.has(o.chartSymbol));
+
+    // Prefer GOLD / SILVER / WTI before walking the rest of the list
+    const ordered = [
+      ...PREFERRED_DEFAULT.map((s) => options.find((o) => o.chartSymbol === s)).filter(Boolean),
+      ...options,
+    ] as CommodityChartOption[];
+    const seen = new Set<string>();
+    const next = ordered.find((o) => {
+      if (!o || seen.has(o.chartSymbol)) return false;
+      seen.add(o.chartSymbol);
+      return !triedEmpty.current.has(o.chartSymbol);
+    });
+
     if (next && next.chartSymbol !== active.chartSymbol) {
+      autoSwitched.current = true;
+      setFallbackNote(`${active.label} chưa có chuỗi giá — đang hiển thị ${next.label}`);
       setChartSymbol(next.chartSymbol);
     }
-  }, [visible, isLoading, data, active, options]);
+  }, [visible, isLoading, data, error, res, active, options]);
 
   const hostRef = useRef<HTMLDivElement>(null);
-  // Opaque handles — avoid LW Charts generic contravariance on setData
   const chartRef = useRef<any>(null);
   const seriesRef = useRef<any>(null);
 
@@ -166,6 +202,8 @@ export function CommodityLineChart({ options, height = 320 }: Props) {
     );
   }
 
+  const emptyAfterLoad = visible && !isLoading && data && !data.candles?.length;
+
   return (
     <section ref={shellRef} className="panel overflow-hidden">
       <header className="flex flex-wrap items-center gap-2 border-b border-border-subtle px-3.5 py-2.5">
@@ -173,7 +211,9 @@ export function CommodityLineChart({ options, height = 320 }: Props) {
         <select
           value={active?.chartSymbol ?? ""}
           onChange={(e) => {
+            autoSwitched.current = true; // user choice — stop auto chain
             triedEmpty.current.delete(e.target.value);
+            setFallbackNote(null);
             setChartSymbol(e.target.value);
           }}
           className="rounded-lg border border-border-subtle bg-surface-elevated px-2.5 py-1.5 text-[12px] text-text-primary outline-none focus:border-accent-primary/60"
@@ -197,10 +237,16 @@ export function CommodityLineChart({ options, height = 320 }: Props) {
         </div>
       </header>
       <div className="relative p-2">
-        {meta?.source && (
-          <div className="mb-1 px-1 text-[10px] text-text-muted">
-            {active?.label} · {meta.source}
-            {data?.candles?.length ? ` · ${data.candles.length} điểm` : ""}
+        {(meta?.source || fallbackNote) && (
+          <div className="mb-1 space-y-0.5 px-1 text-[10px] text-text-muted">
+            {meta?.source ? (
+              <div>
+                {active?.label} · {meta.source}
+                {data?.candles?.length ? ` · ${data.candles.length} điểm` : ""}
+                {meta.note ? ` · ${meta.note}` : ""}
+              </div>
+            ) : null}
+            {fallbackNote ? <div className="text-amber-400/90">{fallbackNote}</div> : null}
           </div>
         )}
         <div ref={hostRef} className="w-full" style={{ height }} />
@@ -209,7 +255,7 @@ export function CommodityLineChart({ options, height = 320 }: Props) {
             <Loading rows={2} />
           </div>
         )}
-        {visible && !isLoading && data && !data.candles?.length && (
+        {emptyAfterLoad && (
           <div className="absolute inset-0 flex items-center justify-center text-[12px] text-text-muted">
             Không lấy được chuỗi giá cho mặt hàng này
           </div>
@@ -217,6 +263,7 @@ export function CommodityLineChart({ options, height = 320 }: Props) {
       </div>
       <footer className="border-t border-border-subtle px-3.5 py-2 text-[10px] text-text-muted">
         Biểu đồ đường tham chiếu quốc tế (Yahoo / Binance PAXG) — có thể khác giá VietnamBiz (VND/nội địa).
+        {tf !== "1d" ? " Intraday thiếu dữ liệu sẽ tự hạ về khung ngày." : ""}
       </footer>
     </section>
   );
