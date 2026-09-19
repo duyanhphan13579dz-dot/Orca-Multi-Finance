@@ -121,7 +121,7 @@ const PRINT_CSS = `
   .chip p:last-child { margin-bottom: 0; }
   .chip ul {
     margin: 4px 0 0;
-    padding: 0 0 0 0;
+    padding: 0;
     list-style: none;
   }
   .chip li {
@@ -142,38 +142,6 @@ const PRINT_CSS = `
     border-radius: 50%;
     background: #123f7c;
   }
-  .scenarios-wrap {
-    border: 1px solid #d8dee8;
-    border-radius: 10px;
-    background: #f7f9fc;
-    padding: 10px 12px;
-    margin: 4px 0 10px;
-    page-break-inside: avoid;
-  }
-  .scenarios-wrap > h2 {
-    font-size: 12px;
-    color: #123f7c;
-    margin: 0 0 8px;
-  }
-  .scenarios {
-    display: table;
-    width: 100%;
-    border-collapse: separate;
-    border-spacing: 6px 0;
-    margin: 0 -6px;
-  }
-  .scenarios > div {
-    display: table-cell;
-    width: 33.33%;
-    vertical-align: top;
-    border: 1px solid #ccd;
-    border-radius: 8px;
-    padding: 8px;
-    background: #fff;
-  }
-  .scenarios b { display: block; font-size: 11px; margin-bottom: 2px; }
-  .scenarios .prob { font-size: 9.5px; color: #5a6b8c; }
-  .scenarios p { font-size: 10px; margin: 4px 0 0; color: #334; line-height: 1.55; }
   .foot {
     margin-top: 16px;
     text-align: center;
@@ -227,19 +195,6 @@ export function printDailyReport(report: DailyReport): void {
     })
     .join("");
 
-  const scenariosHtml =
-    report.scenarios?.length > 0
-      ? `<div class="scenarios-wrap"><h2>Kịch bản Base / Bull / Bear</h2>
-         <div class="scenarios">${report.scenarios
-           .map(
-             (sc) =>
-               `<div><b>${esc(sc.label)}</b><span class="prob">${esc(sc.probabilityRange)}</span>
-                <p>${esc(sc.drivers)}</p>
-                <p style="color:#5a6b8c">${esc(sc.indexZones)}</p></div>`,
-           )
-           .join("")}</div></div>`
-      : "";
-
   const freshnessTags = Object.entries(report.freshness ?? {})
     .map(([k, v]) => `<span class="tag">${esc(k)}: ${esc(String(v))}</span>`)
     .join("");
@@ -261,7 +216,6 @@ export function printDailyReport(report: DailyReport): void {
     </div>
     ${freshnessTags ? `<div class="tags">${freshnessTags}</div>` : ""}
     ${sectionsHtml}
-    ${scenariosHtml}
     <div class="foot">ORCA Financial — Generated from verified market data · không phải khuyến nghị đầu tư</div>
   </div>`;
 
