@@ -16,7 +16,7 @@ const TABS: { id: Tab; label: string; desc: string }[] = [
   { id: "morning_brief", label: "Morning Brief", desc: "Trước giờ mở cửa" },
   { id: "intraday_brief", label: "Intraday Brief", desc: "Cập nhật giữa phiên" },
   { id: "market_summary", label: "Market Summary", desc: "Sau giờ đóng cửa" },
-  { id: "strategy", label: "Vietnam Strategy", desc: "Market view & kịch bản" },
+  { id: "strategy", label: "Weekly Strategy", desc: "Chiến lược tuần · tự chấm điểm" },
   { id: "company", label: "Company Reports", desc: "On-demand theo mã" },
 ];
 
@@ -156,8 +156,8 @@ function DailyReportView({ type }: { type: Exclude<Tab, "company"> }) {
           ))}
           {!history?.items.length && (
             <li className="px-3 py-3 text-[11.5px] text-text-muted">
-              Chưa có bản nào trong kho — bấm “Tạo báo cáo mới”. Scheduler tự chạy 08:15 / 15:45 các ngày trong tuần khi
-              bật.
+              Chưa có bản nào trong kho — bấm “Tạo báo cáo mới”. Scheduler khuyến nghị Chủ Nhật
+              18:00–20:00 VN (Weekly Strategy) hoặc 08:15 / 15:45 các ngày trong tuần khi bật.
             </li>
           )}
           {history?.items.length ? (

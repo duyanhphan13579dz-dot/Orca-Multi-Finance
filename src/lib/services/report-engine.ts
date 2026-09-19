@@ -12,6 +12,7 @@ import {
   type IntradaySlot,
 } from "./intraday-brief-composer";
 import { composeMarketSummaryFramework } from "./market-summary-composer";
+import { composeWeeklyStrategyFramework } from "./weekly-strategy-composer";
 import { buildMarketIntel, type BreadthData } from "./market-intel";
 
 export { MAX_REPORTS_PER_TYPE } from "./report-retention";
@@ -49,11 +50,13 @@ interface DailyCtx {
   sourcesLive: number;
   sourcesTotal: number;
   morningReport: DailyReport | null;
+  priorStrategy: DailyReport | null;
+  weekSummaries: { title: string; generatedAt: string }[];
   slot: IntradaySlot;
   timeLabel: string;
 }
 
-async function loadLatestMorningBrief(): Promise<DailyReport | null> {
+async function loadLatestByType(type: DailyReportType): Promise<DailyReport | null> {
   try {
     const { db } = await import("@/db");
     const { reports } = await import("@/db/schema");
@@ -61,7 +64,7 @@ async function loadLatestMorningBrief(): Promise<DailyReport | null> {
     const rows = await db
       .select()
       .from(reports)
-      .where(eq(reports.type, "morning_brief"))
+      .where(eq(reports.type, type))
       .orderBy(desc(reports.generatedAt))
       .limit(1);
     const row = rows[0];
@@ -72,11 +75,33 @@ async function loadLatestMorningBrief(): Promise<DailyReport | null> {
   }
 }
 
+async function loadWeekMarketSummaries(): Promise<{ title: string; generatedAt: string }[]> {
+  try {
+    const { db } = await import("@/db");
+    const { reports } = await import("@/db/schema");
+    const { desc, eq } = await import("drizzle-orm");
+    const rows = await db
+      .select()
+      .from(reports)
+      .where(eq(reports.type, "market_summary"))
+      .orderBy(desc(reports.generatedAt))
+      .limit(5);
+    return rows.map((r) => ({
+      title: r.title,
+      generatedAt: r.generatedAt?.toISOString?.() ?? String(r.generatedAt),
+    }));
+  } catch {
+    return [];
+  }
+}
+
 async function buildCtx(): Promise<DailyCtx> {
-  const [s, intelRes, morningReport] = await Promise.all([
+  const [s, intelRes, morningReport, priorStrategy, weekSummaries] = await Promise.all([
     buildMarketSnapshot(),
     buildMarketIntel().catch(() => null),
-    loadLatestMorningBrief(),
+    loadLatestByType("morning_brief"),
+    loadLatestByType("strategy"),
+    loadWeekMarketSummaries(),
   ]);
   const session = getVnSession();
   const vnNow = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Ho_Chi_Minh" }));
@@ -116,6 +141,8 @@ async function buildCtx(): Promise<DailyCtx> {
     sourcesLive,
     sourcesTotal,
     morningReport,
+    priorStrategy,
+    weekSummaries,
     slot,
     timeLabel,
   };
@@ -135,7 +162,7 @@ function buildScenarios(ctx: DailyCtx): ReportScenario[] {
   const bearP = Math.max(1, 100 - baseP - bullP);
   const idx = ctx.snap.indices?.[0];
   const zones = idx
-    ? `VN-Index ${idx.value.toLocaleString("vi-VN")} — theo dõi phản ứng quanh ${(idx.value * 0.99).toFixed(0)}–${(idx.value * 1.01).toFixed(0)} điểm trong phiên`
+    ? `VN-Index ${idx.value.toLocaleString("vi-VN")} — theo dõi phản ứng quanh ${(idx.value * 0.99).toFixed(0)}–${(idx.value * 1.01).toFixed(0)} điểm`
     : "Vùng tham khảo kỹ thuật của VN-Index sẽ được định vị ngay khi VNStock kết nối (hệ thống không phác thảo vùng giá khi thiếu dữ liệu)";
   const cryptoDir = ctx.snap.crypto
     ? ctx.snap.crypto.summary.avgChangePercent >= 0
@@ -151,7 +178,7 @@ function buildScenarios(ctx: DailyCtx): ReportScenario[] {
     {
       label: "Base",
       probabilityRange: `${baseP - 5}–${baseP + 5}%`,
-      drivers: `Động lượng hiện tại duy trì: sắc thái crypto ${cryptoDir}, ${safeFlow}; không có cú sốc vĩ mô mới trong phiên.`,
+      drivers: `Động lượng hiện tại duy trì: sắc thái crypto ${cryptoDir}, ${safeFlow}; không có cú sốc vĩ mô mới.`,
       indexZones: zones,
       sectorImpact: "Dòng tiền chọn lọc theo nhóm ngành có câu chuyện riêng; blue chips giữ vai trò giằng điểm số.",
       risks: "Thanh khoản yếu có thể khiến biên dao động của từng mã bị phóng đại dù chỉ số chung biến động nhẹ.",
@@ -225,33 +252,17 @@ function composeSummary(ctx: DailyCtx): { sections: DailyReport["sections"]; ass
 }
 
 function composeStrategy(ctx: DailyCtx): { sections: DailyReport["sections"]; assumptions: string[] } {
-  const { snap } = ctx;
-  const p = snap.pulse;
-  const tone = p.score > 0.15 ? "up" : p.score < -0.15 ? "down" : "neutral";
-  const sections: DailyReport["sections"] = [
+  return composeWeeklyStrategyFramework(
     {
-      heading: "Market view",
-      tone,
-      paragraphs: [
-        `${p.headline}. Composite risk-appetite ${p.score >= 0 ? "+" : ""}${p.score.toFixed(2)} (−1..+1).`,
-        p.body[0] ?? "",
-      ],
+      snap: ctx.snap,
+      sessionState: ctx.sessionState,
+      dateVi: ctx.dateVi,
+      intel: ctx.intel,
+      priorStrategy: ctx.priorStrategy,
+      weekSummaries: ctx.weekSummaries,
     },
-    {
-      heading: "Động lực chính đang vận hành",
-      tone: "neutral",
-      paragraphs: p.drivers.map((d) => `${d.label}: ${d.value}`),
-    },
-    {
-      heading: "Khuynh hướng ngành & chiến lược",
-      tone: "neutral",
-      paragraphs: [
-        `Taxonomy ${VN_SECTOR_MAP.length} nhóm ngành VN. Ưu tiên quan sát nhóm có thanh khoản thực và câu chuyện riêng trong tuần.`,
-        "Chiến lược: chờ xác nhận độ rộng + thanh khoản; không đuổi giá khi chỉ số tăng mà breadth thu hẹp.",
-      ],
-    },
-  ];
-  return { sections, assumptions: assumptionsNote(ctx) };
+    assumptionsNote(ctx),
+  );
 }
 
 function assumptionsNote(ctx: DailyCtx): string[] {
@@ -298,7 +309,7 @@ const TITLES: Record<DailyReportType, string> = {
   morning_brief: "ORCA Morning Brief",
   intraday_brief: "ORCA Intraday Brief",
   market_summary: "ORCA Market Summary",
-  strategy: "ORCA Strategy Note",
+  strategy: "ORCA Weekly Strategy",
 };
 
 function intradaySubtitle(slot: IntradaySlot): string {
@@ -319,8 +330,6 @@ export async function generateDailyReport(
 ): Promise<{ report: DailyReport; meta: Meta }> {
   const ctx = await buildCtx();
   const { sections, assumptions } = COMPOSERS[type](ctx);
-  // Intraday: no scenario table. Market summary carries draft scenarios in Block 9;
-  // still attach model scenarios for UI card consistency on morning/summary/strategy.
   const scenarios = type === "intraday_brief" ? [] : buildScenarios(ctx);
   const report: DailyReport = {
     type,
@@ -334,7 +343,7 @@ export async function generateDailyReport(
           ? intradaySubtitle(ctx.slot)
           : type === "market_summary"
             ? "Tổng kết phiên · scorecard kịch bản sáng · timeline · bàn giao Morning Brief mai · no-mock-data"
-            : "Market view · drivers · levels · sector preferences · scenarios",
+            : "Chiến lược tuần · tự chấm điểm tuần trước · kịch bản & phân bổ ngành · khung tuần · no-mock-data",
     generatedAt: new Date().toISOString(),
     sessionState: ctx.sessionState,
     marketDataTimestamp: ctx.meta.sourceTimestamp,
@@ -430,3 +439,6 @@ export async function getReportById(id: string): Promise<DailyReport | null> {
     return null;
   }
 }
+
+// silence unused until sector rotation module lands
+void VN_SECTOR_MAP;
