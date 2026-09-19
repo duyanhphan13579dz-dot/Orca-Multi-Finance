@@ -197,8 +197,6 @@ function ReportView({
   meta: import("@/lib/types").Meta | null;
   onExportPdf: () => void;
 }) {
-  const showAssumptions = report.type !== "strategy" && (report.assumptions?.length ?? 0) > 0;
-
   return (
     <article className="panel p-5 pb-4">
       <div>
@@ -283,19 +281,6 @@ function ReportView({
                 </div>
               ))}
             </div>
-          </div>
-        )}
-
-        {showAssumptions && (
-          <div className="mt-4 border-t border-border-subtle pt-3">
-            <h3 className="text-[11px] font-semibold uppercase tracking-wider text-text-muted">
-              Giả định & giới hạn
-            </h3>
-            <ul className="mt-1 list-disc space-y-0.5 pl-4 text-[11px] text-text-muted">
-              {report.assumptions.map((a, i) => (
-                <li key={i}>{a}</li>
-              ))}
-            </ul>
           </div>
         )}
       </div>
