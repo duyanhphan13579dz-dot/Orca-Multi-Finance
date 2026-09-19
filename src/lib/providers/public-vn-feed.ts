@@ -3,15 +3,16 @@ import { httpJson } from "../http";
 import type { IndexQuote, Quote, OhlcvBar } from "../types";
 import { getYahooQuote } from "./yahoo";
 import { getVpsQuotes } from "./vps";
+import { getSsiIboardQuotes } from "./ssi-iboard";
 import { ProviderError } from "./binance";
 
 /**
  * Public free VN market feeds — no API key.
- * Failover when VNDirect / SSI are down so dashboard stays FRESH/LIVE.
+ * Parallel race + merge so dashboard stays FRESH/LIVE when primary CTCK feeds fail.
  *
- *  - VPS bgapidatafeed → realtime stock quotes
- *  - Yahoo Finance chart → VNINDEX / VN30 / HNX (may lag minutes)
- *  - Entrade chart-api → daily OHLCV stocks + indices
+ *  Quotes:  VPS bgapidatafeed ∥ SSI iBoard (merge by symbol, prefer VPS price)
+ *  Indices: Yahoo Finance (primary) + VPS index symbols when available
+ *  OHLCV:   Entrade chart-api
  */
 
 export const PUBLIC_VN = "public-vn-feed";
@@ -25,41 +26,140 @@ const YAHOO_INDEX_MAP: Record<string, string> = {
   UPCOM: "UPCOMINDEX.VN",
 };
 
+function mergeQuotes(batches: Array<{ quotes: Quote[]; sourceTs: number | null; source: string }>): {
+  quotes: Quote[];
+  sourceTs: number | null;
+  sources: string[];
+} {
+  const bySym = new Map<string, Quote>();
+  const used = new Set<string>();
+  let newest: number | null = null;
+  for (const batch of batches) {
+    if (batch.sourceTs != null && (newest == null || batch.sourceTs > newest)) newest = batch.sourceTs;
+    for (const q of batch.quotes) {
+      const sym = q.symbol.toUpperCase();
+      const prev = bySym.get(sym);
+      if (!prev) {
+        bySym.set(sym, q);
+        used.add(batch.source);
+        continue;
+      }
+      bySym.set(sym, {
+        ...q,
+        ...prev,
+        name: prev.name ?? q.name,
+        volume: prev.volume ?? q.volume,
+        quoteVolume: prev.quoteVolume ?? q.quoteVolume,
+        open: prev.open ?? q.open,
+        high: prev.high ?? q.high,
+        low: prev.low ?? q.low,
+        referencePrice: prev.referencePrice ?? q.referencePrice,
+        ceilingPrice: prev.ceilingPrice ?? q.ceilingPrice,
+        floorPrice: prev.floorPrice ?? q.floorPrice,
+      });
+      used.add(batch.source);
+    }
+  }
+  return { quotes: [...bySym.values()], sourceTs: newest, sources: [...used] };
+}
+
+/** Race VPS ∥ SSI iBoard — no API key. */
 export async function getPublicQuotes(symbols: string[]): Promise<{
   quotes: Quote[];
   sourceTs: number | null;
+  sources?: string[];
 }> {
-  return getVpsQuotes(symbols);
+  const uniq = [...new Set(symbols.map((s) => s.toUpperCase()).filter(Boolean))];
+  if (!uniq.length) return { quotes: [], sourceTs: null, sources: [] };
+
+  const settled = await Promise.allSettled([
+    getVpsQuotes(uniq).then((r) => ({ ...r, source: "vps" as const })),
+    getSsiIboardQuotes(uniq).then((r) => ({ ...r, source: "ssi-iboard" as const })),
+  ]);
+
+  const batches: Array<{ quotes: Quote[]; sourceTs: number | null; source: string }> = [];
+  for (const s of settled) {
+    if (s.status === "fulfilled" && s.value.quotes.length) {
+      batches.push(s.value);
+    }
+  }
+  if (!batches.length) {
+    throw new ProviderError("public quotes: all sources empty", PUBLIC_VN);
+  }
+  batches.sort((a, b) => (a.source === "vps" ? -1 : b.source === "vps" ? 1 : 0));
+  return mergeQuotes(batches);
 }
 
 export async function getPublicIndices(
   codes: string[] = ["VNINDEX", "VN30", "HNX", "UPCOM"],
 ): Promise<{ items: IndexQuote[]; sourceTs: number | null }> {
-  const items: IndexQuote[] = [];
+  const want = codes.map((c) => c.toUpperCase().replace("HNXINDEX", "HNX"));
+  const byCode = new Map<string, IndexQuote>();
   let newest: number | null = null;
-  await Promise.all(
-    codes.map(async (code) => {
-      const ySym = YAHOO_INDEX_MAP[code.toUpperCase()] ?? `${code}.VN`;
-      try {
-        const q = await getYahooQuote(ySym);
-        const ts = q.marketTime ?? Date.now();
-        if (newest == null || ts > newest) newest = ts;
-        items.push({
-          code: code.toUpperCase().replace("HNXINDEX", "HNX"),
-          name: code.toUpperCase(),
-          value: q.price,
-          change: q.change ?? 0,
-          changePercent: q.changePercent ?? 0,
-          volume: null,
-          updatedAt: ts ? new Date(ts).toISOString() : null,
-        });
-      } catch {
-        /* skip */
-      }
-    }),
-  );
+
+  const [yahooRows, vps] = await Promise.all([
+    Promise.all(
+      codes.map(async (code) => {
+        const ySym = YAHOO_INDEX_MAP[code.toUpperCase()] ?? `${code}.VN`;
+        try {
+          const q = await getYahooQuote(ySym);
+          const ts = q.marketTime ?? Date.now();
+          return {
+            code: code.toUpperCase().replace("HNXINDEX", "HNX"),
+            name: code.toUpperCase(),
+            value: q.price,
+            change: q.change ?? 0,
+            changePercent: q.changePercent ?? 0,
+            volume: null as number | null,
+            updatedAt: ts ? new Date(ts).toISOString() : null,
+            ts,
+          };
+        } catch {
+          return null;
+        }
+      }),
+    ),
+    getVpsQuotes(want).catch(() => ({ quotes: [] as Quote[], sourceTs: null as number | null })),
+  ]);
+
+  for (const row of yahooRows) {
+    if (!row) continue;
+    if (newest == null || row.ts > newest) newest = row.ts;
+    byCode.set(row.code, {
+      code: row.code,
+      name: row.name,
+      value: row.value,
+      change: row.change,
+      changePercent: row.changePercent,
+      volume: row.volume,
+      updatedAt: row.updatedAt,
+    });
+  }
+
+  for (const q of vps.quotes) {
+    const code = q.symbol.toUpperCase().replace("HNXINDEX", "HNX");
+    if (!want.includes(code)) continue;
+    const existing = byCode.get(code);
+    if (!existing && q.price != null) {
+      const ts = q.updatedAt ? Date.parse(q.updatedAt) : Date.now();
+      if (newest == null || ts > newest) newest = ts;
+      byCode.set(code, {
+        code,
+        name: code,
+        value: q.price,
+        change: q.change ?? 0,
+        changePercent: q.changePercent ?? 0,
+        volume: q.volume ?? null,
+        updatedAt: q.updatedAt ?? null,
+      });
+    } else if (existing) {
+      if (existing.volume == null && q.volume != null) existing.volume = q.volume;
+    }
+  }
+
+  const items = [...byCode.values()];
   if (!items.length) throw new ProviderError("public indices: empty", PUBLIC_VN);
-  return { items, sourceTs: newest };
+  return { items, sourceTs: newest ?? vps.sourceTs };
 }
 
 type EntradeOhlc = {
@@ -114,24 +214,14 @@ export async function getPublicOhlcv(
 
 /** Liquid universe for board fallback (not full HOSE). */
 export const LIQUID_BOARD = [
-  // Ngân hàng
   "VCB", "BID", "CTG", "TCB", "MBB", "VPB", "ACB", "STB", "HDB", "VIB", "TPB", "SHB", "MSB", "OCB", "LPB", "EIB", "SSB", "NAB",
-  // BĐS / Xây dựng
   "VIC", "VHM", "VRE", "NVL", "PDR", "DXG", "KDH", "NLG", "DIG", "CEO", "HDG", "BCM", "KBC", "SZC", "IDC", "VGC",
-  // Thép / VLXD
   "HPG", "HSG", "NKG", "SMC", "HT1", "BCC",
-  // Công nghệ
   "FPT", "CMG", "ELC", "FOX",
-  // Tiêu dùng / Bán lẻ
   "VNM", "MSN", "SAB", "MCH", "QNS", "DBC", "MWG", "PNJ", "FRT", "DGW", "PET",
-  // Dầu khí / Năng lượng
   "GAS", "PLX", "PVD", "PVS", "BSR", "OIL", "POW", "REE", "GEG", "PC1", "GEX", "NT2",
-  // Chứng khoán
   "SSI", "VND", "HCM", "VCI", "SHS", "CTS", "BSI", "FTS", "VIX", "ORS",
-  // Cao su / Nông nghiệp
   "GVR", "PHR", "DPR", "HAG", "BAF",
-  // Bảo hiểm / Hàng không
   "BVH", "BMI", "PVI", "MIG", "VJC", "HVN",
-  // Khác thanh khoản cao
   "GMD", "VSC", "HAH", "DGC", "DPM", "DCM",
 ];
