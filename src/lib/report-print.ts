@@ -7,12 +7,17 @@
 
 import type { DailyReport } from "@/lib/services/report-engine";
 
+/** Escape for HTML text/attrs without embedding literal entity sequences in source. */
 function esc(s: string): string {
+  const amp = String.fromCharCode(38) + "amp;";
+  const lt = String.fromCharCode(38) + "lt;";
+  const gt = String.fromCharCode(38) + "gt;";
+  const quot = String.fromCharCode(38) + "quot;";
   return String(s ?? "")
-    .replace(/&/g, "&")
-    .replace(/</g, "<")
-    .replace(/>/g, ">")
-    .replace(/"/g, """);
+    .replace(/&/g, amp)
+    .replace(/</g, lt)
+    .replace(/>/g, gt)
+    .replace(/"/g, quot);
 }
 
 function fmtWhen(iso: string | null | undefined): string {
