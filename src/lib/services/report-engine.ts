@@ -5,7 +5,7 @@ import { getVnSession, type VnSessionState } from "../vn/sessions";
 import { VN_SECTOR_MAP } from "../vn/master";
 import { llmConfigured } from "../ai/gateway";
 import type { FreshnessStatus, Meta } from "../types";
-import { composeMorningFramework } from "./morning-brief-composer";
+import { composeMorningFramework, type MorningIntelSlice } from "./morning-brief-composer";
 import { buildMarketIntel, type BreadthData } from "./market-intel";
 import { formatBreadthParagraphs } from "./breadth-utils";
 
@@ -40,6 +40,9 @@ interface DailyCtx {
   sessionState: VnSessionState;
   dateVi: string;
   breadth: BreadthData | null;
+  intel: MorningIntelSlice;
+  sourcesLive: number;
+  sourcesTotal: number;
 }
 
 async function buildCtx(): Promise<DailyCtx> {
@@ -49,6 +52,22 @@ async function buildCtx(): Promise<DailyCtx> {
   ]);
   const session = getVnSession();
   const vnNow = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Ho_Chi_Minh" }));
+  const intelSections = intelRes?.intel.sections ?? {};
+  const snapSections = (s.meta.sections ?? {}) as Record<string, FreshnessStatus>;
+  const allStatuses = { ...snapSections, ...intelSections };
+  const statuses = Object.values(allStatuses);
+  const sourcesLive = statuses.filter((x) => x === "LIVE" || x === "FRESH").length;
+  const sourcesTotal = Math.max(statuses.length, 5);
+
+  const intel: MorningIntelSlice = {
+    breadth: intelRes?.intel.breadth ?? null,
+    flow: intelRes?.intel.flow ?? null,
+    liquidity: intelRes?.intel.liquidity ?? null,
+    contributors: intelRes?.intel.contributors ?? null,
+    conditionScore: intelRes?.intel.condition?.score ?? null,
+    conditionRating: intelRes?.intel.condition?.rating ?? null,
+  };
+
   return {
     snap: s.snapshot,
     meta: s.meta,
@@ -60,6 +79,9 @@ async function buildCtx(): Promise<DailyCtx> {
       year: "numeric",
     }),
     breadth: intelRes?.intel.breadth ?? null,
+    intel,
+    sourcesLive,
+    sourcesTotal,
   };
 }
 
@@ -108,7 +130,8 @@ function buildScenarios(ctx: DailyCtx): ReportScenario[] {
     {
       label: "Bull",
       probabilityRange: `${bullP - 4}–${bullP + 4}%`,
-      drivers: "Risk-on đồng thuận: crypto vượt kháng cự ngắn hạn, USD dịu lại, hàng hóa đầu vào ổn định; tin doanh nghiệp tích cực lan sang tâm lý nhóm ngành.",
+      drivers:
+        "Risk-on đồng thuận: crypto vượt kháng cự ngắn hạn, USD dịu lại, hàng hóa đầu vào ổn định; tin doanh nghiệp tích cực lan sang tâm lý nhóm ngành.",
       indexZones: idx
         ? `Xác nhận khi VN-Index vượt ${(idx.value * 1.005).toFixed(0)} kèm độ rộng mở rộng rõ rệt`
         : "Xác nhận cần một phiên tăng điểm với thanh khoản vượt trung bình 20 phiên",
@@ -118,11 +141,13 @@ function buildScenarios(ctx: DailyCtx): ReportScenario[] {
     {
       label: "Bear",
       probabilityRange: `${bearP - 3}–${bearP + 3}%`,
-      drivers: "Khủng hoảng bất ngờ vĩ mô/địa chính trị, USD bật mạnh, hoặc tin xấu doanh nghiệp lớn; hợp đồng phái sinh khuếch đại rung lắc.",
+      drivers:
+        "Khủng hoảng bất ngờ vĩ mô/địa chính trị, USD bật mạnh, hoặc tin xấu doanh nghiệp lớn; hợp đồng phái sinh khuếch đại rung lắc.",
       indexZones: idx
         ? `Rủi ro khi mất ${(idx.value * 0.99).toFixed(0)} với bán chiếm ưu thế vượt rõ`
         : "Rủi ro khi diễn biến bán mở rộng ra toàn thị trường thay vì gói gọn trong một nhóm",
-      sectorImpact: "Nhóm phòng thủ (tiêu dùng thiết yếu, dược) tương đối kháng; tài sản nhạy lãi suất/đòn bẩy chịu áp lực trước.",
+      sectorImpact:
+        "Nhóm phòng thủ (tiêu dùng thiết yếu, dược) tương đối kháng; tài sản nhạy lãi suất/đòn bẩy chịu áp lực trước.",
       risks: "Khi rủi ro hệ thống khởi động, correlation tăng và đa dạng hóa ngành giảm hiệu quả bảo vệ.",
     },
   ];
@@ -193,7 +218,14 @@ function composeIntraday(ctx: DailyCtx): { sections: DailyReport["sections"]; as
 
 function composeMorning(ctx: DailyCtx): { sections: DailyReport["sections"]; assumptions: string[] } {
   return composeMorningFramework(
-    { snap: ctx.snap, sessionState: ctx.sessionState, dateVi: ctx.dateVi, breadth: ctx.breadth },
+    {
+      snap: ctx.snap,
+      sessionState: ctx.sessionState,
+      dateVi: ctx.dateVi,
+      intel: ctx.intel,
+      sourcesLive: ctx.sourcesLive,
+      sourcesTotal: ctx.sourcesTotal,
+    },
     assumptionsNote(ctx),
   );
 }
@@ -305,7 +337,9 @@ function assumptionsNote(ctx: DailyCtx): string[] {
     `Trạng thái phiên VN: ${ctx.sessionState}.`,
   ];
   if (vnSectionDataStatus(ctx) === "unavailable") {
-    notes.push("VN equity data UNAVAILABLE tại thời điểm phát hành — các block VN được đánh dấu rõ, không suy diễn.");
+    notes.push(
+      "VN equity data UNAVAILABLE tại thời điểm phát hành — các block VN được đánh dấu rõ, không suy diễn.",
+    );
   }
   notes.push("Thông tin mang tính tham khảo, không phải khuyến nghị đầu tư.");
   return notes;
