@@ -6,6 +6,11 @@ import { VN_SECTOR_MAP } from "../vn/master";
 import { llmConfigured } from "../ai/gateway";
 import type { FreshnessStatus, Meta } from "../types";
 import { composeMorningFramework, type MorningIntelSlice } from "./morning-brief-composer";
+import {
+  composeIntradayFramework,
+  detectIntradaySlot,
+  type IntradaySlot,
+} from "./intraday-brief-composer";
 import { buildMarketIntel, type BreadthData } from "./market-intel";
 import { formatBreadthParagraphs } from "./breadth-utils";
 
@@ -43,15 +48,57 @@ interface DailyCtx {
   intel: MorningIntelSlice;
   sourcesLive: number;
   sourcesTotal: number;
+  morningReport: DailyReport | null;
+  slot: IntradaySlot;
+  timeLabel: string;
+}
+
+async function loadLatestMorningBrief(): Promise<DailyReport | null> {
+  try {
+    const { db } = await import("@/db");
+    const { reports } = await import("@/db/schema");
+    const { desc, eq } = await import("drizzle-orm");
+    const rows = await db
+      .select()
+      .from(reports)
+      .where(eq(reports.type, "morning_brief"))
+      .orderBy(desc(reports.generatedAt))
+      .limit(1);
+    const row = rows[0];
+    if (!row?.body) return null;
+    const body = row.body as unknown as DailyReport;
+    // Prefer same calendar day VN
+    const gen = row.generatedAt ? new Date(row.generatedAt) : null;
+    if (gen) {
+      const vnToday = new Date(
+        new Date().toLocaleString("en-US", { timeZone: "Asia/Ho_Chi_Minh" }),
+      );
+      const sameDay =
+        gen.getFullYear() === vnToday.getFullYear() &&
+        gen.getMonth() === vnToday.getMonth() &&
+        gen.getDate() === vnToday.getDate();
+      // Still return latest morning even if previous day — better than nothing for anchoring
+      void sameDay;
+    }
+    return body;
+  } catch {
+    return null;
+  }
 }
 
 async function buildCtx(): Promise<DailyCtx> {
-  const [s, intelRes] = await Promise.all([
+  const [s, intelRes, morningReport] = await Promise.all([
     buildMarketSnapshot(),
     buildMarketIntel().catch(() => null),
+    loadLatestMorningBrief(),
   ]);
   const session = getVnSession();
   const vnNow = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Ho_Chi_Minh" }));
+  const vnHour = vnNow.getHours();
+  const vnMinute = vnNow.getMinutes();
+  const timeLabel = `${String(vnHour).padStart(2, "0")}:${String(vnMinute).padStart(2, "0")}`;
+  const slot = detectIntradaySlot(vnHour, vnMinute);
+
   const intelSections = intelRes?.intel.sections ?? {};
   const snapSections = (s.meta.sections ?? {}) as Record<string, FreshnessStatus>;
   const allStatuses = { ...snapSections, ...intelSections };
@@ -82,6 +129,9 @@ async function buildCtx(): Promise<DailyCtx> {
     intel,
     sourcesLive,
     sourcesTotal,
+    morningReport,
+    slot,
+    timeLabel,
   };
 }
 
@@ -154,66 +204,18 @@ function buildScenarios(ctx: DailyCtx): ReportScenario[] {
 }
 
 function composeIntraday(ctx: DailyCtx): { sections: DailyReport["sections"]; assumptions: string[] } {
-  const { snap } = ctx;
-  const index = snap.indices?.[0];
-  const tone = snap.pulse.score > 0.15 ? "up" : snap.pulse.score < -0.15 ? "down" : "neutral";
-  const sections: DailyReport["sections"] = [
+  return composeIntradayFramework(
     {
-      heading: "Tóm tắt điều hành giữa phiên",
-      tone,
-      paragraphs: [
-        `${snap.pulse.headline}. Tại thời điểm nghỉ trưa, thị trường cần được đọc qua tương quan giữa điểm số, độ rộng và thanh khoản thay vì chỉ nhìn biến động VN-Index.`,
-        index
-          ? `VN-Index đang ở ${index.value.toLocaleString("vi-VN")} điểm (${pct(index.changePercent)}). Trạng thái phiên: ${snap.vnSession.labelVi}.`
-          : "Chưa có dữ liệu VN-Index hợp lệ để định lượng điểm số; hệ thống không suy diễn số liệu khi nguồn chưa khả dụng.",
-      ],
+      snap: ctx.snap,
+      sessionState: ctx.sessionState,
+      dateVi: ctx.dateVi,
+      intel: ctx.intel,
+      morningReport: ctx.morningReport,
+      slot: ctx.slot,
+      timeLabel: ctx.timeLabel,
     },
-    {
-      heading: "Diễn biến chỉ số và chất lượng độ rộng",
-      tone: "neutral",
-      paragraphs: [
-        ...(snap.indices ?? []).slice(0, 4).map(
-          (i) => `${i.code}: ${i.value.toLocaleString("vi-VN")} điểm (${pct(i.changePercent)}).`,
-        ),
-        "Độ rộng là bộ lọc quan trọng cho phiên chiều: chỉ số tăng nhưng số mã dẫn dắt thu hẹp cho thấy lực kéo tập trung; chỉ số đi ngang cùng độ rộng cải thiện thường là tín hiệu tích lũy lành mạnh hơn.",
-      ],
-    },
-    {
-      heading: "Độ rộng thị trường",
-      tone: "neutral",
-      paragraphs: formatBreadthParagraphs(ctx.breadth),
-    },
-    {
-      heading: "Dòng tiền, thanh khoản và nhóm dẫn dắt",
-      tone: "neutral",
-      paragraphs: [
-        `Risk-appetite composite đang ở mức ${snap.pulse.score >= 0 ? "+" : ""}${snap.pulse.score.toFixed(2)} trên thang -1..+1. ${snap.pulse.drivers.map((d) => `${d.label}: ${d.value}`).join("; ")}.`,
-        "Buổi chiều cần kiểm tra thanh khoản có tiếp tục mở rộng cùng hướng với chỉ số hay không; nếu giá tăng nhưng dòng tiền suy yếu, ưu tiên coi đó là nhịp hồi kỹ thuật và tránh đuổi giá.",
-      ],
-    },
-    {
-      heading: "Nhận định kỹ thuật và nhận xét thị trường",
-      tone,
-      paragraphs: [
-        snap.pulse.body[0] ?? "Động lượng hiện chưa đủ mạnh để xác nhận một xu hướng mới.",
-        snap.pulse.body[1] ?? "Cần chờ phản ứng tại các vùng hỗ trợ/kháng cự gần nhất và sự xác nhận của thanh khoản.",
-        "Quan điểm giữa phiên: duy trì kỷ luật theo tín hiệu xác nhận, phân biệt rõ cổ phiếu mạnh thật sự với các mã chỉ tăng do cung cầu ngắn hạn.",
-      ],
-    },
-    {
-      heading: "Dự kiến phiên chiều",
-      tone: "neutral",
-      paragraphs: [
-        index
-          ? `Kịch bản cơ sở: VN-Index quanh ${index.value.toLocaleString("vi-VN")} (${pct(index.changePercent)} buổi sáng) — phiên chiều nghiêng phân hóa, dòng tiền chọn lọc. Chỉ số cần giữ nền buổi sáng để hạn chế áp lực bán cuối phiên.`
-          : "Kịch bản cơ sở: phiên chiều nghiêng phân hóa, dòng tiền chọn lọc. Cần dữ liệu chỉ số LIVE để neo vùng tham chiếu — không suy diễn điểm số khi nguồn thiếu.",
-        "Điều kiện xác nhận: thanh khoản chiều không suy yếu so với buổi sáng và độ rộng không thu hẹp khi chỉ số tăng. Nếu giá tăng nhưng KL yếu → ưu tiên coi là nhịp hồi kỹ thuật, tránh đuổi.",
-        "Vô hiệu hóa kịch bản cơ sở: mất nền buổi sáng kèm bán lan tỏa → giảm giao dịch theo cảm xúc, chờ đóng cửa xác nhận thay vì bắt đáy giữa phiên.",
-        "Hành động: theo dõi nhóm dẫn dắt có KL thực; đặt ngưỡng cắt trước khi mở vị thế. Bản tin mang tính tham khảo, không phải khuyến nghị đầu tư.",
-      ],
-    },
-  ];
-  return { sections, assumptions: assumptionsNote(ctx) };
+    assumptionsNote(ctx),
+  );
 }
 
 function composeMorning(ctx: DailyCtx): { sections: DailyReport["sections"]; assumptions: string[] } {
@@ -378,6 +380,19 @@ const TITLES: Record<DailyReportType, string> = {
   strategy: "ORCA Strategy Note",
 };
 
+function intradaySubtitle(slot: IntradaySlot): string {
+  switch (slot) {
+    case "mid_morning":
+      return "Mid-morning — delta so với Morning Brief · xác nhận/phủ nhận kịch bản sáng";
+    case "lunch":
+      return "Trưa — tổng kết phiên sáng · chuẩn bị phiên chiều";
+    case "pre_atc":
+      return "Trước ATC — hành động vị thế · cảnh báo đóng/mở trước 14:30";
+    default:
+      return "Intraday — chỉ phần thay đổi so với kế hoạch sáng · no-mock-data";
+  }
+}
+
 export async function generateDailyReport(
   type: DailyReportType,
 ): Promise<{ report: DailyReport; meta: Meta }> {
@@ -386,14 +401,14 @@ export async function generateDailyReport(
   const scenarios = type === "intraday_brief" ? [] : buildScenarios(ctx);
   const report: DailyReport = {
     type,
-    title: `${type === "morning_brief" ? morningTitle() : TITLES[type]} — ${ctx.dateVi}`,
+    title: `${type === "morning_brief" ? morningTitle() : TITLES[type]} — ${ctx.dateVi}${type === "intraday_brief" ? ` · ${ctx.timeLabel}` : ""}`,
     subtitle:
       type === "morning_brief"
         ? morningTitle().includes("Prep")
           ? "Chuẩn bị phiên giao dịch kế tiếp — 10 khối Framework · no-mock-data (phát hành ngoài cửa sổ pre-ATO)"
           : "Chuẩn bị hành động trước ATO — 10 khối theo ORCA Morning Brief Framework · no-mock-data"
         : type === "intraday_brief"
-          ? "Toàn cảnh giữa phiên — nhận định, kịch bản và điểm cần theo dõi cho buổi chiều"
+          ? intradaySubtitle(ctx.slot)
           : type === "market_summary"
             ? "Điều gì thực sự đã xảy ra trên thị trường — giải mã từ dữ liệu"
             : "Market view · drivers · levels · sector preferences · scenarios",
