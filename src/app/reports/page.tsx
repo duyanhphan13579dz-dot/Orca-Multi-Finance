@@ -5,9 +5,10 @@ import { useApi } from "@/lib/hooks";
 import { StockReportSection } from "@/components/stock-report";
 import { OrcaMark } from "@/components/logo";
 import type { DailyReport, ReportListItem } from "@/lib/services/report-engine";
-import type { ApiResponse, MarketBulletin } from "@/lib/types";
-import { Badge, Chg, FreshnessDot, Loading, MetaLine, Panel, Unavailable, fmtCompact, fmtNum } from "@/components/ui";
-import { ArrowDownRight, ArrowUpRight, BookOpenText, FileText, History, Play, Printer, TrendingUp } from "lucide-react";
+import type { ApiResponse } from "@/lib/types";
+import { Badge, FreshnessDot, Loading, Panel, Unavailable } from "@/components/ui";
+import { BookOpenText, History, Play, Printer } from "lucide-react";
+import { printDailyReport } from "@/lib/report-print";
 
 type Tab = "morning_brief" | "intraday_brief" | "market_summary" | "strategy" | "company";
 
@@ -38,7 +39,9 @@ export default function ReportCenterPage() {
                 key={t.id}
                 onClick={() => setTab(t.id)}
                 className={`rounded-md px-3 py-1.5 text-[12px] transition-colors ${
-                  tab === t.id ? "bg-accent-primary/15 text-accent-primary" : "text-text-muted hover:text-text-primary"
+                  tab === t.id
+                    ? "bg-accent-primary/15 text-accent-primary"
+                    : "text-text-muted hover:text-text-primary"
                 }`}
               >
                 {t.label}
@@ -112,8 +115,9 @@ function DailyReportView({ type }: { type: Exclude<Tab, "company"> }) {
     }
   }
 
-  function print() {
-    window.print();
+  function exportPdf() {
+    if (!current) return;
+    printDailyReport(current);
   }
 
   return (
@@ -167,7 +171,7 @@ function DailyReportView({ type }: { type: Exclude<Tab, "company"> }) {
       <div className="col-span-12 lg:col-span-9">
         {busy && <Loading rows={10} />}
         {error && !busy && <Unavailable title="Không tạo được báo cáo" note={error} />}
-        {current && !busy && <ReportView report={current} meta={meta} onPrint={print} />}
+        {current && !busy && <ReportView report={current} meta={meta} onExportPdf={exportPdf} />}
         {!current && !busy && !error && (
           <Unavailable
             title="Chọn hoặc tạo một báo cáo"
@@ -182,22 +186,24 @@ function DailyReportView({ type }: { type: Exclude<Tab, "company"> }) {
 function ReportView({
   report,
   meta,
-  onPrint,
+  onExportPdf,
 }: {
   report: DailyReport;
   meta: import("@/lib/types").Meta | null;
-  onPrint: () => void;
+  onExportPdf: () => void;
 }) {
   return (
-    <article className="panel p-5 pb-4 print:shadow-none">
-      <div id="report-print-area">
+    <article className="panel p-5 pb-4">
+      <div>
         <div className="hd flex items-center gap-3 border-b border-line pb-3">
           <OrcaMark size={44} />
           <div className="min-w-0">
             <h2 className="text-[19px] font-semibold leading-tight">{report.title}</h2>
             <p className="text-[12px] text-text-muted">{report.subtitle}</p>
           </div>
-          <span className="bd ml-auto shrink-0 text-[9.5px] tracking-[0.2em] text-accent-primary">ORCA RESEARCH</span>
+          <span className="bd ml-auto shrink-0 text-[9.5px] tracking-[0.2em] text-accent-primary">
+            ORCA RESEARCH
+          </span>
         </div>
 
         <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-text-muted">
@@ -208,7 +214,9 @@ function ReportView({
           {report.marketDataTimestamp && (
             <span>
               · Dữ liệu đến:{" "}
-              {new Date(report.marketDataTimestamp).toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })}
+              {new Date(report.marketDataTimestamp).toLocaleString("vi-VN", {
+                timeZone: "Asia/Ho_Chi_Minh",
+              })}
             </span>
           )}
           <span className="flex items-center gap-1">
@@ -218,7 +226,10 @@ function ReportView({
         </div>
         <div className="mt-1.5 flex flex-wrap gap-1.5">
           {Object.entries(report.freshness).map(([k, v]) => (
-            <Badge key={k} tone={v === "LIVE" || v === "FRESH" ? "up" : v === "UNAVAILABLE" ? "down" : "warn"}>
+            <Badge
+              key={k}
+              tone={v === "LIVE" || v === "FRESH" ? "up" : v === "UNAVAILABLE" ? "down" : "warn"}
+            >
               {k}: {v}
             </Badge>
           ))}
@@ -229,7 +240,11 @@ function ReportView({
             <section key={s.heading}>
               <h3
                 className={`text-[13px] font-semibold ${
-                  s.tone === "up" ? "text-up" : s.tone === "down" ? "text-down" : "text-text-primary"
+                  s.tone === "up"
+                    ? "text-up"
+                    : s.tone === "down"
+                      ? "text-down"
+                      : "text-text-primary"
                 }`}
               >
                 {s.heading}
@@ -263,7 +278,9 @@ function ReportView({
 
         {report.assumptions?.length > 0 && (
           <div className="mt-4 border-t border-border-subtle pt-3">
-            <h3 className="text-[11px] font-semibold uppercase tracking-wider text-text-muted">Giả định & giới hạn</h3>
+            <h3 className="text-[11px] font-semibold uppercase tracking-wider text-text-muted">
+              Giả định & giới hạn
+            </h3>
             <ul className="mt-1 list-disc space-y-0.5 pl-4 text-[11px] text-text-muted">
               {report.assumptions.map((a, i) => (
                 <li key={i}>{a}</li>
@@ -273,13 +290,13 @@ function ReportView({
         )}
       </div>
 
-      <div className="mt-4 flex justify-end print:hidden">
+      <div className="mt-4 flex justify-end">
         <button
           type="button"
-          onClick={onPrint}
+          onClick={onExportPdf}
           className="inline-flex items-center gap-1.5 rounded-md border border-border-subtle px-3 py-1.5 text-[12px] text-text-secondary hover:text-text-primary"
         >
-          <Printer className="size-3.5" /> In / PDF
+          <Printer className="size-3.5" /> Xuất PDF
         </button>
       </div>
     </article>
