@@ -76,7 +76,7 @@ const SECTOR_KEYWORDS: [RegExp, string][] = [
   [/thép|sắt|tôn mạ/i, "Thép"],
   [/dầu khí|giá dầu|khí đốt|xăng dầu/i, "Dầu khí"],
   [/chứng khoán|vn-?index|hose|hnx|upcom|trái phiếu/i, "Chứng khoán"],
-  [/công nghệ|phần mềm|chuyển đổi số|ai\\b/i, "Công nghệ"],
+  [/công nghệ|phần mềm|chuyển đổi số|ai\b/i, "Công nghệ"],
   [/vàng|gold|kim loại quý/i, "Kim loại quý"],
   [/cà phê|coffee|cao su|rubber|nông sản/i, "Nông sản"],
   [/điện|điện lực|evn|giá điện/i, "Điện"],
@@ -90,21 +90,21 @@ const SECTOR_KEYWORDS: [RegExp, string][] = [
 
 const decodeXml = (s: string) =>
   s
-    .replace(/<!\\[CDATA\\[([\\s\\S]*?)\\]\\]>/g, "$1")
-    .replace(/&/g, "&")
-    .replace(/</g, "<")
-    .replace(/>/g, ">")
-    .replace(/"/g, '"')
-    .replace(/&#39;|'/g, "'")
-    .replace(/&#(\\d+);/g, (_, c) => String.fromCharCode(Number(c)));
+    .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;|&apos;/g, "'")
+    .replace(/&#(\d+);/g, (_, c) => String.fromCharCode(Number(c)));
 
-const stripTags = (s: string) => s.replace(/<[^>]*>/g, " ").replace(/\\s+/g, " ").trim();
+const stripTags = (s: string) => s.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
 
 function tag(text: string): { symbols: string[]; sector: string | null } {
   const symbols = new Set<string>();
   const upper = text.toUpperCase();
   for (const t of VN_TICKER_SET) {
-    if (new RegExp(`\\b${t}\\b`, "i").test(upper) && /\\b[A-Z]{3}\\b/.test(t)) symbols.add(t);
+    if (new RegExp(`\\b${t}\\b`, "i").test(upper) && /\b[A-Z]{3}\b/.test(t)) symbols.add(t);
   }
   const lower = text.toLowerCase();
   for (const [kw, sym] of Object.entries(CRYPTO_MAP)) {
@@ -117,7 +117,7 @@ function tag(text: string): { symbols: string[]; sector: string | null } {
 
 function itemsFromXml(xml: string, feed: FeedDef): NewsArticle[] {
   const items: NewsArticle[] = [];
-  const itemMatches = xml.match(/<item[\\s\\S]*?<\\/item>/gi) ?? [];
+  const itemMatches = xml.match(/<item[\s\S]*?<\/item>/gi) ?? [];
   const now = Date.now();
   for (const raw of itemMatches.slice(0, 25)) {
     const get = (tagName: string) => {
@@ -125,7 +125,7 @@ function itemsFromXml(xml: string, feed: FeedDef): NewsArticle[] {
       return m ? decodeXml(m[1]).trim() : "";
     };
     const title = stripTags(get("title"));
-    const linkRaw = get("link") || raw.match(/<link[^>]*\\/>\\s*([^\\s<]+)/i)?.[1] || "";
+    const linkRaw = get("link") || raw.match(/<link[^>]*\/>\s*([^\s<]+)/i)?.[1] || "";
     const url = linkRaw.trim();
     const desc = stripTags(get("description")).slice(0, 400);
     const pubRaw = get("pubDate") || get("date") || get("dc:date");
