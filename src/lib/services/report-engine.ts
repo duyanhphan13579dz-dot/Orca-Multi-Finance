@@ -122,16 +122,7 @@ async function buildCtx(): Promise<DailyCtx> {
   const crossHighlights = pickCrossHighlights(intelRes?.intel.crossAsset, 8);
   const mergedNews = resolveReportNews(
     s.snapshot,
-    {
-      breadth: intelRes?.intel.breadth ?? null,
-      flow: intelRes?.intel.flow ?? null,
-      liquidity: intelRes?.intel.liquidity ?? null,
-      contributors: intelRes?.intel.contributors ?? null,
-      conditionScore: intelRes?.intel.condition?.score ?? null,
-      conditionRating: intelRes?.intel.condition?.rating ?? null,
-      news: intelRes?.intel.news ?? null,
-      crossHighlights,
-    },
+    { news: intelRes?.intel.news ?? null },
     30,
   );
 
@@ -142,13 +133,14 @@ async function buildCtx(): Promise<DailyCtx> {
     contributors: intelRes?.intel.contributors ?? null,
     conditionScore: intelRes?.intel.condition?.score ?? null,
     conditionRating: intelRes?.intel.condition?.rating ?? null,
-    news: mergedNews.length ? mergedNews : null,
-    crossHighlights: crossHighlights.length ? crossHighlights : null,
   };
 
-  const snap = enrichSnapshotForReports(s.snapshot, intel);
+  // Overlay richer news (intel deep fetch + snapshot, deduped) onto snapshot for all composers
+  const snap = enrichSnapshotForReports(s.snapshot, {
+    news: mergedNews.length ? mergedNews : null,
+  });
+  void crossHighlights; // reserved for composer wiring
 
-  // Prefer richer freshness map (intel sections overlay snapshot sections)
   const metaSections = { ...snapSections, ...intelSections } as Record<string, FreshnessStatus>;
   const meta = { ...s.meta, sections: metaSections };
 
