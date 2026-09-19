@@ -49,7 +49,6 @@ function weekRangeLabel(now = new Date()): { weekNo: number; range: string } {
 
 function extractPriorScore(prior: DailyReport | null): number | null {
   if (!prior) return null;
-  // Look for "x/3" pattern in sections or assumptions
   const blob = [
     ...prior.sections.flatMap((s) => s.paragraphs),
     ...(prior.assumptions ?? []),
@@ -94,8 +93,8 @@ export function composeWeeklyStrategyFramework(
 
   // ——— Block 1 — 60s strategic points ———
   const foreignNet =
-    intel.flow?.foreignNetValue != null
-      ? `${fmtNum(intel.flow.foreignNetValue / 1e9, 1)} tỷ VND (ròng phiên gần nhất)`
+    intel.flow?.foreignNet != null
+      ? `${fmtNum(intel.flow.foreignNet / 1e9, 1)} tỷ VND (ròng phiên gần nhất)`
       : "UNAVAILABLE";
   sections.push({
     heading: "1. Điểm chiến lược 60 giây",
@@ -154,8 +153,8 @@ export function composeWeeklyStrategyFramework(
 
   // ——— Block 4 — Weekly flow ———
   const breadthLine =
-    intel.breadth != null
-      ? `Độ rộng phiên gần: tăng ${intel.breadth.advances ?? "?"} / giảm ${intel.breadth.declines ?? "?"} (tham chiếu, không thay cho rotation tuần).`
+    intel.breadth != null && intel.breadth.available
+      ? `Độ rộng phiên gần: tăng ${intel.breadth.advancers} / giảm ${intel.breadth.decliners} (tham chiếu, không thay cho rotation tuần).`
       : "Độ rộng: UNAVAILABLE.";
   sections.push({
     heading: "4. Dòng vốn tuần",
@@ -163,8 +162,8 @@ export function composeWeeklyStrategyFramework(
     paragraphs: [
       `• Khối ngoại ròng (phiên gần): ${foreignNet}. So 4 tuần gần nhất / chuỗi tuần liên tiếp: UNAVAILABLE khi thiếu chuỗi flow tuần.`,
       "• Top 5 mua/bán ròng tuần: UNAVAILABLE — cần tổng hợp tape theo tuần.",
-      intel.flow?.propNetValue != null
-        ? `• Tự doanh CTCK (phiên gần): ${fmtNum(intel.flow.propNetValue / 1e9, 1)} tỷ VND.`
+      intel.flow?.propNet != null
+        ? `• Tự doanh CTCK (phiên gần): ${fmtNum(intel.flow.propNet / 1e9, 1)} tỷ VND.`
         : "• Tự doanh CTCK tuần: UNAVAILABLE.",
       "• Sector rotation (RRG Leading/Weakening/Lagging/Improving): UNAVAILABLE — module RRG chưa kết nối; không giả lập góc phần tư.",
       breadthLine,
@@ -293,18 +292,22 @@ export function composeWeeklyStrategyFramework(
   });
 
   // ——— Block 11 — Weekly picks ———
+  const pickSyms =
+    intel.contributors?.positive?.length
+      ? intel.contributors.positive
+          .slice(0, 5)
+          .map((c) => c.symbol)
+          .filter(Boolean)
+          .join(", ")
+      : "";
   sections.push({
     heading: "11. Cổ phiếu tiêu điểm tuần",
     tone: "neutral",
     paragraphs: [
       "Định dạng: Mã | Vùng mua | Cắt lỗ | Mục tiêu tuần | Catalyst (có ngày) | Luận điểm.",
       "Yêu cầu framework: mỗi mã phải gắn catalyst cụ thể rơi vào tuần (BCTC/ĐHCĐ/tin ngành) — không nhận định kỹ thuật thuần.",
-      intel.contributors?.topGainers?.length
-        ? `Tham chiếu thanh khoản/biến động gần (không phải khuyến nghị): ${(intel.contributors.topGainers as { symbol?: string }[])
-            .slice(0, 5)
-            .map((x) => x.symbol)
-            .filter(Boolean)
-            .join(", ") || "—"}.`
+      pickSyms
+        ? `Tham chiếu thanh khoản/biến động gần (không phải khuyến nghị): ${pickSyms}.`
         : "Danh sách tiêu điểm có catalyst ngày cụ thể: UNAVAILABLE cho đến khi gắn calendar doanh nghiệp.",
     ],
   });
