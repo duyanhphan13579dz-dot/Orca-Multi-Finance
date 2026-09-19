@@ -4,6 +4,8 @@ import { isCircuitOpen, recordFailure, recordSuccess } from "./health";
 /**
  * Resilient HTTP client for all outbound provider traffic.
  * timeout + retry with exponential backoff + circuit breaker + health recording.
+ *
+ * Speed defaults (phase speed): timeout 5s, retries 1 — override per-call for heavy boards.
  */
 
 const DEFAULT_UA =
@@ -43,9 +45,9 @@ export async function httpText(url: string, opts: HttpOptions): Promise<HttpResu
 
 async function httpRequest<T>(url: string, opts: HttpOptions): Promise<HttpResult<T>> {
   const provider = opts.provider;
-  const timeoutMs = opts.timeoutMs ?? 9_000;
-  const retries = opts.retries ?? 2;
-  const backoffBase = opts.backoffBaseMs ?? 400;
+  const timeoutMs = opts.timeoutMs ?? 5_000;
+  const retries = opts.retries ?? 1;
+  const backoffBase = opts.backoffBaseMs ?? 250;
 
   if (isCircuitOpen(provider)) {
     return { ok: false, status: 0, data: null, text: null, error: `circuit_open:${provider}`, latencyMs: 0, attempts: 0 };
@@ -76,7 +78,7 @@ async function httpRequest<T>(url: string, opts: HttpOptions): Promise<HttpResul
           recordFailure(provider, `${lastError} ${url}`);
           const retryAfter = Number(res.headers.get("retry-after") ?? 0);
           clearTimeout(timer);
-          if (attempt < retries) await sleep(Math.max(backoffBase * 2 ** attempt, retryAfter * 1000) + Math.random() * 200);
+          if (attempt < retries) await sleep(Math.max(backoffBase * 2 ** attempt, retryAfter * 1000) + Math.random() * 100);
           continue;
         }
         recordFailure(provider, `${lastError} ${url}`);
@@ -99,7 +101,7 @@ async function httpRequest<T>(url: string, opts: HttpOptions): Promise<HttpResul
     } catch (e) {
       lastError = e instanceof Error ? (e.name === "AbortError" ? "timeout" : e.message) : "network_error";
       recordFailure(provider, `${lastError} ${url}`);
-      if (attempt < retries) await sleep(backoffBase * 2 ** attempt + Math.random() * 200);
+      if (attempt < retries) await sleep(backoffBase * 2 ** attempt + Math.random() * 100);
     } finally {
       clearTimeout(timer);
     }

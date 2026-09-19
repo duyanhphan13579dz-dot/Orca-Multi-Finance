@@ -6,15 +6,22 @@ import { buildMeta } from "./freshness";
  * Standard response envelope (§32 of the spec):
  * success → { success: true, data, meta }
  * failure → { success: false, error: { code, message }, meta? }
+ *
+ * Speed: short browser/CDN SWR for market-ish payloads (caller can override).
  */
 
 function isCompleteMeta(x: unknown): x is Meta {
   return Boolean(x) && typeof x === "object" && "freshness" in (x as Record<string, unknown>) && "sourceTimestamp" in (x as Record<string, unknown>);
 }
 
+const DEFAULT_HEADERS: Record<string, string> = {
+  "Cache-Control": "private, max-age=3, stale-while-revalidate=30",
+};
+
 export function ok<T>(
   data: T,
   meta?: Meta | (Partial<Parameters<typeof buildMeta>[0]> & { source?: string }),
+  headers?: Record<string, string>,
 ): NextResponse<ApiResponse<T>> {
   const m: Meta = isCompleteMeta(meta)
     ? meta
@@ -25,7 +32,7 @@ export function ok<T>(
         ...(meta ?? {}),
       });
   return NextResponse.json({ success: true, data, meta: m }, {
-    headers: { "Cache-Control": "no-store" },
+    headers: { ...DEFAULT_HEADERS, ...(headers ?? {}) },
   });
 }
 
