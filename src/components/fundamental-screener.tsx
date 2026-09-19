@@ -30,12 +30,112 @@ type Row = {
 };
 type Data = { rows: Row[]; scanned: number; skipped: number; withData?: number };
 
-function Field({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
+/** Single numeric filter inside a bordered chip */
+function FilterChip({
+  title,
+  children,
+  className = "",
+}: {
+  title: string;
+  children: React.ReactNode;
+  className?: string;
+}) {
   return (
-    <label>
-      <span className="mb-0.5 block text-[10px] uppercase tracking-wider text-text-muted">{label}</span>
-      <input inputMode="decimal" value={value} onChange={(e) => onChange(e.target.value)} className="num input !w-20 !py-1.5 text-[12px]" />
-    </label>
+    <div
+      className={`flex min-w-[7.5rem] flex-col gap-1.5 rounded-lg border border-line/80 bg-panel-2/60 px-2.5 py-2 ${className}`}
+    >
+      <span className="text-[10px] font-semibold uppercase tracking-wide text-ink-2">{title}</span>
+      {children}
+    </div>
+  );
+}
+
+function NumInput({
+  value,
+  onChange,
+  placeholder,
+  className = "",
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  placeholder?: string;
+  className?: string;
+}) {
+  return (
+    <input
+      inputMode="decimal"
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      placeholder={placeholder}
+      className={`num input !w-full min-w-0 !px-2 !py-1.5 text-[12px] ${className}`}
+    />
+  );
+}
+
+/** From–to pair in one chip */
+function RangeChip({
+  title,
+  from,
+  to,
+  onFrom,
+  onTo,
+  unit,
+}: {
+  title: string;
+  from: string;
+  to: string;
+  onFrom: (v: string) => void;
+  onTo: (v: string) => void;
+  unit?: string;
+}) {
+  return (
+    <FilterChip title={unit ? `${title} (${unit})` : title} className="min-w-[9.5rem]">
+      <div className="flex items-center gap-1.5">
+        <NumInput value={from} onChange={onFrom} placeholder="Từ" />
+        <span className="shrink-0 text-[10px] text-text-muted">–</span>
+        <NumInput value={to} onChange={onTo} placeholder="Đến" />
+      </div>
+    </FilterChip>
+  );
+}
+
+function MinChip({
+  title,
+  value,
+  onChange,
+  unit,
+  placeholder = "≥",
+}: {
+  title: string;
+  value: string;
+  onChange: (v: string) => void;
+  unit?: string;
+  placeholder?: string;
+}) {
+  return (
+    <FilterChip title={unit ? `${title} (${unit})` : title}>
+      <NumInput value={value} onChange={onChange} placeholder={placeholder} />
+    </FilterChip>
+  );
+}
+
+function MaxChip({
+  title,
+  value,
+  onChange,
+  unit,
+  placeholder = "≤",
+}: {
+  title: string;
+  value: string;
+  onChange: (v: string) => void;
+  unit?: string;
+  placeholder?: string;
+}) {
+  return (
+    <FilterChip title={unit ? `${title} (${unit})` : title}>
+      <NumInput value={value} onChange={onChange} placeholder={placeholder} />
+    </FilterChip>
   );
 }
 
@@ -121,20 +221,48 @@ export function FundamentalScreener({ defaultSector }: { defaultSector: string |
           Sàng lọc từ báo cáo tài chính (bulk snapshot BCTC). Score tổng hợp ROE · ROIC · biên lợi nhuận · nợ/VCSH ·
           coverage. So sánh trong cùng ngành vì mô hình kinh doanh và đòn bẩy khác nhau.
         </p>
-        <div className="flex flex-wrap items-end gap-2">
-          <Field label="ROE từ %" value={minRoe} onChange={setMinRoe} />
-          <Field label="ROE đến %" value={maxRoe} onChange={setMaxRoe} />
-          <Field label="ROA từ %" value={minRoa} onChange={setMinRoa} />
-          <Field label="ROIC từ %" value={minRoic} onChange={setMinRoic} />
-          <Field label="Biên gộp từ %" value={minGrossMargin} onChange={setMinGrossMargin} />
-          <Field label="Biên ròng từ %" value={minNetMargin} onChange={setMinNetMargin} />
-          <Field label="Nợ/VCSH tối đa" value={maxDebtEquity} onChange={setMaxDebtEquity} />
-          <Field label="Current ratio ≥" value={minCurrentRatio} onChange={setMinCurrentRatio} />
-          <Field label="Coverage ≥" value={minCoverage} onChange={setMinCoverage} />
-          <Field label="LN YoY từ %" value={minNiYoy} onChange={setMinNiYoy} />
-          <label>
-            <span className="mb-0.5 block text-[10px] uppercase tracking-wider text-text-muted">Ngành</span>
-            <select value={sector} onChange={(e) => setSector(e.target.value)} className="input !w-36 !py-1.5 text-[12px]">
+
+        {/* Profitability ranges */}
+        <div className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-text-muted">Sinh lời</div>
+        <div className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+          <RangeChip title="ROE" unit="%" from={minRoe} to={maxRoe} onFrom={setMinRoe} onTo={setMaxRoe} />
+          <RangeChip title="ROA" unit="%" from={minRoa} to={maxRoa} onFrom={setMinRoa} onTo={setMaxRoa} />
+          <RangeChip title="ROIC" unit="%" from={minRoic} to={maxRoic} onFrom={setMinRoic} onTo={setMaxRoic} />
+          <RangeChip
+            title="Biên gộp"
+            unit="%"
+            from={minGrossMargin}
+            to={maxGrossMargin}
+            onFrom={setMinGrossMargin}
+            onTo={setMaxGrossMargin}
+          />
+          <RangeChip
+            title="Biên ròng"
+            unit="%"
+            from={minNetMargin}
+            to={maxNetMargin}
+            onFrom={setMinNetMargin}
+            onTo={setMaxNetMargin}
+          />
+        </div>
+
+        {/* Leverage / quality */}
+        <div className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-text-muted">Cấu trúc & chất lượng</div>
+        <div className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+          <MaxChip title="Nợ / VCSH" value={maxDebtEquity} onChange={setMaxDebtEquity} placeholder="Tối đa" />
+          <MinChip title="Current ratio" value={minCurrentRatio} onChange={setMinCurrentRatio} placeholder="Tối thiểu" />
+          <MinChip title="Coverage" value={minCoverage} onChange={setMinCoverage} placeholder="0–1" />
+          <MinChip title="LN YoY" unit="%" value={minNiYoy} onChange={setMinNiYoy} placeholder="Từ" />
+        </div>
+
+        {/* Scope + action */}
+        <div className="flex flex-wrap items-end gap-2 border-t border-line/50 pt-3">
+          <FilterChip title="Ngành" className="min-w-[10rem]">
+            <select
+              value={sector}
+              onChange={(e) => setSector(e.target.value)}
+              className="input !w-full !px-2 !py-1.5 text-[12px]"
+            >
               <option value="">Tất cả</option>
               {VN_SECTOR_MAP.map((s) => (
                 <option key={s.name} value={s.name}>
@@ -142,27 +270,27 @@ export function FundamentalScreener({ defaultSector }: { defaultSector: string |
                 </option>
               ))}
             </select>
-          </label>
-          <label>
-            <span className="mb-0.5 block text-[10px] uppercase tracking-wider text-text-muted">Mã</span>
+          </FilterChip>
+          <FilterChip title="Mã" className="min-w-[9rem]">
             <input
               value={symbols}
               onChange={(e) => setSymbols(e.target.value)}
-              placeholder="VCB,FPT…"
-              className="input !w-32 !py-1.5 text-[12px]"
+              placeholder="VCB, FPT…"
+              className="input !w-full !px-2 !py-1.5 text-[12px]"
             />
-          </label>
+          </FilterChip>
           <button
             type="button"
             onClick={run}
             disabled={isValidating}
-            className="inline-flex items-center gap-1.5 rounded-md bg-accent-primary px-3.5 py-1.5 text-[12px] font-semibold text-white disabled:opacity-60"
+            className="inline-flex h-[2.65rem] items-center gap-1.5 self-end rounded-lg bg-accent-primary px-4 text-[12px] font-semibold text-white shadow-sm transition hover:bg-accent-primary/90 disabled:opacity-60"
           >
             <Play className="size-3.5" />
             {isValidating ? "Đang quét…" : "Quét chỉ số"}
           </button>
         </div>
-        <div className="mt-2 flex flex-wrap items-center gap-3 text-[11px] text-text-muted">
+
+        <div className="mt-3 flex flex-wrap items-center gap-3 text-[11px] text-text-muted">
           <MetaLine meta={meta} />
           {data ? (
             <span>
@@ -221,7 +349,9 @@ export function FundamentalScreener({ defaultSector }: { defaultSector: string |
                     <td className="num py-2 text-right">{num(row.debtEquity)}</td>
                     <td className="num py-2 text-right">{num(row.currentRatio)}</td>
                     <td className="num py-2 text-right">{percent(row.niYoyPct)}</td>
-                    <td className="num py-2 text-right">{row.coverage > 0 ? `${Math.round(row.coverage * 100)}%` : "—"}</td>
+                    <td className="num py-2 text-right">
+                      {row.coverage > 0 ? `${Math.round(row.coverage * 100)}%` : "—"}
+                    </td>
                   </tr>
                 ))}
               </tbody>
