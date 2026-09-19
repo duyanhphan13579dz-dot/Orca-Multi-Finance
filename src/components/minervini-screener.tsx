@@ -51,27 +51,22 @@ const CRITERION_LABELS_VI: Record<string, string> = {
 
 type MinerviniData = { rows: MinerviniScreenRow[]; scanned: number; skipped: number };
 
-function Field({
-  label,
-  value,
-  onChange,
-  small,
+function FilterChip({
+  title,
+  children,
+  className = "",
 }: {
-  label: string;
-  value: string;
-  onChange: (v: string) => void;
-  small?: boolean;
+  title: string;
+  children: React.ReactNode;
+  className?: string;
 }) {
   return (
-    <label>
-      <span className="mb-0.5 block text-[10px] uppercase tracking-wider text-text-muted">{label}</span>
-      <input
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        inputMode="decimal"
-        className={`num input ${small ? "!w-24" : "w-28"} !py-1.5 text-[12px]`}
-      />
-    </label>
+    <div
+      className={`flex min-w-[7.5rem] flex-col gap-1.5 rounded-lg border border-line/80 bg-panel-2/60 px-2.5 py-2 ${className}`}
+    >
+      <span className="text-[10px] font-semibold uppercase tracking-wide text-ink-2">{title}</span>
+      {children}
+    </div>
   );
 }
 
@@ -102,7 +97,10 @@ function buildQs(opts: {
 function CritDots({ row }: { row: MinerviniScreenRow }) {
   const keys = Object.keys(CRITERION_LABELS_VI) as (keyof MinerviniCriteria)[];
   return (
-    <div className="flex flex-wrap gap-0.5" title={keys.map((k) => `${CRITERION_LABELS_VI[k] ?? k}: ${row.criteria[k] ? "✓" : "✗"}`).join("\n")}>
+    <div
+      className="flex flex-wrap gap-0.5"
+      title={keys.map((k) => `${CRITERION_LABELS_VI[k] ?? k}: ${row.criteria[k] ? "✓" : "✗"}`).join("\n")}
+    >
       {keys.map((k) => (
         <span
           key={k}
@@ -163,29 +161,54 @@ export function MinerviniScreener({ defaultSector }: { defaultSector: string | n
     <div className="space-y-3">
       <Panel title="Mark Minervini — Trend Template (SEPA)">
         <p className="mb-3 text-[12px] leading-relaxed text-text-muted">
-          Bộ lọc 8 tiêu chí Stage 2 từ <em>Trade Like a Stock Market Wizard</em>. Tất cả phải đúng mới coi là
-          Stage 2 đầy đủ. RS rank dùng proxy percentile lợi suất ~12T trong universe (không phải IBD RS Rating
-          gốc). VCP / pivot entry vẫn cần phân tích chart thủ công sau khi lọc.
+          Bộ lọc 8 tiêu chí Stage 2 từ <em>Trade Like a Stock Market Wizard</em>. Tất cả phải đúng mới coi là Stage 2
+          đầy đủ. RS rank dùng proxy percentile lợi suất ~12T trong universe (không phải IBD RS Rating gốc).
         </p>
-        <div className="flex flex-wrap items-end gap-2">
-          <label>
-            <span className="mb-0.5 block text-[10px] uppercase tracking-wider text-text-muted">Tối thiểu tiêu chí</span>
-            <select value={minPass} onChange={(e) => setMinPass(e.target.value)} className="input !w-28 !py-1.5 text-[12px]">
+
+        <div className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-text-muted">Ngưỡng lọc</div>
+        <div className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+          <FilterChip title="Tối thiểu tiêu chí">
+            <select
+              value={minPass}
+              onChange={(e) => setMinPass(e.target.value)}
+              className="input !w-full !px-2 !py-1.5 text-[12px]"
+            >
               {[8, 7, 6, 5, 4].map((n) => (
                 <option key={n} value={String(n)}>
                   ≥ {n}/8
                 </option>
               ))}
             </select>
-          </label>
-          <label className="flex items-center gap-1.5 pb-1.5 text-[12px]">
-            <input type="checkbox" checked={onlyPassAll} onChange={(e) => setOnlyPassAll(e.target.checked)} />
-            Chỉ 8/8 (Stage 2)
-          </label>
-          <Field label="RS tối thiểu" value={minRs} onChange={setMinRs} small />
-          <label>
-            <span className="mb-0.5 block text-[10px] uppercase tracking-wider text-text-muted">Ngành</span>
-            <select value={sector} onChange={(e) => setSector(e.target.value)} className="input !w-40 !py-1.5 text-[12px]">
+          </FilterChip>
+          <FilterChip title="RS tối thiểu">
+            <input
+              value={minRs}
+              onChange={(e) => setMinRs(e.target.value)}
+              inputMode="decimal"
+              placeholder="70"
+              className="num input !w-full !px-2 !py-1.5 text-[12px]"
+            />
+          </FilterChip>
+          <FilterChip title="Chỉ Stage 2" className="justify-center">
+            <label className="flex cursor-pointer items-center gap-2 py-1 text-[12px]">
+              <input
+                type="checkbox"
+                checked={onlyPassAll}
+                onChange={(e) => setOnlyPassAll(e.target.checked)}
+                className="size-3.5 rounded border-line"
+              />
+              <span>Chỉ 8/8</span>
+            </label>
+          </FilterChip>
+        </div>
+
+        <div className="flex flex-wrap items-end gap-2 border-t border-line/50 pt-3">
+          <FilterChip title="Ngành" className="min-w-[10rem]">
+            <select
+              value={sector}
+              onChange={(e) => setSector(e.target.value)}
+              className="input !w-full !px-2 !py-1.5 text-[12px]"
+            >
               <option value="">Tất cả</option>
               {VN_SECTOR_MAP.map((s) => (
                 <option key={s.name} value={s.name}>
@@ -193,38 +216,41 @@ export function MinerviniScreener({ defaultSector }: { defaultSector: string | n
                 </option>
               ))}
             </select>
-          </label>
-          <label>
-            <span className="mb-0.5 block text-[10px] uppercase tracking-wider text-text-muted">Mã (tuỳ chọn)</span>
+          </FilterChip>
+          <FilterChip title="Mã" className="min-w-[9rem]">
             <input
               value={symbols}
               onChange={(e) => setSymbols(e.target.value)}
-              placeholder="VCB,FPT,…"
-              className="input !w-40 !py-1.5 text-[12px]"
+              placeholder="VCB, FPT…"
+              className="input !w-full !px-2 !py-1.5 text-[12px]"
             />
-          </label>
+          </FilterChip>
           <button
             type="button"
             onClick={run}
             disabled={isValidating}
             aria-busy={isValidating}
-            className="group inline-flex items-center gap-1.5 rounded-md border border-accent-primary/70 bg-accent-primary px-3.5 py-1.5 text-[12px] font-semibold text-white shadow-[0_0_14px_rgb(59_130_246/0.22)] transition-all duration-200 hover:-translate-y-0.5 hover:bg-accent-primary/90 hover:shadow-[0_0_20px_rgb(59_130_246/0.38)] active:translate-y-0 active:scale-95 disabled:cursor-wait disabled:opacity-75"
+            className="inline-flex h-[2.65rem] items-center gap-1.5 self-end rounded-lg bg-accent-primary px-4 text-[12px] font-semibold text-white shadow-sm transition hover:bg-accent-primary/90 disabled:opacity-60"
           >
-            {isValidating ? <RefreshCw className="size-3.5 animate-spin" aria-hidden /> : <Play className="size-3.5 transition-transform group-hover:translate-x-0.5" aria-hidden />}
+            {isValidating ? (
+              <RefreshCw className="size-3.5 animate-spin" aria-hidden />
+            ) : (
+              <Play className="size-3.5" aria-hidden />
+            )}
             {isValidating ? "Đang quét…" : "Quét dữ liệu"}
           </button>
           <button
             type="button"
             onClick={() => mutate()}
-            className="inline-flex items-center gap-1.5 rounded-md border border-line bg-panel-2 px-3 py-1.5 text-[12px] font-medium text-ink-2 transition-all duration-200 hover:-translate-y-0.5 hover:border-accent-primary/50 hover:bg-accent-primary/10 hover:text-accent-primary active:translate-y-0 active:scale-95 disabled:cursor-wait disabled:opacity-60"
             disabled={isValidating}
-            aria-busy={isValidating}
+            className="inline-flex h-[2.65rem] items-center gap-1.5 self-end rounded-lg border border-line bg-panel-2 px-3 text-[12px] font-medium text-ink-2 transition hover:border-accent-primary/50 hover:bg-accent-primary/10 hover:text-accent-primary disabled:opacity-60"
           >
             <RefreshCw className={`size-3.5 ${isValidating ? "animate-spin" : ""}`} aria-hidden />
-            {isValidating ? "Đang làm mới…" : "Làm mới"}
+            Làm mới
           </button>
         </div>
-        <div className="mt-2 flex flex-wrap items-center gap-3 text-[11px] text-text-muted">
+
+        <div className="mt-3 flex flex-wrap items-center gap-3 text-[11px] text-text-muted">
           <MetaLine meta={meta} />
           {data && (
             <span>
@@ -241,7 +267,10 @@ export function MinerviniScreener({ defaultSector }: { defaultSector: string | n
           <Loading rows={8} />
         </div>
       ) : !res?.success && !data ? (
-        <Unavailable title="Minervini screener không khả dụng" note={res && !res.success ? res.error.message : undefined} />
+        <Unavailable
+          title="Minervini screener không khả dụng"
+          note={res && !res.success ? res.error.message : undefined}
+        />
       ) : (
         <Panel title="Kết quả">
           <div className="mb-2">
@@ -291,9 +320,7 @@ export function MinerviniScreener({ defaultSector }: { defaultSector: string | n
                     <td className="py-1.5 pr-2 text-right">
                       <Chg value={row.changePercent} />
                     </td>
-                    <td className="py-1.5 pr-2 text-center tabular-nums font-medium">
-                      {row.passCount}/8
-                    </td>
+                    <td className="py-1.5 pr-2 text-center tabular-nums font-medium">{row.passCount}/8</td>
                     <td className="py-1.5 pr-2">
                       <CritDots row={row} />
                     </td>

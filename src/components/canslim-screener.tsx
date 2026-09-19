@@ -7,7 +7,6 @@ import { VN_SECTOR_MAP } from "@/lib/vn/master";
 import { Badge, Chg, fmtNum, FreshnessDot, Loading, MetaLine, Panel, Unavailable } from "@/components/ui";
 import { Play } from "@/components/screener-icons";
 
-/** Local types — tránh import từ module server-only (canslim-screener.ts). */
 type CanslimLetter = "C" | "A" | "N" | "S" | "L" | "I" | "M";
 
 type CanslimLetterScore = {
@@ -68,6 +67,25 @@ type CanslimData = {
 
 const ALL_LETTERS: CanslimLetter[] = ["C", "A", "N", "S", "L", "I", "M"];
 
+function FilterChip({
+  title,
+  children,
+  className = "",
+}: {
+  title: string;
+  children: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <div
+      className={`flex min-w-[7.5rem] flex-col gap-1.5 rounded-lg border border-line/80 bg-panel-2/60 px-2.5 py-2 ${className}`}
+    >
+      <span className="text-[10px] font-semibold uppercase tracking-wide text-ink-2">{title}</span>
+      {children}
+    </div>
+  );
+}
+
 function gradeTone(g: string): "up" | "down" | "warn" | "neutral" {
   if (g === "A" || g === "B") return "up";
   if (g === "D" || g === "F") return "down";
@@ -82,20 +100,14 @@ function marketToneClass(bullish: boolean | null | undefined): string {
 }
 
 function letterBtnClass(active: boolean): string {
-  if (active) return "rounded px-2 py-0.5 text-[11px] font-semibold border border-accent-primary bg-accent-primary/20 text-accent-primary";
-  return "rounded px-2 py-0.5 text-[11px] font-semibold border border-line bg-panel-2 text-ink-2 hover:border-accent-primary/40";
+  if (active)
+    return "rounded-md px-2.5 py-1 text-[11px] font-semibold border border-accent-primary bg-accent-primary/20 text-accent-primary";
+  return "rounded-md px-2.5 py-1 text-[11px] font-semibold border border-line bg-panel-2 text-ink-2 hover:border-accent-primary/40";
 }
 
 function passChipClass(hit: boolean): string {
   if (hit) return "inline-block rounded px-1 text-[10px] font-bold bg-emerald-500/20 text-emerald-400";
   return "inline-block rounded px-1 text-[10px] font-bold bg-panel-2 text-ink-3";
-}
-
-function searchBtnClass(pressed: boolean): string {
-  const base =
-    "flex items-center gap-1.5 rounded-md px-3.5 py-1.5 text-[12px] font-semibold text-white transition-all duration-150 active:scale-95";
-  if (pressed) return base + " scale-95 bg-accent-primary ring-2 ring-white/40";
-  return base + " bg-accent-primary/90 hover:bg-accent-primary";
 }
 
 function buildQs(opts: {
@@ -166,108 +178,123 @@ export function CanslimScreener({ defaultSector }: { defaultSector: string | nul
 
   const busy = isLoading || isValidating;
   const cov = data?.coverage;
-  const panelClass = flash
-    ? "space-y-2 p-4 transition-shadow duration-300 ring-2 ring-accent-primary/60"
-    : "space-y-2 p-4 transition-shadow duration-300";
-  const tableClass = isValidating ? "overflow-x-auto transition-opacity opacity-70" : "overflow-x-auto transition-opacity";
 
   return (
-    <>
-      <Panel pad={false}>
-        <div className={panelClass}>
-          <div className="text-[13px] font-medium">Bộ lọc CAN SLIM — growth leaders VN</div>
-          <p className="text-[12px] leading-relaxed text-text-muted">
-            Pipeline thật: BCTC (C/A) · VNDirect ratios/ROE · OHLCV (N/S/L) · NN 5 phiên (I) · VNINDEX MA50+3M (M).
-            Heuristic nghiên cứu — không phải tín hiệu mua bán.
-          </p>
-          {data?.marketDetail ? (
-            <div className={marketToneClass(data.marketBullish)}>
-              M · {data.marketDetail}
-            </div>
-          ) : null}
-          {cov ? (
-            <div className="flex flex-wrap gap-2 text-[10px] text-text-muted">
-              <span className="rounded border border-line px-1.5 py-0.5">Nến {cov.withBars}</span>
-              <span className="rounded border border-line px-1.5 py-0.5">BCTC {cov.withGrowth}</span>
-              <span className="rounded border border-line px-1.5 py-0.5">Health {cov.withHealth}</span>
-              <span className="rounded border border-line px-1.5 py-0.5">Ratios {cov.withRatios}</span>
-              <span className="rounded border border-line px-1.5 py-0.5">NN {cov.withForeign}</span>
-              <span className="rounded border border-line px-1.5 py-0.5">CP LH {cov.withEquity}</span>
-            </div>
-          ) : null}
-          <div className="flex flex-wrap gap-1.5">
-            {ALL_LETTERS.map((L) => (
-              <button
-                key={L}
-                type="button"
-                onClick={() => toggleLetter(L)}
-                className={letterBtnClass(letters.includes(L))}
-                title={`Bắt buộc pass chữ ${L}`}
-              >
-                {L}
-              </button>
-            ))}
-            <span className="self-center text-[10px] text-text-muted">bắt buộc pass (tùy chọn)</span>
+    <div className="space-y-3">
+      <Panel title="Bộ lọc CAN SLIM — growth leaders VN">
+        <p className="mb-3 text-[12px] leading-relaxed text-text-muted">
+          Pipeline: BCTC (C/A) · VNDirect ratios/ROE · OHLCV (N/S/L) · NN 5 phiên (I) · VNINDEX MA50+3M (M). Heuristic
+          nghiên cứu — không phải tín hiệu mua bán.
+        </p>
+
+        {data?.marketDetail ? (
+          <div className={`mb-2 ${marketToneClass(data.marketBullish)}`}>M · {data.marketDetail}</div>
+        ) : null}
+
+        {cov ? (
+          <div className="mb-3 flex flex-wrap gap-1.5 text-[10px] text-text-muted">
+            <span className="rounded-md border border-line px-2 py-0.5">Nến {cov.withBars}</span>
+            <span className="rounded-md border border-line px-2 py-0.5">BCTC {cov.withGrowth}</span>
+            <span className="rounded-md border border-line px-2 py-0.5">Health {cov.withHealth}</span>
+            <span className="rounded-md border border-line px-2 py-0.5">Ratios {cov.withRatios}</span>
+            <span className="rounded-md border border-line px-2 py-0.5">NN {cov.withForeign}</span>
+            <span className="rounded-md border border-line px-2 py-0.5">CP LH {cov.withEquity}</span>
           </div>
-          <div className="flex flex-wrap items-end gap-2 pt-1">
-            <label>
-              <span className="mb-0.5 block text-[10px] uppercase tracking-wider text-text-muted">Điểm ≥</span>
-              <input
-                value={minScore}
-                onChange={(e) => setMinScore(e.target.value)}
-                inputMode="decimal"
-                className="num input !w-20 !py-1.5 text-[12px]"
-              />
-            </label>
-            <label>
-              <span className="mb-0.5 block text-[10px] uppercase tracking-wider text-text-muted">Pass ≥</span>
-              <input
-                value={minPass}
-                onChange={(e) => setMinPass(e.target.value)}
-                inputMode="numeric"
-                className="num input !w-16 !py-1.5 text-[12px]"
-              />
-            </label>
-            <label>
-              <span className="mb-0.5 block text-[10px] uppercase tracking-wider text-text-muted">Ngành</span>
-              <select value={sector} onChange={(e) => setSector(e.target.value)} className="input !w-40 !py-1.5 text-[12px]">
-                <option value="">Tất cả ({VN_SECTOR_MAP.length})</option>
-                {VN_SECTOR_MAP.map((s) => (
-                  <option key={s.name} value={s.name}>
-                    {s.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              <span className="mb-0.5 block text-[10px] uppercase tracking-wider text-text-muted">Mã (live)</span>
-              <input
-                value={symbols}
-                onChange={(e) => setSymbols(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    run();
-                  }
-                }}
-                placeholder="FPT, HPG"
-                className="input !w-36 !py-1.5 text-[12px] focus:ring-2 focus:ring-accent-primary/50"
-                autoComplete="off"
-                spellCheck={false}
-              />
-            </label>
-            <button type="button" onClick={run} className={searchBtnClass(pressed)}>
-              {busy ? (
-                <span className="inline-block size-3.5 animate-spin rounded-full border-2 border-white/30 border-t-white" />
-              ) : (
-                <Play className="size-3.5" />
-              )}
-              {busy ? "Đang quét…" : "Tìm kiếm"}
+        ) : null}
+
+        <div className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-text-muted">
+          Chữ cái bắt buộc (tùy chọn)
+        </div>
+        <div className="mb-3 flex flex-wrap gap-1.5">
+          {ALL_LETTERS.map((L) => (
+            <button
+              key={L}
+              type="button"
+              onClick={() => toggleLetter(L)}
+              className={letterBtnClass(letters.includes(L))}
+              title={`Bắt buộc pass chữ ${L}`}
+            >
+              {L}
             </button>
-          </div>
-          {flash ? (
-            <div className="text-[11px] font-medium text-accent-primary animate-pulse">Đã áp dụng bộ lọc CANSLIM…</div>
-          ) : null}
+          ))}
+        </div>
+
+        <div className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-text-muted">Ngưỡng điểm</div>
+        <div className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+          <FilterChip title="Điểm ≥">
+            <input
+              value={minScore}
+              onChange={(e) => setMinScore(e.target.value)}
+              inputMode="decimal"
+              placeholder="50"
+              className="num input !w-full !px-2 !py-1.5 text-[12px]"
+            />
+          </FilterChip>
+          <FilterChip title="Pass ≥">
+            <input
+              value={minPass}
+              onChange={(e) => setMinPass(e.target.value)}
+              inputMode="numeric"
+              placeholder="3"
+              className="num input !w-full !px-2 !py-1.5 text-[12px]"
+            />
+          </FilterChip>
+        </div>
+
+        <div className="flex flex-wrap items-end gap-2 border-t border-line/50 pt-3">
+          <FilterChip title="Ngành" className="min-w-[10rem]">
+            <select
+              value={sector}
+              onChange={(e) => setSector(e.target.value)}
+              className="input !w-full !px-2 !py-1.5 text-[12px]"
+            >
+              <option value="">Tất cả ({VN_SECTOR_MAP.length})</option>
+              {VN_SECTOR_MAP.map((s) => (
+                <option key={s.name} value={s.name}>
+                  {s.name}
+                </option>
+              ))}
+            </select>
+          </FilterChip>
+          <FilterChip title="Mã (live)" className="min-w-[9rem]">
+            <input
+              value={symbols}
+              onChange={(e) => setSymbols(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  run();
+                }
+              }}
+              placeholder="FPT, HPG"
+              className="input !w-full !px-2 !py-1.5 text-[12px]"
+              autoComplete="off"
+              spellCheck={false}
+            />
+          </FilterChip>
+          <button
+            type="button"
+            onClick={run}
+            className={`inline-flex h-[2.65rem] items-center gap-1.5 self-end rounded-lg px-4 text-[12px] font-semibold text-white shadow-sm transition ${
+              pressed ? "scale-95 bg-accent-primary ring-2 ring-white/40" : "bg-accent-primary hover:bg-accent-primary/90"
+            }`}
+          >
+            {busy ? (
+              <span className="inline-block size-3.5 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+            ) : (
+              <Play className="size-3.5" />
+            )}
+            {busy ? "Đang quét…" : "Tìm kiếm"}
+          </button>
+        </div>
+
+        {flash ? (
+          <div className="mt-2 text-[11px] font-medium text-accent-primary animate-pulse">Đã áp dụng bộ lọc CANSLIM…</div>
+        ) : null}
+
+        <div className="mt-3 flex flex-wrap items-center gap-3 text-[11px] text-text-muted">
+          <MetaLine meta={meta} />
+          <FreshnessDot status={meta?.freshness} ageMs={meta?.ageMs} />
         </div>
       </Panel>
 
@@ -286,7 +313,7 @@ export function CanslimScreener({ defaultSector }: { defaultSector: string | nul
           }
           pad={false}
         >
-          <div className={tableClass}>
+          <div className={isValidating ? "overflow-x-auto opacity-70 transition-opacity" : "overflow-x-auto transition-opacity"}>
             <table className="w-full min-w-[820px] text-[12px]">
               <thead>
                 <tr className="border-b border-line text-left text-[10px] uppercase tracking-wider text-ink-3">
@@ -358,6 +385,6 @@ export function CanslimScreener({ defaultSector }: { defaultSector: string | nul
           </div>
         </Panel>
       )}
-    </>
+    </div>
   );
 }
