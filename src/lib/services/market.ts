@@ -59,7 +59,7 @@ export async function buildMarketSnapshot(): Promise<{ snapshot: MarketSnapshot;
         getCryptoMarkets(),
         getForexMarkets(),
         getCommodityMarket(),
-        getNews({ limit: 10 }),
+        getNews({ limit: 24 }),
       ]);
       const sections: Record<string, FreshnessStatus> = {
         vn_stocks: vnRes.status === "fulfilled" && vnRes.value ? vnRes.value.meta.freshness : "UNAVAILABLE",
