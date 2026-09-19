@@ -163,6 +163,7 @@ async function cryptoCandles(symbol: string, tf: string, limit: number): Promise
   return { candles: bars.map(toCandle), source: "binance" };
 }
 
+/** Yahoo futures tickers for commodity chart symbols used by the UI. */
 function yahooCommoditySymbol(symbol: string): string | null {
   const s = symbol.toUpperCase().replace(/[^A-Z0-9]/g, "");
   const exact: Record<string, string> = {
@@ -180,6 +181,18 @@ function yahooCommoditySymbol(symbol: string): string | null {
     NG: "NG=F",
     COPPER: "HG=F",
     PLATINUM: "PL=F",
+    PALLADIUM: "PA=F",
+    // Softs / ags — frequently first in VN catalog; must resolve or chart stays empty
+    COFFEE: "KC=F",
+    KC: "KC=F",
+    SUGAR: "SB=F",
+    CORN: "ZC=F",
+    SOYBEAN: "ZS=F",
+    SOY: "ZS=F",
+    WHEAT: "ZW=F",
+    // Iron ore proxy (SGX TSI) — often used when catalog has thép/quặng
+    IRON: "TIO=F",
+    IRONORE: "TIO=F",
   };
   if (exact[s]) return exact[s];
   if (s.endsWith("=F") || s.includes("=")) return symbol.toUpperCase();
@@ -531,17 +544,16 @@ export async function getChartHistory(args: ChartArgs): Promise<{ data: ChartMar
           .join(" · ") || undefined,
       slas:
         args.assetType === "crypto"
-          ? { liveSlaMs: TF_MS[tf] * 1.5, freshSlaMs: TF_MS[tf] * 4, delayedSlaMs: TF_MS[tf] * 20 }
-          : { liveSlaMs: TF_MS[tf] * 2, freshSlaMs: TF_MS[tf] * 6, delayedSlaMs: TF_MS[tf] * 48 },
+          ? { liveSlaMs: TF_MS[tf] * 1.5, freshSlaMs: TF_MS[tf] * 4, delayedSlaMs: TF_MS[tf] * 12 }
+          : { liveSlaMs: 5 * 60_000, freshSlaMs: 30 * 60_000, delayedSlaMs: 6 * 3_600_000 },
     });
-    meta.qualityStatus = suspect ? "SUSPECT" : "VALID";
 
     return {
       data: {
-        candles,
-        indicators: computeIndicators(candles),
-        markers: computeMarkers(candles),
-        intervalMs: TF_MS[tf],
+        candles: candles as ChartCandle[],
+        indicators: computeIndicators(candles as ChartCandle[]),
+        markers: computeMarkers(candles as ChartCandle[]),
+        intervalMs: TF_MS[tf] ?? 86_400_000,
         gaps,
         suspect,
       },
@@ -551,5 +563,3 @@ export async function getChartHistory(args: ChartArgs): Promise<{ data: ChartMar
     return null;
   }
 }
-
-export type { TechnicalSnapshot };

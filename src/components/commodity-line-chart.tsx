@@ -3,6 +3,7 @@
 /**
  * Biểu đồ đường đơn giản cho trang Hàng hóa — không nến, không indicator.
  * Lazy: chỉ dynamic-import lightweight-charts và fetch history khi vào viewport.
+ * Default ưu tiên GOLD; nếu series trống → tự chuyển sang option kế tiếp có dữ liệu.
  */
 import { useEffect, useRef, useState } from "react";
 import { useApi } from "@/lib/hooks";
@@ -26,6 +27,7 @@ export function CommodityLineChart({ options, height = 320 }: Props) {
   const [visible, setVisible] = useState(false);
   const [chartSymbol, setChartSymbol] = useState(options[0]?.chartSymbol ?? "");
   const [tf, setTf] = useState<string>("1d");
+  const triedEmpty = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     const el = shellRef.current;
@@ -52,7 +54,7 @@ export function CommodityLineChart({ options, height = 320 }: Props) {
       return;
     }
     if (!options.some((o) => o.chartSymbol === chartSymbol)) {
-      window.setTimeout(() => setChartSymbol(options[0].chartSymbol), 0);
+      window.setTimeout(() => setChartSymbol(options[0]!.chartSymbol), 0);
     }
   }, [options, chartSymbol]);
 
@@ -63,12 +65,21 @@ export function CommodityLineChart({ options, height = 320 }: Props) {
       ? `/api/v1/chart/history?symbol=${encodeURIComponent(active.chartSymbol)}&assetType=commodity&timeframe=${tf}&limit=${histLimit}`
       : null,
   );
+  // Auto-fallback: empty series → next option (prefer GOLD path already sorted upstream)
+  useEffect(() => {
+    if (!visible || isLoading || !active) return;
+    const empty = data != null && !(data.candles?.length);
+    if (!empty) return;
+    triedEmpty.current.add(active.chartSymbol);
+    const next = options.find((o) => !triedEmpty.current.has(o.chartSymbol));
+    if (next && next.chartSymbol !== active.chartSymbol) {
+      setChartSymbol(next.chartSymbol);
+    }
+  }, [visible, isLoading, data, active, options]);
 
   const hostRef = useRef<HTMLDivElement>(null);
   // Opaque handles — avoid LW Charts generic contravariance on setData
-   
   const chartRef = useRef<any>(null);
-   
   const seriesRef = useRef<any>(null);
 
   useEffect(() => {
@@ -161,7 +172,10 @@ export function CommodityLineChart({ options, height = 320 }: Props) {
         <h2 className="text-[13px] font-semibold text-text-primary">Biểu đồ biến động</h2>
         <select
           value={active?.chartSymbol ?? ""}
-          onChange={(e) => setChartSymbol(e.target.value)}
+          onChange={(e) => {
+            triedEmpty.current.delete(e.target.value);
+            setChartSymbol(e.target.value);
+          }}
           className="rounded-lg border border-border-subtle bg-surface-elevated px-2.5 py-1.5 text-[12px] text-text-primary outline-none focus:border-accent-primary/60"
           aria-label="Chọn mặt hàng"
         >
@@ -224,5 +238,6 @@ export function resolveCommodityChartSymbol(symbol: string, nameVi: string): str
   if (/CORN|\bNGO\b|\bBAP\b/.test(s)) return "CORN";
   if (/SOY|DAU TUONG|DAUTUONG/.test(s)) return "SOYBEAN";
   if (/WHEAT|LUA MI|LUAMI/.test(s)) return "WHEAT";
+  if (/QUANG SAT|IRON\s*ORE|\bIRON\b|THEP PHEP|HRC/.test(s)) return "IRON";
   return null;
 }

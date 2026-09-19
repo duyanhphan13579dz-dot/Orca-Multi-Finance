@@ -37,6 +37,14 @@ const FALLBACK_GROUPS: { key: string; title: string; desc: string }[] = [
   { key: "nhua_va_cao_su", title: "Nhựa & cao su", desc: "PVC · PP…" },
 ];
 
+/** Prefer liquid international series first so the chart is never blank on load. */
+const CHART_PRIORITY = ["GOLD", "SILVER", "WTI", "BRENT", "COPPER", "NATGAS", "PLATINUM", "COFFEE", "SUGAR", "CORN", "IRON"] as const;
+
+function chartRank(sym: string): number {
+  const i = CHART_PRIORITY.indexOf(sym as (typeof CHART_PRIORITY)[number]);
+  return i < 0 ? 50 : i;
+}
+
 export default function CommoditiesPage() {
   const [q, setQ] = useState("");
   const [group, setGroup] = useState("");
@@ -83,11 +91,13 @@ export default function CommoditiesPage() {
       { chartSymbol: "BRENT", label: "Dầu Brent" },
       { chartSymbol: "COPPER", label: "Đồng (Copper)" },
       { chartSymbol: "COFFEE", label: "Cà phê (KC)" },
+      { chartSymbol: "IRON", label: "Quặng sắt (TIO)" },
     ] as const) {
       if (!acc.some((x) => x.chartSymbol === fallback.chartSymbol)) {
         acc.push({ chartSymbol: fallback.chartSymbol, label: fallback.label });
       }
     }
+    acc.sort((a, b) => chartRank(a.chartSymbol) - chartRank(b.chartSymbol) || a.label.localeCompare(b.label, "vi"));
     return acc;
   }, [data?.catalog]);
 
