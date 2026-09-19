@@ -55,5 +55,13 @@ export {
   BALANCE_METRIC_ORDER,
   CASHFLOW_METRIC_ORDER,
 } from "./metric-dictionary";
-export type { MetricKey, MetricDefinition, MetricProfile } from "./metric-dictionary";
+export {
+  getFinancialPackagesBulk,
+  getFundamentalSnapshots,
+  warmFundamentalSnapshots,
+  buildSnapshotFromBundle,
+  normalizeSymbols,
+  mapPool,
+} from "./snapshots";
+export type { FundamentalSnapshot, PackageBundle } from "./snapshots";
 export type * from "./types";

@@ -1,7 +1,7 @@
 import "server-only";
 import { buildMeta } from "../freshness";
 import { analyzeCanslim, retPct, type CanslimLetter, type CanslimSnapshot } from "../engines/canslim";
-import { getFinancialPackage } from "../financial/service";
+import { getFinancialPackagesBulk, mapPool } from "../financial/snapshots";
 import { getVnIndices, getVnOhlcv, getVnQuotes } from "./stocks";
 import { LIQUID_BOARD } from "../providers/public-vn-feed";
 import { getVndSymbolForeignFlow } from "../providers/vndirect-foreign-symbol";
@@ -35,19 +35,6 @@ export interface CanslimCoverageStats {
   withForeign: number;
   withRatios: number;
   withEquity: number;
-}
-
-async function mapPool<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
-  const out: R[] = new Array(items.length);
-  let i = 0;
-  async function worker() {
-    while (i < items.length) {
-      const idx = i++;
-      out[idx] = await fn(items[idx]!);
-    }
-  }
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, () => worker()));
-  return out;
 }
 
 function sma(closes: number[], n: number): number | null {
@@ -187,15 +174,21 @@ export async function screenCanslim(args?: {
     withEquity: 0,
   };
 
-  // Pass 2 — BCTC + ratios + equity + NN (pool 4)
+  // Pass 2a — bulk BCTC (shared cache with Fundamental screener)
+  const finMap = await getFinancialPackagesBulk(
+    valid.map((p) => p.symbol),
+    { concurrency: 5 },
+  );
+
+  // Pass 2b — foreign + equity + ratios (pool 4), BCTC already warm
   const analyzed = await mapPool(valid, 4, async (p) => {
-    const [fin, foreign, equity, ratios] = await Promise.all([
-      getFinancialPackage(p.symbol).catch(() => null),
+    const [foreign, equity, ratios] = await Promise.all([
       getVndSymbolForeignFlow(p.symbol, 8).catch(() => null),
       getVndEquitySnapshot(p.symbol).catch(() => null),
       getVndValuationRatios(p.symbol).catch(() => null),
     ]);
 
+    const fin = finMap.get(p.symbol) ?? null;
     const net1 = foreign?.latest?.netVal ?? null;
     const hist = foreign?.history ?? [];
     const net5 =
@@ -203,7 +196,7 @@ export async function screenCanslim(args?: {
         ? hist.slice(0, 5).reduce((s, d) => s + (d.netVal || 0), 0)
         : null;
 
-    if (fin?.pkg.growth && (fin.pkg.growth.yoy.length || fin.pkg.growth.qoq.length)) coverage.withGrowth += 1;
+    if (fin?.growth && (fin.growth.yoy.length || fin.growth.qoq.length)) coverage.withGrowth += 1;
     if (fin?.health && fin.health.coverage > 0) coverage.withHealth += 1;
     if (net1 != null || net5 != null) coverage.withForeign += 1;
     if (ratios?.roe != null || ratios?.eps != null) coverage.withRatios += 1;
@@ -211,7 +204,7 @@ export async function screenCanslim(args?: {
 
     const snap = analyzeCanslim({
       bars: p.bars,
-      growth: fin?.pkg.growth ?? null,
+      growth: fin?.growth ?? null,
       health: fin?.health ?? null,
       periods: fin?.pkg.periods ?? null,
       foreignNetVal: net1,
@@ -263,7 +256,7 @@ export async function screenCanslim(args?: {
 
   if (!rows.length && skipped === uniq.length) return null;
 
-  const covNote = `BCTC ${coverage.withGrowth}/${valid.length} · ROE/ratios ${coverage.withRatios} · NN ${coverage.withForeign} · CP ${coverage.withEquity} · nến ${coverage.withBars}`;
+  const covNote = `BCTC bulk ${coverage.withGrowth}/${valid.length} growth · health ${coverage.withHealth} · ROE/ratios ${coverage.withRatios} · NN ${coverage.withForeign} · CP ${coverage.withEquity} · nến ${coverage.withBars}`;
 
   return {
     rows,
@@ -273,7 +266,7 @@ export async function screenCanslim(args?: {
     marketDetail: market.detail,
     coverage,
     meta: buildMeta({
-      source: [quotesPack?.meta.source, "bctc", "vnd-ratios", "ohlcv", market.source].filter(Boolean).join("+") || "canslim-pipeline",
+      source: [quotesPack?.meta.source, "bctc-bulk", "vnd-ratios", "ohlcv", market.source].filter(Boolean).join("+") || "canslim-pipeline",
       sourceTimestampMs: Date.now(),
       partial: skipped > 0 || coverage.withGrowth < valid.length * 0.5,
       note: `CANSLIM · quét ${uniq.length} · ${covNote} · ${market.detail} · không phải tín hiệu GD`,
