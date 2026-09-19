@@ -9,6 +9,7 @@ import type { ApiResponse } from "@/lib/types";
 import { Badge, FreshnessDot, Loading, Panel, Unavailable } from "@/components/ui";
 import { BookOpenText, History, Play, Printer } from "lucide-react";
 import { printDailyReport } from "@/lib/report-print";
+import { ReportVnIndexWeeklyChart } from "@/components/report-vnindex-weekly-chart";
 
 type Tab = "morning_brief" | "intraday_brief" | "market_summary" | "strategy" | "company";
 
@@ -183,6 +184,10 @@ function DailyReportView({ type }: { type: Exclude<Tab, "company"> }) {
   );
 }
 
+function isWeekOverviewHeading(heading: string): boolean {
+  return /tổng quan diễn biến tuần/i.test(heading);
+}
+
 function ReportView({
   report,
   meta,
@@ -192,6 +197,8 @@ function ReportView({
   meta: import("@/lib/types").Meta | null;
   onExportPdf: () => void;
 }) {
+  const showAssumptions = report.type !== "strategy" && (report.assumptions?.length ?? 0) > 0;
+
   return (
     <article className="panel p-5 pb-4">
       <div>
@@ -254,6 +261,9 @@ function ReportView({
                   <p key={i}>{p}</p>
                 ))}
               </div>
+              {report.type === "strategy" && isWeekOverviewHeading(s.heading) && (
+                <ReportVnIndexWeeklyChart height={280} limit={120} />
+              )}
             </section>
           ))}
         </div>
@@ -276,7 +286,7 @@ function ReportView({
           </div>
         )}
 
-        {report.assumptions?.length > 0 && (
+        {showAssumptions && (
           <div className="mt-4 border-t border-border-subtle pt-3">
             <h3 className="text-[11px] font-semibold uppercase tracking-wider text-text-muted">
               Giả định & giới hạn

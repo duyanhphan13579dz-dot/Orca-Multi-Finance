@@ -2,6 +2,7 @@
  * Weekly Strategy — 12-block framework (ORCA).
  * Aggregates weekly view from available market snapshot + prior strategy report.
  * No mock data; UNAVAILABLE when weekly series / prior score cannot be computed.
+ * Assumptions footer is intentionally empty (UI does not show Giả định & giới hạn).
  */
 import type { MarketSnapshot } from "./market";
 import type { DailyReport } from "./report-engine";
@@ -60,7 +61,7 @@ function extractPriorScore(prior: DailyReport | null): number | null {
 
 export function composeWeeklyStrategyFramework(
   ctx: WeeklyStrategyCtx,
-  baseAssumptions: string[],
+  _baseAssumptions: string[],
 ): { sections: Section[]; assumptions: string[] } {
   const sections: Section[] = [];
   const { snap, intel } = ctx;
@@ -113,7 +114,7 @@ export function composeWeeklyStrategyFramework(
     ],
   });
 
-  // ——— Block 2 — Week overview ———
+  // ——— Block 2 — Week overview (+ UI injects VN-Index weekly line chart) ———
   const recapLines =
     ctx.weekSummaries.length > 0
       ? ctx.weekSummaries
@@ -127,13 +128,13 @@ export function composeWeeklyStrategyFramework(
     heading: "2. Tổng quan diễn biến tuần",
     tone: "neutral",
     paragraphs: [
-      "2.1 Hiệu suất tuần (khung tuần — một phần số liệu vẫn ở mức phiên nếu chưa có OHLC tuần):",
+      "2.1 Hiệu suất tuần (khung tuần — chart VN-Index 1W phía dưới; số liệu text vẫn ở mức phiên nếu chưa có OHLC tuần đầy đủ):",
       idx
         ? `• Đóng gần nhất: ${fmtNum(idx.value)} | %phiên: ${fmtPct(idx.changePercent)} | %YTD: UNAVAILABLE (cần series tuần).`
         : "• OHLC tuần: UNAVAILABLE.",
       "• GTGD TB/phiên tuần vs tuần trước / TB 4 tuần: UNAVAILABLE khi thiếu chuỗi volume tuần.",
       "• Số phiên tăng/giảm trong tuần: tổng hợp khi đủ 5 Market Summary.",
-      "• Mẫu hình nến tuần: UNAVAILABLE — cần nến tuần đóng cửa thứ Sáu.",
+      "• Mẫu hình nến tuần: đọc trên chart đường 1W (không mô tả giả khi thiếu pattern engine).",
       "2.2 Recap tham chiếu (kéo từ Market Summary đã lưu):",
       ...recapLines,
     ],
@@ -319,12 +320,6 @@ export function composeWeeklyStrategyFramework(
     paragraphs: ["Thông tin mang tính tham khảo, không phải khuyến nghị đầu tư."],
   });
 
-  const assumptions = [
-    ...baseAssumptions,
-    "Weekly Strategy tổng hợp khung tuần; số liệu chỉ có nghĩa theo ngày được đánh dấu và không thay thế OHLC/volume tuần.",
-    "Block 10 (tự chấm điểm) là bắt buộc — phát hành lần đầu ghi 0/3 nếu không có bản trước.",
-    `Cadence khuyến nghị: cut-off sau ATC thứ Sáu · phát hành Chủ Nhật 18:00–20:00 VN (hiện tại session: ${ctx.sessionState}).`,
-  ];
-
-  return { sections, assumptions };
+  // No assumptions footer for Weekly Strategy (product decision)
+  return { sections, assumptions: [] };
 }
