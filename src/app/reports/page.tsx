@@ -197,7 +197,6 @@ function SectionBody({ paragraphs }: { paragraphs: string[] }) {
 
   const bullets = lines.filter((l) => l.kind === "bullet");
   const prose = lines.filter((l) => l.kind === "prose");
-  // If majority are bullets, render all as one list when mixed; keep prose as paragraphs above/below
   const mostlyBullets = bullets.length >= Math.max(1, prose.length);
 
   if (mostlyBullets && bullets.length > 0) {
@@ -335,31 +334,6 @@ function ReportView({
             );
           })}
         </div>
-
-        {report.scenarios?.length > 0 && (
-          <div className="mt-4 rounded-xl border border-border-subtle/80 bg-surface-elevated/40 p-3.5 shadow-sm ring-1 ring-black/[0.03]">
-            <h3 className="text-[13px] font-semibold tracking-tight">Kịch bản Base / Bull / Bear</h3>
-            <div className="mt-2.5 grid gap-2.5 md:grid-cols-3">
-              {report.scenarios.map((sc) => (
-                <div
-                  key={sc.label}
-                  className="rounded-lg border border-border-subtle bg-surface-base/60 p-3 shadow-sm"
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-[12px] font-semibold tracking-tight">{sc.label}</span>
-                    <span className="text-[10px] tabular-nums text-text-muted">
-                      {sc.probabilityRange}
-                    </span>
-                  </div>
-                  <p className="mt-1.5 text-[11.5px] leading-[1.6] tracking-[0.01em] text-text-secondary">
-                    {sc.drivers}
-                  </p>
-                  <p className="mt-1 text-[11px] leading-[1.55] text-text-muted">{sc.indexZones}</p>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
       </div>
 
       <div className="mt-4 flex justify-end">
