@@ -3,7 +3,6 @@ import { buildMeta } from "../freshness";
 import { buildMarketSnapshot, type MarketSnapshot } from "./market";
 import { getVnSession, type VnSessionState } from "../vn/sessions";
 import { VN_SECTOR_MAP } from "../vn/master";
-import { llmConfigured } from "../ai/gateway";
 import type { FreshnessStatus, Meta } from "../types";
 import { composeMorningFramework, type MorningIntelSlice } from "./morning-brief-composer";
 import {
@@ -37,6 +36,7 @@ export interface DailyReport {
   freshness: Record<string, FreshnessStatus>;
   sections: { heading: string; tone: "up" | "down" | "neutral"; paragraphs: string[] }[];
   scenarios: ReportScenario[];
+  /** Always empty — product decision: no "Giả định & giới hạn" footer on any report type. */
   assumptions: string[];
 }
 
@@ -150,10 +150,6 @@ async function buildCtx(): Promise<DailyCtx> {
 
 const clamp = (x: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, x));
 
-function vnSectionDataStatus(ctx: DailyCtx): "available" | "unavailable" {
-  return ctx.snap.indices?.length ? "available" : "unavailable";
-}
-
 function buildScenarios(ctx: DailyCtx): ReportScenario[] {
   const score = ctx.snap.pulse.score;
   const pip = clamp(score, -1, 1);
@@ -209,6 +205,9 @@ function buildScenarios(ctx: DailyCtx): ReportScenario[] {
   ];
 }
 
+/** Empty base notes — product no longer surfaces assumptions footer. */
+const EMPTY_ASSUMPTIONS: string[] = [];
+
 function composeIntraday(ctx: DailyCtx): { sections: DailyReport["sections"]; assumptions: string[] } {
   return composeIntradayFramework(
     {
@@ -220,7 +219,7 @@ function composeIntraday(ctx: DailyCtx): { sections: DailyReport["sections"]; as
       slot: ctx.slot,
       timeLabel: ctx.timeLabel,
     },
-    assumptionsNote(ctx),
+    EMPTY_ASSUMPTIONS,
   );
 }
 
@@ -234,7 +233,7 @@ function composeMorning(ctx: DailyCtx): { sections: DailyReport["sections"]; ass
       sourcesLive: ctx.sourcesLive,
       sourcesTotal: ctx.sourcesTotal,
     },
-    assumptionsNote(ctx),
+    EMPTY_ASSUMPTIONS,
   );
 }
 
@@ -247,7 +246,7 @@ function composeSummary(ctx: DailyCtx): { sections: DailyReport["sections"]; ass
       intel: ctx.intel,
       morningReport: ctx.morningReport,
     },
-    assumptionsNote(ctx),
+    EMPTY_ASSUMPTIONS,
   );
 }
 
@@ -261,22 +260,8 @@ function composeStrategy(ctx: DailyCtx): { sections: DailyReport["sections"]; as
       priorStrategy: ctx.priorStrategy,
       weekSummaries: ctx.weekSummaries,
     },
-    assumptionsNote(ctx),
+    EMPTY_ASSUMPTIONS,
   );
-}
-
-function assumptionsNote(ctx: DailyCtx): string[] {
-  const notes: string[] = [
-    "Báo cáo dựng từ dữ liệu đã qua Data Engine (freshness gate) — không mock, không nội suy số liệu thiếu.",
-    `Trạng thái phiên VN: ${ctx.sessionState}.`,
-  ];
-  if (vnSectionDataStatus(ctx) === "unavailable") {
-    notes.push(
-      "VN equity data UNAVAILABLE tại thời điểm phát hành — các block VN được đánh dấu rõ, không suy diễn.",
-    );
-  }
-  notes.push("Thông tin mang tính tham khảo, không phải khuyến nghị đầu tư.");
-  return notes;
 }
 
 const COMPOSERS: Record<
@@ -329,7 +314,7 @@ export async function generateDailyReport(
   type: DailyReportType,
 ): Promise<{ report: DailyReport; meta: Meta }> {
   const ctx = await buildCtx();
-  const { sections, assumptions } = COMPOSERS[type](ctx);
+  const { sections } = COMPOSERS[type](ctx);
   const scenarios = type === "intraday_brief" ? [] : buildScenarios(ctx);
   const report: DailyReport = {
     type,
@@ -350,7 +335,7 @@ export async function generateDailyReport(
     freshness: (ctx.meta.sections ?? {}) as Record<string, FreshnessStatus>,
     sections,
     scenarios,
-    assumptions,
+    assumptions: [],
   };
   const persistResult = await persist(report);
   const meta = buildMeta({
@@ -359,16 +344,7 @@ export async function generateDailyReport(
     sections: ctx.meta.sections,
     note: `scheduler-ready · freshness gate · ${persistResult.keptPolicy}`,
   });
-  ensureLlmNote(report);
   return { report, meta };
-}
-
-function ensureLlmNote(report: DailyReport) {
-  if (llmConfigured()) {
-    report.assumptions.push(
-      "LLM-assisted narrative được giới hạn trong structured context đã output-validation.",
-    );
-  }
 }
 
 async function persist(report: DailyReport): Promise<{ purged: number; keptPolicy: string }> {
