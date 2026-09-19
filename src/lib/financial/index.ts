@@ -64,4 +64,5 @@ export {
   mapPool,
 } from "./snapshots";
 export type { FundamentalSnapshot, PackageBundle } from "./snapshots";
+export { persistFinancialPackage, persistFinancialPackageAsync } from "./persist";
 export type * from "./types";

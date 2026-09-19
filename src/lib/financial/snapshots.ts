@@ -1,17 +1,19 @@
 import "server-only";
 import { cached } from "../cache";
 import { getFinancialPackage } from "./service";
+import { persistFinancialPackageAsync } from "./persist";
 import type { FinancialPackage } from "./types";
 import type { FinancialHealthResult } from "../engines/fundamental";
 import type { GrowthSnapshot } from "./types";
 
 /**
- * Bulk fundamental snapshots — shared layer for screeners (Fundamental, CANSLIM, …).
+ * Bulk fundamental snapshots — shared layer for screeners (Fundamental, CANSLIM, Valuation).
  *
  * Strategy:
  *  1. Parallel getFinancialPackage (already TTL-cached 6h / stale 90d) with pool limit
  *  2. Flatten health + growth into a filter-friendly snapshot (extra cache 12h)
- *  3. CANSLIM reuses the same package map so BCTC is not double-fetched
+ *  3. Best-effort persist periods → financial_statements
+ *  4. CANSLIM / Valuation reuse the same package map
  */
 
 export type FundamentalSnapshot = {
@@ -32,6 +34,15 @@ export type FundamentalSnapshot = {
   netDebtToEbitda: number | null;
   fcfTtm: number | null;
   ocfTtm: number | null;
+  /** Anchors for valuation (VND full units where applicable) */
+  revenue: number | null;
+  netProfit: number | null;
+  equity: number | null;
+  totalDebt: number | null;
+  cash: number | null;
+  shares: number | null;
+  epsTtm: number | null;
+  ebitdaTtm: number | null;
   revenueYoyPct: number | null;
   niYoyPct: number | null;
   revenueQoqPct: number | null;
@@ -54,7 +65,6 @@ export type PackageBundle = {
 const pct = (v: number | null | undefined): number | null =>
   v == null || !Number.isFinite(v) ? null : Number((v * 100).toFixed(2));
 
-/** Growth engine stores ratio (0.25); some sources already percent — normalize to %. */
 function growthPct(raw: number | null | undefined): number | null {
   if (raw == null || !Number.isFinite(raw)) return null;
   if (Math.abs(raw) <= 3) return Number((raw * 100).toFixed(2));
@@ -98,6 +108,7 @@ export function buildSnapshotFromBundle(b: PackageBundle): FundamentalSnapshot {
   const liq = h.groups.liquidity;
   const lev = h.groups.leverage;
   const cf = h.groups.cashflow;
+  const a = h.anchors;
 
   return {
     symbol: b.symbol,
@@ -116,14 +127,18 @@ export function buildSnapshotFromBundle(b: PackageBundle): FundamentalSnapshot {
     netDebtToEbitda: lev.netDebtToEbitda != null ? Number(lev.netDebtToEbitda.toFixed(2)) : null,
     fcfTtm: cf.fcfTtm ?? null,
     ocfTtm: cf.ocfTtm ?? null,
-    revenueYoyPct:
-      growthOf(g, "revenue", "yoy") ?? growthOf(g, "netRevenue", "yoy"),
-    niYoyPct:
-      growthOf(g, "netIncome", "yoy") ?? growthOf(g, "netIncomeParent", "yoy"),
-    revenueQoqPct:
-      growthOf(g, "revenue", "qoq") ?? growthOf(g, "netRevenue", "qoq"),
-    niQoqPct:
-      growthOf(g, "netIncome", "qoq") ?? growthOf(g, "netIncomeParent", "qoq"),
+    revenue: a.revenue,
+    netProfit: a.netProfit,
+    equity: a.equity,
+    totalDebt: a.totalDebt,
+    cash: a.cash,
+    shares: a.shares,
+    epsTtm: a.epsTtm,
+    ebitdaTtm: a.ebitdaTtm,
+    revenueYoyPct: growthOf(g, "revenue", "yoy") ?? growthOf(g, "netRevenue", "yoy"),
+    niYoyPct: growthOf(g, "netIncome", "yoy") ?? growthOf(g, "netIncomeParent", "yoy"),
+    revenueQoqPct: growthOf(g, "revenue", "qoq") ?? growthOf(g, "netRevenue", "qoq"),
+    niQoqPct: growthOf(g, "netIncome", "qoq") ?? growthOf(g, "netIncomeParent", "qoq"),
     coverage: h.coverage,
     qualityScore: b.qualityScore,
     healthScore: h.scores.overall,
@@ -132,16 +147,13 @@ export function buildSnapshotFromBundle(b: PackageBundle): FundamentalSnapshot {
   };
 }
 
-/**
- * Parallel fetch of full financial packages. Hits the same cache key as
- * getFinancialPackage so subsequent single-symbol reads are free.
- */
 export async function getFinancialPackagesBulk(
   symbols: string[],
-  opts?: { concurrency?: number },
+  opts?: { concurrency?: number; persist?: boolean },
 ): Promise<Map<string, PackageBundle>> {
   const uniq = [...new Set(symbols.map((s) => s.toUpperCase()).filter(Boolean))];
   const concurrency = opts?.concurrency ?? 5;
+  const doPersist = opts?.persist !== false;
   const map = new Map<string, PackageBundle>();
 
   await mapPool(uniq, concurrency, async (symbol) => {
@@ -159,28 +171,28 @@ export async function getFinancialPackagesBulk(
         growth: r.pkg.growth,
         qualityScore: r.quality?.score ?? r.pkg.meta.qualityScore ?? null,
       });
+      if (doPersist) persistFinancialPackageAsync(r.pkg);
     } catch {
-      /* skip symbol */
+      /* skip */
     }
   });
 
   return map;
 }
 
-/**
- * Flat snapshots for filtering. Each snapshot is also memory-cached 12h so
- * repeated screener runs with overlapping universes are cheap.
- */
 export async function getFundamentalSnapshots(
   symbols: string[],
-  opts?: { concurrency?: number },
+  opts?: { concurrency?: number; persist?: boolean },
 ): Promise<{ snapshots: FundamentalSnapshot[]; packages: Map<string, PackageBundle>; scanned: number; hit: number }> {
   const uniq = [...new Set(symbols.map((s) => s.toUpperCase()).filter(Boolean))];
-  const packages = await getFinancialPackagesBulk(uniq, { concurrency: opts?.concurrency ?? 5 });
+  const packages = await getFinancialPackagesBulk(uniq, {
+    concurrency: opts?.concurrency ?? 5,
+    persist: opts?.persist,
+  });
 
   const snapshots: FundamentalSnapshot[] = [];
   for (const [symbol, bundle] of packages) {
-    const key = `fin:snap:v1:${symbol}`;
+    const key = `fin:snap:v2:${symbol}`;
     try {
       const res = await cached(key, {
         ttlMs: 12 * 3_600_000,
@@ -201,11 +213,10 @@ export async function getFundamentalSnapshots(
   };
 }
 
-/** Warm liquid universe after market close / on demand. */
 export async function warmFundamentalSnapshots(
   symbols: string[],
   opts?: { concurrency?: number },
 ): Promise<{ warmed: number; scanned: number }> {
-  const r = await getFundamentalSnapshots(symbols, opts);
+  const r = await getFundamentalSnapshots(symbols, { ...opts, persist: true });
   return { warmed: r.hit, scanned: r.scanned };
 }
