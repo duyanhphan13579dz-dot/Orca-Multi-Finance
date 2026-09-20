@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useSyncExternalStore } from "react";
+import { useEffect, useRef, useSyncExternalStore } from "react";
 import useSWR from "swr";
 import type { ApiResponse } from "./types";
 import { getSettingsSnapshot, resolveRefresh } from "./settings";
@@ -12,15 +12,24 @@ import { getSettingsSnapshot, resolveRefresh } from "./settings";
  * backgroundRefresh → revalidate on window focus; autoReconnect → SWR retry.
  * Tab hidden → polling paused (saves battery + backend load).
  * Adaptive: LIVE → tighter poll; STALE/UNAVAILABLE → back off.
+ * Rapid in-app navigation → short revalidate freeze to avoid request storms.
  */
 
 const FETCH_TIMEOUT_MS = 22_000;
-const CLIENT_DEDUPE_MS = 1_500;
+const CLIENT_DEDUPE_MS = 2_800;
 const pendingFetches = new Map<string, { promise: Promise<ApiResponse<unknown>>; startedAt: number }>();
+
+/** Soft freeze window after route change — skip non-critical revalidations. */
+let navFreezeUntil = 0;
+export function markAppNavigating(ms = 450) {
+  navFreezeUntil = Date.now() + ms;
+}
 
 const fetcher = async <T>(url: string, timeoutMs = FETCH_TIMEOUT_MS): Promise<ApiResponse<T>> => {
   const existing = pendingFetches.get(url);
-  if (existing && Date.now() - existing.startedAt < CLIENT_DEDUPE_MS) return existing.promise as Promise<ApiResponse<T>>;
+  if (existing && Date.now() - existing.startedAt < CLIENT_DEDUPE_MS) {
+    return existing.promise as Promise<ApiResponse<T>>;
+  }
 
   const promise = fetcherUncached<T>(url, timeoutMs);
   pendingFetches.set(url, { promise: promise as Promise<ApiResponse<unknown>>, startedAt: Date.now() });
@@ -102,21 +111,26 @@ export function useApi<T>(url: string | null, opts?: { refreshInterval?: number;
     if (f === "LIVE") return Math.max(8_000, Math.min(baseRefresh, 12_000));
     return baseRefresh;
   })();
-  const refreshInterval = visible && rt.liveUpdates ? adaptiveBase : 0;
+
+  // During rapid tab switches, hold polling so the UI paints first
+  const inNavFreeze = typeof window !== "undefined" && Date.now() < navFreezeUntil;
+  const refreshInterval = visible && rt.liveUpdates && !inNavFreeze ? adaptiveBase : 0;
 
   const { data, error, isLoading, isValidating, mutate } = useSWR<ApiResponse<T>>(
     url,
     (key: string) => fetcher<T>(key, opts?.timeoutMs ?? FETCH_TIMEOUT_MS),
     {
       refreshInterval,
-      revalidateOnFocus: rt.backgroundRefresh,
+      revalidateOnFocus: rt.backgroundRefresh && !inNavFreeze,
       revalidateOnReconnect: rt.autoReconnect,
-      focusThrottleInterval: rt.lowDataMode ? 60_000 : 30_000,
+      focusThrottleInterval: rt.lowDataMode ? 60_000 : 45_000,
       shouldRetryOnError: rt.autoReconnect,
       errorRetryInterval: rt.lowDataMode ? 60_000 : 15_000,
       errorRetryCount: rt.autoReconnect ? 3 : 0,
       keepPreviousData: true,
-      dedupingInterval: rt.lowDataMode ? 20_000 : 6_000,
+      // Prefer cached paint when hopping tabs; background revalidate after freeze
+      revalidateIfStale: true,
+      dedupingInterval: rt.lowDataMode ? 24_000 : 8_000,
       suspense: false,
       onSuccess: (payload) => {
         if (payload?.success && payload.meta?.freshness) {
@@ -130,6 +144,17 @@ export function useApi<T>(url: string | null, opts?: { refreshInterval?: number;
   if (data?.success && data.meta?.freshness && freshnessRef.current !== data.meta.freshness) {
     freshnessRef.current = data.meta.freshness;
   }
+
+  // When freeze ends, nudge a light revalidate once (stale-while-revalidate feel)
+  useEffect(() => {
+    if (!url || !visible) return;
+    const left = navFreezeUntil - Date.now();
+    if (left <= 0) return;
+    const t = window.setTimeout(() => {
+      void mutate();
+    }, left + 40);
+    return () => window.clearTimeout(t);
+  }, [url, visible, mutate]);
 
   return {
     res: data ?? null,
