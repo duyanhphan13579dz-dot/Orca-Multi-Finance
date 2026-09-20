@@ -53,6 +53,14 @@ type SourceBatch = {
   ok: boolean;
 };
 
+type QuotePack = { quotes: Quote[]; sourceTs: number | null };
+
+/** Normalize providers that return Quote[] into the pack shape. */
+async function asPack(fn: () => Promise<Quote[]>): Promise<QuotePack> {
+  const quotes = await fn();
+  return { quotes: quotes ?? [], sourceTs: quotes?.length ? Date.now() : null };
+}
+
 function withDeadline<T>(p: Promise<T>, ms: number): Promise<T> {
   return new Promise((resolve, reject) => {
     const t = setTimeout(() => reject(new Error("deadline")), ms);
@@ -71,7 +79,7 @@ function withDeadline<T>(p: Promise<T>, ms: number): Promise<T> {
 
 async function runSource(
   src: string,
-  fn: () => Promise<{ quotes: Quote[]; sourceTs: number | null }>,
+  fn: () => Promise<QuotePack>,
   timeoutMs: number,
 ): Promise<SourceBatch> {
   const t0 = performance.now();
@@ -156,7 +164,7 @@ function countConflicts(batches: SourceBatch[]): number {
     }
   }
   let n = 0;
-  for (const [sym, arr] of bySym) {
+  for (const [, arr] of bySym) {
     if (arr.length < 2) continue;
     arr.sort((a, b) => rank(b.src) - rank(a.src));
     const a = arr[0]!;
@@ -167,7 +175,7 @@ function countConflicts(batches: SourceBatch[]): number {
       n += 1;
       if (process.env.NODE_ENV !== "production" || process.env.ORCA_LOG_QUOTE_CONFLICT === "1") {
         console.warn(
-          `[quote-conflict] ${sym}: ${a.src}=${a.price} vs ${b.src}=${b.price} (Δ${abs.toFixed(0)} / ${(pct * 100).toFixed(2)}%) → keep ${a.src}`,
+          `[quote-conflict] ${a.src}=${a.price} vs ${b.src}=${b.price} (Δ${abs.toFixed(0)} / ${(pct * 100).toFixed(2)}%) → keep ${a.src}`,
         );
       }
     }
@@ -191,16 +199,23 @@ export async function getMultiQuotes(symbols: string[]): Promise<MultiQuoteResul
 
   const tierA = Promise.all([
     runSource("vndirect", () => vndirect.getVndQuotes(uniq), 6_500),
-    runSource("vps", () => getVpsQuotes(uniq), 6_500),
+    runSource("vps", () => asPack(() => getVpsQuotes(uniq)), 6_500),
   ]);
 
-  const tierB = runSource("ssi-iboard", () => getSsiIboardQuotes(uniq), 6_000);
+  const tierB = runSource("ssi-iboard", () => asPack(() => getSsiIboardQuotes(uniq)), 6_000);
 
   const tierCTasks: Promise<SourceBatch>[] = [
     runSource("vietcap", () => getVietcapQuotes(uniq), 4_500),
   ];
   if (ssiFcConfigured()) {
-    tierCTasks.push(runSource("ssi-fcdata", () => getSsiQuotes(uniq), 4_500));
+    // ssi-fcdata may return Quote[] or pack — normalize either way
+    tierCTasks.push(
+      runSource("ssi-fcdata", async () => {
+        const r = await getSsiQuotes(uniq);
+        if (Array.isArray(r)) return { quotes: r, sourceTs: r.length ? Date.now() : null };
+        return r as QuotePack;
+      }, 4_500),
+    );
   }
 
   const tierCPromise = Promise.all(tierCTasks);
