@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, ArrowRight, BrainCircuit, CircleAlert, Eye, Gauge, LayoutDashboard, ShieldCheck, Target, TrendingDown, TrendingUp } from "lucide-react";
+import { AlertTriangle, ArrowRight, BarChart3, BrainCircuit, CircleAlert, Eye, Gauge, LayoutDashboard, PieChart, ShieldCheck, Target, TrendingDown, TrendingUp } from "lucide-react";
 import { useApi } from "@/lib/hooks";
 import { Badge, Chg, Panel, fmtNum } from "@/components/ui";
 import {
@@ -114,8 +114,41 @@ function Overview({ snapshot }: { snapshot: ReturnType<typeof buildPortfolioSnap
       <Panel className="lg:col-span-2" title="Smart readout">
         <div className="grid gap-3 sm:grid-cols-3"><Readout label="Trạng thái book" value={snapshot.positions.length ? `${snapshot.positions.length} vị thế đang mở` : "Chưa có vị thế"} note={snapshot.totalExposure ? `Exposure ${fmtNum(snapshot.totalExposure, 2)}` : "Watchlist vẫn hoạt động độc lập"} /><Readout label="Chất lượng hiệu suất" value={snapshot.profitFactor == null ? "Chưa đủ mẫu" : snapshot.profitFactor >= 1.5 ? "Có lợi thế" : snapshot.profitFactor >= 1 ? "Cần theo dõi" : "Đang suy yếu"} note={snapshot.winRate == null ? "Cần lệnh đã đóng" : `Win rate ${(snapshot.winRate * 100).toFixed(0)}%`} /><Readout label="Việc nên làm trước" value={snapshot.alerts[0]?.title ?? "Tiếp tục ghi nhận"} note={snapshot.alerts[0]?.detail ?? "Ghi entry, SL, TP và exit để analytics đáng tin cậy hơn."} /></div>
       </Panel>
+      <PortfolioCharts snapshot={snapshot} />
     </div>
   );
+}
+
+const CHART_COLORS = ["#38bdf8", "#a78bfa", "#34d399", "#fbbf24", "#fb7185"];
+
+function PortfolioCharts({ snapshot }: { snapshot: ReturnType<typeof buildPortfolioSnapshot> }) {
+  const allocationTotal = snapshot.allocation.reduce((sum, item) => sum + item.value, 0);
+  const allocationSegments = snapshot.allocation.reduce<{ label: string; value: number; color: string; start: number }[]>((segments, item, index) => {
+    const previous = segments.at(-1);
+    const start = previous ? previous.start + previous.value : 0;
+    segments.push({ label: item.label, value: item.value, color: CHART_COLORS[index % CHART_COLORS.length], start });
+    return segments;
+  }, []);
+  const maxAbsPnl = Math.max(1, ...snapshot.performanceByAsset.map((item) => Math.abs(item.pnl)));
+
+  return (
+    <Panel className="lg:col-span-2" title="Portfolio charts" right={<span className="text-[10px] text-text-muted">Từ engine phân tích</span>}>
+      <div className="grid gap-5 lg:grid-cols-[1.15fr_0.85fr]">
+        <section aria-labelledby="pnl-chart-title">
+          <div className="mb-3 flex items-center gap-1.5 text-[12px] font-medium"><BarChart3 className="size-3.5 text-accent-primary" /><h2 id="pnl-chart-title">PnL theo nhóm tài sản</h2></div>
+          {snapshot.performanceByAsset.length ? <div className="space-y-3">{snapshot.performanceByAsset.map((item, index) => <div key={item.label} title={`${assetLabels[item.label] ?? item.label}: ${fmtNum(item.pnl, 2)} · ${item.trades} lệnh`}><div className="mb-1 flex items-center justify-between text-[11px]"><span>{assetLabels[item.label] ?? item.label} <span className="text-text-muted">· {item.trades} lệnh</span></span><span className={`num font-medium ${item.pnl >= 0 ? "text-positive" : "text-negative"}`}>{item.pnl >= 0 ? "+" : ""}{fmtNum(item.pnl, 2)}</span></div><div className="relative h-5 rounded bg-surface-modal"><div className={`absolute inset-y-0 rounded ${item.pnl >= 0 ? "bg-positive/75" : "bg-negative/75"}`} style={{ width: `${Math.max(4, (Math.abs(item.pnl) / maxAbsPnl) * 100)}%`, left: item.pnl >= 0 ? "0" : "auto", right: item.pnl < 0 ? "0" : "auto" }} /><div className="absolute inset-y-0 left-1/2 w-px bg-border-default/80" /></div><div className="mt-0.5 text-[10px] text-text-muted">Win rate {item.winRate == null ? "—" : `${(item.winRate * 100).toFixed(0)}%`}</div></div>)}</div> : <ChartEmpty text="Chưa có lệnh đã đóng để vẽ PnL." />}
+        </section>
+        <section aria-labelledby="allocation-chart-title">
+          <div className="mb-3 flex items-center gap-1.5 text-[12px] font-medium"><PieChart className="size-3.5 text-accent-primary" /><h2 id="allocation-chart-title">Phân bổ exposure</h2></div>
+          {allocationTotal > 0 ? <div className="flex flex-wrap items-center gap-5 sm:flex-nowrap"><div className="relative size-36 shrink-0 rounded-full" style={{ background: `conic-gradient(${allocationSegments.map((segment) => `${segment.color} ${(segment.start / allocationTotal) * 100}% ${((segment.start + segment.value) / allocationTotal) * 100}%`).join(", ")})` }} role="img" aria-label="Biểu đồ tròn phân bổ exposure"><div className="absolute inset-[22px] grid place-items-center rounded-full bg-surface-base text-center"><span className="text-[9px] uppercase tracking-wide text-text-muted">Exposure</span><b className="num text-[13px]">{fmtNum(allocationTotal, 2)}</b></div></div><div className="min-w-0 flex-1 space-y-2">{allocationSegments.map((segment) => <div key={segment.label} className="flex items-center justify-between gap-3 text-[11px]"><span className="flex min-w-0 items-center gap-1.5"><i className="size-2 shrink-0 rounded-full" style={{ backgroundColor: segment.color }} />{assetLabels[segment.label] ?? segment.label}</span><span className="num text-text-secondary">{((segment.value / allocationTotal) * 100).toFixed(0)}%</span></div>)}</div></div> : <ChartEmpty text="Chưa có vị thế mở để vẽ phân bổ." />}
+        </section>
+      </div>
+    </Panel>
+  );
+}
+
+function ChartEmpty({ text }: { text: string }) {
+  return <div className="grid min-h-36 place-items-center rounded-md border border-dashed border-border-subtle px-4 text-center text-[11px] text-text-muted">{text}</div>;
 }
 
 function Positions({ snapshot }: { snapshot: ReturnType<typeof buildPortfolioSnapshot> }) {

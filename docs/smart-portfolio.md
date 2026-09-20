@@ -6,7 +6,9 @@ Smart Portfolio là lớp điều phối phía trên hai module local-first hi�
 
 Trang `/portfolio` hợp nhất watchlist và nhật ký lệnh trong một control center. Dữ liệu cũ từ `orca.watchlist.v1` và `orca.journal.v1` được đọc nguyên trạng, vì vậy người dùng không cần migrate dữ liệu trên trình duyệt. Thay đổi trên hai trang gốc phát sự kiện `orca:watchlist` và `orca:journal`, khiến Smart Portfolio cập nhật mà không cần reload.
 
-Engine `src/lib/portfolio.ts` là pure TypeScript và không gọi provider. Engine tính realized PnL, unrealized PnL theo mark hiện có, exposure, risk tới stop loss, phân bổ theo asset class, win rate, profit factor, expectancy, average R, max drawdown và discipline score. Engine cũng tạo action queue cho vị thế thiếu stop loss, gần stop loss/take profit hoặc quá tập trung theo asset class.
+Engine `src/lib/portfolio.ts` là pure TypeScript và không gọi provider. Engine tính realized PnL, unrealized PnL theo mark hiện có, exposure, risk tới stop loss, phân bổ theo asset class, win rate, profit factor, expectancy, average R, max drawdown và discipline score. Engine cũng tạo action queue cho vị thế thiếu stop loss, gần stop loss/take profit hoặc quá tập trung theo asset class. Ngoài snapshot KPI, engine xuất `performanceByAsset` gồm PnL, số lệnh, số lệnh thắng và win rate theo asset class để UI vẽ biểu đồ mà không lặp lại logic tính toán.
+
+Overview hiển thị hai biểu đồ lấy trực tiếp từ snapshot: biểu đồ cột ngang PnL theo nhóm tài sản, có phân biệt lãi/lỗ và win rate; và biểu đồ tròn allocation exposure, có màu lát, phần trăm và tổng exposure ở tâm. Cả hai dùng HTML/CSS native, không thêm dependency chart nặng, có trạng thái rỗng khi chưa đủ dữ liệu và co giãn theo màn hình.
 
 Giá mark chỉ được lấy từ API nội bộ hiện có cho crypto và forex. Cổ phiếu Việt Nam hoặc hàng hóa chưa có mark thì hiển thị trạng thái chưa có giá, không dùng giá giả và không cộng vào unrealized PnL. Đây là cách tuân thủ nguyên tắc freshness/provenance của ORCA.
 

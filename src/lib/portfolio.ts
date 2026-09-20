@@ -48,6 +48,14 @@ export type PortfolioAlert = {
   symbol?: string;
 };
 
+export type PortfolioPerformanceDatum = {
+  label: string;
+  pnl: number;
+  trades: number;
+  wins: number;
+  winRate: number | null;
+};
+
 export type PortfolioSnapshot = {
   positions: PortfolioPosition[];
   closed: PortfolioTrade[];
@@ -61,6 +69,7 @@ export type PortfolioSnapshot = {
   maxDrawdown: number;
   averageR: number | null;
   allocation: { label: string; value: number; percentage: number }[];
+  performanceByAsset: PortfolioPerformanceDatum[];
   alerts: PortfolioAlert[];
   disciplineScore: number;
 };
@@ -135,6 +144,20 @@ export function buildPortfolioSnapshot(
     .map(([label, value]) => ({ label, value, percentage: totalExposure ? (value / totalExposure) * 100 : 0 }))
     .sort((a, b) => b.value - a.value);
 
+  const performanceMap = new Map<string, { pnl: number; trades: number; wins: number }>();
+  for (const trade of closed) {
+    const tradePnl = pnl(trade, trade.exit);
+    if (tradePnl == null) continue;
+    const current = performanceMap.get(trade.assetType) ?? { pnl: 0, trades: 0, wins: 0 };
+    current.pnl += tradePnl;
+    current.trades += 1;
+    if (tradePnl > 0) current.wins += 1;
+    performanceMap.set(trade.assetType, current);
+  }
+  const performanceByAsset = [...performanceMap.entries()]
+    .map(([label, value]) => ({ ...value, label, winRate: value.trades ? value.wins / value.trades : null }))
+    .sort((a, b) => b.pnl - a.pnl);
+
   const alerts: PortfolioAlert[] = [];
   for (const position of positions) {
     if (position.stopLoss == null) alerts.push({ tone: "warning", title: "Thiếu stop loss", detail: "Vị thế chưa có mức thoát rủi ro rõ ràng.", symbol: position.symbol });
@@ -168,6 +191,7 @@ export function buildPortfolioSnapshot(
     maxDrawdown,
     averageR: rValues.length ? rValues.reduce((sum, value) => sum + value, 0) / rValues.length : null,
     allocation,
+    performanceByAsset,
     alerts: alerts.slice(0, 8),
     disciplineScore,
   };

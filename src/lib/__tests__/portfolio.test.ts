@@ -49,6 +49,8 @@ test("buildPortfolioSnapshot measures closed performance and drawdown", () => {
   assert.equal(snapshot.winRate, 0.5);
   assert.equal(snapshot.profitFactor, 2);
   assert.equal(snapshot.maxDrawdown, 20);
+  assert.equal(snapshot.performanceByAsset[0]?.label, "crypto");
+  assert.equal(snapshot.performanceByAsset[0]?.pnl, 20);
 });
 
 test("open positions without stop loss create a discipline alert", () => {
