@@ -130,8 +130,11 @@ export function AppShell({ children }: { children: ReactNode }) {
         >
           <div className="flex h-14 items-center gap-2 border-b border-border-subtle px-3">
             <Link href="/" onClick={(e) => { e.preventDefault(); navigate("/"); }} className="flex min-w-0 items-center gap-2">
-              <OrcaMark size={28} className="shrink-0 rounded-md" />
-              {!collapsed && <OrcaWordmark className="truncate text-[15px]" />}
+              {collapsed ? (
+                <OrcaMark size={28} className="shrink-0 rounded-md" />
+              ) : (
+                <OrcaWordmark size={28} subtitle={false} />
+              )}
             </Link>
             <button
               type="button"
@@ -196,7 +199,6 @@ export function AppShell({ children }: { children: ReactNode }) {
             </button>
             <Link href="/" onClick={(e) => { e.preventDefault(); navigate("/"); }} className="flex items-center gap-2">
               <OrcaMark size={26} className="rounded-md" />
-              <OrcaWordmark className="text-[14px]" />
             </Link>
             <div className="ml-auto flex items-center gap-1">
               <NotifBell />
@@ -225,7 +227,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           <div className="absolute inset-0 bg-black/50" onClick={() => setMobileOpen(false)} />
           <aside className="absolute bottom-0 left-0 top-0 flex w-[min(280px,86vw)] flex-col bg-surface-base shadow-2xl">
             <div className="flex h-12 items-center justify-between border-b border-border-subtle px-3">
-              <OrcaWordmark className="text-[15px]" />
+              <OrcaWordmark size={28} subtitle={false} />
               <button type="button" onClick={() => setMobileOpen(false)} className="grid size-9 place-items-center rounded-lg text-text-muted hover:bg-surface-elevated">
                 <X className="size-5" />
               </button>
