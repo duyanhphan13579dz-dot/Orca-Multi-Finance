@@ -50,7 +50,15 @@ async function httpRequest<T>(url: string, opts: HttpOptions): Promise<HttpResul
   const backoffBase = opts.backoffBaseMs ?? 350;
 
   if (isCircuitOpen(provider)) {
-    return { ok: false, status: 0, data: null, text: null, error: `circuit_open:${provider}`, latencyMs: 0, attempts: 0 };
+    return {
+      ok: false,
+      status: 0,
+      data: null,
+      text: null,
+      error: `circuit_open:${provider}`,
+      latencyMs: 0,
+      attempts: 0,
+    };
   }
 
   let lastError = "unknown";
@@ -80,7 +88,9 @@ async function httpRequest<T>(url: string, opts: HttpOptions): Promise<HttpResul
       if (res.status === 429 || res.status >= 500) {
         const retryAfter = Number(res.headers.get("retry-after") || 0);
         lastError = `http_${res.status}`;
-        if (attempt < retries) await sleep(Math.max(backoffBase * 2 ** attempt, retryAfter * 1000) + Math.random() * 100);
+        if (attempt < retries) {
+          await sleep(Math.max(backoffBase * 2 ** attempt, retryAfter * 1000) + Math.random() * 100);
+        }
         continue;
       }
 
@@ -91,35 +101,55 @@ async function httpRequest<T>(url: string, opts: HttpOptions): Promise<HttpResul
           data = text ? (JSON.parse(text) as T) : null;
         } catch {
           lastError = "json_parse_error";
-          recordFailure(provider);
-          return { ok: false, status: res.status, data: null, text, error: lastError, latencyMs: performance.now() - started, attempts };
+          recordFailure(provider, lastError);
+          return {
+            ok: false,
+            status: res.status,
+            data: null,
+            text,
+            error: lastError,
+            latencyMs: performance.now() - started,
+            attempts,
+          };
         }
       }
 
+      const latencyMs = performance.now() - started;
       if (res.ok) {
-        recordSuccess(provider);
+        recordSuccess(provider, latencyMs);
         return {
           ok: true,
           status: res.status,
           data: opts.parse === "json" ? data : null,
           text: opts.parse === "text" ? text : null,
           error: null,
-          latencyMs: performance.now() - started,
+          latencyMs,
           attempts,
         };
       }
 
       lastError = `http_${res.status}`;
-      recordFailure(provider);
-      return { ok: false, status: res.status, data, text, error: lastError, latencyMs: performance.now() - started, attempts };
+      recordFailure(provider, lastError);
+      return {
+        ok: false,
+        status: res.status,
+        data,
+        text,
+        error: lastError,
+        latencyMs,
+        attempts,
+      };
     } catch (e) {
       clearTimeout(timer);
-      lastError = e instanceof Error ? (e.name === "AbortError" ? "timeout" : e.message) : "network_error";
-      if (attempt < retries) await sleep(backoffBase * 2 ** attempt + Math.random() * 100);
+      lastError =
+        e instanceof Error ? (e.name === "AbortError" ? "timeout" : e.message) : "network_error";
+      if (attempt < retries) {
+        await sleep(backoffBase * 2 ** attempt + Math.random() * 100);
+      }
     }
   }
 
-  recordFailure(provider);
+  recordFailure(provider, lastError);
   return {
     ok: false,
     status: lastStatus,
