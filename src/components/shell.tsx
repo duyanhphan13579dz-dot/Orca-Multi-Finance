@@ -3,13 +3,13 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
-  startTransition,
   useCallback,
   useEffect,
   useRef,
   useState,
   type ComponentType,
   type ReactNode,
+  type MouseEvent,
 } from "react";
 import { markAppNavigating } from "@/lib/hooks";
 import {
@@ -55,9 +55,9 @@ const NAV_SECTIONS: {
   {
     title: "THỊ TRƯỜNG",
     items: [
-      { href: "/", label: "Tổng quan", icon: Home },
+      { href: "/", label: "Tổng quan", icon: Home, core: true },
       { href: "/stocks", label: "Cổ phiếu VN", icon: CandlestickChart, core: true },
-      { href: "/crypto", label: "Tiền mã hóa", icon: Coins },
+      { href: "/crypto", label: "Tiền mã hóa", icon: Coins, core: true },
       { href: "/forex", label: "Ngoại hối", icon: DollarSign },
       { href: "/commodities", label: "Hàng hóa", icon: Boxes },
       { href: "/macro-economic", label: "Kinh tế vĩ mô", icon: ChartNoAxesCombined },
@@ -69,7 +69,7 @@ const NAV_SECTIONS: {
     items: [
       { href: "/heatmap", label: "Bản đồ nhiệt", icon: Grid2x2 },
       { href: "/screener", label: "Bộ lọc", icon: FlaskConical },
-      { href: "/news", label: "Tin tức", icon: Newspaper },
+      { href: "/news", label: "Tin tức", icon: Newspaper, core: true },
       { href: "/reports", label: "Bản tin", icon: Globe2 },
       { href: "/agent", label: "Trợ lý AI", icon: Bot },
     ],
@@ -84,9 +84,11 @@ const NAV_SECTIONS: {
   },
 ];
 
+const ALL_HREFS = NAV_SECTIONS.flatMap((s) => s.items.map((i) => i.href));
 const CORE_HREFS = NAV_SECTIONS.flatMap((s) =>
-  s.items.filter((i) => i.core || i.href === "/" || i.href === "/news" || i.href === "/stocks").map((i) => i.href),
+  s.items.filter((i) => i.core).map((i) => i.href),
 );
+const SECONDARY_HREFS = ALL_HREFS.filter((h) => !CORE_HREFS.includes(h));
 
 const SB_KEY = "orca.sidebar.collapsed";
 
@@ -94,15 +96,42 @@ function isActivePath(pathname: string, href: string) {
   return pathname === href || (href !== "/" && pathname.startsWith(href));
 }
 
+/** Next.js App Router route warmer — full segment tree via router.prefetch. */
+function useRoutePrefetch() {
+  const router = useRouter();
+  const warmed = useRef(new Set<string>());
+
+  const warm = useCallback(
+    (href: string) => {
+      if (!href || warmed.current.has(href)) return;
+      warmed.current.add(href);
+      try {
+        // Full route tree (static + dynamic down to loading boundary)
+        void router.prefetch(href);
+      } catch {
+        warmed.current.delete(href);
+      }
+    },
+    [router],
+  );
+
+  const warmMany = useCallback(
+    (hrefs: string[]) => {
+      for (const href of hrefs) warm(href);
+    },
+    [warm],
+  );
+
+  return { warm, warmMany };
+}
+
 export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
-  const router = useRouter();
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [routeBusy, setRouteBusy] = useState(false);
-  /** Optimistic highlight while transition is in flight */
   const [pendingHref, setPendingHref] = useState<string | null>(null);
-  const prefetched = useRef(new Set<string>());
+  const { warm, warmMany } = useRoutePrefetch();
 
   useEffect(() => {
     try {
@@ -110,55 +139,67 @@ export function AppShell({ children }: { children: ReactNode }) {
     } catch {}
   }, []);
 
-  // Idle prefetch core routes
+  /**
+   * Staged idle prefetch (Next.js production only actually networks):
+   *  1) core routes ASAP on idle
+   *  2) secondary routes after a short gap so we don't contend with first paint
+   */
   useEffect(() => {
     let cancelled = false;
-    const run = () => {
-      if (cancelled) return;
-      for (const href of CORE_HREFS) {
-        if (prefetched.current.has(href)) continue;
-        try {
-          router.prefetch(href);
-          prefetched.current.add(href);
-        } catch {}
+    let idleId: number | undefined;
+    let t1: ReturnType<typeof setTimeout> | undefined;
+    let t2: ReturnType<typeof setTimeout> | undefined;
+
+    const schedule = (fn: () => void, timeout: number) => {
+      if (typeof window !== "undefined" && "requestIdleCallback" in window) {
+        return (
+          window as Window & {
+            requestIdleCallback: (cb: () => void, opts?: { timeout: number }) => number;
+          }
+        ).requestIdleCallback(fn, { timeout });
+      }
+      return window.setTimeout(fn, Math.min(timeout, 400)) as unknown as number;
+    };
+
+    const cancelIdle = (id: number) => {
+      if (typeof window !== "undefined" && "cancelIdleCallback" in window) {
+        (window as Window & { cancelIdleCallback: (id: number) => void }).cancelIdleCallback(id);
+      } else {
+        clearTimeout(id);
       }
     };
-    if (typeof window !== "undefined" && "requestIdleCallback" in window) {
-      const id = (window as Window & { requestIdleCallback: (cb: () => void, opts?: { timeout: number }) => number }).requestIdleCallback(run, {
-        timeout: 1800,
-      });
-      return () => {
-        cancelled = true;
-        (window as Window & { cancelIdleCallback?: (id: number) => void }).cancelIdleCallback?.(id);
-      };
-    }
-    const t = setTimeout(run, 900);
+
+    idleId = schedule(() => {
+      if (cancelled) return;
+      warmMany(CORE_HREFS);
+      t1 = setTimeout(() => {
+        if (cancelled) return;
+        warmMany(SECONDARY_HREFS);
+      }, 600);
+    }, 1200);
+
+    // Safety net: ensure cores are warm even if idle never fires
+    t2 = setTimeout(() => {
+      if (!cancelled) warmMany(CORE_HREFS);
+    }, 2500);
+
     return () => {
       cancelled = true;
-      clearTimeout(t);
+      if (idleId != null) cancelIdle(idleId);
+      if (t1) clearTimeout(t1);
+      if (t2) clearTimeout(t2);
     };
-  }, [router]);
+  }, [warmMany]);
 
-  // Route settled → clear optimistic + progress
+  // Route settled
   useEffect(() => {
     setMobileOpen(false);
     setPendingHref(null);
-    markAppNavigating(420);
+    markAppNavigating(400);
     setRouteBusy(true);
-    const t = setTimeout(() => setRouteBusy(false), 380);
+    const t = setTimeout(() => setRouteBusy(false), 360);
     return () => clearTimeout(t);
   }, [pathname]);
-
-  const prefetchHref = useCallback(
-    (href: string) => {
-      if (prefetched.current.has(href)) return;
-      try {
-        router.prefetch(href);
-        prefetched.current.add(href);
-      } catch {}
-    },
-    [router],
-  );
 
   const toggleCollapsed = () => {
     setCollapsed((c) => {
@@ -170,24 +211,41 @@ export function AppShell({ children }: { children: ReactNode }) {
     });
   };
 
-  const navigate = useCallback(
+  /**
+   * Intent-based warm: pointerenter / focus / touchstart.
+   * Next.js also prioritizes hover intent in its own Link scheduler;
+   * we reinforce for routes already in the sidebar (always "in viewport").
+   */
+  const onIntent = useCallback(
     (href: string) => {
-      if (href === pathname) return;
+      warm(href);
+    },
+    [warm],
+  );
+
+  /**
+   * Soft click handler — do NOT preventDefault so Next.js <Link> owns navigation
+   * (client transition + its internal prefetch cache). We only paint optimistic UI.
+   * Modifier / middle-click still open new tabs natively.
+   */
+  const onNavClick = useCallback(
+    (href: string, e: MouseEvent<HTMLAnchorElement>) => {
+      if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
+      if (href === pathname) {
+        e.preventDefault();
+        return;
+      }
       setPendingHref(href);
       markAppNavigating(480);
       setRouteBusy(true);
-      startTransition(() => {
-        router.push(href);
-      });
     },
-    [pathname, router],
+    [pathname],
   );
 
   const effectivePath = pendingHref ?? pathname;
 
   return (
     <div className="flex h-full flex-col bg-canvas text-text-primary">
-      {/* Top progress bar */}
       <div
         aria-hidden
         className={`pointer-events-none fixed left-0 right-0 top-0 z-[60] h-[2px] origin-left bg-accent-primary transition-[transform,opacity] duration-300 ease-out ${
@@ -199,7 +257,6 @@ export function AppShell({ children }: { children: ReactNode }) {
       <TickerTape />
 
       <div className="flex min-h-0 flex-1">
-        {/* ── Desktop sidebar ── */}
         <aside
           className={`hidden shrink-0 flex-col border-r border-border-subtle bg-surface-base lg:flex ${
             collapsed ? "w-[60px]" : "w-[220px]"
@@ -209,20 +266,18 @@ export function AppShell({ children }: { children: ReactNode }) {
             willChange: "width",
           }}
         >
-          {/* Brand + collapse */}
           <div
-            className={`flex h-13 shrink-0 items-center border-b border-border-subtle ${
+            className={`flex shrink-0 items-center border-b border-border-subtle ${
               collapsed ? "justify-center px-1.5" : "gap-1.5 px-2.5"
             }`}
             style={{ height: 52 }}
           >
             <Link
               href="/"
-              onClick={(e) => {
-                e.preventDefault();
-                navigate("/");
-              }}
-              onMouseEnter={() => prefetchHref("/")}
+              prefetch
+              onPointerEnter={() => onIntent("/")}
+              onFocus={() => onIntent("/")}
+              onClick={(e) => onNavClick("/", e)}
               className="flex min-w-0 items-center gap-2 rounded-md outline-none focus-visible:ring-2 focus-visible:ring-accent-primary/40"
             >
               {collapsed ? (
@@ -243,7 +298,6 @@ export function AppShell({ children }: { children: ReactNode }) {
             )}
           </div>
 
-          {/* Expand button when collapsed — sits under logo */}
           {collapsed && (
             <div className="flex justify-center border-b border-border-subtle py-1.5">
               <button
@@ -257,7 +311,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             </div>
           )}
 
-          <nav className="flex-1 overflow-y-auto overflow-x-hidden py-2 scrollbar-thin">
+          <nav className="flex-1 overflow-y-auto overflow-x-hidden py-2">
             {NAV_SECTIONS.map((section, sIdx) => (
               <div key={section.title} className={sIdx > 0 ? "mt-1" : ""}>
                 {!collapsed ? (
@@ -269,7 +323,11 @@ export function AppShell({ children }: { children: ReactNode }) {
                     <div className="mx-auto my-1.5 h-px w-6 bg-border-subtle" aria-hidden />
                   )
                 )}
-                <ul className={`flex flex-col ${collapsed ? "items-center gap-0.5 px-1" : "gap-0.5 px-1.5"}`}>
+                <ul
+                  className={`flex flex-col ${
+                    collapsed ? "items-center gap-0.5 px-1" : "gap-0.5 px-1.5"
+                  }`}
+                >
                   {section.items.map((item) => {
                     const active = isActivePath(effectivePath, item.href);
                     const Icon = item.icon;
@@ -279,12 +337,10 @@ export function AppShell({ children }: { children: ReactNode }) {
                           href={item.href}
                           prefetch
                           title={collapsed ? item.label : undefined}
-                          onMouseEnter={() => prefetchHref(item.href)}
-                          onFocus={() => prefetchHref(item.href)}
-                          onClick={(e) => {
-                            e.preventDefault();
-                            navigate(item.href);
-                          }}
+                          onPointerEnter={() => onIntent(item.href)}
+                          onFocus={() => onIntent(item.href)}
+                          onTouchStart={() => onIntent(item.href)}
+                          onClick={(e) => onNavClick(item.href, e)}
                           className={`group relative flex items-center rounded-lg text-[13px] font-medium outline-none transition-[background-color,color,transform,box-shadow] duration-150 ease-out focus-visible:ring-2 focus-visible:ring-accent-primary/40 ${
                             collapsed
                               ? "mx-auto size-10 justify-center"
@@ -295,7 +351,6 @@ export function AppShell({ children }: { children: ReactNode }) {
                               : "text-text-secondary hover:bg-surface-elevated hover:text-text-primary active:scale-[0.97]"
                           }`}
                         >
-                          {/* Active rail when collapsed */}
                           {collapsed && active && (
                             <span
                               aria-hidden
@@ -320,9 +375,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           </nav>
         </aside>
 
-        {/* ── Main column ── */}
         <div className="flex min-w-0 flex-1 flex-col">
-          {/* Mobile top bar */}
           <header className="flex h-12 items-center gap-2 border-b border-border-subtle bg-surface-base px-3 lg:hidden">
             <button
               type="button"
@@ -334,10 +387,9 @@ export function AppShell({ children }: { children: ReactNode }) {
             </button>
             <Link
               href="/"
-              onClick={(e) => {
-                e.preventDefault();
-                navigate("/");
-              }}
+              prefetch
+              onPointerEnter={() => onIntent("/")}
+              onClick={(e) => onNavClick("/", e)}
               className="flex items-center gap-2"
             >
               <OrcaMark size={26} className="rounded-md" />
@@ -348,7 +400,6 @@ export function AppShell({ children }: { children: ReactNode }) {
             </div>
           </header>
 
-          {/* Desktop top bar */}
           <header className="hidden h-12 items-center gap-3 border-b border-border-subtle bg-surface-base/90 px-4 backdrop-blur lg:flex">
             <div className="min-w-0 flex-1">
               <GlobalSearch />
@@ -363,17 +414,13 @@ export function AppShell({ children }: { children: ReactNode }) {
         </div>
       </div>
 
-      {/* ── Mobile drawer ── */}
       {mobileOpen && (
         <div className="fixed inset-0 z-50 lg:hidden">
           <div
             className="absolute inset-0 bg-black/50 transition-opacity"
             onClick={() => setMobileOpen(false)}
           />
-          <aside
-            className="absolute bottom-0 left-0 top-0 flex w-[min(280px,86vw)] flex-col bg-surface-base shadow-2xl"
-            style={{ animation: "slideInLeft 180ms cubic-bezier(0.22, 1, 0.36, 1)" }}
-          >
+          <aside className="absolute bottom-0 left-0 top-0 flex w-[min(280px,86vw)] flex-col bg-surface-base shadow-2xl">
             <div className="flex h-12 items-center justify-between border-b border-border-subtle px-3">
               <OrcaWordmark size={28} subtitle={false} />
               <button
@@ -390,8 +437,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                   <div className="mb-1.5 px-2 text-[10px] font-semibold tracking-[0.14em] text-text-muted">
                     {section.title}
                   </div>
-                  <ul className="space-y-0.5"
-                  >
+                  <ul className="space-y-0.5">
                     {section.items.map((item) => {
                       const active = isActivePath(effectivePath, item.href);
                       const Icon = item.icon;
@@ -400,11 +446,11 @@ export function AppShell({ children }: { children: ReactNode }) {
                           <Link
                             href={item.href}
                             prefetch
-                            onMouseEnter={() => prefetchHref(item.href)}
+                            onPointerEnter={() => onIntent(item.href)}
+                            onTouchStart={() => onIntent(item.href)}
                             onClick={(e) => {
-                              e.preventDefault();
                               setMobileOpen(false);
-                              navigate(item.href);
+                              onNavClick(item.href, e);
                             }}
                             className={`flex items-center gap-2.5 rounded-lg px-2.5 py-2.5 text-[13.5px] font-medium transition-[background-color,color,transform] duration-150 active:scale-[0.98] ${
                               active
@@ -425,17 +471,6 @@ export function AppShell({ children }: { children: ReactNode }) {
           </aside>
         </div>
       )}
-
-      <style jsx global>{`
-        @keyframes slideInLeft {
-          from {
-            transform: translateX(-100%);
-          }
-          to {
-            transform: translateX(0);
-          }
-        }
-      `}</style>
     </div>
   );
 }
@@ -453,8 +488,8 @@ function NotifBell() {
     const onDoc = (e: MouseEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
     };
-    document.addEventListener("mousedown", onDoc);
-    return () => document.removeEventListener("mousedown", onDoc);
+    document.addEventListener("mousedown", onDoc as unknown as EventListener);
+    return () => document.removeEventListener("mousedown", onDoc as unknown as EventListener);
   }, []);
 
   return (
@@ -524,8 +559,8 @@ function UserMenu() {
     const onDoc = (e: MouseEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
     };
-    document.addEventListener("mousedown", onDoc);
-    return () => document.removeEventListener("mousedown", onDoc);
+    document.addEventListener("mousedown", onDoc as unknown as EventListener);
+    return () => document.removeEventListener("mousedown", onDoc as unknown as EventListener);
   }, []);
 
   const displayName =
@@ -553,6 +588,7 @@ function UserMenu() {
               </div>
               <Link
                 href="/settings"
+                prefetch
                 onClick={() => setOpen(false)}
                 className="flex items-center gap-2 px-3 py-2.5 text-[12.5px] text-text-secondary transition-colors hover:bg-surface-elevated hover:text-text-primary"
               >
@@ -573,6 +609,7 @@ function UserMenu() {
           ) : (
             <Link
               href="/login"
+              prefetch
               onClick={() => setOpen(false)}
               className="block px-3 py-2.5 text-[12.5px] text-text-secondary transition-colors hover:bg-surface-elevated hover:text-text-primary"
             >
