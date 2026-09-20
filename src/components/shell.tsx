@@ -106,7 +106,6 @@ function useRoutePrefetch() {
       if (!href || warmed.current.has(href)) return;
       warmed.current.add(href);
       try {
-        // Full route tree (static + dynamic down to loading boundary)
         void router.prefetch(href);
       } catch {
         warmed.current.delete(href);
@@ -123,6 +122,25 @@ function useRoutePrefetch() {
   );
 
   return { warm, warmMany };
+}
+
+function scheduleIdle(fn: () => void, timeoutMs: number): number {
+  if (typeof window === "undefined") {
+    return setTimeout(fn, Math.min(timeoutMs, 400)) as unknown as number;
+  }
+  const ric = window.requestIdleCallback?.bind(window);
+  if (typeof ric === "function") {
+    return ric(fn, { timeout: timeoutMs });
+  }
+  return setTimeout(fn, Math.min(timeoutMs, 400)) as unknown as number;
+}
+
+function cancelIdle(id: number) {
+  if (typeof window !== "undefined" && typeof window.cancelIdleCallback === "function") {
+    window.cancelIdleCallback(id);
+  } else {
+    clearTimeout(id);
+  }
 }
 
 export function AppShell({ children }: { children: ReactNode }) {
@@ -146,30 +164,10 @@ export function AppShell({ children }: { children: ReactNode }) {
    */
   useEffect(() => {
     let cancelled = false;
-    let idleId: number | undefined;
     let t1: ReturnType<typeof setTimeout> | undefined;
     let t2: ReturnType<typeof setTimeout> | undefined;
 
-    const schedule = (fn: () => void, timeout: number) => {
-      if (typeof window !== "undefined" && "requestIdleCallback" in window) {
-        return (
-          window as Window & {
-            requestIdleCallback: (cb: () => void, opts?: { timeout: number }) => number;
-          }
-        ).requestIdleCallback(fn, { timeout });
-      }
-      return window.setTimeout(fn, Math.min(timeout, 400)) as unknown as number;
-    };
-
-    const cancelIdle = (id: number) => {
-      if (typeof window !== "undefined" && "cancelIdleCallback" in window) {
-        (window as Window & { cancelIdleCallback: (id: number) => void }).cancelIdleCallback(id);
-      } else {
-        clearTimeout(id);
-      }
-    };
-
-    idleId = schedule(() => {
+    const idleId = scheduleIdle(() => {
       if (cancelled) return;
       warmMany(CORE_HREFS);
       t1 = setTimeout(() => {
@@ -185,7 +183,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
     return () => {
       cancelled = true;
-      if (idleId != null) cancelIdle(idleId);
+      cancelIdle(idleId);
       if (t1) clearTimeout(t1);
       if (t2) clearTimeout(t2);
     };
@@ -211,11 +209,6 @@ export function AppShell({ children }: { children: ReactNode }) {
     });
   };
 
-  /**
-   * Intent-based warm: pointerenter / focus / touchstart.
-   * Next.js also prioritizes hover intent in its own Link scheduler;
-   * we reinforce for routes already in the sidebar (always "in viewport").
-   */
   const onIntent = useCallback(
     (href: string) => {
       warm(href);
@@ -224,8 +217,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   );
 
   /**
-   * Soft click handler — do NOT preventDefault so Next.js <Link> owns navigation
-   * (client transition + its internal prefetch cache). We only paint optimistic UI.
+   * Soft click — do NOT preventDefault so Next.js <Link> owns navigation.
    * Modifier / middle-click still open new tabs natively.
    */
   const onNavClick = useCallback(
@@ -485,11 +477,11 @@ function NotifBell() {
   const articles = data?.articles ?? [];
 
   useEffect(() => {
-    const onDoc = (e: MouseEvent) => {
+    const onDoc = (e: Event) => {
       if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
     };
-    document.addEventListener("mousedown", onDoc as unknown as EventListener);
-    return () => document.removeEventListener("mousedown", onDoc as unknown as EventListener);
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
   }, []);
 
   return (
@@ -556,11 +548,11 @@ function UserMenu() {
   );
 
   useEffect(() => {
-    const onDoc = (e: MouseEvent) => {
+    const onDoc = (e: Event) => {
       if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
     };
-    document.addEventListener("mousedown", onDoc as unknown as EventListener);
-    return () => document.removeEventListener("mousedown", onDoc as unknown as EventListener);
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
   }, []);
 
   const displayName =
