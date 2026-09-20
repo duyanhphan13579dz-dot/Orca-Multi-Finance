@@ -220,7 +220,7 @@ export function AiTab() {
         <div className="flex items-start gap-2 rounded-lg border border-border-subtle bg-surface-elevated p-3 text-[12px] text-text-secondary">
           <ShieldCheck className="mt-0.5 size-4 shrink-0 text-positive" />
           <span>
-            Engine deterministic (dữ liệu thật) luôn hoạt động. Khi server cấu hình <code className="text-accent-primary">AI_PROVIDER_KEY</code>, Agent tự nâng cấp lên LLM với context giới hạn trong dữ liệu đã fetch. API key không bao giờ đi qua trình duyệt{showKey ? "" : " — và không thể xem từ UI"}.
+            Engine deterministic (dữ liệu thật) luôn hoạt động. Khi server cấu hình <code className="text-accent-primary">OPENROUTER_API_KEY</code>, Agent tự nâng cấp lên LLM với context giới hạn trong dữ liệu đã fetch. API key không bao giờ đi qua trình duyệt{showKey ? "" : " — và không thể xem từ UI"}.
           </span>
         </div>
       </Section>
@@ -305,27 +305,26 @@ export function SecurityTab() {
                 <div className="truncate text-[12px] text-text-primary">{s.userAgent?.slice(0, 90) ?? "Thiết bị không xác định"}</div>
                 <div className="text-[10.5px] text-text-muted">
                   {new Date(s.createdAt).toLocaleString("vi-VN")} · hết hạn {new Date(s.expiresAt).toLocaleDateString("vi-VN")}
+                  {s.current ? " · phiên hiện tại" : ""}
                 </div>
               </div>
-              {s.current ? <Badge tone="up">phiên này</Badge> : (
-                <button onClick={() => revoke(s.id)} className="rounded-md border border-negative/40 px-2 py-1 text-[11px] text-negative hover:bg-negative/10">Thu hồi</button>
+              {!s.current && (
+                <button onClick={() => revoke(s.id)} className="text-[11px] text-negative hover:underline">Thu hồi</button>
               )}
             </li>
           ))}
-          {!sess?.sessions?.length && <li className="text-[12px] text-text-muted">Không có phiên nào.</li>}
         </ul>
       </Section>
 
-      <Section title="Hoạt động gần đây" desc="Audit trail của tài khoản (tối đa 20 sự kiện).">
-        <ul className="space-y-1">
-          {(act?.activity ?? []).map((a) => (
-            <li key={a.id} className="flex items-center gap-2 text-[12px]">
-              <span className={`size-1.5 rounded-full ${a.action.includes("failed") ? "bg-negative" : "bg-positive"}`} />
-              <span className="text-text-primary">{ACTION_VI[a.action] ?? a.action}</span>
-              <span className="num ml-auto text-[10.5px] text-text-muted">{new Date(a.createdAt).toLocaleString("vi-VN")}</span>
+      <Section title="Hoạt động gần đây" desc="Audit log đăng nhập / đổi mật khẩu / thu hồi phiên.">
+        <ul className="max-h-64 space-y-1 overflow-y-auto">
+          {(act?.activity ?? []).slice(0, 20).map((a) => (
+            <li key={a.id} className="flex items-center gap-2 border-b border-border-subtle/50 py-1.5 text-[11.5px]">
+              <span className="w-36 shrink-0 text-text-muted">{new Date(a.createdAt).toLocaleString("vi-VN")}</span>
+              <span className="font-medium text-text-primary">{ACTION_VI[a.action] ?? a.action}</span>
             </li>
           ))}
-          {!act?.activity?.length && <li className="text-[12px] text-text-muted">Chưa có hoạt động.</li>}
+          {!act?.activity?.length && <li className="text-text-muted">Chưa có hoạt động.</li>}
         </ul>
       </Section>
     </>
@@ -334,62 +333,37 @@ export function SecurityTab() {
 
 /* ---------------------------------- SYSTEM --------------------------------- */
 
-interface SystemInfo {
-  app: { name: string; version: string; environment: string };
-  runtime: { uptimeSec: number; serverTime: string };
-  database: { connected: boolean; latencyMs: number | null };
-  redis: { configured: boolean; connected: boolean };
-  dataEngine: { providersTotal: number; providersHealthy: number; providersDown: number; cache: { entries: number; hits: number; staleServed: number; inflight: number } };
-  features: Record<string, boolean>;
-}
-
 export function SystemTab() {
-  const { data } = useApi<SystemInfo>("/api/v1/system/info", { refreshInterval: 30_000 });
-  const d = data;
+  const { data, isLoading } = useApi<Record<string, unknown>>("/api/v1/system/info", { refreshInterval: 15_000 });
+  if (isLoading && !data) return <Panel><p className="text-[12px] text-text-muted">Đang tải thông tin hệ thống…</p></Panel>;
+  const features = (data?.features ?? {}) as Record<string, boolean>;
   return (
-    <>
-      <Section title="Ứng dụng" desc="Thông tin build không nhạy cảm.">
-        <Row label="Application"><span className="num text-[12.5px] text-text-primary">{d?.app.name ?? "ORCA Financial"} v{d?.app.version ?? "—"}</span></Row>
-        <Row label="Environment"><Badge tone="accent">{d?.app.environment ?? "—"}</Badge></Row>
-        <Row label="Server time"><span className="num text-[12.5px] text-text-secondary">{d ? new Date(d.runtime.serverTime).toLocaleString("vi-VN") : "—"}</span></Row>
-        <Row label="Uptime (process)"><span className="num text-[12.5px] text-text-secondary">{d ? `${Math.floor(d.runtime.uptimeSec / 60)}p ${d.runtime.uptimeSec % 60}s` : "—"}</span></Row>
-      </Section>
-      <Section title="Data Engine" desc="Trạng thái hạ tầng dữ liệu (chi tiết provider tại /system).">
-        <Row label="PostgreSQL" hint={d?.database.latencyMs != null ? `latency ${d.database.latencyMs}ms` : undefined}>
-          <StatusPill ok={d?.database.connected} />
-        </Row>
-        <Row label="Redis" hint={d?.redis.configured ? "đã cấu hình" : "chưa cấu hình REDIS_URL — đang chạy memory cache"}>
-          <StatusPill ok={d?.redis.configured ? d.redis.connected : undefined} na={!d?.redis.configured} />
-        </Row>
-        <Row label="Providers" hint="healthy / tổng số">
-          <span className="num text-[12.5px] text-text-primary">{d ? `${d.dataEngine.providersHealthy}/${d.dataEngine.providersTotal}` : "—"}{d && d.dataEngine.providersDown > 0 ? ` · ${d.dataEngine.providersDown} down` : ""}</span>
-        </Row>
-        <Row label="Cache" hint="entries · hits · stale phục vụ">
-          <span className="num text-[12.5px] text-text-secondary">{d ? `${d.dataEngine.cache.entries} · ${d.dataEngine.cache.hits} · ${d.dataEngine.cache.staleServed}` : "—"}</span>
-        </Row>
-        <a href="/system" className="inline-flex items-center gap-1.5 text-[12px] text-accent-primary hover:underline">
-          <Server className="size-3.5" /> Mở Ops Dashboard đầy đủ
-        </a>
-      </Section>
-      <Section title="Nguồn dữ liệu đã cấu hình" desc="Feature flags — chỉ hiển thị có/không, không lộ khóa.">
-        <div className="grid grid-cols-2 gap-1.5">
-          {d && Object.entries(d.features).map(([k, v]) => (
-            <div key={k} className="flex items-center gap-2 rounded-md border border-border-subtle bg-surface-elevated px-2.5 py-1.5">
-              {v ? <CheckCircle2 className="size-3.5 text-positive" /> : <AlertTriangle className="size-3.5 text-warning" />}
-              <span className="text-[11.5px] text-text-secondary">{k}</span>
-              <span className="ml-auto text-[10px] text-text-muted">{v ? "configured" : "pending"}</span>
-            </div>
-          ))}
+    <Section title="Hệ thống" desc="Trạng thái runtime server — không chứa lộ secret.">
+      <div className="grid gap-2 sm:grid-cols-2">
+        <div className="rounded-lg border border-border-subtle bg-surface-elevated p-3">
+          <div className="mb-1 flex items-center gap-1.5 text-[11px] uppercase tracking-wider text-text-muted">
+            <Server className="size-3.5" /> Runtime
+          </div>
+          <pre className="overflow-x-auto text-[11px] text-text-secondary">{JSON.stringify(data?.runtime ?? data?.app ?? {}, null, 2)}</pre>
         </div>
-      </Section>
-    </>
+        <div className="rounded-lg border border-border-subtle bg-surface-elevated p-3">
+          <div className="mb-1 flex items-center gap-1.5 text-[11px] uppercase tracking-wider text-text-muted">
+            <Database className="size-3.5" /> Database / Redis
+          </div>
+          <pre className="overflow-x-auto text-[11px] text-text-secondary">{JSON.stringify({ database: data?.database, redis: data?.redis }, null, 2)}</pre>
+        </div>
+      </div>
+      <div className="mt-2 flex flex-wrap gap-2">
+        {Object.entries(features).map(([k, v]) => (
+          <Badge key={k} tone={v ? "up" : "neutral"}>{k}: {v ? "on" : "off"}</Badge>
+        ))}
+      </div>
+      {features.llmConfigured === false && (
+        <div className="mt-2 flex items-start gap-2 rounded-lg border border-warning/30 bg-warning/5 p-2.5 text-[12px] text-text-secondary">
+          <AlertTriangle className="mt-0.5 size-4 shrink-0 text-warning" />
+          <span>LLM chưa cấu hình — set <code className="text-accent-primary">OPENROUTER_API_KEY</code> trên Vercel rồi redeploy.</span>
+        </div>
+      )}
+    </Section>
   );
 }
-
-function StatusPill({ ok, na }: { ok: boolean | undefined; na?: boolean }) {
-  if (na) return <Badge>memory mode</Badge>;
-  if (ok === undefined) return <Badge>—</Badge>;
-  return <Badge tone={ok ? "up" : "down"}><Database className="size-3" /> {ok ? "connected" : "error"}</Badge>;
-}
-
-export { Panel };
