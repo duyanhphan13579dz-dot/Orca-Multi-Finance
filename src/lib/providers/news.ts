@@ -137,13 +137,10 @@ function extractCdataOrText(block: string, tag: string): string {
 }
 
 function extractLink(block: string): string {
-  // <link>url</link>
   const plain = extractTag(block, "link");
   if (/^https?:\/\//i.test(plain)) return plain.trim();
-  // Atom <link href="..." />
   const href = block.match(/<link[^>]+href=["']([^"']+)["']/i);
   if (href?.[1]) return href[1];
-  // guid sometimes is the permalink
   const guid = extractTag(block, "guid");
   if (/^https?:\/\//i.test(guid)) return guid.trim();
   return "";
@@ -171,7 +168,8 @@ function tag(text: string): { symbols: string[]; sector: string | null } {
   const symbols = new Set<string>();
   const upper = text.toUpperCase();
   for (const t of VN_TICKERS) {
-    if (new RegExp(`\\b${t}\\b`, "i").test(upper) && /\\b[A-Z]{3}\\b/.test(t)) symbols.add(t);
+    // word-boundary match; VN tickers are 3-letter codes
+    if (t.length >= 3 && new RegExp(`\\b${t}\\b`).test(upper)) symbols.add(t);
   }
   const lower = text.toLowerCase();
   for (const [kw, sym] of Object.entries(CRYPTO_KW)) {
@@ -224,7 +222,6 @@ export async function fetchFeed(feed: FeedDef): Promise<NewsArticle[]> {
       extractCdataOrText(block, "content") ||
       null;
     const publishedAt = parsePublished(block);
-    // Reject clearly broken future timestamps (> 2h ahead)
     if (Date.parse(publishedAt) - Date.now() > 2 * 3_600_000) continue;
     const { symbols, sector } = tag(`${title} ${summary ?? ""}`);
     out.push({
@@ -260,7 +257,6 @@ function withFeedBudget<T>(p: Promise<T>, ms: number): Promise<T> {
   });
 }
 
-/** Run promises with limited concurrency. */
 async function mapPool<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<PromiseSettledResult<R>[]> {
   const results: PromiseSettledResult<R>[] = new Array(items.length);
   let next = 0;
