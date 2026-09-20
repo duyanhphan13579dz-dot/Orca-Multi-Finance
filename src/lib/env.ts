@@ -73,6 +73,7 @@ export const env = {
   groqBaseUrl: opt(process.env.GROQ_BASE_URL) ?? "https://api.groq.com/openai/v1",
   groqModel: opt(process.env.GROQ_MODEL),
 
+  /** OpenRouter first; AI_PROVIDER_KEY kept only as legacy OpenAI-compatible fallback */
   aiProviderKey:
     opt(process.env.OPENROUTER_API_KEY) ??
     opt(process.env.AI_PROVIDER_KEY) ??
