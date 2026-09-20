@@ -204,7 +204,7 @@ const SentimentPanel = memo(function SentimentPanel({
           </div>
         )}
         {!llm && llmStatus === "skipped" && (
-          <p className="text-[10px] text-text-muted">LLM chưa bật (AI_PROVIDER_KEY) — chỉ điểm quant.</p>
+          <p className="text-[10px] text-text-muted">LLM chưa bật (OPENROUTER_API_KEY) — chỉ điểm quant.</p>
         )}
         {!llm && (llmStatus === "unavailable" || llmStatus === "failed") && (
           <p className="text-[10px] text-text-muted">LLM tạm không phản hồi — giữ điểm quant.</p>
