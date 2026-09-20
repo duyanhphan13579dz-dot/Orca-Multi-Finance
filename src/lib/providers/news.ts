@@ -7,6 +7,12 @@ import { ProviderError } from "./binance";
 /**
  * News aggregation engine — real RSS ingestion with timestamp validation,
  * deduplication, symbol/sector tagging. Cadence handled by the service cache.
+ *
+ * Resilience:
+ *  - generous per-feed timeout + 1 retry (VN RSS often slow from edge regions)
+ *  - concurrency-limited fan-out (avoid serverless connection storms)
+ *  - Atom <entry> + RSS <item>
+ *  - empty aggregate throws so soft-SWR keeps last good snapshot
  */
 
 export interface FeedDef {
@@ -25,8 +31,9 @@ export const FEEDS: FeedDef[] = [
   { name: "VnExpress — Kinh doanh", url: "https://vnexpress.net/rss/kinh-doanh.rss", category: "market", lang: "vi" },
   { name: "VietnamBiz — Tài chính", url: "https://vietnambiz.vn/rss/tai-chinh.rss", category: "market", lang: "vi" },
   { name: "VietnamBiz — Chứng khoán", url: "https://vietnambiz.vn/rss/chung-khoan.rss", category: "market", lang: "vi" },
+  { name: "Tuổi Trẻ — Kinh doanh", url: "https://tuoitre.vn/rss/kinh-doanh.rss", category: "market", lang: "vi" },
+  { name: "BBC Vietnamese — Business", url: "https://feeds.bbci.co.uk/vietnamese/business/rss.xml", category: "macro", lang: "vi" },
   { name: "CoinTelegraph", url: "https://cointelegraph.com/rss", category: "crypto", lang: "en" },
-  // Phase 0 — Google News RSS (public, no key) for VN + policy + Fed coverage
   {
     name: "Google News — VN-Index",
     url: "https://news.google.com/rss/search?q=VN-Index+OR+VNINDEX+OR+%22ch%E1%BB%A9ng+kho%C3%A1n%22&hl=vi&gl=VN&ceid=VN:vi",
@@ -48,6 +55,11 @@ export const FEEDS: FeedDef[] = [
 ];
 
 export const NEWS_PROVIDER = "rss-news";
+
+const FEED_TIMEOUT_MS = 10_000;
+const FEED_RETRIES = 1;
+const FEED_BUDGET_MS = 12_000;
+const CONCURRENCY = 4;
 
 /* ------------------------------ tagging dicts ------------------------------ */
 
@@ -91,12 +103,13 @@ const SECTOR_KEYWORDS: [RegExp, string][] = [
 const decodeXml = (s: string) =>
   s
     .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1")
-    .replace(/&/g, "&")
-    .replace(/</g, "<")
-    .replace(/>/g, ">")
-    .replace(/"/g, '"')
-    .replace(/&#39;|'/g, "'")
-    .replace(/&#(\d+);/g, (_, c) => String.fromCharCode(Number(c)));
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;|&apos;/g, "'")
+    .replace(/&#(\d+);/g, (_, c) => String.fromCharCode(Number(c)))
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, h) => String.fromCharCode(parseInt(h, 16)));
 
 const stripTags = (s: string) => s.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
 
@@ -115,20 +128,45 @@ function tag(text: string): { symbols: string[]; sector: string | null } {
   return { symbols: [...symbols].slice(0, 8), sector };
 }
 
+function extractTag(raw: string, tagName: string): string {
+  const m = raw.match(new RegExp(`<${tagName}[^>]*>([\\s\\S]*?)</${tagName}>`, "i"));
+  return m ? decodeXml(m[1]).trim() : "";
+}
+
+function extractLink(raw: string): string {
+  const fromTag = extractTag(raw, "link");
+  if (fromTag && /^https?:\/\//i.test(fromTag)) return fromTag.trim();
+  const href = raw.match(/<link[^>]+href=["']([^"']+)["']/i)?.[1];
+  if (href && /^https?:\/\//i.test(href)) return href.trim();
+  const selfClose = raw.match(/<link[^>]*\/>\s*([^\s<]+)/i)?.[1];
+  if (selfClose && /^https?:\/\//i.test(selfClose)) return selfClose.trim();
+  const guid = extractTag(raw, "guid");
+  if (guid && /^https?:\/\//i.test(guid)) return guid.trim();
+  return (fromTag || href || selfClose || "").trim();
+}
+
 function itemsFromXml(xml: string, feed: FeedDef): NewsArticle[] {
   const items: NewsArticle[] = [];
-  const itemMatches = xml.match(/<item[\s\S]*?<\/item>/gi) ?? [];
+  const blocks =
+    xml.match(/<item[\s\S]*?<\/item>/gi) ??
+    xml.match(/<entry[\s\S]*?<\/entry>/gi) ??
+    [];
   const now = Date.now();
-  for (const raw of itemMatches.slice(0, 25)) {
-    const get = (tagName: string) => {
-      const m = raw.match(new RegExp(`<${tagName}[^>]*>([\\s\\S]*?)<\\/${tagName}>`, "i"));
-      return m ? decodeXml(m[1]).trim() : "";
-    };
-    const title = stripTags(get("title"));
-    const linkRaw = get("link") || raw.match(/<link[^>]*\/>\s*([^\s<]+)/i)?.[1] || "";
-    const url = linkRaw.trim();
-    const desc = stripTags(get("description")).slice(0, 400);
-    const pubRaw = get("pubDate") || get("date") || get("dc:date");
+  for (const raw of blocks.slice(0, 30)) {
+    const title = stripTags(extractTag(raw, "title"));
+    const url = extractLink(raw);
+    const desc = stripTags(
+      extractTag(raw, "description") ||
+        extractTag(raw, "summary") ||
+        extractTag(raw, "content") ||
+        extractTag(raw, "content:encoded"),
+    ).slice(0, 400);
+    const pubRaw =
+      extractTag(raw, "pubDate") ||
+      extractTag(raw, "published") ||
+      extractTag(raw, "updated") ||
+      extractTag(raw, "date") ||
+      extractTag(raw, "dc:date");
     let ts = Date.parse(pubRaw);
     if (!Number.isFinite(ts) || ts > now + 600_000 || ts < now - 30 * 86_400_000) {
       ts = now;
@@ -152,29 +190,71 @@ function itemsFromXml(xml: string, feed: FeedDef): NewsArticle[] {
 }
 
 export async function fetchFeed(feed: FeedDef): Promise<NewsArticle[]> {
-  const res = await httpText(feed.url, { provider: `news:${feed.name}`, timeoutMs: 3_500, retries: 0, headers: { Accept: "application/rss+xml,application/xml,text/xml,*/*" } });
-  if (!res.ok || !res.text) throw new ProviderError(`news feed ${feed.name}: ${res.error ?? "unreachable"}`, NEWS_PROVIDER);
-  return itemsFromXml(res.text, feed);
+  const res = await httpText(feed.url, {
+    provider: NEWS_PROVIDER,
+    timeoutMs: FEED_TIMEOUT_MS,
+    retries: FEED_RETRIES,
+    backoffBaseMs: 400,
+    headers: {
+      Accept: "application/rss+xml,application/xml,text/xml,application/atom+xml,*/*",
+      "Accept-Language": "vi,en;q=0.8",
+    },
+  });
+  if (!res.ok || !res.text) {
+    throw new ProviderError(`news feed ${feed.name}: ${res.error ?? "unreachable"}`, NEWS_PROVIDER);
+  }
+  const items = itemsFromXml(res.text, feed);
+  if (!items.length) {
+    throw new ProviderError(`news feed ${feed.name}: empty parse`, NEWS_PROVIDER);
+  }
+  return items;
 }
 
 function withFeedBudget<T>(p: Promise<T>, ms: number): Promise<T> {
   return new Promise((resolve, reject) => {
     const t = setTimeout(() => reject(new Error("feed_budget")), ms);
     p.then(
-      (v) => { clearTimeout(t); resolve(v); },
-      (e) => { clearTimeout(t); reject(e); },
+      (v) => {
+        clearTimeout(t);
+        resolve(v);
+      },
+      (e) => {
+        clearTimeout(t);
+        reject(e);
+      },
     );
   });
 }
 
+/** Run promises with limited concurrency. */
+async function mapPool<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<PromiseSettledResult<R>[]> {
+  const results: PromiseSettledResult<R>[] = new Array(items.length);
+  let next = 0;
+  async function worker() {
+    while (next < items.length) {
+      const i = next++;
+      try {
+        results[i] = { status: "fulfilled", value: await fn(items[i]!) };
+      } catch (reason) {
+        results[i] = { status: "rejected", reason };
+      }
+    }
+  }
+  const n = Math.min(limit, items.length);
+  await Promise.all(Array.from({ length: n }, () => worker()));
+  return results;
+}
+
 /** Fan-out to all feeds, keep partial success, dedupe cross-feed. */
 export async function aggregateNews(): Promise<{ articles: NewsArticle[]; errors: string[] }> {
-  const results = await Promise.allSettled(FEEDS.map((f) => withFeedBudget(fetchFeed(f), 4_000)));
+  const results = await mapPool(FEEDS, CONCURRENCY, (f) =>
+    withFeedBudget(fetchFeed(f), FEED_BUDGET_MS),
+  );
   const seen = new Set<string>();
   const articles: NewsArticle[] = [];
   const errors: string[] = [];
   for (let i = 0; i < results.length; i++) {
-    const r = results[i];
+    const r = results[i]!;
     if (r.status === "rejected") {
       errors.push(r.reason instanceof Error ? r.reason.message : String(r.reason));
       continue;
@@ -187,5 +267,11 @@ export async function aggregateNews(): Promise<{ articles: NewsArticle[]; errors
     }
   }
   articles.sort((a, b) => Date.parse(b.publishedAt) - Date.parse(a.publishedAt));
-  return { articles: articles.slice(0, 80), errors };
+  if (!articles.length) {
+    throw new ProviderError(
+      `rss-news: all ${FEEDS.length} feeds failed (${errors.slice(0, 3).join("; ")})`,
+      NEWS_PROVIDER,
+    );
+  }
+  return { articles: articles.slice(0, 100), errors };
 }

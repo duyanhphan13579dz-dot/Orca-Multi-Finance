@@ -1,7 +1,7 @@
 import "server-only";
-import { cached } from "../cache";
+import { cached, peekStale } from "../cache";
 import { buildMeta } from "../freshness";
-import { aggregateNews } from "../providers/news";
+import { aggregateNews, FEEDS } from "../providers/news";
 import type { Meta, NewsArticle } from "../types";
 
 /**
@@ -29,13 +29,12 @@ export async function getNews(args: {
 }): Promise<{ articles: NewsArticle[]; errors: string[]; meta: Meta } | null> {
   try {
     const res = await cached("news:aggregate", {
-      ttlMs: 60_000,
-      staleMs: 45 * 60_000,
+      ttlMs: 90_000,
+      staleMs: 2 * 60 * 60_000,
       producer: aggregateNews,
     });
     let articles = res.value.articles;
 
-    // Soft category: never hard-drop all — keep original if filtered empty
     if (args.category) {
       const cat = args.category;
       const filtered = articles.filter((a) => {
@@ -84,15 +83,16 @@ export async function getNews(args: {
     const latest = limited.length
       ? Math.max(...limited.map((a) => Date.parse(a.publishedAt)))
       : null;
+    const feedCount = FEEDS.length;
     const meta = buildMeta({
-      source: "RSS multi-feed (CafeF, VnExpress, VietnamBiz, CoinTelegraph)",
+      source: `RSS multi-feed (${feedCount} nguồn)`,
       sourceTimestampMs: latest,
       cached: res.cached,
       stale: res.stale,
       degraded: res.value.errors.length > 0,
       partial: res.value.errors.length > 0,
       note: res.value.errors.length
-        ? `${res.value.errors.length}/9 nguồn tin tạm lỗi — hiển thị phần còn lại`
+        ? `${res.value.errors.length}/${feedCount} nguồn tin tạm lỗi — hiển thị phần còn lại`
         : undefined,
       slas: {
         liveSlaMs: 10 * 60_000,
@@ -103,6 +103,31 @@ export async function getNews(args: {
     void persist(limited);
     return { articles: limited, errors: res.value.errors, meta };
   } catch {
+    const stale = peekStale<{ articles: NewsArticle[]; errors: string[] }>("news:aggregate");
+    if (stale?.value?.articles?.length) {
+      const limited = stale.value.articles.slice(0, args.limit ?? 40);
+      const latest = limited.length
+        ? Math.max(...limited.map((a) => Date.parse(a.publishedAt)))
+        : null;
+      return {
+        articles: limited,
+        errors: stale.value.errors ?? [],
+        meta: buildMeta({
+          source: `RSS multi-feed (stale cache)`,
+          sourceTimestampMs: latest,
+          cached: true,
+          stale: true,
+          degraded: true,
+          partial: true,
+          note: "Nguồn tin đang lỗi — đang hiển thị bản cache gần nhất",
+          slas: {
+            liveSlaMs: 10 * 60_000,
+            freshSlaMs: 3_600_000,
+            delayedSlaMs: 6 * 3_600_000,
+          },
+        }),
+      };
+    }
     return null;
   }
 }
