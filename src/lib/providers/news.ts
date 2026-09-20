@@ -109,19 +109,19 @@ const SECTOR_KW: [RegExp, string][] = [
 
 /* ------------------------------ XML helpers ------------------------------ */
 
+const _AMP = "&";
 const decodeXml = (s: string) =>
   s
-    .replace(/</g, "<")
-    .replace(/>/g, ">")
-    .replace(/&/g, "&")
-    .replace(/"/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
-    .replace(/&#x([0-9a-fA-F]+);/g, (_, h) => String.fromCharCode(parseInt(h, 16)));
+    .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1")
+    .replace(new RegExp(_AMP + "amp;", "g"), _AMP)
+    .replace(new RegExp(_AMP + "lt;", "g"), "<")
+    .replace(new RegExp(_AMP + "gt;", "g"), ">")
+    .replace(new RegExp(_AMP + "quot;", "g"), '"')
+    .replace(new RegExp(_AMP + "#39;|" + _AMP + "apos;", "g"), "'")
+    .replace(new RegExp(_AMP + "#(\\d+);", "g"), (_, c) => String.fromCharCode(Number(c)))
+    .replace(new RegExp(_AMP + "#x([0-9a-fA-F]+);", "g"), (_, h) => String.fromCharCode(parseInt(h, 16)));
 
-function stripTags(s: string): string {
-  return decodeXml(s.replace(/<[^>]+>/g, " ")).replace(/\s+/g, " ").trim();
-}
+const stripTags = (s: string) => s.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
 
 function extractTag(block: string, tag: string): string {
   const re = new RegExp(`<${tag}(?:\\s[^>]*)?>([\\s\\S]*?)</${tag}>`, "i");
@@ -129,13 +129,23 @@ function extractTag(block: string, tag: string): string {
   return m ? decodeXml(m[1]).trim() : "";
 }
 
+function extractCdataOrText(block: string, tag: string): string {
+  const re = new RegExp(`<${tag}(?:\\s[^>]*)?>([\\s\\S]*?)</${tag}>`, "i");
+  const m = block.match(re);
+  if (!m) return "";
+  return stripTags(decodeXml(m[1]));
+}
+
 function extractLink(block: string): string {
+  // <link>url</link>
   const plain = extractTag(block, "link");
-  if (plain && /^https?:\/\//i.test(plain)) return plain;
+  if (/^https?:\/\//i.test(plain)) return plain.trim();
+  // Atom <link href="..." />
   const href = block.match(/<link[^>]+href=["']([^"']+)["']/i);
   if (href?.[1]) return href[1];
+  // guid sometimes is the permalink
   const guid = extractTag(block, "guid");
-  if (guid && /^https?:\/\//i.test(guid)) return guid;
+  if (/^https?:\/\//i.test(guid)) return guid.trim();
   return "";
 }
 
@@ -149,11 +159,10 @@ function extractItems(xml: string): string[] {
 
 function parsePublished(block: string): string {
   for (const tag of ["pubDate", "published", "updated", "dc:date"]) {
-    const v = extractTag(block, tag);
-    if (v) {
-      const t = Date.parse(v);
-      if (Number.isFinite(t)) return new Date(t).toISOString();
-    }
+    const raw = extractTag(block, tag);
+    if (!raw) continue;
+    const t = Date.parse(raw);
+    if (Number.isFinite(t)) return new Date(t).toISOString();
   }
   return new Date().toISOString();
 }
@@ -178,11 +187,11 @@ function tag(text: string): { symbols: string[]; sector: string | null } {
   return { symbols: [...symbols].slice(0, 8), sector };
 }
 
-function articleId(url: string, title: string): string {
+function makeId(url: string, title: string): string {
   return createHash("sha1").update(`${url}|${title}`).digest("hex").slice(0, 16);
 }
 
-/* ------------------------------ fetch + parse ------------------------------ */
+/* ------------------------------ per-feed fetch ------------------------------ */
 
 export async function fetchFeed(feed: FeedDef): Promise<NewsArticle[]> {
   const res = await httpText(feed.url, {
@@ -202,67 +211,70 @@ export async function fetchFeed(feed: FeedDef): Promise<NewsArticle[]> {
     throw new ProviderError(`news feed ${feed.name}: empty parse`, NEWS_PROVIDER);
   }
 
-  const articles: NewsArticle[] = [];
-  for (const block of items.slice(0, 30)) {
-    const title = stripTags(extractTag(block, "title"));
-    if (!title) continue;
-    const link = extractLink(block);
-    if (!link) continue;
-    const desc =
-      stripTags(extractTag(block, "description")) ||
-      stripTags(extractTag(block, "summary")) ||
-      stripTags(extractTag(block, "content")) ||
-      "";
+  const out: NewsArticle[] = [];
+  for (const block of items.slice(0, 25)) {
+    const title = extractCdataOrText(block, "title");
+    if (!title || title.length < 8) continue;
+    const url = extractLink(block);
+    if (!url) continue;
+    const summary =
+      extractCdataOrText(block, "description") ||
+      extractCdataOrText(block, "summary") ||
+      extractCdataOrText(block, "content:encoded") ||
+      extractCdataOrText(block, "content") ||
+      null;
     const publishedAt = parsePublished(block);
-    const { symbols, sector } = tag(`${title} ${desc}`);
-    articles.push({
-      id: articleId(link, title),
+    // Reject clearly broken future timestamps (> 2h ahead)
+    if (Date.parse(publishedAt) - Date.now() > 2 * 3_600_000) continue;
+    const { symbols, sector } = tag(`${title} ${summary ?? ""}`);
+    out.push({
+      id: makeId(url, title),
       title,
-      url: link,
+      url,
       source: feed.name,
-      publishedAt,
-      summary: desc.slice(0, 400) || null,
       category: feed.category,
+      publishedAt,
+      summary: summary ? summary.slice(0, 400) : null,
       relatedSymbols: symbols,
       relatedSector: sector,
     });
   }
-  return articles;
+  return out;
 }
 
-function withFeedBudget<T>(p: Promise<T>, ms: number): Promise<PromiseSettledResult<T>> {
-  return Promise.race([
+/* ------------------------------ aggregate ------------------------------ */
+
+function withFeedBudget<T>(p: Promise<T>, ms: number): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error("feed_budget")), ms);
     p.then(
-      (v) => ({ status: "fulfilled" as const, value: v }),
-      (e) => ({ status: "rejected" as const, reason: e }),
-    ),
-    new Promise<PromiseSettledResult<T>>((r) =>
-      setTimeout(
-        () => r({ status: "rejected", reason: new Error(`feed_budget_${ms}ms`) }),
-        ms,
-      ),
-    ),
-  ]);
+      (v) => {
+        clearTimeout(t);
+        resolve(v);
+      },
+      (e) => {
+        clearTimeout(t);
+        reject(e);
+      },
+    );
+  });
 }
 
-async function mapPool<T, R>(
-  items: T[],
-  concurrency: number,
-  fn: (item: T) => Promise<R>,
-): Promise<PromiseSettledResult<R>[]> {
+/** Run promises with limited concurrency. */
+async function mapPool<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<PromiseSettledResult<R>[]> {
   const results: PromiseSettledResult<R>[] = new Array(items.length);
-  let i = 0;
+  let next = 0;
   async function worker() {
-    while (i < items.length) {
-      const idx = i++;
+    while (next < items.length) {
+      const i = next++;
       try {
-        results[idx] = { status: "fulfilled", value: await fn(items[idx]!) };
-      } catch (e) {
-        results[idx] = { status: "rejected", reason: e };
+        results[i] = { status: "fulfilled", value: await fn(items[i]!) };
+      } catch (reason) {
+        results[i] = { status: "rejected", reason };
       }
     }
   }
-  const n = Math.min(concurrency, items.length);
+  const n = Math.min(limit, items.length);
   await Promise.all(Array.from({ length: n }, () => worker()));
   return results;
 }
@@ -270,10 +282,7 @@ async function mapPool<T, R>(
 /** Fan-out to all feeds, keep partial success, dedupe cross-feed. */
 export async function aggregateNews(): Promise<{ articles: NewsArticle[]; errors: string[] }> {
   const results = await mapPool(FEEDS, CONCURRENCY, (f) =>
-    withFeedBudget(fetchFeed(f), FEED_BUDGET_MS).then((r) => {
-      if (r.status === "fulfilled") return r.value;
-      throw r.reason;
-    }),
+    withFeedBudget(fetchFeed(f), FEED_BUDGET_MS),
   );
   const seen = new Set<string>();
   const articles: NewsArticle[] = [];
