@@ -14,6 +14,9 @@ import type {
 /**
  * Central market snapshot — single aggregation point consumed by the
  * dashboard, reports, and the AI agent (avoids per-component provider storms).
+ *
+ * Speed: overall budget ~2.8s — slow sections (news/commodities) soft-timeout
+ * so UI never waits on the slowest RSS feed.
  */
 
 export interface PulseResult {
@@ -49,32 +52,51 @@ function fmtPct(x: number | null | undefined, digits = 2): string {
   return `${x > 0 ? "+" : ""}${x.toFixed(digits)}%`;
 }
 
+/** Race a promise against a hard deadline; on timeout return null (soft fail). */
+function withBudget<T>(p: Promise<T>, ms: number): Promise<T | null> {
+  return Promise.race([
+    p.then((v) => v as T | null).catch(() => null),
+    new Promise<null>((r) => setTimeout(() => r(null), ms)),
+  ]);
+}
+
 export async function buildMarketSnapshot(): Promise<{ snapshot: MarketSnapshot; meta: Meta }> {
   const res = await cached("market:snapshot", {
-    ttlMs: 10_000,
+    ttlMs: 8_000,
     staleMs: 30 * 60_000,
     producer: async (): Promise<SnapshotPayload> => {
-      const [vnRes, cryptoRes, forexRes, commRes, newsRes] = await Promise.allSettled([
-        getVnIndices(),
-        getCryptoMarkets(),
-        getForexMarkets(),
-        getCommodityMarket(),
-        getNews({ limit: 24 }),
+      // Hot path budget: indices + crypto + forex must finish fast.
+      // News & commodities are nice-to-have within the same window.
+      const BUDGET_MS = 2_800;
+
+      const vnP = getVnIndices();
+      const cryptoP = getCryptoMarkets();
+      const forexP = getForexMarkets();
+      const commP = getCommodityMarket();
+      const newsP = getNews({ limit: 24 });
+
+      const [vnRes, cryptoRes, forexRes, commRes, newsRes] = await Promise.all([
+        withBudget(vnP, BUDGET_MS),
+        withBudget(cryptoP, BUDGET_MS),
+        withBudget(forexP, BUDGET_MS),
+        withBudget(commP, BUDGET_MS),
+        withBudget(newsP, BUDGET_MS),
       ]);
+
       const sections: Record<string, FreshnessStatus> = {
-        vn_stocks: vnRes.status === "fulfilled" && vnRes.value ? vnRes.value.meta.freshness : "UNAVAILABLE",
-        crypto: cryptoRes.status === "fulfilled" && cryptoRes.value ? cryptoRes.value.meta.freshness : "UNAVAILABLE",
-        forex: forexRes.status === "fulfilled" && forexRes.value ? forexRes.value.meta.freshness : "UNAVAILABLE",
-        commodities: commRes.status === "fulfilled" && commRes.value ? commRes.value.meta.freshness : "UNAVAILABLE",
-        news: newsRes.status === "fulfilled" && newsRes.value ? newsRes.value.meta.freshness : "UNAVAILABLE",
+        vn_stocks: vnRes ? vnRes.meta.freshness : "UNAVAILABLE",
+        crypto: cryptoRes ? cryptoRes.meta.freshness : "UNAVAILABLE",
+        forex: forexRes ? forexRes.meta.freshness : "UNAVAILABLE",
+        commodities: commRes ? commRes.meta.freshness : "UNAVAILABLE",
+        news: newsRes ? newsRes.meta.freshness : "UNAVAILABLE",
       };
-      const indices = vnRes.status === "fulfilled" ? vnRes.value?.items ?? null : null;
-      const crypto = cryptoRes.status === "fulfilled" && cryptoRes.value
-        ? { top: cryptoRes.value.rows.slice(0, 60), summary: cryptoRes.value.summary }
+      const indices = vnRes?.items ?? null;
+      const crypto = cryptoRes
+        ? { top: cryptoRes.rows.slice(0, 60), summary: cryptoRes.summary }
         : null;
-      const forex = forexRes.status === "fulfilled" ? forexRes.value?.data ?? null : null;
-      const commodities = commRes.status === "fulfilled" ? commRes.value?.data.rows ?? null : null;
-      const news = newsRes.status === "fulfilled" ? newsRes.value?.articles ?? null : null;
+      const forex = forexRes?.data ?? null;
+      const commodities = commRes?.data.rows ?? null;
+      const news = newsRes?.articles ?? null;
 
       const tsCandidates = [
         crypto ? Date.parse(crypto.summary.fetchedAt) : null,
@@ -87,6 +109,7 @@ export async function buildMarketSnapshot(): Promise<{ snapshot: MarketSnapshot;
       const notes: string[] = [];
       if (sections.vn_stocks === "UNAVAILABLE") notes.push("VNStock chưa khả dụng — nhóm dữ liệu chứng khoán Việt Nam đang ở trạng thái UNAVAILABLE");
       if (sections.forex === "DELAYED" || sections.forex === "STALE") notes.push("Forex đang dùng tỷ giá tham chiếu ngày (ECB/exchangerate-api)");
+      if (!newsRes) notes.push("News soft-timeout — snapshot không chờ RSS chậm");
       const vnSession = getVnSession();
       return {
         snapshot: { indices, crypto, forex, commodities, news, pulse, vnSession, vnSessionHint: sessionFreshnessHint(vnSession.state) },
