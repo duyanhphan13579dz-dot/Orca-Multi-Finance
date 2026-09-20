@@ -73,8 +73,16 @@ export async function getPublicQuotes(symbols: string[]): Promise<{
   if (!uniq.length) return { quotes: [], sourceTs: null, sources: [] };
 
   const settled = await Promise.allSettled([
-    getVpsQuotes(uniq).then((r) => ({ ...r, source: "vps" as const })),
-    getSsiIboardQuotes(uniq).then((r) => ({ ...r, source: "ssi-iboard" as const })),
+    getVpsQuotes(uniq).then((quotes) => ({
+      quotes,
+      sourceTs: quotes.length ? Date.now() : null,
+      source: "vps" as const,
+    })),
+    getSsiIboardQuotes(uniq).then((quotes) => ({
+      quotes,
+      sourceTs: quotes.length ? Date.now() : null,
+      source: "ssi-iboard" as const,
+    })),
   ]);
 
   const batches: Array<{ quotes: Quote[]; sourceTs: number | null; source: string }> = [];
@@ -97,7 +105,7 @@ export async function getPublicIndices(
   const byCode = new Map<string, IndexQuote>();
   let newest: number | null = null;
 
-  const [yahooRows, vps] = await Promise.all([
+  const [yahooRows, vpsPack] = await Promise.all([
     Promise.all(
       codes.map(async (code) => {
         const ySym = YAHOO_INDEX_MAP[code.toUpperCase()] ?? `${code}.VN`;
@@ -119,7 +127,9 @@ export async function getPublicIndices(
         }
       }),
     ),
-    getVpsQuotes(want).catch(() => ({ quotes: [] as Quote[], sourceTs: null as number | null })),
+    getVpsQuotes(want)
+      .then((quotes) => ({ quotes, sourceTs: quotes.length ? Date.now() : null }))
+      .catch(() => ({ quotes: [] as Quote[], sourceTs: null as number | null })),
   ]);
 
   for (const row of yahooRows) {
@@ -136,12 +146,12 @@ export async function getPublicIndices(
     });
   }
 
-  for (const q of vps.quotes) {
+  for (const q of vpsPack.quotes) {
     const code = q.symbol.toUpperCase().replace("HNXINDEX", "HNX");
     if (!want.includes(code)) continue;
     const existing = byCode.get(code);
     if (!existing && q.price != null) {
-      const ts = q.updatedAt ? Date.parse(q.updatedAt) : Date.now();
+      const ts = q.updatedAt ? Date.parse(String(q.updatedAt)) : Date.now();
       if (newest == null || ts > newest) newest = ts;
       byCode.set(code, {
         code,
@@ -150,7 +160,7 @@ export async function getPublicIndices(
         change: q.change ?? 0,
         changePercent: q.changePercent ?? 0,
         volume: q.volume ?? null,
-        updatedAt: q.updatedAt ?? null,
+        updatedAt: q.updatedAt ? String(q.updatedAt) : null,
       });
     } else if (existing) {
       if (existing.volume == null && q.volume != null) existing.volume = q.volume;
@@ -159,7 +169,7 @@ export async function getPublicIndices(
 
   const items = [...byCode.values()];
   if (!items.length) throw new ProviderError("public indices: empty", PUBLIC_VN);
-  return { items, sourceTs: newest ?? vps.sourceTs };
+  return { items, sourceTs: newest ?? vpsPack.sourceTs };
 }
 
 type EntradeOhlc = {
