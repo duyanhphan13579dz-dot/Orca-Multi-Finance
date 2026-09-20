@@ -3,16 +3,8 @@ import { env } from "../env";
 import { httpJson } from "../http";
 
 /**
- * LLM GATEWAY — OpenRouter-first, role-based model selection + sequential cascade.
- *
- * Env (Vercel / .env):
- *   OPENROUTER_API_KEY              — primary key
- *   OPENROUTER_MODEL                — default model id (provider/model[:free])
- *   AI_MODEL_REASONING              — deep reasoning
- *   AI_MODEL_REASONING_FALLBACKS    — comma list after primary
- *   AI_MODEL_REPORT / AI_MODEL_ANALYSIS
- *   AI_MODEL_REPORT_FALLBACKS / AI_MODEL_ANALYSIS_FALLBACKS
- *   GROQ_* + AI_LLM_FALLBACK_BACKEND=groq — last-resort when OpenRouter 429/5xx
+ * LLM GATEWAY — OpenRouter-first + fast cascade (production).
+ * Race first 2 models, cap attempts, short fallback timeout, soft cooldown.
  */
 
 export type LlmRole = "reasoning" | "analysis" | "classification" | "report";
@@ -24,13 +16,15 @@ export interface LlmResult {
   role: LlmRole;
   latencyMs: number;
   provider: "openrouter" | "groq" | "openai-compatible";
-  /** Models tried before success (empty if first candidate worked) */
   attemptedModels?: string[];
-  /** true if response came from AI_LLM_FALLBACK_BACKEND (e.g. Groq) */
   usedBackendFallback?: boolean;
+  raced?: boolean;
 }
 
 export type ChatTurn = { role: "user" | "assistant"; content: string };
+
+const modelCooldownUntil = new Map<string, number>();
+const COOLDOWN_MS = 45_000;
 
 function firstDefined(...vals: (string | undefined)[]): string | undefined {
   for (const v of vals) {
@@ -51,15 +45,35 @@ function dedupeModels(ids: (string | undefined | null)[]): string[] {
   return out;
 }
 
-/** Primary model for role (first in cascade). */
+function markCooldown(model: string) {
+  modelCooldownUntil.set(model, Date.now() + COOLDOWN_MS);
+}
+
+function isCooling(model: string): boolean {
+  const until = modelCooldownUntil.get(model);
+  if (!until) return false;
+  if (Date.now() >= until) {
+    modelCooldownUntil.delete(model);
+    return false;
+  }
+  return true;
+}
+
+function maxCascade(): number {
+  const n = Number(process.env.AI_LLM_MAX_CASCADE ?? env.aiLlmMaxCascade ?? 3);
+  if (!Number.isFinite(n) || n < 1) return 3;
+  return Math.min(6, Math.floor(n));
+}
+
+function cascadeMode(): "race" | "sequential" {
+  const m = (process.env.AI_LLM_CASCADE_MODE ?? env.aiLlmCascadeMode ?? "race").toLowerCase();
+  return m === "sequential" ? "sequential" : "race";
+}
+
 export function modelFor(role: LlmRole): string {
   return modelsFor(role)[0] ?? "qwen/qwen3.8-27b:free";
 }
 
-/**
- * Ordered candidate list: primary → role fallbacks → OPENROUTER_MODEL → safe free default.
- * Services keep calling modelFor(); llmChat walks the full cascade.
- */
 export function modelsFor(role: LlmRole): string[] {
   if (role === "reasoning") {
     return dedupeModels([
@@ -73,12 +87,7 @@ export function modelsFor(role: LlmRole): string[] {
   }
   if (role === "report") {
     return dedupeModels([
-      firstDefined(
-        env.aiModelReport,
-        env.aiModelAnalysis,
-        process.env.AI_MODEL_REPORT,
-        process.env.AI_MODEL_ANALYSIS,
-      ),
+      firstDefined(env.aiModelReport, env.aiModelAnalysis, process.env.AI_MODEL_REPORT, process.env.AI_MODEL_ANALYSIS),
       ...env.aiModelReportFallbacks,
       ...env.aiModelAnalysisFallbacks,
       env.openrouterModel,
@@ -90,12 +99,7 @@ export function modelsFor(role: LlmRole): string[] {
   }
   if (role === "analysis") {
     return dedupeModels([
-      firstDefined(
-        env.aiModelAnalysis,
-        env.aiModelReport,
-        process.env.AI_MODEL_ANALYSIS,
-        process.env.AI_MODEL_REPORT,
-      ),
+      firstDefined(env.aiModelAnalysis, env.aiModelReport, process.env.AI_MODEL_ANALYSIS, process.env.AI_MODEL_REPORT),
       ...env.aiModelAnalysisFallbacks,
       ...env.aiModelReportFallbacks,
       env.openrouterModel,
@@ -105,7 +109,6 @@ export function modelsFor(role: LlmRole): string[] {
       "openrouter/free",
     ]);
   }
-  // classification — light / default
   return dedupeModels([
     env.openrouterModel,
     env.aiModel,
@@ -116,10 +119,7 @@ export function modelsFor(role: LlmRole): string[] {
   ]);
 }
 
-function resolveProvider(
-  model: string,
-  backend?: LlmBackend,
-): {
+function resolveProvider(model: string, backend?: LlmBackend): {
   baseUrl: string;
   apiKey: string | undefined;
   provider: LlmResult["provider"];
@@ -138,22 +138,16 @@ function resolveProvider(
       provider: "openrouter",
     };
   }
-
   if (env.aiBaseUrl?.trim()) {
     const base = env.aiBaseUrl.replace(/\/$/, "");
     const isOr = base.includes("openrouter");
     const isGroq = base.includes("groq");
     return {
       baseUrl: base,
-      apiKey: isOr
-        ? env.openrouterApiKey ?? env.aiProviderKey
-        : isGroq
-          ? env.groqApiKey ?? env.aiProviderKey
-          : env.aiProviderKey,
+      apiKey: isOr ? env.openrouterApiKey ?? env.aiProviderKey : isGroq ? env.groqApiKey ?? env.aiProviderKey : env.aiProviderKey,
       provider: isOr ? "openrouter" : isGroq ? "groq" : "openai-compatible",
     };
   }
-
   if (env.openrouterApiKey || model.includes("/")) {
     return {
       baseUrl: "https://openrouter.ai/api/v1",
@@ -161,7 +155,6 @@ function resolveProvider(
       provider: "openrouter",
     };
   }
-
   if (env.groqApiKey) {
     return {
       baseUrl: (env.groqBaseUrl ?? "https://api.groq.com/openai/v1").replace(/\/$/, ""),
@@ -169,26 +162,20 @@ function resolveProvider(
       provider: "groq",
     };
   }
-
-  return {
-    baseUrl: "https://api.openai.com/v1",
-    apiKey: env.aiProviderKey,
-    provider: "openai-compatible",
-  };
+  return { baseUrl: "https://api.openai.com/v1", apiKey: env.aiProviderKey, provider: "openai-compatible" };
 }
 
 export function llmConfigured(): boolean {
   return Boolean(env.openrouterApiKey || env.aiProviderKey || env.groqApiKey);
 }
 
-/** Registry (no secrets) — GET /api/v1/system/llm */
 export function llmRegistryInfo() {
   const roles: LlmRole[] = ["reasoning", "analysis", "report", "classification"];
   const models: Record<string, string> = {};
   const cascades: Record<string, string[]> = {};
   for (const r of roles) {
     models[r] = modelFor(r);
-    cascades[r] = modelsFor(r);
+    cascades[r] = modelsFor(r).slice(0, maxCascade());
   }
   const sample = modelFor("analysis");
   const { baseUrl, provider } = resolveProvider(sample);
@@ -199,6 +186,8 @@ export function llmRegistryInfo() {
     models,
     cascades,
     cascadeEnabled: true,
+    cascadeMode: cascadeMode(),
+    maxCascade: maxCascade(),
     fallbackBackend:
       env.aiLlmFallbackBackend === "groq" && env.groqApiKey
         ? { backend: "groq", model: env.groqModel ?? null }
@@ -214,6 +203,8 @@ export function llmRegistryInfo() {
       AI_MODEL_REPORT_FALLBACKS: env.aiModelReportFallbacks.length > 0,
       GROQ_API_KEY: Boolean(env.groqApiKey),
       AI_LLM_FALLBACK_BACKEND: env.aiLlmFallbackBackend || null,
+      AI_LLM_CASCADE_MODE: cascadeMode(),
+      AI_LLM_MAX_CASCADE: maxCascade(),
       AI_PROVIDER_KEY: Boolean(process.env.AI_PROVIDER_KEY?.trim()),
     },
     openrouterModelResolved: env.openrouterModel ?? env.aiModel ?? null,
@@ -229,29 +220,29 @@ interface ChatOptions {
   timeoutMs?: number;
   modelOverride?: string;
   backend?: LlmBackend;
-  /** Skip cascade — only try modelOverride / modelFor once (default false) */
   disableCascade?: boolean;
 }
 
 type ChatResponse = { choices?: { message?: { content?: string } }[] };
 
+type CallOutcome = {
+  result: LlmResult | null;
+  rateLimited: boolean;
+  providerError: boolean;
+  invalidModel: boolean;
+};
+
 async function callOnce(
   model: string,
   role: LlmRole,
   opts: ChatOptions,
-  backend?: LlmBackend,
-): Promise<{
-  result: LlmResult | null;
-  rateLimited: boolean;
-  providerError: boolean;
-}> {
+  backend: LlmBackend | undefined,
+  timeoutMs: number,
+): Promise<CallOutcome> {
   const { baseUrl, apiKey, provider } = resolveProvider(model, backend);
-  if (!apiKey) {
-    return { result: null, rateLimited: false, providerError: true };
-  }
+  if (!apiKey) return { result: null, rateLimited: false, providerError: true, invalidModel: false };
 
   const t0 = performance.now();
-
   const history = (opts.history ?? [])
     .filter((t) => t.content?.trim())
     .slice(-16)
@@ -281,7 +272,7 @@ async function callOnce(
     const res = await httpJson<ChatResponse>(`${baseUrl}/chat/completions`, {
       provider: `llm:${provider}:${role}`,
       method: "POST",
-      timeoutMs: opts.timeoutMs ?? 45_000,
+      timeoutMs,
       retries: 0,
       headers,
       body: JSON.stringify({
@@ -294,11 +285,15 @@ async function callOnce(
 
     const status = res.status ?? (res.ok ? 200 : 500);
     const rateLimited = status === 429;
+    const invalidModel = status === 400 || status === 404;
     const providerError = !res.ok || status >= 500;
     const text = res.data?.choices?.[0]?.message?.content;
+
     if (!res.ok || !text || !text.trim()) {
-      return { result: null, rateLimited, providerError };
+      if (rateLimited || providerError || invalidModel) markCooldown(model);
+      return { result: null, rateLimited, providerError, invalidModel };
     }
+
     return {
       result: {
         text: text.trim(),
@@ -309,46 +304,93 @@ async function callOnce(
       },
       rateLimited: false,
       providerError: false,
+      invalidModel: false,
     };
   } catch {
-    return { result: null, rateLimited: false, providerError: true };
+    markCooldown(model);
+    return { result: null, rateLimited: false, providerError: true, invalidModel: false };
   }
 }
 
-/**
- * Sequential cascade: try each model in modelsFor(role) until one returns text.
- * If OpenRouter cascade exhausts with rate-limit/errors and AI_LLM_FALLBACK_BACKEND=groq,
- * one final attempt uses GROQ_MODEL on Groq.
- */
+function primaryTimeout(opts: ChatOptions): number {
+  return opts.timeoutMs ?? 28_000;
+}
+
+function fallbackTimeout(opts: ChatOptions): number {
+  const base = opts.timeoutMs ?? 28_000;
+  return Math.min(12_000, Math.max(8_000, Math.floor(base * 0.45)));
+}
+
 export async function llmChat(role: LlmRole, opts: ChatOptions): Promise<LlmResult | null> {
   if (!llmConfigured()) return null;
 
-  const candidates = opts.disableCascade
+  const full = opts.disableCascade
     ? dedupeModels([opts.modelOverride?.trim() || modelFor(role)])
     : opts.modelOverride?.trim()
       ? dedupeModels([opts.modelOverride.trim(), ...modelsFor(role)])
       : modelsFor(role);
 
-  if (!candidates.length) return null;
+  const candidates = full.filter((m) => !isCooling(m)).slice(0, opts.disableCascade ? 1 : maxCascade());
+  const list = candidates.length ? candidates : full.slice(0, 1);
+  if (!list.length) return null;
 
   const attempted: string[] = [];
   let sawRateLimit = false;
   let sawProviderError = false;
+  const tPrimary = primaryTimeout(opts);
+  const tFallback = fallbackTimeout(opts);
+  const mode = cascadeMode();
 
-  for (const model of candidates) {
-    attempted.push(model);
-    const { result, rateLimited, providerError } = await callOnce(model, role, opts, opts.backend);
-    if (rateLimited) sawRateLimit = true;
-    if (providerError) sawProviderError = true;
-    if (result) {
+  if (mode === "race" && list.length >= 2 && !opts.backend) {
+    const pair = list.slice(0, 2);
+    attempted.push(...pair);
+    const settled = await Promise.all(
+      pair.map((model, i) => callOnce(model, role, opts, opts.backend, i === 0 ? tPrimary : tFallback)),
+    );
+    for (const o of settled) {
+      if (o.rateLimited) sawRateLimit = true;
+      if (o.providerError) sawProviderError = true;
+    }
+    const wins = settled
+      .map((o, i) => ({ o, i, model: pair[i]! }))
+      .filter((x) => x.o.result);
+    if (wins.length) {
+      wins.sort((a, b) => {
+        if (a.i === 0 && b.i !== 0) return -1;
+        if (b.i === 0 && a.i !== 0) return 1;
+        return (a.o.result!.latencyMs ?? 0) - (b.o.result!.latencyMs ?? 0);
+      });
+      const best = wins[0]!;
       return {
-        ...result,
-        attemptedModels: attempted.length > 1 ? attempted.slice(0, -1) : [],
+        ...best.o.result!,
+        attemptedModels: attempted.filter((m) => m !== best.model),
+        raced: true,
       };
+    }
+    for (let i = 2; i < list.length; i++) {
+      const model = list[i]!;
+      attempted.push(model);
+      const o = await callOnce(model, role, opts, opts.backend, tFallback);
+      if (o.rateLimited) sawRateLimit = true;
+      if (o.providerError) sawProviderError = true;
+      if (o.result) return { ...o.result, attemptedModels: attempted.slice(0, -1) };
+    }
+  } else {
+    for (let i = 0; i < list.length; i++) {
+      const model = list[i]!;
+      attempted.push(model);
+      const o = await callOnce(model, role, opts, opts.backend, i === 0 ? tPrimary : tFallback);
+      if (o.rateLimited) sawRateLimit = true;
+      if (o.providerError) sawProviderError = true;
+      if (o.result) {
+        return {
+          ...o.result,
+          attemptedModels: attempted.length > 1 ? attempted.slice(0, -1) : [],
+        };
+      }
     }
   }
 
-  // Optional backend fallback (e.g. Groq) after OpenRouter cascade fails hard
   const wantGroqFallback =
     !opts.backend &&
     env.aiLlmFallbackBackend === "groq" &&
@@ -356,16 +398,11 @@ export async function llmChat(role: LlmRole, opts: ChatOptions): Promise<LlmResu
     (sawRateLimit || sawProviderError);
 
   if (wantGroqFallback) {
-    const groqModel =
-      firstDefined(env.groqModel, process.env.GROQ_MODEL) ?? "llama-3.3-70b-versatile";
+    const groqModel = firstDefined(env.groqModel, process.env.GROQ_MODEL) ?? "llama-3.3-70b-versatile";
     attempted.push(`groq:${groqModel}`);
-    const { result } = await callOnce(groqModel, role, opts, "groq");
-    if (result) {
-      return {
-        ...result,
-        attemptedModels: attempted.slice(0, -1),
-        usedBackendFallback: true,
-      };
+    const o = await callOnce(groqModel, role, opts, "groq", tFallback);
+    if (o.result) {
+      return { ...o.result, attemptedModels: attempted.slice(0, -1), usedBackendFallback: true };
     }
   }
 
