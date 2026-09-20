@@ -6,7 +6,7 @@ Smart Portfolio là lớp điều phối phía trên hai module local-first hi�
 
 Trang `/portfolio` hợp nhất watchlist và nhật ký lệnh trong một control center. Dữ liệu cũ từ `orca.watchlist.v1` và `orca.journal.v1` được đọc nguyên trạng, vì vậy người dùng không cần migrate dữ liệu trên trình duyệt. Thay đổi trên hai trang gốc phát sự kiện `orca:watchlist` và `orca:journal`, khiến Smart Portfolio cập nhật mà không cần reload.
 
-Engine `src/lib/portfolio.ts` là pure TypeScript và không gọi provider. Engine tính realized PnL, unrealized PnL theo mark hiện có, exposure, risk tới stop loss, phân bổ theo asset class, win rate, profit factor, expectancy, average R, max drawdown và discipline score. Engine cũng tạo action queue cho vị thế thiếu stop loss, gần stop loss/take profit hoặc quá tập trung theo asset class. Ngoài snapshot KPI, engine xuất `performanceByAsset` gồm PnL, số lệnh, số lệnh thắng và win rate theo asset class để UI vẽ biểu đồ mà không lặp lại logic tính toán.
+Engine `src/lib/portfolio.ts` là pure TypeScript và không gọi provider trực tiếp — client kéo mark từ API nội bộ rồi truyền vào `buildPortfolioSnapshot`. Engine tính realized PnL, unrealized PnL theo mark hiện có, exposure, risk tới stop loss, phân bổ theo asset class, win rate, profit factor, expectancy, average R, max drawdown và discipline score. Engine cũng tạo action queue cho vị thế thiếu stop loss, gần stop loss/take profit hoặc quá tập trung theo asset class. Ngoài snapshot KPI, engine xuất `performanceByAsset`, `volatilityByAsset`, `portfolioStatus` (coverage mark, trạng thái từng mã, data gaps) và `analyzeAssetStatus` để UI hiển thị trạng thái cổ phiếu/danh mục mà không lặp logic.
 
 Overview hiển thị hai biểu đồ lấy trực tiếp từ snapshot: biểu đồ cột ngang PnL theo nhóm tài sản, có phân biệt lãi/lỗ và win rate; và biểu đồ tròn allocation exposure, có màu lát, phần trăm và tổng exposure ở tâm. Cả hai dùng HTML/CSS native, không thêm dependency chart nặng, có trạng thái rỗng khi chưa đủ dữ liệu và co giãn theo màn hình.
 
@@ -18,11 +18,20 @@ AI Portfolio Coach được đặt ngay trên Tổng quan. Request gửi cả nh
 
 ## Risk alert theo biến động
 
-Engine xuất thêm `volatilityByAsset`. Với mỗi nhóm tài sản có vị thế mở, hệ thống lấy giá trị tuyệt đối của `changePercent` từ quote hiện tại và tính trung bình có trọng số theo exposure. Đây là **proxy biến động tức thời**, không phải historical volatility hay ATR. Ngưỡng được đặt thận trọng theo asset class: Crypto cảnh báo cao từ 4% và cực cao từ 7%; Stock từ 2,5%/5%; Forex từ 0,8%/1,5%; Commodity từ 2%/4%.
+Engine xuất thêm `volatilityByAsset` và cảnh báo biến động cao/cực cao theo ngưỡng từng asset class (stock/crypto/forex/commodity).
 
-Khi nhóm tài sản đạt mức cao hoặc cực cao, engine tự thêm risk alert vào action queue. UI đồng thời hiển thị volatility monitor với mức Thấp, Tăng, Cao, Cực cao hoặc Chưa có mark. Cơ chế chỉ cảnh báo và không tự đóng lệnh. Chu kỳ cập nhật tuân theo polling quote hiện có của trang (Crypto khoảng 20 giây, Forex khoảng 60 giây); chưa gửi thông báo ra email/push và không chạy khi người dùng đóng trình duyệt.
+## Nguồn giá mark (live)
 
-Giá mark chỉ được lấy từ API nội bộ hiện có cho crypto và forex. Cổ phiếu Việt Nam hoặc hàng hóa chưa có mark thì hiển thị trạng thái chưa có giá, không dùng giá giả và không cộng vào unrealized PnL. Đây là cách tuân thủ nguyên tắc freshness/provenance của ORCA.
+Giá mark được kéo từ API nội bộ theo đúng asset class đang có trong trades/watchlist:
+
+| Asset | Endpoint | Cadence |
+| --- | --- | --- |
+| Crypto | `/api/v1/crypto/markets` | ~20s |
+| Forex | `/api/v1/forex/markets` | ~60s |
+| **Cổ phiếu VN** | `/api/v1/stocks?symbols=VCB,FPT,…` (chỉ các mã trong portfolio) | ~15s |
+| **Hàng hóa** | `/api/v1/commodities` (lọc theo symbol trong portfolio) | ~60s |
+
+Engine `collectPortfolioSymbols` gom symbol unique theo asset class để client không phải tải toàn bộ bảng giá. `analyzeAssetStatus` / `portfolioStatus` đánh giá trạng thái từng mã (tăng/giảm, có mark, freshness) và coverage danh mục. Mã chưa có mark vẫn hiển thị “Chưa có giá”, **không dùng giá giả** và không cộng vào unrealized PnL — tuân thủ freshness/provenance của ORCA.
 
 ## Quyết định thiết kế
 
