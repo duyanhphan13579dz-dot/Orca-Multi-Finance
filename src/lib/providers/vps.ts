@@ -47,19 +47,19 @@ function mapRow(r: VpsRow): Quote | null {
   const changePercent = Number(r.change_percent ?? r.changePercent ?? 0);
   return {
     symbol: code,
+    assetClass: "stock",
     price: last,
     change: Number.isFinite(change) ? change : null,
     changePercent: Number.isFinite(changePercent) ? changePercent : null,
     volume: Number(r.total_vol ?? r.totalVol ?? 0) || null,
-    value: Number(r.total_val ?? r.totalVal ?? 0) || null,
+    quoteVolume: Number(r.total_val ?? r.totalVal ?? 0) || null,
     high: Number(r.high_price ?? r.highPrice ?? 0) || null,
     low: Number(r.low_price ?? r.lowPrice ?? 0) || null,
     open: Number(r.open_price ?? r.openPrice ?? 0) || null,
-    ref: Number(r.ref_price ?? r.refPrice ?? 0) || null,
-    ceiling: Number(r.ceiling_price ?? r.ceilingPrice ?? 0) || null,
-    floor: Number(r.floor_price ?? r.floorPrice ?? 0) || null,
-    source: "vps",
-    ts: Date.now(),
+    referencePrice: Number(r.ref_price ?? r.refPrice ?? 0) || null,
+    ceilingPrice: Number(r.ceiling_price ?? r.ceilingPrice ?? 0) || null,
+    floorPrice: Number(r.floor_price ?? r.floorPrice ?? 0) || null,
+    updatedAt: new Date().toISOString(),
   };
 }
 
