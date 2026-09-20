@@ -2,97 +2,54 @@ import "server-only";
 import { createHash } from "crypto";
 import { httpText } from "../http";
 import type { NewsArticle } from "../types";
+import { ProviderError } from "./binance";
 
 /**
- * Multi-source RSS news provider (public, free, no API key).
+ * News aggregation engine — real RSS ingestion with timestamp validation,
+ * deduplication, symbol/sector tagging. Cadence handled by the service cache.
  *
- * Design notes:
- *  - parallel fetch with concurrency limit (avoid serverless connection storm)
- *  - per-feed circuit breaker name so one dead feed does not open global circuit
+ * Resilience:
  *  - generous per-feed timeout + 1 retry (VN RSS often slow from edge regions)
- *  - hard budget deadline so one hung feed cannot block the whole page
- *  - throw on total empty so soft-SWR cache is not poisoned with []
- *  - Atom + RSS support, resilient link extraction
+ *  - concurrency-limited fan-out (avoid serverless connection storms)
+ *  - Atom <entry> + RSS <item>
+ *  - empty aggregate throws so soft-SWR keeps last good snapshot
  */
 
-export type FeedDef = {
+export interface FeedDef {
   name: string;
   url: string;
-  category: string;
+  category: NewsArticle["category"];
   lang: "vi" | "en";
-};
+}
 
 export const FEEDS: FeedDef[] = [
+  { name: "CafeF — Thị trường", url: "https://cafef.vn/thi-truong-chung-khoan.rss", category: "market", lang: "vi" },
+  { name: "CafeF — Doanh nghiệp", url: "https://cafef.vn/doanh-nghiep.rss", category: "corporate", lang: "vi" },
+  { name: "CafeF — Vĩ mô", url: "https://cafef.vn/vi-mo-dau-tu.rss", category: "macro", lang: "vi" },
+  { name: "CafeF — Bất động sản", url: "https://cafef.vn/bat-dong-san.rss", category: "market", lang: "vi" },
+  { name: "CafeF — Tài chính quốc tế", url: "https://cafef.vn/tai-chinh-quoc-te.rss", category: "macro", lang: "vi" },
+  { name: "VnExpress — Kinh doanh", url: "https://vnexpress.net/rss/kinh-doanh.rss", category: "market", lang: "vi" },
+  { name: "VietnamBiz — Tài chính", url: "https://vietnambiz.vn/rss/tai-chinh.rss", category: "market", lang: "vi" },
+  { name: "VietnamBiz — Chứng khoán", url: "https://vietnambiz.vn/rss/chung-khoan.rss", category: "market", lang: "vi" },
+  { name: "Tuổi Trẻ — Kinh doanh", url: "https://tuoitre.vn/rss/kinh-doanh.rss", category: "market", lang: "vi" },
+  { name: "BBC Vietnamese — Business", url: "https://feeds.bbci.co.uk/vietnamese/business/rss.xml", category: "macro", lang: "vi" },
+  { name: "CoinTelegraph", url: "https://cointelegraph.com/rss", category: "crypto", lang: "en" },
   {
-    name: "cafef",
-    url: "https://cafef.vn/thi-truong-chung-khoan.rss",
+    name: "Google News — VN-Index",
+    url: "https://news.google.com/rss/search?q=VN-Index+OR+VNINDEX+OR+%22ch%E1%BB%A9ng+kho%C3%A1n%22&hl=vi&gl=VN&ceid=VN:vi",
     category: "market",
     lang: "vi",
   },
   {
-    name: "vnexpress-kinhdoanh",
-    url: "https://vnexpress.net/rss/kinh-doanh.rss",
-    category: "market",
-    lang: "vi",
-  },
-  {
-    name: "vietstock",
-    url: "https://vietstock.vn/rss/thi-truong.rss",
-    category: "market",
-    lang: "vi",
-  },
-  {
-    name: "ndh",
-    url: "https://ndh.vn/rss/thi-truong",
-    category: "market",
-    lang: "vi",
-  },
-  {
-    name: "tinnhanhchungkhoan",
-    url: "https://www.tinnhanhchungkhoan.vn/rss/chung-khoan.rss",
-    category: "market",
-    lang: "vi",
-  },
-  {
-    name: "tuoitre-kinhdoanh",
-    url: "https://tuoitre.vn/rss/kinh-doanh.rss",
-    category: "market",
-    lang: "vi",
-  },
-  {
-    name: "bbc-business",
-    url: "https://feeds.bbci.co.uk/news/business/rss.xml",
+    name: "Google News — NHNN",
+    url: "https://news.google.com/rss/search?q=NHNN+OR+%22Ng%C3%A2n+h%C3%A0ng+Nh%C3%A0+n%C6%B0%E1%BB%9Bc%22+OR+SBV&hl=vi&gl=VN&ceid=VN:vi",
     category: "macro",
-    lang: "en",
-  },
-  {
-    name: "reuters-business",
-    url: "https://www.reutersagency.com/feed/?best-topics=business-finance&post_type=best",
-    category: "macro",
-    lang: "en",
-  },
-  {
-    name: "google-news-vn",
-    url: "https://news.google.com/rss/search?q=chứng+khoán+OR+VN-Index+OR+HOSE&hl=vi&gl=VN&ceid=VN:vi",
-    category: "market",
     lang: "vi",
   },
   {
-    name: "google-news-crypto",
-    url: "https://news.google.com/rss/search?q=bitcoin+OR+crypto+OR+ethereum&hl=en&gl=US&ceid=US:en",
-    category: "crypto",
-    lang: "en",
-  },
-  {
-    name: "google-news-macro",
+    name: "Google News — Fed",
     url: "https://news.google.com/rss/search?q=Federal+Reserve+OR+Fed+interest+rate+OR+FOMC&hl=en&gl=US&ceid=US:en",
     category: "macro",
-    lang: "en",
-  },
-  {
-    name: "cointelegraph",
-    url: "https://cointelegraph.com/rss",
-    category: "crypto",
     lang: "en",
   },
 ];
@@ -117,62 +74,69 @@ export const VN_TICKERS = [
   "GMD","VSC","HAH","PVP","VTO","STG","TCL","PHP","ILB","CDN","DVP","VGR","SGP","VOS","TCO","MAS","VNL","TMS",
   "PGI","BMI","MIG","BIC","ABI","PVI","BVH","VNR","PRE","PTI","ACI","PAI","OPC","FOC","TNH","PDV","DVN","AMV","JVC","IMP","DBD","DHG","TRA","VMD","SPM","HID","CDP","PMC","PPE","TTB","DP3","MKP","NBC","HT1","BCC","BTS","YBM","QCC","HOM","KSB","VCS","VLB","DHA","CCM",
 ];
-const VN_TICKER_SET = new Set(VN_TICKERS);
 
-const CRYPTO_MAP: Record<string, string> = {
-  bitcoin: "BTCUSDT", btc: "BTCUSDT", ethereum: "ETHUSDT", eth: "ETHUSDT", solana: "SOLUSDT", sol: "SOLUSDT",
-  bnb: "BNBUSDT", xrp: "XRPUSDT", ripple: "XRPUSDT", doge: "DOGEUSDT", dogecoin: "DOGEUSDT", cardano: "ADAUSDT", ada: "ADAUSDT",
-  toncoin: "TONUSDT", avax: "AVAXUSDT", avalanche: "AVAXUSDT", polkadot: "DOTUSDT", chainlink: "LINKUSDT",
+const CRYPTO_KW: Record<string, string> = {
+  bitcoin: "BTCUSDT",
+  btc: "BTCUSDT",
+  ethereum: "ETHUSDT",
+  eth: "ETHUSDT",
+  solana: "SOLUSDT",
+  sol: "SOLUSDT",
+  bnb: "BNBUSDT",
+  xrp: "XRPUSDT",
+  doge: "DOGEUSDT",
+  cardano: "ADAUSDT",
+  ada: "ADAUSDT",
+  toncoin: "TONUSDT",
+  avax: "AVAXUSDT",
+  avalanche: "AVAXUSDT",
 };
 
-const SECTOR_KEYWORDS: [RegExp, string][] = [
+const SECTOR_KW: [RegExp, string][] = [
   [/ngân hàng|tín dụng|lãi suất (cho vay|huy động)|room ngoại/i, "Ngân hàng"],
   [/bất động sản|đất nền|dự án (khu|nhà ở)|chung cư/i, "Bất động sản"],
   [/thép|sắt|tôn mạ/i, "Thép"],
   [/dầu khí|giá dầu|khí đốt|xăng dầu/i, "Dầu khí"],
   [/chứng khoán|vn-?index|hose|hnx|upcom|trái phiếu/i, "Chứng khoán"],
-  [/công nghệ|phần mềm|chuyển đổi số|ai\b/i, "Công nghệ"],
+  [/công nghệ|phần mềm|chuyển đổi số|\bai\b/i, "Công nghệ"],
   [/vàng|gold|kim loại quý/i, "Kim loại quý"],
   [/cà phê|coffee|cao su|rubber|nông sản/i, "Nông sản"],
   [/điện|điện lực|evn|giá điện/i, "Điện"],
-  [/bán lẻ|tiêu dùng|bán lẻ/i, "Bán lẻ"],
+  [/bán lẻ|tiêu dùng/i, "Bán lẻ"],
   [/hóa chất|phân bón|ure/i, "Hóa chất"],
-  [/cao su/i, "Cao su"],
   [/fed|ecb|lạm phát|cpi|gdp|tỷ giá|đô la|usd/i, "Vĩ mô"],
 ];
 
 /* ------------------------------ XML helpers ------------------------------ */
 
-function decodeXml(s: string): string {
-  return s
+const decodeXml = (s: string) =>
+  s
     .replace(/</g, "<")
     .replace(/>/g, ">")
     .replace(/&/g, "&")
     .replace(/"/g, '"')
-    .replace(/'/g, "'")
+    .replace(/&#39;/g, "'")
     .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
     .replace(/&#x([0-9a-fA-F]+);/g, (_, h) => String.fromCharCode(parseInt(h, 16)));
-}
 
 function stripTags(s: string): string {
   return decodeXml(s.replace(/<[^>]+>/g, " ")).replace(/\s+/g, " ").trim();
 }
 
-function extractTag(block: string, tag: string): string | null {
+function extractTag(block: string, tag: string): string {
   const re = new RegExp(`<${tag}(?:\\s[^>]*)?>([\\s\\S]*?)</${tag}>`, "i");
   const m = block.match(re);
-  return m ? stripTags(m[1]) : null;
+  return m ? decodeXml(m[1]).trim() : "";
 }
 
-function extractLink(block: string): string | null {
-  // <link>url</link> or <link href="url" /> (Atom)
+function extractLink(block: string): string {
   const plain = extractTag(block, "link");
   if (plain && /^https?:\/\//i.test(plain)) return plain;
   const href = block.match(/<link[^>]+href=["']([^"']+)["']/i);
-  if (href) return href[1];
+  if (href?.[1]) return href[1];
   const guid = extractTag(block, "guid");
   if (guid && /^https?:\/\//i.test(guid)) return guid;
-  return null;
+  return "";
 }
 
 function extractItems(xml: string): string[] {
@@ -183,7 +147,7 @@ function extractItems(xml: string): string[] {
   return items;
 }
 
-function parsePublished(block: string): string | null {
+function parsePublished(block: string): string {
   for (const tag of ["pubDate", "published", "updated", "dc:date"]) {
     const v = extractTag(block, tag);
     if (v) {
@@ -191,24 +155,27 @@ function parsePublished(block: string): string | null {
       if (Number.isFinite(t)) return new Date(t).toISOString();
     }
   }
-  return null;
+  return new Date().toISOString();
 }
 
-function tagArticle(title: string, summary: string): { tickers: string[]; sectors: string[]; symbols: string[] } {
-  const text = `${title} ${summary}`;
-  const tickers: string[] = [];
-  for (const t of VN_TICKER_SET) {
-    if (new RegExp(`\\b${t}\\b`, "i").test(text)) tickers.push(t);
+function tag(text: string): { symbols: string[]; sector: string | null } {
+  const symbols = new Set<string>();
+  const upper = text.toUpperCase();
+  for (const t of VN_TICKERS) {
+    if (new RegExp(`\\b${t}\\b`, "i").test(upper) && /\\b[A-Z]{3}\\b/.test(t)) symbols.add(t);
   }
-  const sectors: string[] = [];
-  for (const [re, name] of SECTOR_KEYWORDS) {
-    if (re.test(text)) sectors.push(name);
+  const lower = text.toLowerCase();
+  for (const [kw, sym] of Object.entries(CRYPTO_KW)) {
+    if (new RegExp(`\\b${kw}\\b`, "i").test(lower)) symbols.add(sym);
   }
-  const symbols: string[] = [];
-  for (const [k, v] of Object.entries(CRYPTO_MAP)) {
-    if (new RegExp(`\\b${k}\\b`, "i").test(text)) symbols.push(v);
+  let sector: string | null = null;
+  for (const [re, name] of SECTOR_KW) {
+    if (re.test(text)) {
+      sector = name;
+      break;
+    }
   }
-  return { tickers: [...new Set(tickers)], sectors: [...new Set(sectors)], symbols: [...new Set(symbols)] };
+  return { symbols: [...symbols].slice(0, 8), sector };
 }
 
 function articleId(url: string, title: string): string {
@@ -217,7 +184,7 @@ function articleId(url: string, title: string): string {
 
 /* ------------------------------ fetch + parse ------------------------------ */
 
-async function fetchFeed(feed: FeedDef): Promise<{ articles: NewsArticle[]; error?: string }> {
+export async function fetchFeed(feed: FeedDef): Promise<NewsArticle[]> {
   const res = await httpText(feed.url, {
     provider: `news:${feed.name}`,
     timeoutMs: FEED_TIMEOUT_MS,
@@ -228,91 +195,108 @@ async function fetchFeed(feed: FeedDef): Promise<{ articles: NewsArticle[]; erro
     },
   });
   if (!res.ok || !res.text) {
-    return { articles: [], error: res.error ?? `http_${res.status}` };
+    throw new ProviderError(`news feed ${feed.name}: ${res.error ?? "unreachable"}`, NEWS_PROVIDER);
   }
   const items = extractItems(res.text);
-  if (!items.length) return { articles: [], error: "empty_items" };
+  if (!items.length) {
+    throw new ProviderError(`news feed ${feed.name}: empty parse`, NEWS_PROVIDER);
+  }
 
   const articles: NewsArticle[] = [];
   for (const block of items.slice(0, 30)) {
-    const title = extractTag(block, "title");
+    const title = stripTags(extractTag(block, "title"));
     if (!title) continue;
     const link = extractLink(block);
     if (!link) continue;
-    const summary =
-      extractTag(block, "description") ??
-      extractTag(block, "summary") ??
-      extractTag(block, "content") ??
+    const desc =
+      stripTags(extractTag(block, "description")) ||
+      stripTags(extractTag(block, "summary")) ||
+      stripTags(extractTag(block, "content")) ||
       "";
-    const publishedAt = parsePublished(block) ?? new Date().toISOString();
-    const tags = tagArticle(title, summary);
+    const publishedAt = parsePublished(block);
+    const { symbols, sector } = tag(`${title} ${desc}`);
     articles.push({
       id: articleId(link, title),
       title,
       url: link,
       source: feed.name,
       publishedAt,
-      summary: summary.slice(0, 400),
+      summary: desc.slice(0, 400) || null,
       category: feed.category,
-      lang: feed.lang,
-      tickers: tags.tickers,
-      sectors: tags.sectors,
-      symbols: tags.symbols,
+      relatedSymbols: symbols,
+      relatedSector: sector,
     });
   }
-  return { articles };
+  return articles;
 }
 
-function withFeedBudget<T>(p: Promise<T>, ms: number): Promise<T | { articles: []; error: string }> {
+function withFeedBudget<T>(p: Promise<T>, ms: number): Promise<PromiseSettledResult<T>> {
   return Promise.race([
-    p,
-    new Promise<{ articles: []; error: string }>((r) =>
-      setTimeout(() => r({ articles: [], error: "feed_budget" }), ms),
+    p.then(
+      (v) => ({ status: "fulfilled" as const, value: v }),
+      (e) => ({ status: "rejected" as const, reason: e }),
+    ),
+    new Promise<PromiseSettledResult<T>>((r) =>
+      setTimeout(
+        () => r({ status: "rejected", reason: new Error(`feed_budget_${ms}ms`) }),
+        ms,
+      ),
     ),
   ]);
 }
 
-async function mapPool<T, R>(items: T[], concurrency: number, fn: (item: T) => Promise<R>): Promise<R[]> {
-  const out: R[] = new Array(items.length);
+async function mapPool<T, R>(
+  items: T[],
+  concurrency: number,
+  fn: (item: T) => Promise<R>,
+): Promise<PromiseSettledResult<R>[]> {
+  const results: PromiseSettledResult<R>[] = new Array(items.length);
   let i = 0;
   async function worker() {
     while (i < items.length) {
       const idx = i++;
-      out[idx] = await fn(items[idx]!);
+      try {
+        results[idx] = { status: "fulfilled", value: await fn(items[idx]!) };
+      } catch (e) {
+        results[idx] = { status: "rejected", reason: e };
+      }
     }
   }
-  await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, () => worker()));
-  return out;
+  const n = Math.min(concurrency, items.length);
+  await Promise.all(Array.from({ length: n }, () => worker()));
+  return results;
 }
 
-export async function fetchAllNews(): Promise<NewsArticle[]> {
+/** Fan-out to all feeds, keep partial success, dedupe cross-feed. */
+export async function aggregateNews(): Promise<{ articles: NewsArticle[]; errors: string[] }> {
   const results = await mapPool(FEEDS, CONCURRENCY, (f) =>
-    withFeedBudget(fetchFeed(f), FEED_BUDGET_MS),
+    withFeedBudget(fetchFeed(f), FEED_BUDGET_MS).then((r) => {
+      if (r.status === "fulfilled") return r.value;
+      throw r.reason;
+    }),
   );
-
+  const seen = new Set<string>();
   const articles: NewsArticle[] = [];
   const errors: string[] = [];
-  for (let i = 0; i < FEEDS.length; i++) {
-    const r = results[i]! as { articles: NewsArticle[]; error?: string };
-    if (r.articles?.length) articles.push(...r.articles);
-    else if (r.error) errors.push(`${FEEDS[i]!.name}:${r.error}`);
+  for (let i = 0; i < results.length; i++) {
+    const r = results[i]!;
+    if (r.status === "rejected") {
+      errors.push(r.reason instanceof Error ? r.reason.message : String(r.reason));
+      continue;
+    }
+    for (const a of r.value) {
+      const key = a.id;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      articles.push(a);
+    }
   }
-
-  // de-dupe by url / id
-  const seen = new Set<string>();
-  const uniq: NewsArticle[] = [];
-  for (const a of articles) {
-    const key = a.url || a.id;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    uniq.push(a);
-  }
-  uniq.sort((a, b) => Date.parse(b.publishedAt) - Date.parse(a.publishedAt));
-
-  if (!uniq.length) {
-    throw new Error(
+  articles.sort((a, b) => Date.parse(b.publishedAt) - Date.parse(a.publishedAt));
+  if (!articles.length) {
+    throw new ProviderError(
       `rss-news: all ${FEEDS.length} feeds failed (${errors.slice(0, 3).join("; ")})`,
+      NEWS_PROVIDER,
     );
   }
-  return uniq;
+  return { articles: articles.slice(0, 100), errors };
 }
