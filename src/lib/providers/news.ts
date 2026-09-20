@@ -11,6 +11,7 @@ import { ProviderError } from "./binance";
  * Resilience:
  *  - generous per-feed timeout + 1 retry (VN RSS often slow from edge regions)
  *  - concurrency-limited fan-out (avoid serverless connection storms)
+ *  - per-feed circuit breaker (one dead source cannot open circuit for all)
  *  - Atom <entry> + RSS <item>
  *  - empty aggregate throws so soft-SWR keeps last good snapshot
  */
@@ -103,11 +104,11 @@ const SECTOR_KEYWORDS: [RegExp, string][] = [
 const decodeXml = (s: string) =>
   s
     .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1")
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;|&apos;/g, "'")
+    .replace(/&/g, "&")
+    .replace(/</g, "<")
+    .replace(/>/g, ">")
+    .replace(/"/g, '"')
+    .replace(/&#39;|'/g, "'")
     .replace(/&#(\d+);/g, (_, c) => String.fromCharCode(Number(c)))
     .replace(/&#x([0-9a-fA-F]+);/g, (_, h) => String.fromCharCode(parseInt(h, 16)));
 
@@ -191,7 +192,8 @@ function itemsFromXml(xml: string, feed: FeedDef): NewsArticle[] {
 
 export async function fetchFeed(feed: FeedDef): Promise<NewsArticle[]> {
   const res = await httpText(feed.url, {
-    provider: NEWS_PROVIDER,
+    // Per-feed provider key so one dead source cannot open the circuit for all RSS
+    provider: `news:${feed.name}`,
     timeoutMs: FEED_TIMEOUT_MS,
     retries: FEED_RETRIES,
     backoffBaseMs: 400,
