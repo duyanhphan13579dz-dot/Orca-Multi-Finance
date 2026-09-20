@@ -385,10 +385,9 @@ export function buildPortfolioSnapshot(
 
   const volatilityByAsset: PortfolioVolatilityDatum[] = (
     ["stock", "crypto", "forex", "commodity"] as PortfolioAssetType[]
-  )
-    .map((label) => {
+  ).flatMap((label): PortfolioVolatilityDatum[] => {
       const group = positions.filter((p) => p.assetType === label);
-      if (!group.length) return null;
+      if (!group.length) return [];
       const marked = group.filter((p) => {
         const m = markMap.get(`${p.assetType}:${p.symbol.toUpperCase()}`);
         return m?.changePercent != null && Number.isFinite(m.changePercent);
@@ -398,31 +397,31 @@ export function buildPortfolioSnapshot(
         ? (group.reduce((s, p) => s + p.exposure, 0) / totalExposure) * 100
         : 0;
       if (!marked.length) {
-        return {
+        return [{
           label,
           volatilityPct: null,
           positionCount: group.length,
           markedPositions: 0,
           exposurePct,
-          level: "unavailable" as const,
+          level: "unavailable",
           highThresholdPct: thresholds.high,
           extremeThresholdPct: thresholds.extreme,
-        };
+        }];
       }
       const avgAbs =
         marked.reduce((sum, p) => {
           const m = markMap.get(`${p.assetType}:${p.symbol.toUpperCase()}`)!;
           return sum + Math.abs(m.changePercent ?? 0);
         }, 0) / marked.length;
-      const level =
+      const level: PortfolioVolatilityDatum["level"] =
         avgAbs >= thresholds.extreme
-          ? ("extreme" as const)
+          ? "extreme"
           : avgAbs >= thresholds.high
-            ? ("high" as const)
+            ? "high"
             : avgAbs >= thresholds.high * 0.5
-              ? ("elevated" as const)
-              : ("low" as const);
-      return {
+              ? "elevated"
+              : "low";
+      return [{
         label,
         volatilityPct: avgAbs,
         positionCount: group.length,
@@ -431,9 +430,8 @@ export function buildPortfolioSnapshot(
         level,
         highThresholdPct: thresholds.high,
         extremeThresholdPct: thresholds.extreme,
-      };
-    })
-    .filter((v): v is PortfolioVolatilityDatum => v != null);
+      }];
+    });
 
   const alerts: PortfolioAlert[] = [];
   for (const position of positions) {
