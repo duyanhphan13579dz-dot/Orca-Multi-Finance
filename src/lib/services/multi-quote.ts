@@ -20,7 +20,7 @@ import { recordMarketSource } from "../realtime/market-source-monitor";
  * Field phụ (volume, name, ceiling…) chỉ fill khi field đang null.
  * Lệch giá lớn giữa nguồn → log, vẫn giữ giá theo ưu tiên.
  *
- * Speed: tier timeouts 4s / 3.5s / 2.5s; race early when coverage ≥ 80%.
+ * Speed: tier timeouts 6.5s / 6s / 4.5s; race early when coverage ≥ 80%.
  */
 
 export type MultiQuoteResult = {
@@ -183,24 +183,24 @@ export async function getMultiQuotes(symbols: string[]): Promise<MultiQuoteResul
 
   /**
    * Latency strategy (phase speed):
-   * - Tier A: vndirect + vps — timeout 4s, parallel
-   * - Tier B: ssi-iboard — timeout 3.5s
-   * - Tier C: ssi-fc / vietcap — timeout 2.5s if symbols still missing
+   * - Tier A: vndirect + vps — timeout 6.5s, parallel
+   * - Tier B: ssi-iboard — timeout 6s
+   * - Tier C: ssi-fc / vietcap — timeout 4.5s if symbols still missing
    * Early-exit tier C wait when coverage ≥ 80%.
    */
 
   const tierA = Promise.all([
-    runSource("vndirect", () => vndirect.getVndQuotes(uniq), 4_000),
-    runSource("vps", () => getVpsQuotes(uniq), 4_000),
+    runSource("vndirect", () => vndirect.getVndQuotes(uniq), 6_500),
+    runSource("vps", () => getVpsQuotes(uniq), 6_500),
   ]);
 
-  const tierB = runSource("ssi-iboard", () => getSsiIboardQuotes(uniq), 3_500);
+  const tierB = runSource("ssi-iboard", () => getSsiIboardQuotes(uniq), 6_000);
 
   const tierCTasks: Promise<SourceBatch>[] = [
-    runSource("vietcap", () => getVietcapQuotes(uniq), 2_500),
+    runSource("vietcap", () => getVietcapQuotes(uniq), 4_500),
   ];
   if (ssiFcConfigured()) {
-    tierCTasks.push(runSource("ssi-fcdata", () => getSsiQuotes(uniq), 2_800));
+    tierCTasks.push(runSource("ssi-fcdata", () => getSsiQuotes(uniq), 4_500));
   }
 
   const tierCPromise = Promise.all(tierCTasks);
