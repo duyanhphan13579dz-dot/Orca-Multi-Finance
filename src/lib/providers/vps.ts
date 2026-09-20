@@ -5,78 +5,68 @@ import type { Quote } from "../types";
 /**
  * VPS public datafeed — bảng giá realtime HOSE/HNX/UPCOM (không cần API key).
  * Endpoint: https://bgapidatafeed.vps.com.vn/getliststockdata/SYM1,SYM2
- * Giá thường ở đơn vị nghìn đồng (lastPrice 26.85 = 26,850 VND).
- * Batch 40 mã/request, parallel chunks — hỗ trợ board lớn (VN30 + rổ thanh khoản).
+ * Giá thường cập nhật nhanh; dùng làm tier-A song song với VNDirect.
  */
 
 const BASE = "https://bgapidatafeed.vps.com.vn";
 const CHUNK = 40;
-const MAX_SYMBOLS = 160;
 
-type VpsRow = {
-  sym?: string;
-  lastPrice?: number | string;
-  openPrice?: number | string;
-  highPrice?: number | string;
-  lowPrice?: number | string;
-  avePrice?: number | string;
-  changePc?: number | string;
-  ot?: number | string;
-  lot?: number | string;
-  r?: number | string;
-  c?: number | string;
-  f?: number | string;
-  closePrice?: number | string;
-};
-
-const num = (v: unknown): number | null => {
-  const n = Number(v);
-  return Number.isFinite(n) ? n : null;
-};
-
-function toVnd(price: number | null): number | null {
-  if (price == null) return null;
-  if (price > 0 && price < 500) return Math.round(price * 1000);
-  return price;
+interface VpsRow {
+  stock_code?: string;
+  stockCode?: string;
+  last_price?: number;
+  lastPrice?: number;
+  change_price?: number;
+  changePrice?: number;
+  change_percent?: number;
+  changePercent?: number;
+  total_vol?: number;
+  totalVol?: number;
+  total_val?: number;
+  totalVal?: number;
+  high_price?: number;
+  highPrice?: number;
+  low_price?: number;
+  lowPrice?: number;
+  open_price?: number;
+  openPrice?: number;
+  ref_price?: number;
+  refPrice?: number;
+  ceiling_price?: number;
+  ceilingPrice?: number;
+  floor_price?: number;
+  floorPrice?: number;
 }
 
 function mapRow(r: VpsRow): Quote | null {
-  const symbol = String(r.sym ?? "").toUpperCase();
-  if (!symbol) return null;
-  const rawLast = num(r.lastPrice) ?? num(r.avePrice);
-  const closeFull = num(r.closePrice);
-  let price = toVnd(rawLast);
-  if (closeFull != null && closeFull > 1000) {
-    if (price == null || Math.abs(closeFull - price) / closeFull > 0.5) price = closeFull;
-    else price = closeFull;
-  }
-  if (price == null || price <= 0) return null;
-
-  const ref = toVnd(num(r.r));
-  const chgAbs = num(r.ot);
-  const chgPct = num(r.changePc);
+  const code = (r.stock_code ?? r.stockCode ?? "").toUpperCase();
+  if (!code) return null;
+  const last = Number(r.last_price ?? r.lastPrice ?? 0);
+  if (!last || !Number.isFinite(last)) return null;
+  const change = Number(r.change_price ?? r.changePrice ?? 0);
+  const changePercent = Number(r.change_percent ?? r.changePercent ?? 0);
   return {
-    symbol,
-    assetClass: "stock",
-    price,
-    change: chgAbs != null ? (Math.abs(chgAbs) < 500 ? chgAbs * 1000 : chgAbs) : ref != null ? price - ref : null,
-    changePercent: chgPct,
-    open: toVnd(num(r.openPrice)),
-    high: toVnd(num(r.highPrice)),
-    low: toVnd(num(r.lowPrice)),
-    volume: num(r.lot) != null ? Math.round(Number(r.lot) * 100) : null,
-    quoteVolume: null,
-    referencePrice: ref,
-    ceilingPrice: toVnd(num(r.c)),
-    floorPrice: toVnd(num(r.f)),
-    updatedAt: new Date().toISOString(),
+    symbol: code,
+    price: last,
+    change: Number.isFinite(change) ? change : null,
+    changePercent: Number.isFinite(changePercent) ? changePercent : null,
+    volume: Number(r.total_vol ?? r.totalVol ?? 0) || null,
+    value: Number(r.total_val ?? r.totalVal ?? 0) || null,
+    high: Number(r.high_price ?? r.highPrice ?? 0) || null,
+    low: Number(r.low_price ?? r.lowPrice ?? 0) || null,
+    open: Number(r.open_price ?? r.openPrice ?? 0) || null,
+    ref: Number(r.ref_price ?? r.refPrice ?? 0) || null,
+    ceiling: Number(r.ceiling_price ?? r.ceilingPrice ?? 0) || null,
+    floor: Number(r.floor_price ?? r.floorPrice ?? 0) || null,
+    source: "vps",
+    ts: Date.now(),
   };
 }
 
 async function fetchChunk(syms: string[]): Promise<Quote[]> {
   const res = await httpJson<VpsRow[]>(`${BASE}/getliststockdata/${syms.join(",")}`, {
     provider: "vps",
-    timeoutMs: 6_000,
+    timeoutMs: 7_500,
     retries: 1,
     headers: {
       Accept: "application/json",
@@ -92,22 +82,11 @@ async function fetchChunk(syms: string[]): Promise<Quote[]> {
   return out;
 }
 
-export async function getVpsQuotes(symbols: string[]): Promise<{
-  quotes: Quote[];
-  sourceTs: number | null;
-}> {
-  const uniq = [...new Set(symbols.map((s) => s.toUpperCase()).filter(Boolean))].slice(0, MAX_SYMBOLS);
-  if (!uniq.length) return { quotes: [], sourceTs: null };
-
+export async function getVpsQuotes(symbols: string[]): Promise<Quote[]> {
+  const uniq = [...new Set(symbols.map((s) => s.toUpperCase()).filter(Boolean))];
+  if (!uniq.length) return [];
   const chunks: string[][] = [];
   for (let i = 0; i < uniq.length; i += CHUNK) chunks.push(uniq.slice(i, i + CHUNK));
-
-  const parts = await Promise.all(chunks.map((c) => fetchChunk(c).catch(() => [] as Quote[])));
-  const bySym = new Map<string, Quote>();
-  for (const list of parts) {
-    for (const q of list) bySym.set(q.symbol, q);
-  }
-  const quotes = [...bySym.values()];
-  if (!quotes.length) throw new Error("vps: no quotes mapped");
-  return { quotes, sourceTs: Date.now() };
+  const batches = await Promise.all(chunks.map(fetchChunk));
+  return batches.flat();
 }
