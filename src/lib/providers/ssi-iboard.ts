@@ -11,6 +11,8 @@ const BASE = "https://iboard-query.ssi.com.vn";
 
 interface SsiBoardRow {
   stockSymbol?: string;
+  stockName?: string;
+  companyName?: string;
   matchedPrice?: number;
   priceChange?: number;
   priceChangePercent?: number;
@@ -28,6 +30,13 @@ interface SsiEnvelope {
   data?: SsiBoardRow[];
 }
 
+export type SsiIboardUniverseItem = {
+  symbol: string;
+  name: string | null;
+  exchange: string;
+  listedDate: string | null;
+};
+
 function mapRow(r: SsiBoardRow): Quote | null {
   const code = (r.stockSymbol ?? "").toUpperCase();
   if (!code) return null;
@@ -36,6 +45,7 @@ function mapRow(r: SsiBoardRow): Quote | null {
   return {
     symbol: code,
     assetClass: "stock",
+    name: r.stockName ?? r.companyName ?? null,
     price: last,
     change: Number.isFinite(Number(r.priceChange)) ? Number(r.priceChange) : null,
     changePercent: Number.isFinite(Number(r.priceChangePercent)) ? Number(r.priceChangePercent) : null,
@@ -64,6 +74,43 @@ async function fetchExchange(ex: "hose" | "hnx" | "upcom"): Promise<SsiBoardRow[
   });
   if (!res.ok || !res.data?.data) return [];
   return res.data.data;
+}
+
+const EX_LABEL: Record<"hose" | "hnx" | "upcom", string> = {
+  hose: "HOSE",
+  hnx: "HNX",
+  upcom: "UPCOM",
+};
+
+/** Full listed universe from SSI iBoard boards (no API key). */
+export async function getSsiIboardUniverse(): Promise<SsiIboardUniverseItem[]> {
+  const [hose, hnx, upcom] = await Promise.all([
+    fetchExchange("hose"),
+    fetchExchange("hnx"),
+    fetchExchange("upcom"),
+  ]);
+  const out: SsiIboardUniverseItem[] = [];
+  const seen = new Set<string>();
+  for (const [ex, rows] of [
+    ["hose", hose],
+    ["hnx", hnx],
+    ["upcom", upcom],
+  ] as const) {
+    for (const r of rows) {
+      const symbol = (r.stockSymbol ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+      if (!symbol || symbol.length < 2 || seen.has(symbol)) continue;
+      // skip index-like codes
+      if (symbol.includes("INDEX") || symbol === "VN30" || symbol === "HNX30") continue;
+      seen.add(symbol);
+      out.push({
+        symbol,
+        name: r.stockName ?? r.companyName ?? null,
+        exchange: EX_LABEL[ex],
+        listedDate: null,
+      });
+    }
+  }
+  return out;
 }
 
 export async function getSsiIboardQuotes(symbols: string[]): Promise<Quote[]> {
