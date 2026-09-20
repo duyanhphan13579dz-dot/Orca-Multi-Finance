@@ -3,15 +3,8 @@ import { env } from "../env";
 import { httpJson } from "../http";
 
 /**
- * LLM GATEWAY — OpenRouter-first, role-based model selection.
- *
- * Env (Vercel):
- *   OPENROUTER_API_KEY   — primary key
- *   OPENROUTER_MODEL     — default model id (provider/model)
- *   AI_MODEL_REASONING   — deep reasoning / compare
- *   AI_MODEL_REPORT      — financial report / analysis / forecast
- *   AI_MODEL_ANALYSIS    — optional alias for report
- *   GROQ_*               — optional fast path (not default for BCTC analysis)
+ * LLM GATEWAY — OpenRouter-first + fast cascade (production).
+ * Race first 2 models, cap attempts, short fallback timeout, soft cooldown.
  */
 
 export type LlmRole = "reasoning" | "analysis" | "classification" | "report";
@@ -23,9 +16,15 @@ export interface LlmResult {
   role: LlmRole;
   latencyMs: number;
   provider: "openrouter" | "groq" | "openai-compatible";
+  attemptedModels?: string[];
+  usedBackendFallback?: boolean;
+  raced?: boolean;
 }
 
 export type ChatTurn = { role: "user" | "assistant"; content: string };
+
+const modelCooldownUntil = new Map<string, number>();
+const COOLDOWN_MS = 45_000;
 
 function firstDefined(...vals: (string | undefined)[]): string | undefined {
   for (const v of vals) {
@@ -34,28 +33,90 @@ function firstDefined(...vals: (string | undefined)[]): string | undefined {
   return undefined;
 }
 
-/** Chọn model theo role — bám biến Vercel của user */
+function dedupeModels(ids: (string | undefined | null)[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of ids) {
+    const id = raw?.trim();
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    out.push(id);
+  }
+  return out;
+}
+
+function markCooldown(model: string) {
+  modelCooldownUntil.set(model, Date.now() + COOLDOWN_MS);
+}
+
+function isCooling(model: string): boolean {
+  const until = modelCooldownUntil.get(model);
+  if (!until) return false;
+  if (Date.now() >= until) {
+    modelCooldownUntil.delete(model);
+    return false;
+  }
+  return true;
+}
+
+function maxCascade(): number {
+  const n = Number(process.env.AI_LLM_MAX_CASCADE ?? env.aiLlmMaxCascade ?? 3);
+  if (!Number.isFinite(n) || n < 1) return 3;
+  return Math.min(6, Math.floor(n));
+}
+
+function cascadeMode(): "race" | "sequential" {
+  const m = (process.env.AI_LLM_CASCADE_MODE ?? env.aiLlmCascadeMode ?? "race").toLowerCase();
+  return m === "sequential" ? "sequential" : "race";
+}
+
 export function modelFor(role: LlmRole): string {
+  return modelsFor(role)[0] ?? "qwen/qwen3.8-27b:free";
+}
+
+export function modelsFor(role: LlmRole): string[] {
   if (role === "reasoning") {
-    return (
-      firstDefined(env.aiModelReasoning, process.env.AI_MODEL_REASONING, env.openrouterModel, env.aiModel) ??
-      "qwen/qwen3-32b"
-    );
+    return dedupeModels([
+      firstDefined(env.aiModelReasoning, process.env.AI_MODEL_REASONING),
+      ...env.aiModelReasoningFallbacks,
+      env.openrouterModel,
+      env.aiModel,
+      "nvidia/nemotron-3-super-120b-a12b:free",
+      "openrouter/free",
+    ]);
   }
-  if (role === "report" || role === "analysis") {
-    return (
-      firstDefined(
-        env.aiModelReport,
-        env.aiModelAnalysis,
-        process.env.AI_MODEL_REPORT,
-        process.env.AI_MODEL_ANALYSIS,
-        env.openrouterModel,
-        env.aiModel,
-      ) ?? "qwen/qwen3-32b"
-    );
+  if (role === "report") {
+    return dedupeModels([
+      firstDefined(env.aiModelReport, env.aiModelAnalysis, process.env.AI_MODEL_REPORT, process.env.AI_MODEL_ANALYSIS),
+      ...env.aiModelReportFallbacks,
+      ...env.aiModelAnalysisFallbacks,
+      env.openrouterModel,
+      env.aiModel,
+      "inclusionai/ling-3.0-flash-fin:free",
+      "qwen/qwen3.8-27b:free",
+      "openrouter/free",
+    ]);
   }
-  // classification → model nhẹ / default OpenRouter
-  return firstDefined(env.openrouterModel, env.aiModel, env.groqModel) ?? "qwen/qwen3-32b";
+  if (role === "analysis") {
+    return dedupeModels([
+      firstDefined(env.aiModelAnalysis, env.aiModelReport, process.env.AI_MODEL_ANALYSIS, process.env.AI_MODEL_REPORT),
+      ...env.aiModelAnalysisFallbacks,
+      ...env.aiModelReportFallbacks,
+      env.openrouterModel,
+      env.aiModel,
+      "inclusionai/ling-3.0-flash-fin:free",
+      "qwen/qwen3.8-27b:free",
+      "openrouter/free",
+    ]);
+  }
+  return dedupeModels([
+    env.openrouterModel,
+    env.aiModel,
+    env.groqModel,
+    ...env.aiModelClassificationFallbacks,
+    "qwen/qwen3.8-27b:free",
+    "openrouter/free",
+  ]);
 }
 
 function resolveProvider(model: string, backend?: LlmBackend): {
@@ -77,24 +138,16 @@ function resolveProvider(model: string, backend?: LlmBackend): {
       provider: "openrouter",
     };
   }
-
-  // Explicit AI_BASE_URL wins
   if (env.aiBaseUrl?.trim()) {
     const base = env.aiBaseUrl.replace(/\/$/, "");
     const isOr = base.includes("openrouter");
     const isGroq = base.includes("groq");
     return {
       baseUrl: base,
-      apiKey: isOr
-        ? env.openrouterApiKey ?? env.aiProviderKey
-        : isGroq
-          ? env.groqApiKey ?? env.aiProviderKey
-          : env.aiProviderKey,
+      apiKey: isOr ? env.openrouterApiKey ?? env.aiProviderKey : isGroq ? env.groqApiKey ?? env.aiProviderKey : env.aiProviderKey,
       provider: isOr ? "openrouter" : isGroq ? "groq" : "openai-compatible",
     };
   }
-
-  // OpenRouter when key present OR model looks like provider/model
   if (env.openrouterApiKey || model.includes("/")) {
     return {
       baseUrl: "https://openrouter.ai/api/v1",
@@ -102,7 +155,6 @@ function resolveProvider(model: string, backend?: LlmBackend): {
       provider: "openrouter",
     };
   }
-
   if (env.groqApiKey) {
     return {
       baseUrl: (env.groqBaseUrl ?? "https://api.groq.com/openai/v1").replace(/\/$/, ""),
@@ -110,23 +162,21 @@ function resolveProvider(model: string, backend?: LlmBackend): {
       provider: "groq",
     };
   }
-
-  return {
-    baseUrl: "https://api.openai.com/v1",
-    apiKey: env.aiProviderKey,
-    provider: "openai-compatible",
-  };
+  return { baseUrl: "https://api.openai.com/v1", apiKey: env.aiProviderKey, provider: "openai-compatible" };
 }
 
 export function llmConfigured(): boolean {
   return Boolean(env.openrouterApiKey || env.aiProviderKey || env.groqApiKey);
 }
 
-/** Thông tin registry (không lộ secret) — dùng /system hoặc debug */
 export function llmRegistryInfo() {
   const roles: LlmRole[] = ["reasoning", "analysis", "report", "classification"];
   const models: Record<string, string> = {};
-  for (const r of roles) models[r] = modelFor(r);
+  const cascades: Record<string, string[]> = {};
+  for (const r of roles) {
+    models[r] = modelFor(r);
+    cascades[r] = modelsFor(r).slice(0, maxCascade());
+  }
   const sample = modelFor("analysis");
   const { baseUrl, provider } = resolveProvider(sample);
   return {
@@ -134,16 +184,29 @@ export function llmRegistryInfo() {
     provider,
     baseUrl,
     models,
+    cascades,
+    cascadeEnabled: true,
+    cascadeMode: cascadeMode(),
+    maxCascade: maxCascade(),
+    fallbackBackend:
+      env.aiLlmFallbackBackend === "groq" && env.groqApiKey
+        ? { backend: "groq", model: env.groqModel ?? null }
+        : null,
     envPresent: {
       OPENROUTER_API_KEY: Boolean(env.openrouterApiKey),
       OPENROUTER_MODEL: Boolean(env.openrouterModel),
       AI_MODEL_REASONING: Boolean(env.aiModelReasoning),
       AI_MODEL_REPORT: Boolean(env.aiModelReport),
       AI_MODEL_ANALYSIS: Boolean(env.aiModelAnalysis),
+      AI_MODEL_ANALYSIS_FALLBACKS: env.aiModelAnalysisFallbacks.length > 0,
+      AI_MODEL_REASONING_FALLBACKS: env.aiModelReasoningFallbacks.length > 0,
+      AI_MODEL_REPORT_FALLBACKS: env.aiModelReportFallbacks.length > 0,
       GROQ_API_KEY: Boolean(env.groqApiKey),
+      AI_LLM_FALLBACK_BACKEND: env.aiLlmFallbackBackend || null,
+      AI_LLM_CASCADE_MODE: cascadeMode(),
+      AI_LLM_MAX_CASCADE: maxCascade(),
       AI_PROVIDER_KEY: Boolean(process.env.AI_PROVIDER_KEY?.trim()),
     },
-    /** Model OpenRouter mặc định đang resolve (không phải secret) */
     openrouterModelResolved: env.openrouterModel ?? env.aiModel ?? null,
   };
 }
@@ -157,17 +220,29 @@ interface ChatOptions {
   timeoutMs?: number;
   modelOverride?: string;
   backend?: LlmBackend;
+  disableCascade?: boolean;
 }
 
 type ChatResponse = { choices?: { message?: { content?: string } }[] };
 
-export async function llmChat(role: LlmRole, opts: ChatOptions): Promise<LlmResult | null> {
-  const model = opts.modelOverride?.trim() || modelFor(role);
-  const { baseUrl, apiKey, provider } = resolveProvider(model, opts.backend);
-  if (!apiKey) return null;
+type CallOutcome = {
+  result: LlmResult | null;
+  rateLimited: boolean;
+  providerError: boolean;
+  invalidModel: boolean;
+};
+
+async function callOnce(
+  model: string,
+  role: LlmRole,
+  opts: ChatOptions,
+  backend: LlmBackend | undefined,
+  timeoutMs: number,
+): Promise<CallOutcome> {
+  const { baseUrl, apiKey, provider } = resolveProvider(model, backend);
+  if (!apiKey) return { result: null, rateLimited: false, providerError: true, invalidModel: false };
 
   const t0 = performance.now();
-
   const history = (opts.history ?? [])
     .filter((t) => t.content?.trim())
     .slice(-16)
@@ -186,7 +261,6 @@ export async function llmChat(role: LlmRole, opts: ChatOptions): Promise<LlmResu
     "Content-Type": "application/json",
     Authorization: `Bearer ${apiKey}`,
   };
-  // OpenRouter khuyến nghị HTTP-Referer + X-Title
   if (provider === "openrouter") {
     headers["HTTP-Referer"] = process.env.VERCEL_URL
       ? `https://${process.env.VERCEL_URL}`
@@ -194,27 +268,143 @@ export async function llmChat(role: LlmRole, opts: ChatOptions): Promise<LlmResu
     headers["X-Title"] = "Orca Multi Finance";
   }
 
-  const res = await httpJson<ChatResponse>(`${baseUrl}/chat/completions`, {
-    provider: `llm:${provider}:${role}`,
-    method: "POST",
-    timeoutMs: opts.timeoutMs ?? 45_000,
-    retries: 0,
-    headers,
-    body: JSON.stringify({
-      model,
-      temperature: opts.temperature ?? 0.3,
-      max_tokens: opts.maxTokens ?? 1200,
-      messages,
-    }),
-  });
+  try {
+    const res = await httpJson<ChatResponse>(`${baseUrl}/chat/completions`, {
+      provider: `llm:${provider}:${role}`,
+      method: "POST",
+      timeoutMs,
+      retries: 0,
+      headers,
+      body: JSON.stringify({
+        model,
+        temperature: opts.temperature ?? 0.3,
+        max_tokens: opts.maxTokens ?? 1200,
+        messages,
+      }),
+    });
 
-  const text = res.data?.choices?.[0]?.message?.content;
-  if (!res.ok || !text || !text.trim()) return null;
-  return {
-    text: text.trim(),
-    model,
-    role,
-    latencyMs: Math.round(performance.now() - t0),
-    provider,
-  };
+    const status = res.status ?? (res.ok ? 200 : 500);
+    const rateLimited = status === 429;
+    const invalidModel = status === 400 || status === 404;
+    const providerError = !res.ok || status >= 500;
+    const text = res.data?.choices?.[0]?.message?.content;
+
+    if (!res.ok || !text || !text.trim()) {
+      if (rateLimited || providerError || invalidModel) markCooldown(model);
+      return { result: null, rateLimited, providerError, invalidModel };
+    }
+
+    return {
+      result: {
+        text: text.trim(),
+        model,
+        role,
+        latencyMs: Math.round(performance.now() - t0),
+        provider,
+      },
+      rateLimited: false,
+      providerError: false,
+      invalidModel: false,
+    };
+  } catch {
+    markCooldown(model);
+    return { result: null, rateLimited: false, providerError: true, invalidModel: false };
+  }
+}
+
+function primaryTimeout(opts: ChatOptions): number {
+  return opts.timeoutMs ?? 28_000;
+}
+
+function fallbackTimeout(opts: ChatOptions): number {
+  const base = opts.timeoutMs ?? 28_000;
+  return Math.min(12_000, Math.max(8_000, Math.floor(base * 0.45)));
+}
+
+export async function llmChat(role: LlmRole, opts: ChatOptions): Promise<LlmResult | null> {
+  if (!llmConfigured()) return null;
+
+  const full = opts.disableCascade
+    ? dedupeModels([opts.modelOverride?.trim() || modelFor(role)])
+    : opts.modelOverride?.trim()
+      ? dedupeModels([opts.modelOverride.trim(), ...modelsFor(role)])
+      : modelsFor(role);
+
+  const candidates = full.filter((m) => !isCooling(m)).slice(0, opts.disableCascade ? 1 : maxCascade());
+  const list = candidates.length ? candidates : full.slice(0, 1);
+  if (!list.length) return null;
+
+  const attempted: string[] = [];
+  let sawRateLimit = false;
+  let sawProviderError = false;
+  const tPrimary = primaryTimeout(opts);
+  const tFallback = fallbackTimeout(opts);
+  const mode = cascadeMode();
+
+  if (mode === "race" && list.length >= 2 && !opts.backend) {
+    const pair = list.slice(0, 2);
+    attempted.push(...pair);
+    const settled = await Promise.all(
+      pair.map((model, i) => callOnce(model, role, opts, opts.backend, i === 0 ? tPrimary : tFallback)),
+    );
+    for (const o of settled) {
+      if (o.rateLimited) sawRateLimit = true;
+      if (o.providerError) sawProviderError = true;
+    }
+    const wins = settled
+      .map((o, i) => ({ o, i, model: pair[i]! }))
+      .filter((x) => x.o.result);
+    if (wins.length) {
+      wins.sort((a, b) => {
+        if (a.i === 0 && b.i !== 0) return -1;
+        if (b.i === 0 && a.i !== 0) return 1;
+        return (a.o.result!.latencyMs ?? 0) - (b.o.result!.latencyMs ?? 0);
+      });
+      const best = wins[0]!;
+      return {
+        ...best.o.result!,
+        attemptedModels: attempted.filter((m) => m !== best.model),
+        raced: true,
+      };
+    }
+    for (let i = 2; i < list.length; i++) {
+      const model = list[i]!;
+      attempted.push(model);
+      const o = await callOnce(model, role, opts, opts.backend, tFallback);
+      if (o.rateLimited) sawRateLimit = true;
+      if (o.providerError) sawProviderError = true;
+      if (o.result) return { ...o.result, attemptedModels: attempted.slice(0, -1) };
+    }
+  } else {
+    for (let i = 0; i < list.length; i++) {
+      const model = list[i]!;
+      attempted.push(model);
+      const o = await callOnce(model, role, opts, opts.backend, i === 0 ? tPrimary : tFallback);
+      if (o.rateLimited) sawRateLimit = true;
+      if (o.providerError) sawProviderError = true;
+      if (o.result) {
+        return {
+          ...o.result,
+          attemptedModels: attempted.length > 1 ? attempted.slice(0, -1) : [],
+        };
+      }
+    }
+  }
+
+  const wantGroqFallback =
+    !opts.backend &&
+    env.aiLlmFallbackBackend === "groq" &&
+    Boolean(env.groqApiKey) &&
+    (sawRateLimit || sawProviderError);
+
+  if (wantGroqFallback) {
+    const groqModel = firstDefined(env.groqModel, process.env.GROQ_MODEL) ?? "llama-3.3-70b-versatile";
+    attempted.push(`groq:${groqModel}`);
+    const o = await callOnce(groqModel, role, opts, "groq", tFallback);
+    if (o.result) {
+      return { ...o.result, attemptedModels: attempted.slice(0, -1), usedBackendFallback: true };
+    }
+  }
+
+  return null;
 }

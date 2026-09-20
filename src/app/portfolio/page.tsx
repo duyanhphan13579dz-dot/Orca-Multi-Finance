@@ -9,6 +9,7 @@ import { PortfolioAiPanel } from "@/components/journal/portfolio-ai-panel";
 import { SmartPortfolioJournal } from "@/components/portfolio/smart-portfolio-journal";
 import {
   buildPortfolioSnapshot,
+  collectPortfolioSymbols,
   formatAssetType,
   loadPortfolioTrades,
   loadPortfolioWatchlist,
@@ -17,11 +18,13 @@ import {
   type PortfolioTrade,
   type PortfolioWatchItem,
 } from "@/lib/portfolio";
-import type { CryptoMarketRow, ForexRow } from "@/lib/types";
+import type { CommodityRow, CryptoMarketRow, ForexRow, Quote } from "@/lib/types";
 import type { CryptoSummary } from "@/lib/services/crypto";
 import type { ForexMarket } from "@/lib/services/forex";
 
 type CryptoData = { rows: CryptoMarketRow[]; summary: CryptoSummary };
+type StockQuotesData = { quotes: Quote[]; count?: number; session?: unknown };
+type CommodityData = { rows: CommodityRow[]; unavailable?: unknown[] };
 
 const toneClass = { danger: "text-negative", warning: "text-warning", info: "text-accent-primary" } as const;
 const assetLabels: Record<string, string> = { stock: "Cổ phiếu", crypto: "Crypto", forex: "Forex", commodity: "Hàng hóa" };
@@ -42,21 +45,77 @@ export default function SmartPortfolioPage() {
     return subscribePortfolioStorage(refresh);
   }, []);
 
+  /** Symbols cần quote theo từng asset class — chỉ kéo đúng mã đang dùng trong portfolio */
+  const symbolBuckets = useMemo(() => collectPortfolioSymbols(trades, watchlist), [trades, watchlist]);
+
+  const stockSymbolsKey = symbolBuckets.stock.join(",");
+  const needCommodities = symbolBuckets.commodity.length > 0;
+
+  const { data: stocks, meta: stocksMeta } = useApi<StockQuotesData>(
+    stockSymbolsKey ? `/api/v1/stocks?symbols=${encodeURIComponent(stockSymbolsKey)}` : null,
+    { refreshInterval: 15_000 },
+  );
+  const { data: commodities, meta: commoditiesMeta } = useApi<CommodityData>(
+    needCommodities ? "/api/v1/commodities" : null,
+    { refreshInterval: 60_000 },
+  );
+
   const marks = useMemo<PortfolioMark[]>(() => {
-    const cryptoMarks = (crypto?.rows ?? []).map((row) => ({
+    const cryptoMarks: PortfolioMark[] = (crypto?.rows ?? []).map((row) => ({
       assetType: "crypto" as const,
       symbol: row.symbol,
       price: Number(row.price),
       changePercent: row.changePercent == null ? null : Number(row.changePercent),
+      change: row.change == null ? null : Number(row.change),
+      volume: row.volume == null ? null : Number(row.volume),
+      high: row.high == null ? null : Number(row.high),
+      low: row.low == null ? null : Number(row.low),
+      updatedAt: row.updatedAt ?? null,
+      source: "binance",
+      fresh: true,
     }));
-    const forexMarks = (forex?.rows ?? []).map((row: ForexRow) => ({
+    const forexMarks: PortfolioMark[] = (forex?.rows ?? []).map((row: ForexRow) => ({
       assetType: "forex" as const,
       symbol: row.pair,
       price: Number(row.price),
       changePercent: row.changePercent == null ? null : Number(row.changePercent),
+      change: row.change == null ? null : Number(row.change),
+      updatedAt: row.updatedAt ?? null,
+      source: "forex",
+      fresh: true,
     }));
-    return [...cryptoMarks, ...forexMarks].filter((mark) => Number.isFinite(mark.price));
-  }, [crypto, forex]);
+    const stockMarks: PortfolioMark[] = (stocks?.quotes ?? []).map((row) => ({
+      assetType: "stock" as const,
+      symbol: row.symbol,
+      price: Number(row.price),
+      changePercent: row.changePercent == null ? null : Number(row.changePercent),
+      change: row.change == null ? null : Number(row.change),
+      volume: row.volume == null ? null : Number(row.volume),
+      high: row.high == null ? null : Number(row.high),
+      low: row.low == null ? null : Number(row.low),
+      updatedAt: row.updatedAt ?? null,
+      source: stocksMeta?.source ?? "vn-multi",
+      fresh: stocksMeta?.freshness === "LIVE" || stocksMeta?.freshness === "DELAYED" ? true : stocksMeta?.freshness === "STALE" ? false : null,
+    }));
+    const wantedCommodities = new Set(symbolBuckets.commodity.map((s) => s.toUpperCase()));
+    const commodityMarks: PortfolioMark[] = (commodities?.rows ?? [])
+      .filter((row) => wantedCommodities.has(String(row.symbol ?? row.commodity ?? "").toUpperCase())
+        || wantedCommodities.has(String(row.commodity ?? "").toUpperCase()))
+      .map((row) => ({
+        assetType: "commodity" as const,
+        symbol: String(row.symbol || row.commodity || "").toUpperCase(),
+        price: row.price == null ? null : Number(row.price),
+        changePercent: row.changePercent == null ? null : Number(row.changePercent),
+        change: row.change == null ? null : Number(row.change),
+        updatedAt: row.updatedAt ?? null,
+        source: commoditiesMeta?.source ?? "vietnambiz",
+        fresh: commoditiesMeta?.freshness === "LIVE" || commoditiesMeta?.freshness === "DELAYED" ? true : commoditiesMeta?.freshness === "STALE" ? false : null,
+      }));
+
+    return [...cryptoMarks, ...forexMarks, ...stockMarks, ...commodityMarks].filter(
+      (mark) => mark.price != null && Number.isFinite(mark.price),
+    );
+  }, [crypto, forex, stocks, stocksMeta, commodities, commoditiesMeta, symbolBuckets.commodity]);
 
   const snapshot = useMemo(() => buildPortfolioSnapshot(trades, watchlist, marks), [trades, watchlist, marks]);
   const watchMarkMap = useMemo(() => new Map(marks.map((mark) => [`${mark.assetType}:${mark.symbol.toUpperCase()}`, mark])), [marks]);
@@ -117,7 +176,21 @@ function Overview({ snapshot, trades, watchlistCount }: { snapshot: ReturnType<t
         {snapshot.alerts.length ? <div className="space-y-2">{snapshot.alerts.map((alert, index) => <div key={`${alert.title}-${alert.symbol}-${index}`} className="flex gap-2 rounded-md border border-border-subtle bg-surface-base/60 p-2.5"><div className={toneClass[alert.tone]}>{alert.tone === "danger" ? <CircleAlert className="size-4" /> : alert.tone === "warning" ? <AlertTriangle className="size-4" /> : <ShieldCheck className="size-4" />}</div><div className="min-w-0"><div className="text-[12px] font-medium">{alert.symbol ? `${alert.symbol} · ` : ""}{alert.title}</div><p className="mt-0.5 text-[11px] text-text-muted">{alert.detail}</p></div></div>)}</div> : <div className="flex items-center gap-2 rounded-md bg-positive/10 p-3 text-[12px] text-positive"><ShieldCheck className="size-4" /> Chưa phát hiện vi phạm kỷ luật rõ ràng trên dữ liệu hiện có.</div>}
       </Panel>
       <Panel className="lg:col-span-2" title="Smart readout">
-        <div className="grid gap-3 sm:grid-cols-3"><Readout label="Trạng thái book" value={snapshot.positions.length ? `${snapshot.positions.length} vị thế đang mở` : "Chưa có vị thế"} note={snapshot.totalExposure ? `Exposure ${fmtNum(snapshot.totalExposure, 2)}` : "Watchlist vẫn hoạt động độc lập"} /><Readout label="Chất lượng hiệu suất" value={snapshot.profitFactor == null ? "Chưa đủ mẫu" : snapshot.profitFactor >= 1.5 ? "Có lợi thế" : snapshot.profitFactor >= 1 ? "Cần theo dõi" : "Đang suy yếu"} note={snapshot.winRate == null ? "Cần lệnh đã đóng" : `Win rate ${(snapshot.winRate * 100).toFixed(0)}%`} /><Readout label="Việc nên làm trước" value={snapshot.alerts[0]?.title ?? "Tiếp tục ghi nhận"} note={snapshot.alerts[0]?.detail ?? "Ghi entry, SL, TP và exit để analytics đáng tin cậy hơn."} /></div>
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4"><Readout label="Trạng thái book" value={snapshot.positions.length ? `${snapshot.positions.length} vị thế đang mở` : "Chưa có vị thế"} note={snapshot.totalExposure ? `Exposure ${fmtNum(snapshot.totalExposure, 2)}` : "Watchlist vẫn hoạt động độc lập"} /><Readout label="Trạng thái danh mục" value={snapshot.portfolioStatus.statusLabel} note={`Mark coverage ${snapshot.portfolioStatus.markCoveragePct.toFixed(0)}% · ${snapshot.portfolioStatus.markedOpenCount}/${snapshot.positions.length || 0} có giá nguồn`} /><Readout label="Chất lượng hiệu suất" value={snapshot.profitFactor == null ? "Chưa đủ mẫu" : snapshot.profitFactor >= 1.5 ? "Có lợi thế" : snapshot.profitFactor >= 1 ? "Cần theo dõi" : "Đang suy yếu"} note={snapshot.winRate == null ? "Cần lệnh đã đóng" : `Win rate ${(snapshot.winRate * 100).toFixed(0)}%`} /><Readout label="Việc nên làm trước" value={snapshot.alerts[0]?.title ?? "Tiếp tục ghi nhận"} note={snapshot.alerts[0]?.detail ?? "Ghi entry, SL, TP và exit để analytics đáng tin cậy hơn."} /></div>
+        {snapshot.portfolioStatus.stockOpenCount > 0 || snapshot.portfolioStatus.dataGaps.length > 0 ? (
+          <div className="mt-3 rounded-md border border-border-subtle bg-surface-base/50 p-3 text-[11px] text-text-muted">
+            <div className="font-medium text-text-primary">Nguồn giá cổ phiếu / danh mục</div>
+            <p className="mt-1">
+              Cổ phiếu mở: {snapshot.portfolioStatus.stockMarkedCount}/{snapshot.portfolioStatus.stockOpenCount} có mark từ VNDirect/SSI/public.
+              {snapshot.portfolioStatus.cryptoOpenCount ? ` · Crypto: ${snapshot.portfolioStatus.cryptoOpenCount}` : ""}
+              {snapshot.portfolioStatus.forexOpenCount ? ` · Forex: ${snapshot.portfolioStatus.forexOpenCount}` : ""}
+              {snapshot.portfolioStatus.commodityOpenCount ? ` · Hàng hóa: ${snapshot.portfolioStatus.commodityOpenCount}` : ""}
+            </p>
+            {snapshot.portfolioStatus.dataGaps.map((gap) => (
+              <p key={gap} className="mt-0.5 text-warning">{gap}</p>
+            ))}
+          </div>
+        ) : null}
       </Panel>
       <VolatilityMonitor snapshot={snapshot} />
       <PortfolioCharts snapshot={snapshot} />
