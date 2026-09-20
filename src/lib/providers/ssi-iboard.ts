@@ -35,19 +35,19 @@ function mapRow(r: SsiBoardRow): Quote | null {
   if (!last || !Number.isFinite(last)) return null;
   return {
     symbol: code,
+    assetClass: "stock",
     price: last,
     change: Number.isFinite(Number(r.priceChange)) ? Number(r.priceChange) : null,
     changePercent: Number.isFinite(Number(r.priceChangePercent)) ? Number(r.priceChangePercent) : null,
     volume: Number(r.totalMatchVolume ?? 0) || null,
-    value: Number(r.totalMatchValue ?? 0) || null,
+    quoteVolume: Number(r.totalMatchValue ?? 0) || null,
     high: Number(r.highest ?? 0) || null,
     low: Number(r.lowest ?? 0) || null,
     open: Number(r.openPrice ?? 0) || null,
-    ref: Number(r.refPrice ?? 0) || null,
-    ceiling: Number(r.ceiling ?? 0) || null,
-    floor: Number(r.floor ?? 0) || null,
-    source: "ssi-iboard",
-    ts: Date.now(),
+    referencePrice: Number(r.refPrice ?? 0) || null,
+    ceilingPrice: Number(r.ceiling ?? 0) || null,
+    floorPrice: Number(r.floor ?? 0) || null,
+    updatedAt: new Date().toISOString(),
   };
 }
 
