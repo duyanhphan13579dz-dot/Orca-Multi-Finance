@@ -6,6 +6,7 @@ import { getProviderHealth } from "@/lib/health";
 import { getLastNetworkLatency, probeNetworkLatency } from "@/lib/network-latency";
 import { ensureHeartbeatStarted, processHeartbeat } from "@/lib/realtime/heartbeat";
 import { cacheStats, redisStatus } from "@/lib/cache";
+import { llmConfigured } from "@/lib/ai/gateway";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -19,67 +20,64 @@ export async function GET() {
     const pkg = JSON.parse(readFileSync(join(process.cwd(), "package.json"), "utf8")) as { version?: string; name?: string };
     version = pkg.version ?? version;
   } catch {
-    /* default */
+    /* ignore */
   }
+
+  // Best-effort DB ping
   let dbOk = false;
   let dbLatencyMs: number | null = null;
-  const { databaseConfigured } = await import("@/db");
-  const dbConfigured = databaseConfigured();
   try {
-    const t0 = performance.now();
-    const { db } = await import("@/db");
-    await db.execute(sql`select 1`);
-    dbLatencyMs = Math.round(performance.now() - t0);
+    const t0 = Date.now();
+    await sql`select 1`;
+    dbLatencyMs = Date.now() - t0;
     dbOk = true;
   } catch {
     dbOk = false;
   }
-  const redis = await redisStatus();
-  const providers = getProviderHealth();
-  const healthy = providers.filter((p) => p.status === "healthy").length;
-  const down = providers.filter((p) => p.status === "down").length;
 
-  ensureHeartbeatStarted();
-  // Non-blocking network latency: use cache if warm, else kick a background probe
+  // Provider health snapshot
+  const health = getProviderHealth();
+
+  // Network latency (cached probe)
   let network = getLastNetworkLatency();
   if (!network) {
-    void probeNetworkLatency({ timeoutMs: 4_000 }).catch(() => null);
+    try {
+      network = await probeNetworkLatency();
+    } catch {
+      network = null;
+    }
   }
-  const heartbeat = processHeartbeat.stats();
+
+  // Heartbeat
+  ensureHeartbeatStarted();
+  const heartbeat = processHeartbeat();
+
+  const redis = redisStatus();
+  const cache = cacheStats();
 
   return ok(
     {
-      app: { name: "ORCA Financial", version, environment: process.env.NODE_ENV ?? "development", nodeEnv: process.env.NODE_ENV },
-      runtime: { uptimeSec: Math.round((Date.now() - startedAt) / 1000), serverTime: new Date().toISOString() },
-      database: { configured: dbConfigured, connected: dbOk, latencyMs: dbLatencyMs },
+      version,
+      uptimeMs: Date.now() - startedAt,
+      nodeEnv: process.env.NODE_ENV ?? "development",
+      runtime: "nodejs",
+      database: { ok: dbOk, latencyMs: dbLatencyMs },
       redis,
+      cache,
+      network,
       heartbeat,
-      networkLatency: network
-        ? {
-            summary: network.summary,
-            probedAt: network.probedAt,
-            hosts: network.results.map((r) => ({
-              id: r.id,
-              ok: r.ok,
-              latencyMs: r.latencyMs,
-              error: r.error,
-            })),
-          }
-        : null,
-      dataEngine: {
-        providersTotal: providers.length,
-        providersHealthy: healthy,
-        providersDown: down,
-        cache: cacheStats(),
-      },
-      features: {
+      providers: health,
+      flags: {
+        ssiConfigured: Boolean(
+          process.env.SSI_FC_CONSUMER_ID?.trim() || process.env.SSI_API_KEY?.trim(),
+        ),
         vnstockConfigured: Boolean(process.env.VNSTOCK_API_KEY?.trim()),
         biquoteConfigured: Boolean(process.env.BIQUOTE_API_KEY?.trim()),
         simplizeConfigured: Boolean(process.env.SIMPLIZE_API_KEY?.trim()),
-        llmConfigured: Boolean(process.env.AI_PROVIDER_KEY?.trim()),
+        llmConfigured: llmConfigured(),
         msnCommodityMap: Boolean(process.env.MSN_COMMODITY_MAP?.trim()),
       },
     },
-    { source: "orca-ops" },
+    { source: "orca-system-info" },
   );
 }
