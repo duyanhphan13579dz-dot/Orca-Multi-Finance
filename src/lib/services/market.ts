@@ -15,7 +15,7 @@ import type {
  * Central market snapshot — single aggregation point consumed by the
  * dashboard, reports, and the AI agent (avoids per-component provider storms).
  *
- * Speed: overall budget ~2.8s — slow sections (news/commodities) soft-timeout
+ * Speed: overall budget ~5.5s — slow sections (news/commodities) soft-timeout
  * so UI never waits on the slowest RSS feed.
  */
 
@@ -67,7 +67,7 @@ export async function buildMarketSnapshot(): Promise<{ snapshot: MarketSnapshot;
     producer: async (): Promise<SnapshotPayload> => {
       // Hot path budget: indices + crypto + forex must finish fast.
       // News & commodities are nice-to-have within the same window.
-      const BUDGET_MS = 2_800;
+      const BUDGET_MS = 5_500;
 
       const vnP = getVnIndices();
       const cryptoP = getCryptoMarkets();
