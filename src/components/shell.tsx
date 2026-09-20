@@ -2,11 +2,38 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { startTransition, useEffect, useRef, useState, type ComponentType, type ReactNode } from "react";
+import {
+  startTransition,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ComponentType,
+  type ReactNode,
+} from "react";
 import { markAppNavigating } from "@/lib/hooks";
 import {
-  Bell, Bot, Boxes, CandlestickChart, ChartNoAxesCombined, ChevronsLeft, ChevronsRight, Coins, DollarSign,
-  Eye, FlaskConical, Globe2, Grid2x2, Home, Landmark, LogOut, Menu, Newspaper, NotebookPen, Settings, X,
+  Bell,
+  Bot,
+  Boxes,
+  CandlestickChart,
+  ChartNoAxesCombined,
+  ChevronsLeft,
+  ChevronsRight,
+  Coins,
+  DollarSign,
+  Eye,
+  FlaskConical,
+  Globe2,
+  Grid2x2,
+  Home,
+  Landmark,
+  LogOut,
+  Menu,
+  Newspaper,
+  NotebookPen,
+  Settings,
+  X,
 } from "lucide-react";
 import { TickerTape } from "@/components/ticker-tape";
 import { GlobalSearch } from "@/components/search";
@@ -16,7 +43,15 @@ import { useSettings } from "@/lib/settings";
 import { FreshnessDot } from "@/components/ui";
 import type { NewsArticle } from "@/lib/types";
 
-const NAV_SECTIONS: { title: string; items: { href: string; label: string; icon: ComponentType<{ className?: string }>; core?: boolean }[] }[] = [
+const NAV_SECTIONS: {
+  title: string;
+  items: {
+    href: string;
+    label: string;
+    icon: ComponentType<{ className?: string }>;
+    core?: boolean;
+  }[];
+}[] = [
   {
     title: "THỊ TRƯỜNG",
     items: [
@@ -49,7 +84,15 @@ const NAV_SECTIONS: { title: string; items: { href: string; label: string; icon:
   },
 ];
 
+const CORE_HREFS = NAV_SECTIONS.flatMap((s) =>
+  s.items.filter((i) => i.core || i.href === "/" || i.href === "/news" || i.href === "/stocks").map((i) => i.href),
+);
+
 const SB_KEY = "orca.sidebar.collapsed";
+
+function isActivePath(pathname: string, href: string) {
+  return pathname === href || (href !== "/" && pathname.startsWith(href));
+}
 
 export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
@@ -57,124 +100,216 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [routeBusy, setRouteBusy] = useState(false);
+  /** Optimistic highlight while transition is in flight */
+  const [pendingHref, setPendingHref] = useState<string | null>(null);
+  const prefetched = useRef(new Set<string>());
 
   useEffect(() => {
     try {
-      const v = localStorage.getItem(SB_KEY);
-      if (v === "1") setCollapsed(true);
+      if (localStorage.getItem(SB_KEY) === "1") setCollapsed(true);
     } catch {}
   }, []);
 
-  // Prefetch core routes on idle
+  // Idle prefetch core routes
   useEffect(() => {
-    const cores = NAV_SECTIONS.flatMap((s) => s.items).filter((i) => i.core || i.href === "/" || i.href === "/news" || i.href === "/stocks").map((i) => i.href);
     let cancelled = false;
     const run = () => {
       if (cancelled) return;
-      for (const href of cores) {
-        try { router.prefetch(href); } catch {}
+      for (const href of CORE_HREFS) {
+        if (prefetched.current.has(href)) continue;
+        try {
+          router.prefetch(href);
+          prefetched.current.add(href);
+        } catch {}
       }
     };
     if (typeof window !== "undefined" && "requestIdleCallback" in window) {
-      const id = (window as any).requestIdleCallback(run, { timeout: 2500 });
-      return () => { cancelled = true; (window as any).cancelIdleCallback?.(id); };
+      const id = (window as Window & { requestIdleCallback: (cb: () => void, opts?: { timeout: number }) => number }).requestIdleCallback(run, {
+        timeout: 1800,
+      });
+      return () => {
+        cancelled = true;
+        (window as Window & { cancelIdleCallback?: (id: number) => void }).cancelIdleCallback?.(id);
+      };
     }
-    const t = setTimeout(run, 1200);
-    return () => { cancelled = true; clearTimeout(t); };
+    const t = setTimeout(run, 900);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
   }, [router]);
 
-  // Close mobile drawer on route change + mark navigating
+  // Route settled → clear optimistic + progress
   useEffect(() => {
     setMobileOpen(false);
-    markAppNavigating(480);
+    setPendingHref(null);
+    markAppNavigating(420);
     setRouteBusy(true);
-    const t = setTimeout(() => setRouteBusy(false), 420);
+    const t = setTimeout(() => setRouteBusy(false), 380);
     return () => clearTimeout(t);
   }, [pathname]);
+
+  const prefetchHref = useCallback(
+    (href: string) => {
+      if (prefetched.current.has(href)) return;
+      try {
+        router.prefetch(href);
+        prefetched.current.add(href);
+      } catch {}
+    },
+    [router],
+  );
 
   const toggleCollapsed = () => {
     setCollapsed((c) => {
       const next = !c;
-      try { localStorage.setItem(SB_KEY, next ? "1" : "0"); } catch {}
+      try {
+        localStorage.setItem(SB_KEY, next ? "1" : "0");
+      } catch {}
       return next;
     });
   };
 
-  const navigate = (href: string) => {
-    if (href === pathname) return;
-    markAppNavigating(480);
-    setRouteBusy(true);
-    startTransition(() => {
-      router.push(href);
-    });
-  };
+  const navigate = useCallback(
+    (href: string) => {
+      if (href === pathname) return;
+      setPendingHref(href);
+      markAppNavigating(480);
+      setRouteBusy(true);
+      startTransition(() => {
+        router.push(href);
+      });
+    },
+    [pathname, router],
+  );
+
+  const effectivePath = pendingHref ?? pathname;
 
   return (
     <div className="flex h-full flex-col bg-canvas text-text-primary">
       {/* Top progress bar */}
       <div
-        className={`pointer-events-none fixed left-0 right-0 top-0 z-[60] h-0.5 origin-left bg-accent-primary transition-transform duration-300 ${
+        aria-hidden
+        className={`pointer-events-none fixed left-0 right-0 top-0 z-[60] h-[2px] origin-left bg-accent-primary transition-[transform,opacity] duration-300 ease-out ${
           routeBusy ? "scale-x-100 opacity-100" : "scale-x-0 opacity-0"
         }`}
-        style={{ transformOrigin: "left" }}
+        style={{ transformOrigin: "left center" }}
       />
 
       <TickerTape />
 
       <div className="flex min-h-0 flex-1">
-        {/* Sidebar desktop */}
+        {/* ── Desktop sidebar ── */}
         <aside
-          className={`hidden shrink-0 flex-col border-r border-border-subtle bg-surface-base transition-[width] duration-200 lg:flex ${
-            collapsed ? "w-[64px]" : "w-[220px]"
+          className={`hidden shrink-0 flex-col border-r border-border-subtle bg-surface-base lg:flex ${
+            collapsed ? "w-[60px]" : "w-[220px]"
           }`}
+          style={{
+            transition: "width 200ms cubic-bezier(0.22, 1, 0.36, 1)",
+            willChange: "width",
+          }}
         >
-          <div className="flex h-14 items-center gap-2 border-b border-border-subtle px-3">
-            <Link href="/" onClick={(e) => { e.preventDefault(); navigate("/"); }} className="flex min-w-0 items-center gap-2">
+          {/* Brand + collapse */}
+          <div
+            className={`flex h-13 shrink-0 items-center border-b border-border-subtle ${
+              collapsed ? "justify-center px-1.5" : "gap-1.5 px-2.5"
+            }`}
+            style={{ height: 52 }}
+          >
+            <Link
+              href="/"
+              onClick={(e) => {
+                e.preventDefault();
+                navigate("/");
+              }}
+              onMouseEnter={() => prefetchHref("/")}
+              className="flex min-w-0 items-center gap-2 rounded-md outline-none focus-visible:ring-2 focus-visible:ring-accent-primary/40"
+            >
               {collapsed ? (
                 <OrcaMark size={28} className="shrink-0 rounded-md" />
               ) : (
                 <OrcaWordmark size={28} subtitle={false} />
               )}
             </Link>
-            <button
-              type="button"
-              onClick={toggleCollapsed}
-              className="ml-auto grid size-7 place-items-center rounded-md text-text-muted hover:bg-surface-elevated hover:text-text-primary"
-              aria-label={collapsed ? "Mở rộng sidebar" : "Thu gọn sidebar"}
-            >
-              {collapsed ? <ChevronsRight className="size-4" /> : <ChevronsLeft className="size-4" />}
-            </button>
+            {!collapsed && (
+              <button
+                type="button"
+                onClick={toggleCollapsed}
+                className="ml-auto grid size-7 place-items-center rounded-md text-text-muted transition-colors hover:bg-surface-elevated hover:text-text-primary active:scale-95"
+                aria-label="Thu gọn sidebar"
+              >
+                <ChevronsLeft className="size-4" />
+              </button>
+            )}
           </div>
 
-          <nav className="flex-1 overflow-y-auto px-2 py-3">
-            {NAV_SECTIONS.map((section) => (
-              <div key={section.title} className="mb-4">
-                {!collapsed && (
-                  <div className="mb-1.5 px-2 text-[10px] font-semibold tracking-wider text-text-muted">
+          {/* Expand button when collapsed — sits under logo */}
+          {collapsed && (
+            <div className="flex justify-center border-b border-border-subtle py-1.5">
+              <button
+                type="button"
+                onClick={toggleCollapsed}
+                className="grid size-8 place-items-center rounded-md text-text-muted transition-colors hover:bg-surface-elevated hover:text-text-primary active:scale-95"
+                aria-label="Mở rộng sidebar"
+              >
+                <ChevronsRight className="size-4" />
+              </button>
+            </div>
+          )}
+
+          <nav className="flex-1 overflow-y-auto overflow-x-hidden py-2 scrollbar-thin">
+            {NAV_SECTIONS.map((section, sIdx) => (
+              <div key={section.title} className={sIdx > 0 ? "mt-1" : ""}>
+                {!collapsed ? (
+                  <div className="mb-1 px-3 pt-1 text-[10px] font-semibold tracking-[0.14em] text-text-muted">
                     {section.title}
                   </div>
+                ) : (
+                  sIdx > 0 && (
+                    <div className="mx-auto my-1.5 h-px w-6 bg-border-subtle" aria-hidden />
+                  )
                 )}
-                <ul className="space-y-0.5">
+                <ul className={`flex flex-col ${collapsed ? "items-center gap-0.5 px-1" : "gap-0.5 px-1.5"}`}>
                   {section.items.map((item) => {
-                    const active = pathname === item.href || (item.href !== "/" && pathname.startsWith(item.href));
+                    const active = isActivePath(effectivePath, item.href);
                     const Icon = item.icon;
                     return (
-                      <li key={item.href}>
+                      <li key={item.href} className={collapsed ? "w-full" : undefined}>
                         <Link
                           href={item.href}
                           prefetch
+                          title={collapsed ? item.label : undefined}
+                          onMouseEnter={() => prefetchHref(item.href)}
+                          onFocus={() => prefetchHref(item.href)}
                           onClick={(e) => {
                             e.preventDefault();
                             navigate(item.href);
                           }}
-                          className={`group flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-[13px] font-medium transition-all ${
+                          className={`group relative flex items-center rounded-lg text-[13px] font-medium outline-none transition-[background-color,color,transform,box-shadow] duration-150 ease-out focus-visible:ring-2 focus-visible:ring-accent-primary/40 ${
+                            collapsed
+                              ? "mx-auto size-10 justify-center"
+                              : "gap-2.5 px-2.5 py-[7px]"
+                          } ${
                             active
-                              ? "bg-accent-primary/15 text-accent-primary shadow-[inset_0_0_0_1px_rgba(0,212,255,0.25)]"
-                              : "text-text-secondary hover:bg-surface-elevated hover:text-text-primary active:scale-[0.98]"
+                              ? "bg-accent-primary/15 text-accent-primary shadow-[inset_0_0_0_1px_rgba(59,130,246,0.28)]"
+                              : "text-text-secondary hover:bg-surface-elevated hover:text-text-primary active:scale-[0.97]"
                           }`}
                         >
-                          <Icon className={`size-4 shrink-0 ${active ? "text-accent-primary" : "text-text-muted group-hover:text-text-secondary"}`} />
-                          {!collapsed && <span className="truncate">{item.label}</span>}
+                          {/* Active rail when collapsed */}
+                          {collapsed && active && (
+                            <span
+                              aria-hidden
+                              className="absolute left-0 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-r-full bg-accent-primary"
+                            />
+                          )}
+                          <Icon
+                            className={`size-[18px] shrink-0 transition-colors duration-150 ${
+                              active
+                                ? "text-accent-primary"
+                                : "text-text-muted group-hover:text-text-secondary"
+                            }`}
+                          />
+                          {!collapsed && <span className="truncate leading-none">{item.label}</span>}
                         </Link>
                       </li>
                     );
@@ -185,19 +320,26 @@ export function AppShell({ children }: { children: ReactNode }) {
           </nav>
         </aside>
 
-        {/* Main column */}
+        {/* ── Main column ── */}
         <div className="flex min-w-0 flex-1 flex-col">
           {/* Mobile top bar */}
           <header className="flex h-12 items-center gap-2 border-b border-border-subtle bg-surface-base px-3 lg:hidden">
             <button
               type="button"
               onClick={() => setMobileOpen(true)}
-              className="grid size-9 place-items-center rounded-lg text-text-secondary hover:bg-surface-elevated"
+              className="grid size-9 place-items-center rounded-lg text-text-secondary transition-colors hover:bg-surface-elevated active:scale-95"
               aria-label="Menu"
             >
               <Menu className="size-5" />
             </button>
-            <Link href="/" onClick={(e) => { e.preventDefault(); navigate("/"); }} className="flex items-center gap-2">
+            <Link
+              href="/"
+              onClick={(e) => {
+                e.preventDefault();
+                navigate("/");
+              }}
+              className="flex items-center gap-2"
+            >
               <OrcaMark size={26} className="rounded-md" />
             </Link>
             <div className="ml-auto flex items-center gap-1">
@@ -221,37 +363,53 @@ export function AppShell({ children }: { children: ReactNode }) {
         </div>
       </div>
 
-      {/* Mobile drawer */}
+      {/* ── Mobile drawer ── */}
       {mobileOpen && (
         <div className="fixed inset-0 z-50 lg:hidden">
-          <div className="absolute inset-0 bg-black/50" onClick={() => setMobileOpen(false)} />
-          <aside className="absolute bottom-0 left-0 top-0 flex w-[min(280px,86vw)] flex-col bg-surface-base shadow-2xl">
+          <div
+            className="absolute inset-0 bg-black/50 transition-opacity"
+            onClick={() => setMobileOpen(false)}
+          />
+          <aside
+            className="absolute bottom-0 left-0 top-0 flex w-[min(280px,86vw)] flex-col bg-surface-base shadow-2xl"
+            style={{ animation: "slideInLeft 180ms cubic-bezier(0.22, 1, 0.36, 1)" }}
+          >
             <div className="flex h-12 items-center justify-between border-b border-border-subtle px-3">
               <OrcaWordmark size={28} subtitle={false} />
-              <button type="button" onClick={() => setMobileOpen(false)} className="grid size-9 place-items-center rounded-lg text-text-muted hover:bg-surface-elevated">
+              <button
+                type="button"
+                onClick={() => setMobileOpen(false)}
+                className="grid size-9 place-items-center rounded-lg text-text-muted transition-colors hover:bg-surface-elevated active:scale-95"
+              >
                 <X className="size-5" />
               </button>
             </div>
             <nav className="flex-1 overflow-y-auto px-2 py-3">
               {NAV_SECTIONS.map((section) => (
                 <div key={section.title} className="mb-4">
-                  <div className="mb-1.5 px-2 text-[10px] font-semibold tracking-wider text-text-muted">{section.title}</div>
-                  <ul className="space-y-0.5">
+                  <div className="mb-1.5 px-2 text-[10px] font-semibold tracking-[0.14em] text-text-muted">
+                    {section.title}
+                  </div>
+                  <ul className="space-y-0.5"
+                  >
                     {section.items.map((item) => {
-                      const active = pathname === item.href || (item.href !== "/" && pathname.startsWith(item.href));
+                      const active = isActivePath(effectivePath, item.href);
                       const Icon = item.icon;
                       return (
                         <li key={item.href}>
                           <Link
                             href={item.href}
                             prefetch
+                            onMouseEnter={() => prefetchHref(item.href)}
                             onClick={(e) => {
                               e.preventDefault();
                               setMobileOpen(false);
                               navigate(item.href);
                             }}
-                            className={`flex items-center gap-2.5 rounded-lg px-2.5 py-2.5 text-[13.5px] font-medium ${
-                              active ? "bg-accent-primary/15 text-accent-primary" : "text-text-secondary hover:bg-surface-elevated"
+                            className={`flex items-center gap-2.5 rounded-lg px-2.5 py-2.5 text-[13.5px] font-medium transition-[background-color,color,transform] duration-150 active:scale-[0.98] ${
+                              active
+                                ? "bg-accent-primary/15 text-accent-primary"
+                                : "text-text-secondary hover:bg-surface-elevated"
                             }`}
                           >
                             <Icon className="size-4 shrink-0" />
@@ -267,13 +425,26 @@ export function AppShell({ children }: { children: ReactNode }) {
           </aside>
         </div>
       )}
+
+      <style jsx global>{`
+        @keyframes slideInLeft {
+          from {
+            transform: translateX(-100%);
+          }
+          to {
+            transform: translateX(0);
+          }
+        }
+      `}</style>
     </div>
   );
 }
 
 function NotifBell() {
   const { settings } = useSettings();
-  const { data } = useApi<{ articles: NewsArticle[] }>("/api/v1/news?limit=8", { refreshInterval: 90_000 });
+  const { data } = useApi<{ articles: NewsArticle[] }>("/api/v1/news?limit=8", {
+    refreshInterval: 90_000,
+  });
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const articles = data?.articles ?? [];
@@ -292,7 +463,7 @@ function NotifBell() {
         type="button"
         onClick={() => setOpen((o) => !o)}
         aria-label="Thông báo tin tức"
-        className="relative grid size-9 place-items-center rounded-lg text-text-secondary hover:bg-surface-elevated hover:text-text-primary"
+        className="relative grid size-9 place-items-center rounded-lg text-text-secondary transition-colors hover:bg-surface-elevated hover:text-text-primary active:scale-95"
       >
         <Bell className="size-4.5" />
         {articles.length > 0 && (
@@ -316,9 +487,11 @@ function NotifBell() {
                     target="_blank"
                     rel="noopener noreferrer"
                     onClick={() => setOpen(false)}
-                    className="block border-b border-border-subtle px-3 py-2.5 text-left hover:bg-surface-elevated"
+                    className="block border-b border-border-subtle px-3 py-2.5 text-left transition-colors hover:bg-surface-elevated"
                   >
-                    <span className="line-clamp-2 text-[12.5px] font-medium text-text-primary">{a.title}</span>
+                    <span className="line-clamp-2 text-[12.5px] font-medium text-text-primary">
+                      {a.title}
+                    </span>
                     <span className="mt-0.5 block text-[10px] text-text-muted">
                       {a.source} ·{" "}
                       {new Date(a.publishedAt).toLocaleTimeString("vi-VN", {
@@ -343,7 +516,9 @@ function UserMenu() {
   const { settings } = useSettings();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
-  const { data: me, mutate } = useApi<{ user: { email: string; name: string | null } }>("/api/v1/auth/me");
+  const { data: me, mutate } = useApi<{ user: { email: string; name: string | null } }>(
+    "/api/v1/auth/me",
+  );
 
   useEffect(() => {
     const onDoc = (e: MouseEvent) => {
@@ -353,7 +528,8 @@ function UserMenu() {
     return () => document.removeEventListener("mousedown", onDoc);
   }, []);
 
-  const displayName = settings.profile.displayName || me?.user?.name || me?.user?.email?.split("@")[0] || "";
+  const displayName =
+    settings.profile.displayName || me?.user?.name || me?.user?.email?.split("@")[0] || "";
   const initials = displayName.slice(0, 2).toUpperCase();
 
   return (
@@ -361,7 +537,7 @@ function UserMenu() {
       <button
         onClick={() => setOpen((o) => !o)}
         aria-label="Tài khoản"
-        className="grid size-9 place-items-center overflow-hidden rounded-lg border border-border-subtle text-[11px] font-bold transition-colors hover:border-border-default sm:size-8 bg-surface-elevated"
+        className="grid size-9 place-items-center overflow-hidden rounded-lg border border-border-subtle bg-surface-elevated text-[11px] font-bold transition-colors hover:border-border-default active:scale-95 sm:size-8"
       >
         {me?.user ? initials || "·" : <span className="text-text-muted">?</span>}
       </button>
@@ -370,13 +546,15 @@ function UserMenu() {
           {me?.user ? (
             <>
               <div className="border-b border-border-subtle px-3 py-2.5">
-                <div className="truncate text-[12.5px] font-semibold text-text-primary">{displayName || me.user.email}</div>
+                <div className="truncate text-[12.5px] font-semibold text-text-primary">
+                  {displayName || me.user.email}
+                </div>
                 <div className="truncate text-[10.5px] text-text-muted">{me.user.email}</div>
               </div>
               <Link
                 href="/settings"
                 onClick={() => setOpen(false)}
-                className="flex items-center gap-2 px-3 py-2.5 text-[12.5px] text-text-secondary hover:bg-surface-elevated hover:text-text-primary"
+                className="flex items-center gap-2 px-3 py-2.5 text-[12.5px] text-text-secondary transition-colors hover:bg-surface-elevated hover:text-text-primary"
               >
                 <Settings className="size-3.5" /> Cài đặt
               </Link>
@@ -387,7 +565,7 @@ function UserMenu() {
                   setOpen(false);
                   router.refresh();
                 }}
-                className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-[12.5px] text-text-secondary hover:bg-surface-elevated hover:text-text-primary"
+                className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-[12.5px] text-text-secondary transition-colors hover:bg-surface-elevated hover:text-text-primary"
               >
                 <LogOut className="size-3.5" /> Đăng xuất
               </button>
@@ -396,7 +574,7 @@ function UserMenu() {
             <Link
               href="/login"
               onClick={() => setOpen(false)}
-              className="block px-3 py-2.5 text-[12.5px] text-text-secondary hover:bg-surface-elevated hover:text-text-primary"
+              className="block px-3 py-2.5 text-[12.5px] text-text-secondary transition-colors hover:bg-surface-elevated hover:text-text-primary"
             >
               Đăng nhập
             </Link>
