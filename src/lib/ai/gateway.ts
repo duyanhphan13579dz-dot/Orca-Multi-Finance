@@ -144,14 +144,14 @@ function resolveProvider(model: string, backend?: LlmBackend): {
     const isGroq = base.includes("groq");
     return {
       baseUrl: base,
-      apiKey: isOr ? env.openrouterApiKey ?? env.aiProviderKey : isGroq ? env.groqApiKey ?? env.aiProviderKey : env.aiProviderKey,
+      apiKey: isOr ? env.openrouterApiKey ?? env.aiApiKey : isGroq ? env.groqApiKey ?? env.aiApiKey : env.aiApiKey,
       provider: isOr ? "openrouter" : isGroq ? "groq" : "openai-compatible",
     };
   }
   if (env.openrouterApiKey || model.includes("/")) {
     return {
       baseUrl: "https://openrouter.ai/api/v1",
-      apiKey: env.openrouterApiKey ?? env.aiProviderKey,
+      apiKey: env.openrouterApiKey ?? env.aiApiKey,
       provider: "openrouter",
     };
   }
@@ -162,11 +162,11 @@ function resolveProvider(model: string, backend?: LlmBackend): {
       provider: "groq",
     };
   }
-  return { baseUrl: "https://api.openai.com/v1", apiKey: env.aiProviderKey, provider: "openai-compatible" };
+  return { baseUrl: "https://api.openai.com/v1", apiKey: env.aiApiKey, provider: "openai-compatible" };
 }
 
 export function llmConfigured(): boolean {
-  return Boolean(env.openrouterApiKey || env.aiProviderKey || env.groqApiKey);
+  return Boolean(env.openrouterApiKey || env.aiApiKey || env.groqApiKey);
 }
 
 export function llmRegistryInfo() {
@@ -205,7 +205,6 @@ export function llmRegistryInfo() {
       AI_LLM_FALLBACK_BACKEND: env.aiLlmFallbackBackend || null,
       AI_LLM_CASCADE_MODE: cascadeMode(),
       AI_LLM_MAX_CASCADE: maxCascade(),
-      AI_PROVIDER_KEY_LEGACY: Boolean(process.env.AI_PROVIDER_KEY?.trim()),
     },
     openrouterModelResolved: env.openrouterModel ?? env.aiModel ?? null,
   };
