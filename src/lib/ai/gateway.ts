@@ -312,12 +312,12 @@ async function callOnce(
 }
 
 function primaryTimeout(opts: ChatOptions): number {
-  return opts.timeoutMs ?? 28_000;
+  return opts.timeoutMs ?? 20_000;
 }
 
 function fallbackTimeout(opts: ChatOptions): number {
-  const base = opts.timeoutMs ?? 28_000;
-  return Math.min(12_000, Math.max(8_000, Math.floor(base * 0.45)));
+  const base = opts.timeoutMs ?? 20_000;
+  return Math.min(10_000, Math.max(6_000, Math.floor(base * 0.4)));
 }
 
 export async function llmChat(role: LlmRole, opts: ChatOptions): Promise<LlmResult | null> {
@@ -390,11 +390,9 @@ export async function llmChat(role: LlmRole, opts: ChatOptions): Promise<LlmResu
     }
   }
 
+  // Always try Groq last-resort when configured (not only on 429/5xx)
   const wantGroqFallback =
-    !opts.backend &&
-    env.aiLlmFallbackBackend === "groq" &&
-    Boolean(env.groqApiKey) &&
-    (sawRateLimit || sawProviderError);
+    !opts.backend && env.aiLlmFallbackBackend === "groq" && Boolean(env.groqApiKey);
 
   if (wantGroqFallback) {
     const groqModel = firstDefined(env.groqModel, process.env.GROQ_MODEL) ?? "llama-3.3-70b-versatile";
