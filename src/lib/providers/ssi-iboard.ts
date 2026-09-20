@@ -50,8 +50,8 @@ export type SsiUniverseItem = {
 async function fetchExchange(ex: "hose" | "hnx" | "upcom"): Promise<SsiBoardRow[]> {
   const res = await httpJson<SsiEnvelope>(`${BASE}/stock/exchange/${ex}?boardId=MAIN`, {
     provider: "ssi-iboard",
-    timeoutMs: 15_000,
-    retries: 1,
+    timeoutMs: 5_000,
+    retries: 0,
     headers: {
       Accept: "application/json",
       Origin: "https://iboard.ssi.com.vn",

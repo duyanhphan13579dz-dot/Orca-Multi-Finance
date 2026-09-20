@@ -29,7 +29,7 @@ export async function getNews(args: {
 }): Promise<{ articles: NewsArticle[]; errors: string[]; meta: Meta } | null> {
   try {
     const res = await cached("news:aggregate", {
-      ttlMs: 90_000,
+      ttlMs: 60_000,
       staleMs: 45 * 60_000,
       producer: aggregateNews,
     });
