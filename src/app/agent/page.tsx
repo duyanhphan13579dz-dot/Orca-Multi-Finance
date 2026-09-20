@@ -94,12 +94,13 @@ export default function AgentPage() {
   }
 
   const messagesRef = useRef(messages);
-  useEffect(() => { messagesRef.current = messages; }, [messages]);
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
 
   useEffect(() => {
     const el = listRef.current;
     if (!el) return;
-    // Only auto-follow when user is near the bottom (don't yank if they scrolled up)
     const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
     const nearBottom = distanceFromBottom < 120;
     if (!nearBottom && messages.length > 2) return;
@@ -129,36 +130,78 @@ export default function AgentPage() {
 
     setMessages((m) => [...m, { role: "user", text: question }]);
     setInput("");
-    try {
-      const res = await fetch("/api/v1/agent", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          question,
-          history: prior,
-          preferences: settings.ai,
-        }),
-      });
-      const json = (await res.json()) as ApiResponse<AgentResult>;
-      if (json.success) {
-        setMessages((m) => [
-          ...m,
-          {
-            role: "agent",
-            text: json.data.answer,
-            meta: json.meta,
-            mode: json.data.mode,
-            intent: json.data.intent,
-            confidence: json.data.confidence,
-            dataQuality: json.data.dataQuality,
-            model: json.data.model,
-          },
-        ]);
-      } else {
-        setMessages((m) => [...m, { role: "agent", text: `Không xử lý được: ${json.error.message}` }]);
+
+    const payload = {
+      question,
+      history: prior,
+      preferences: settings.ai,
+    };
+
+    const callOnce = async () => {
+      const controller = new AbortController();
+      const timer = window.setTimeout(() => controller.abort(), 55_000);
+      try {
+        const res = await fetch("/api/v1/agent", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+          signal: controller.signal,
+        });
+        const json = (await res.json()) as ApiResponse<AgentResult>;
+        return { res, json };
+      } finally {
+        window.clearTimeout(timer);
       }
-    } catch {
-      setMessages((m) => [...m, { role: "agent", text: "Kết nối tới agent thất bại — thử lại sau." }]);
+    };
+
+    try {
+      let lastErr = "";
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        try {
+          const { res, json } = await callOnce();
+          if (json.success) {
+            setMessages((m) => [
+              ...m,
+              {
+                role: "agent",
+                text: json.data.answer,
+                meta: json.meta,
+                mode: json.data.mode,
+                intent: json.data.intent,
+                confidence: json.data.confidence,
+                dataQuality: json.data.dataQuality,
+                model: json.data.model,
+              },
+            ]);
+            return;
+          }
+          lastErr = json.error?.message ?? `HTTP ${res.status}`;
+          if (res.status >= 500 && attempt < 2) {
+            await new Promise((r) => setTimeout(r, 800 * attempt));
+            continue;
+          }
+          setMessages((m) => [...m, { role: "agent", text: `Không xử lý được: ${lastErr}` }]);
+          return;
+        } catch (e) {
+          lastErr =
+            e instanceof Error
+              ? e.name === "AbortError"
+                ? "hết thời gian chờ (55s)"
+                : e.message
+              : "network";
+          if (attempt < 2) {
+            await new Promise((r) => setTimeout(r, 1_000 * attempt));
+            continue;
+          }
+        }
+      }
+      setMessages((m) => [
+        ...m,
+        {
+          role: "agent",
+          text: `Kết nối tới agent thất bại (${lastErr}) — đã thử 2 lần. Kiểm tra /api/v1/system/llm hoặc thử lại sau.`,
+        },
+      ]);
     } finally {
       setBusy(false);
     }
