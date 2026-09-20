@@ -274,6 +274,7 @@ function deterministicNarrative(
 
 export async function analyzeJournalPortfolio(
   trades: JournalTradeInput[],
+  portfolioContext?: Record<string, unknown>,
 ): Promise<{ result: JournalAnalysisResult; meta: Meta }> {
   const slice = trades.slice(0, 200);
   const stats = computeStats(slice);
@@ -307,13 +308,14 @@ export async function analyzeJournalPortfolio(
         }));
 
       const r = await llmChat("analysis", {
-        system: `Bạn là coach giao dịch ORCA trên trang Nhật ký lệnh.
+        system: `Bạn là AI Portfolio Coach của ORCA Smart Portfolio.
 Chỉ dùng STATS + OPEN_MARKS + SAMPLE — không bịa giá hay sự kiện.
 Tiếng Việt, cấu trúc ## / gạch đầu dòng.
 Với lệnh đang mở: nhận xét khoảng entry–SL–TP, uPnL, kỷ luật quản trị rủi ro.
 Với lệnh đã đóng: win rate, R-multiple, hành vi.
-Kết thúc bằng 3 hành động cụ thể. Không khuyến nghị all-in.`,
-        user: `STATS:\n${JSON.stringify(stats)}\n\nOPEN_MARKS (giá realtime hệ thống):\n${JSON.stringify(openMarks)}\n\nSAMPLE_CLOSED:\n${JSON.stringify(sampleClosed)}\n\nViết đánh giá nhật ký giao dịch này.`,
+Nếu có PORTFOLIO_CONTEXT, ưu tiên đánh giá concentration, volatility, stop-loss coverage, risk alerts và chất lượng danh mục tổng thể.
+Phân biệt rõ dữ liệu đủ/thiếu mẫu. Kết thúc bằng 3 hành động cụ thể theo thứ tự ưu tiên. Không khuyến nghị all-in hoặc dự đoán chắc chắn.`,
+        user: `STATS:\n${JSON.stringify(stats)}\n\nPORTFOLIO_CONTEXT:\n${JSON.stringify(portfolioContext ?? {})}\n\nOPEN_MARKS (giá realtime hệ thống):\n${JSON.stringify(openMarks)}\n\nSAMPLE_CLOSED:\n${JSON.stringify(sampleClosed)}\n\nViết đánh giá Smart Portfolio và nhật ký lệnh này.`,
         temperature: 0.3,
         maxTokens: 1000,
       });

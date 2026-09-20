@@ -10,6 +10,12 @@ Engine `src/lib/portfolio.ts` là pure TypeScript và không gọi provider. Eng
 
 Overview hiển thị hai biểu đồ lấy trực tiếp từ snapshot: biểu đồ cột ngang PnL theo nhóm tài sản, có phân biệt lãi/lỗ và win rate; và biểu đồ tròn allocation exposure, có màu lát, phần trăm và tổng exposure ở tâm. Cả hai dùng HTML/CSS native, không thêm dependency chart nặng, có trạng thái rỗng khi chưa đủ dữ liệu và co giãn theo màn hình.
 
+Smart Portfolio hiện là điểm vào hợp nhất cho **Tổng quan**, **Vị thế**, **Nhật ký lệnh** và **Theo dõi**. Tab Nhật ký dùng chung các key localStorage cũ nên không mất dữ liệu. Sidebar không còn đặt `/journal` như một module ngang hàng; route cũ vẫn tồn tại để tương thích liên kết cũ.
+
+Engine bổ sung `stopLossCoverage` và `portfolioScore`. Portfolio Score là điểm tổng hợp có trọng số của kỷ luật ghi lệnh, edge từ profit factor, risk-to-exposure và trạng thái volatility. Điểm này dùng như một tín hiệu chất lượng danh mục, không phải khuyến nghị mua/bán.
+
+AI Portfolio Coach được đặt ngay trên Tổng quan. Request gửi cả nhật ký lệnh và `portfolioContext` gồm exposure, risk, score, stop-loss coverage, allocation, volatility, alerts và watchlist count. Khi LLM khả dụng, AI nhận xét ở cấp danh mục; khi không khả dụng, service vẫn trả deterministic analysis an toàn dựa trên dữ liệu đã có.
+
 ## Risk alert theo biến động
 
 Engine xuất thêm `volatilityByAsset`. Với mỗi nhóm tài sản có vị thế mở, hệ thống lấy giá trị tuyệt đối của `changePercent` từ quote hiện tại và tính trung bình có trọng số theo exposure. Đây là **proxy biến động tức thời**, không phải historical volatility hay ATR. Ngưỡng được đặt thận trọng theo asset class: Crypto cảnh báo cao từ 4% và cực cao từ 7%; Stock từ 2,5%/5%; Forex từ 0,8%/1,5%; Commodity từ 2%/4%.

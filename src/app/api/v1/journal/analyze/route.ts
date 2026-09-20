@@ -15,7 +15,7 @@ export const maxDuration = 45;
  */
 export async function POST(req: Request) {
   try {
-    const body = (await req.json().catch(() => null)) as { trades?: JournalTradeInput[] } | null;
+    const body = (await req.json().catch(() => null)) as { trades?: JournalTradeInput[]; portfolioContext?: Record<string, unknown> } | null;
     const trades = Array.isArray(body?.trades) ? body!.trades : null;
     if (!trades || trades.length === 0) {
       return badRequest("Cần ít nhất 1 lệnh trong trades[]");
@@ -45,7 +45,7 @@ export async function POST(req: Request) {
       closedAt: typeof t.closedAt === "number" ? t.closedAt : null,
     }));
 
-    const { result, meta } = await analyzeJournalPortfolio(cleaned);
+    const { result, meta } = await analyzeJournalPortfolio(cleaned, body?.portfolioContext);
     return ok(result, meta);
   } catch (e) {
     console.error("[journal-analyze]", e);

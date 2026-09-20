@@ -82,6 +82,8 @@ export type PortfolioSnapshot = {
   allocation: { label: string; value: number; percentage: number }[];
   performanceByAsset: PortfolioPerformanceDatum[];
   volatilityByAsset: PortfolioVolatilityDatum[];
+  stopLossCoverage: number;
+  portfolioScore: number;
   alerts: PortfolioAlert[];
   disciplineScore: number;
 };
@@ -243,6 +245,12 @@ export function buildPortfolioSnapshot(
     closed.length ? Math.min(25, (rValues.filter((value) => value >= 0).length / closed.length) * 25) : 25,
   ];
   const disciplineScore = Math.round(Math.max(0, Math.min(100, disciplineInputs.reduce((sum, value) => sum + value, 0))));
+  const stopLossCoverage = open.length ? (open.filter((trade) => trade.stopLoss != null).length / open.length) * 100 : 100;
+  const profitFactor = grossLoss > 0 ? wins.reduce((sum, value) => sum + value, 0) / grossLoss : null;
+  const edgeScore = closed.length ? Math.max(0, Math.min(100, (profitFactor == null ? 0 : Math.min(2, profitFactor) / 2) * 100)) : 50;
+  const riskScore = positions.length ? (totalRisk == null ? 25 : Math.max(0, 100 - Math.min(100, (totalRisk / Math.max(totalExposure, 1)) * 100))) : 100;
+  const volatilityScore = volatilityByAsset.length ? (volatilityByAsset.reduce((sum, item) => sum + (item.level === "extreme" ? 0 : item.level === "high" ? 30 : item.level === "elevated" ? 65 : item.level === "unavailable" ? 50 : 100), 0) / volatilityByAsset.length) : 100;
+  const portfolioScore = Math.round((disciplineScore * 0.35) + (edgeScore * 0.25) + (riskScore * 0.2) + (volatilityScore * 0.2));
 
   return {
     positions,
@@ -252,13 +260,15 @@ export function buildPortfolioSnapshot(
     totalExposure,
     totalRisk,
     winRate: closed.length ? wins.length / closed.length : null,
-    profitFactor: grossLoss > 0 ? wins.reduce((sum, value) => sum + value, 0) / grossLoss : null,
+    profitFactor,
     expectancy: closedPnls.length ? realizedPnl / closedPnls.length : null,
     maxDrawdown,
     averageR: rValues.length ? rValues.reduce((sum, value) => sum + value, 0) / rValues.length : null,
     allocation,
     performanceByAsset,
     volatilityByAsset,
+    stopLossCoverage,
+    portfolioScore,
     alerts: alerts.slice(0, 8),
     disciplineScore,
   };

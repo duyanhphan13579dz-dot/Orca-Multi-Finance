@@ -50,6 +50,19 @@ type AnalyzeResult = {
   model: string | null;
 };
 
+export type PortfolioAiContext = {
+  totalExposure: number;
+  totalRisk: number | null;
+  disciplineScore: number;
+  portfolioScore: number;
+  stopLossCoverage: number;
+  maxDrawdown: number;
+  allocation: { label: string; percentage: number; value: number }[];
+  volatilityByAsset: { label: string; volatilityPct: number | null; level: string; exposurePct: number }[];
+  alerts: { tone: string; title: string; detail: string; symbol?: string }[];
+  watchlistCount: number;
+};
+
 function renderMarkdownLite(text: string) {
   return text.split("\n").map((line, i) => {
     const t = line.trim();
@@ -93,7 +106,7 @@ function renderMarkdownLite(text: string) {
   });
 }
 
-export function PortfolioAiPanel({ trades }: { trades: TradeLite[] }) {
+export function PortfolioAiPanel({ trades, context }: { trades: TradeLite[]; context?: PortfolioAiContext }) {
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [result, setResult] = useState<AnalyzeResult | null>(null);
@@ -109,7 +122,7 @@ export function PortfolioAiPanel({ trades }: { trades: TradeLite[] }) {
       const res = await fetch("/api/v1/journal/analyze", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ trades }),
+        body: JSON.stringify({ trades, portfolioContext: context }),
       });
       const json = (await res.json()) as {
         success?: boolean;
@@ -133,7 +146,7 @@ export function PortfolioAiPanel({ trades }: { trades: TradeLite[] }) {
 
   return (
     <Panel
-      title="Đánh giá nhật ký (AI)"
+      title="AI Portfolio Coach"
       right={
         <button
           type="button"
@@ -147,7 +160,7 @@ export function PortfolioAiPanel({ trades }: { trades: TradeLite[] }) {
       }
     >
       <p className="mb-2 text-[11.5px] text-ink-3">
-        Đọc lệnh đã đóng + vị thế đang mở (mark giá realtime) · LLM nhận xét khi có API key.
+        Đọc nhật ký, exposure, volatility, risk alerts và vị thế đang mở · LLM nhận xét khi có API key.
         {trades.length > 0 && (
           <span className="ml-1 text-ink-2">
             ({closedN} đóng · {openN} mở)
@@ -162,7 +175,7 @@ export function PortfolioAiPanel({ trades }: { trades: TradeLite[] }) {
           <Bot className="mt-0.5 size-4 shrink-0 text-accent" />
           <span>
             {trades.length
-              ? `Bấm "Phân tích danh mục" để ORCA đánh giá ${trades.length} lệnh (kể cả HĐ đang mở).`
+              ? `Bấm "Phân tích danh mục" để ORCA đánh giá ${trades.length} lệnh cùng snapshot Smart Portfolio.`
               : "Thêm lệnh vào nhật ký trước, rồi bấm phân tích."}
           </span>
         </div>

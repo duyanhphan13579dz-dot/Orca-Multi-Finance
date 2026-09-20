@@ -5,6 +5,8 @@ import { useEffect, useMemo, useState } from "react";
 import { Activity, AlertTriangle, ArrowRight, BarChart3, BrainCircuit, CircleAlert, Eye, Gauge, LayoutDashboard, PieChart, ShieldCheck, Target, TrendingDown, TrendingUp } from "lucide-react";
 import { useApi } from "@/lib/hooks";
 import { Badge, Chg, Panel, fmtNum } from "@/components/ui";
+import { PortfolioAiPanel } from "@/components/journal/portfolio-ai-panel";
+import { SmartPortfolioJournal } from "@/components/portfolio/smart-portfolio-journal";
 import {
   buildPortfolioSnapshot,
   formatAssetType,
@@ -27,7 +29,7 @@ const assetLabels: Record<string, string> = { stock: "Cổ phiếu", crypto: "Cr
 export default function SmartPortfolioPage() {
   const [trades, setTrades] = useState<PortfolioTrade[]>([]);
   const [watchlist, setWatchlist] = useState<PortfolioWatchItem[]>([]);
-  const [activeTab, setActiveTab] = useState<"overview" | "positions" | "watchlist">("overview");
+  const [activeTab, setActiveTab] = useState<"overview" | "positions" | "watchlist" | "journal">("overview");
   const { data: crypto } = useApi<CryptoData>("/api/v1/crypto/markets?limit=300", { refreshInterval: 20_000 });
   const { data: forex } = useApi<ForexMarket>("/api/v1/forex/markets", { refreshInterval: 60_000 });
 
@@ -72,11 +74,11 @@ export default function SmartPortfolioPage() {
         </div>
         <div className="flex items-center gap-2 text-[11px] text-text-muted">
           <Link href="/watchlist" className="rounded-md border border-border-subtle px-2.5 py-1.5 hover:border-border-default hover:text-text-primary">Quản lý watchlist</Link>
-          <Link href="/journal" className="rounded-md bg-accent-primary/15 px-2.5 py-1.5 text-accent-primary hover:bg-accent-primary/25">Ghi lệnh mới</Link>
+          <span className="rounded-md bg-accent-primary/15 px-2.5 py-1.5 text-accent-primary">Mở tab Nhật ký để ghi lệnh</span>
         </div>
       </header>
 
-      <div className="grid grid-cols-2 gap-2 md:grid-cols-4 lg:grid-cols-8">
+      <div className="grid grid-cols-2 gap-2 md:grid-cols-4 lg:grid-cols-9">
         <Metric label="Vị thế mở" value={String(snapshot.positions.length)} icon={<Eye />} />
         <Metric label="Exposure" value={snapshot.totalExposure ? fmtNum(snapshot.totalExposure, 2) : "—"} icon={<Gauge />} />
         <Metric label="PnL thực hiện" value={fmtNum(snapshot.realizedPnl, 2)} tone={snapshot.realizedPnl >= 0 ? "up" : "down"} icon={<TrendingUp />} />
@@ -85,16 +87,18 @@ export default function SmartPortfolioPage() {
         <Metric label="Profit factor" value={snapshot.profitFactor == null ? "—" : snapshot.profitFactor.toFixed(2)} icon={<BrainCircuit />} />
         <Metric label="Max drawdown" value={snapshot.maxDrawdown ? fmtNum(snapshot.maxDrawdown, 2) : "—"} tone={snapshot.maxDrawdown > 0 ? "down" : undefined} icon={<TrendingDown />} />
         <Metric label="Kỷ luật" value={`${snapshot.disciplineScore}/100`} tone={snapshot.disciplineScore >= 70 ? "up" : snapshot.disciplineScore < 45 ? "down" : undefined} icon={<ShieldCheck />} />
+        <Metric label="Portfolio score" value={`${snapshot.portfolioScore}/100`} tone={snapshot.portfolioScore >= 70 ? "up" : snapshot.portfolioScore < 45 ? "down" : undefined} icon={<Activity />} />
       </div>
 
       <nav className="flex gap-1 rounded-lg border border-border-subtle bg-surface-base p-1" aria-label="Portfolio views">
-        {([["overview", "Tổng quan"], ["positions", `Vị thế (${snapshot.positions.length})`], ["watchlist", `Theo dõi (${watchlist.length})`]] as const).map(([id, label]) => (
+        {([["overview", "Tổng quan"], ["positions", `Vị thế (${snapshot.positions.length})`], ["journal", `Nhật ký (${trades.length})`], ["watchlist", `Theo dõi (${watchlist.length})`]] as const).map(([id, label]) => (
           <button key={id} type="button" onClick={() => setActiveTab(id)} className={`rounded-md px-3 py-1.5 text-[12px] transition ${activeTab === id ? "bg-accent-primary/15 font-medium text-accent-primary" : "text-text-muted hover:text-text-primary"}`}>{label}</button>
         ))}
       </nav>
 
-      {activeTab === "overview" && <Overview snapshot={snapshot} />}
+      {activeTab === "overview" && <Overview snapshot={snapshot} trades={trades} watchlistCount={watchlist.length} />}
       {activeTab === "positions" && <Positions snapshot={snapshot} />}
+      {activeTab === "journal" && <JournalView trades={trades} setTrades={setTrades} />}
       {activeTab === "watchlist" && <Watchlist items={watchlist} marks={watchMarkMap} />}
 
       <p className="text-[10px] text-text-muted">Giá mark chỉ hiển thị khi data provider trả về dữ liệu thật. PnL của vị thế chưa có mark không được cộng vào uPnL. Smart Portfolio không phải khuyến nghị đầu tư.</p>
@@ -102,11 +106,12 @@ export default function SmartPortfolioPage() {
   );
 }
 
-function Overview({ snapshot }: { snapshot: ReturnType<typeof buildPortfolioSnapshot> }) {
+function Overview({ snapshot, trades, watchlistCount }: { snapshot: ReturnType<typeof buildPortfolioSnapshot>; trades: PortfolioTrade[]; watchlistCount: number }) {
   return (
     <div className="grid gap-3 lg:grid-cols-[1.15fr_0.85fr]">
+      <div className="lg:col-span-2"><PortfolioAiPanel trades={trades} context={{ totalExposure: snapshot.totalExposure, totalRisk: snapshot.totalRisk, disciplineScore: snapshot.disciplineScore, portfolioScore: snapshot.portfolioScore, stopLossCoverage: snapshot.stopLossCoverage, maxDrawdown: snapshot.maxDrawdown, allocation: snapshot.allocation, volatilityByAsset: snapshot.volatilityByAsset, alerts: snapshot.alerts, watchlistCount }} /></div>
       <Panel title="Risk & allocation" right={<span className="text-[10px] text-text-muted">Exposure hiện tại</span>}>
-        {snapshot.allocation.length ? <div className="space-y-3">{snapshot.allocation.map((item) => <div key={item.label}><div className="mb-1 flex justify-between text-[12px]"><span>{assetLabels[item.label] ?? item.label}</span><span className="num text-text-secondary">{item.percentage.toFixed(0)}% · {fmtNum(item.value, 2)}</span></div><div className="h-2 overflow-hidden rounded-full bg-surface-modal"><div className="h-full rounded-full bg-accent-primary" style={{ width: `${item.percentage}%` }} /></div></div>)}<div className="grid grid-cols-2 gap-2 border-t border-border-subtle pt-3"><Info label="Risk to SL" value={snapshot.totalRisk == null ? "Chưa đủ SL" : fmtNum(snapshot.totalRisk, 2)} /><Info label="Expectancy" value={snapshot.expectancy == null ? "—" : fmtNum(snapshot.expectancy, 2)} /></div></div> : <Empty title="Chưa có vị thế mở" note="Ghi một lệnh chưa đóng để bắt đầu theo dõi exposure và risk budget." href="/journal" action="Mở nhật ký" />}
+        {snapshot.allocation.length ? <div className="space-y-3">{snapshot.allocation.map((item) => <div key={item.label}><div className="mb-1 flex justify-between text-[12px]"><span>{assetLabels[item.label] ?? item.label}</span><span className="num text-text-secondary">{item.percentage.toFixed(0)}% · {fmtNum(item.value, 2)}</span></div><div className="h-2 overflow-hidden rounded-full bg-surface-modal"><div className="h-full rounded-full bg-accent-primary" style={{ width: `${item.percentage}%` }} /></div></div>)}<div className="grid grid-cols-2 gap-2 border-t border-border-subtle pt-3"><Info label="Risk to SL" value={snapshot.totalRisk == null ? "Chưa đủ SL" : fmtNum(snapshot.totalRisk, 2)} /><Info label="Expectancy" value={snapshot.expectancy == null ? "—" : fmtNum(snapshot.expectancy, 2)} /></div></div> : <Empty title="Chưa có vị thế mở" note="Mở tab Nhật ký để ghi một lệnh chưa đóng và bắt đầu theo dõi exposure." href="/portfolio" action="Mở Smart Portfolio" />}
       </Panel>
       <Panel title="Action queue" right={<Badge tone={snapshot.alerts.length ? "warn" : "up"}>{snapshot.alerts.length} cảnh báo</Badge>}>
         {snapshot.alerts.length ? <div className="space-y-2">{snapshot.alerts.map((alert, index) => <div key={`${alert.title}-${alert.symbol}-${index}`} className="flex gap-2 rounded-md border border-border-subtle bg-surface-base/60 p-2.5"><div className={toneClass[alert.tone]}>{alert.tone === "danger" ? <CircleAlert className="size-4" /> : alert.tone === "warning" ? <AlertTriangle className="size-4" /> : <ShieldCheck className="size-4" />}</div><div className="min-w-0"><div className="text-[12px] font-medium">{alert.symbol ? `${alert.symbol} · ` : ""}{alert.title}</div><p className="mt-0.5 text-[11px] text-text-muted">{alert.detail}</p></div></div>)}</div> : <div className="flex items-center gap-2 rounded-md bg-positive/10 p-3 text-[12px] text-positive"><ShieldCheck className="size-4" /> Chưa phát hiện vi phạm kỷ luật rõ ràng trên dữ liệu hiện có.</div>}
@@ -117,6 +122,18 @@ function Overview({ snapshot }: { snapshot: ReturnType<typeof buildPortfolioSnap
       <VolatilityMonitor snapshot={snapshot} />
       <PortfolioCharts snapshot={snapshot} />
     </div>
+  );
+}
+
+function JournalView({
+  trades,
+  setTrades,
+}: {
+  trades: PortfolioTrade[];
+  setTrades: (trades: PortfolioTrade[]) => void;
+}) {
+  return (
+    <SmartPortfolioJournal trades={trades} onChange={setTrades} />
   );
 }
 
@@ -169,7 +186,7 @@ function ChartEmpty({ text }: { text: string }) {
 }
 
 function Positions({ snapshot }: { snapshot: ReturnType<typeof buildPortfolioSnapshot> }) {
-  return <Panel title="Open positions" right={<Link href="/journal" className="inline-flex items-center gap-1 text-[11px] text-accent-primary">Sửa nhật ký <ArrowRight className="size-3" /></Link>} pad={false}>{snapshot.positions.length ? <div className="overflow-x-auto"><table className="w-full min-w-[760px] text-left text-[12px]"><thead><tr className="border-b border-border-subtle text-[10px] uppercase tracking-wide text-text-muted"><th className="px-3.5 py-2">Mã</th><th className="py-2">Entry → Mark</th><th className="py-2 text-right">uPnL</th><th className="py-2 text-right">Exposure</th><th className="py-2 text-right">SL / TP</th><th className="py-2 pr-3.5 text-right">Kỷ luật</th></tr></thead><tbody>{snapshot.positions.map((position) => <tr key={position.id} className="border-b border-border-subtle/60"><td className="px-3.5 py-2.5"><div className="font-semibold">{position.symbol}</div><div className="text-[10px] text-text-muted">{formatAssetType(position.assetType)} · {position.side}</div></td><td className="num py-2.5">{fmtNum(position.entry, 4)} → {position.mark == null ? <span className="text-text-muted">chưa có mark</span> : fmtNum(position.mark, 4)}</td><td className={`num py-2.5 text-right ${position.unrealizedPnl == null ? "text-text-muted" : position.unrealizedPnl >= 0 ? "text-positive" : "text-negative"}`}>{position.unrealizedPnl == null ? "—" : fmtNum(position.unrealizedPnl, 2)}</td><td className="num py-2.5 text-right">{fmtNum(position.exposure, 2)}</td><td className="num py-2.5 text-right text-text-muted">{position.stopLoss ?? "—"} / {position.takeProfit ?? "—"}</td><td className="py-2.5 pr-3.5 text-right">{position.stopLoss == null ? <Badge tone="warn">Thiếu SL</Badge> : <Badge tone="up">Có SL</Badge>}</td></tr>)}</tbody></table></div> : <Empty title="Chưa có vị thế mở" note="Các lệnh đã đóng vẫn được dùng cho thống kê hiệu suất." href="/journal" action="Thêm lệnh" />}</Panel>;
+  return <Panel title="Open positions" right={<span className="text-[11px] text-text-muted">Quản lý tại tab Nhật ký</span>} pad={false}>{snapshot.positions.length ? <div className="overflow-x-auto"><table className="w-full min-w-[760px] text-left text-[12px]"><thead><tr className="border-b border-border-subtle text-[10px] uppercase tracking-wide text-text-muted"><th className="px-3.5 py-2">Mã</th><th className="py-2">Entry → Mark</th><th className="py-2 text-right">uPnL</th><th className="py-2 text-right">Exposure</th><th className="py-2 text-right">SL / TP</th><th className="py-2 pr-3.5 text-right">Kỷ luật</th></tr></thead><tbody>{snapshot.positions.map((position) => <tr key={position.id} className="border-b border-border-subtle/60"><td className="px-3.5 py-2.5"><div className="font-semibold">{position.symbol}</div><div className="text-[10px] text-text-muted">{formatAssetType(position.assetType)} · {position.side}</div></td><td className="num py-2.5">{fmtNum(position.entry, 4)} → {position.mark == null ? <span className="text-text-muted">chưa có mark</span> : fmtNum(position.mark, 4)}</td><td className={`num py-2.5 text-right ${position.unrealizedPnl == null ? "text-text-muted" : position.unrealizedPnl >= 0 ? "text-positive" : "text-negative"}`}>{position.unrealizedPnl == null ? "—" : fmtNum(position.unrealizedPnl, 2)}</td><td className="num py-2.5 text-right">{fmtNum(position.exposure, 2)}</td><td className="num py-2.5 text-right text-text-muted">{position.stopLoss ?? "—"} / {position.takeProfit ?? "—"}</td><td className="py-2.5 pr-3.5 text-right">{position.stopLoss == null ? <Badge tone="warn">Thiếu SL</Badge> : <Badge tone="up">Có SL</Badge>}</td></tr>)}</tbody></table></div> : <Empty title="Chưa có vị thế mở" note="Các lệnh đã đóng vẫn được dùng cho thống kê hiệu suất." href="/portfolio" action="Mở Smart Portfolio" />}</Panel>;
 }
 
 function Watchlist({ items, marks }: { items: PortfolioWatchItem[]; marks: Map<string, PortfolioMark> }) {

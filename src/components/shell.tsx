@@ -32,7 +32,6 @@ import {
   LogOut,
   Menu,
   Newspaper,
-  NotebookPen,
   Settings,
   X,
 } from "lucide-react";
@@ -80,7 +79,6 @@ const NAV_SECTIONS: {
     items: [
       { href: "/portfolio", label: "Smart Portfolio", icon: LayoutDashboard },
       { href: "/watchlist", label: "Danh mục theo dõi", icon: Eye },
-      { href: "/journal", label: "Nhật ký lệnh", icon: NotebookPen },
       { href: "/settings", label: "Cài đặt", icon: Settings },
     ],
   },
