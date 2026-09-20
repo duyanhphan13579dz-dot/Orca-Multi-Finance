@@ -9,7 +9,7 @@ export const maxDuration = 60;
 /**
  * POST/GET /api/v1/stocks/[symbol]/ai-analysis
  * AI phân tích sức khỏe TC + xu hướng từ snapshot BCTC.
- * Fallback deterministic nếu chưa có AI_PROVIDER_KEY.
+ * Fallback deterministic nếu chưa có OPENROUTER_API_KEY.
  */
 export async function GET(_req: Request, ctx: { params: Promise<{ symbol: string }> }) {
   const { symbol } = await ctx.params;
