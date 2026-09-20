@@ -91,11 +91,11 @@ const SECTOR_KEYWORDS: [RegExp, string][] = [
 const decodeXml = (s: string) =>
   s
     .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1")
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;|&apos;/g, "'")
+    .replace(/&/g, "&")
+    .replace(/</g, "<")
+    .replace(/>/g, ">")
+    .replace(/"/g, '"')
+    .replace(/&#39;|'/g, "'")
     .replace(/&#(\d+);/g, (_, c) => String.fromCharCode(Number(c)));
 
 const stripTags = (s: string) => s.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
@@ -152,14 +152,24 @@ function itemsFromXml(xml: string, feed: FeedDef): NewsArticle[] {
 }
 
 export async function fetchFeed(feed: FeedDef): Promise<NewsArticle[]> {
-  const res = await httpText(feed.url, { provider: `news:${feed.name}`, timeoutMs: 8_000, retries: 1, headers: { Accept: "application/rss+xml,application/xml,text/xml,*/*" } });
+  const res = await httpText(feed.url, { provider: `news:${feed.name}`, timeoutMs: 3_500, retries: 0, headers: { Accept: "application/rss+xml,application/xml,text/xml,*/*" } });
   if (!res.ok || !res.text) throw new ProviderError(`news feed ${feed.name}: ${res.error ?? "unreachable"}`, NEWS_PROVIDER);
   return itemsFromXml(res.text, feed);
 }
 
+function withFeedBudget<T>(p: Promise<T>, ms: number): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error("feed_budget")), ms);
+    p.then(
+      (v) => { clearTimeout(t); resolve(v); },
+      (e) => { clearTimeout(t); reject(e); },
+    );
+  });
+}
+
 /** Fan-out to all feeds, keep partial success, dedupe cross-feed. */
 export async function aggregateNews(): Promise<{ articles: NewsArticle[]; errors: string[] }> {
-  const results = await Promise.allSettled(FEEDS.map((f) => fetchFeed(f)));
+  const results = await Promise.allSettled(FEEDS.map((f) => withFeedBudget(fetchFeed(f), 4_000)));
   const seen = new Set<string>();
   const articles: NewsArticle[] = [];
   const errors: string[] = [];
