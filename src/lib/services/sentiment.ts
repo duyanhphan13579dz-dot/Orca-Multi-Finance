@@ -257,7 +257,7 @@ export async function getCryptoSentiment(symbolRaw: string): Promise<{ data: Sen
     sourceTimestampMs: Date.now(),
     note:
       status === "skipped"
-        ? "LLM chưa cấu hình (AI_PROVIDER_KEY) — chỉ điểm quant"
+        ? "LLM chưa cấu hình (OPENROUTER_API_KEY) — chỉ điểm quant"
         : status === "unavailable" || status === "failed"
           ? "LLM tạm lỗi — hiển thị điểm quant"
           : undefined,
@@ -302,7 +302,7 @@ export async function getForexSentiment(pairRaw: string): Promise<{ data: Sentim
     sourceTimestampMs: Date.now(),
     note:
       status === "skipped"
-        ? "LLM chưa cấu hình (AI_PROVIDER_KEY) — chỉ điểm quant"
+        ? "LLM chưa cấu hình (OPENROUTER_API_KEY) — chỉ điểm quant"
         : status === "unavailable" || status === "failed"
           ? "LLM tạm lỗi — hiển thị điểm quant"
           : undefined,
