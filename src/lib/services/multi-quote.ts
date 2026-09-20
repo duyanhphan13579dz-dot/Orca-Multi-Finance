@@ -19,6 +19,8 @@ import { recordMarketSource } from "../realtime/market-source-monitor";
  *
  * Field phụ (volume, name, ceiling…) chỉ fill khi field đang null.
  * Lệch giá lớn giữa nguồn → log, vẫn giữ giá theo ưu tiên.
+ *
+ * Speed: tier timeouts 4s / 3.5s / 2.5s; race early when coverage ≥ 80%.
  */
 
 export type MultiQuoteResult = {
@@ -180,24 +182,25 @@ export async function getMultiQuotes(symbols: string[]): Promise<MultiQuoteResul
   }
 
   /**
-   * Latency strategy:
-   * - Tier A: vndirect + vps — timeout 7s, parallel
-   * - Tier B: ssi-iboard — timeout 6.5s
-   * - Tier C: ssi-fc / vietcap — timeout 5–5.5s if symbols still missing
+   * Latency strategy (phase speed):
+   * - Tier A: vndirect + vps — timeout 4s, parallel
+   * - Tier B: ssi-iboard — timeout 3.5s
+   * - Tier C: ssi-fc / vietcap — timeout 2.5s if symbols still missing
+   * Early-exit tier C wait when coverage ≥ 80%.
    */
 
   const tierA = Promise.all([
-    runSource("vndirect", () => vndirect.getVndQuotes(uniq), 7_000),
-    runSource("vps", () => getVpsQuotes(uniq), 7_000),
+    runSource("vndirect", () => vndirect.getVndQuotes(uniq), 4_000),
+    runSource("vps", () => getVpsQuotes(uniq), 4_000),
   ]);
 
-  const tierB = runSource("ssi-iboard", () => getSsiIboardQuotes(uniq), 6_500);
+  const tierB = runSource("ssi-iboard", () => getSsiIboardQuotes(uniq), 3_500);
 
   const tierCTasks: Promise<SourceBatch>[] = [
-    runSource("vietcap", () => getVietcapQuotes(uniq), 5_000),
+    runSource("vietcap", () => getVietcapQuotes(uniq), 2_500),
   ];
   if (ssiFcConfigured()) {
-    tierCTasks.push(runSource("ssi-fcdata", () => getSsiQuotes(uniq), 5_500));
+    tierCTasks.push(runSource("ssi-fcdata", () => getSsiQuotes(uniq), 2_800));
   }
 
   const tierCPromise = Promise.all(tierCTasks);
@@ -211,14 +214,16 @@ export async function getMultiQuotes(symbols: string[]): Promise<MultiQuoteResul
     }
   }
   const missing = uniq.filter((s) => !covered.has(s));
+  const coverage = covered.size / Math.max(uniq.length, 1);
 
   let cBatches: SourceBatch[] = [];
-  if (missing.length > 0) {
+  if (missing.length > 0 && coverage < 0.8) {
     cBatches = await tierCPromise;
   } else {
+    // Don't block UI for low-value sources when already well covered
     cBatches = await Promise.race([
       tierCPromise,
-      new Promise<SourceBatch[]>((r) => setTimeout(() => r([]), 200)),
+      new Promise<SourceBatch[]>((r) => setTimeout(() => r([]), 120)),
     ]);
   }
 
