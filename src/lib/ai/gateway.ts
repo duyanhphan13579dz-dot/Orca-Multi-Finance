@@ -205,7 +205,7 @@ export function llmRegistryInfo() {
       AI_LLM_FALLBACK_BACKEND: env.aiLlmFallbackBackend || null,
       AI_LLM_CASCADE_MODE: cascadeMode(),
       AI_LLM_MAX_CASCADE: maxCascade(),
-      AI_PROVIDER_KEY: Boolean(process.env.AI_PROVIDER_KEY?.trim()),
+      AI_PROVIDER_KEY_LEGACY: Boolean(process.env.AI_PROVIDER_KEY?.trim()),
     },
     openrouterModelResolved: env.openrouterModel ?? env.aiModel ?? null,
   };
