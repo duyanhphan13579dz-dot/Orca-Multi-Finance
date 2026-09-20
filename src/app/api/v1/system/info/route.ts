@@ -20,57 +20,60 @@ export async function GET() {
     const pkg = JSON.parse(readFileSync(join(process.cwd(), "package.json"), "utf8")) as { version?: string; name?: string };
     version = pkg.version ?? version;
   } catch {
-    /* ignore */
+    /* default */
   }
-
-  // Best-effort DB ping
   let dbOk = false;
   let dbLatencyMs: number | null = null;
+  const { databaseConfigured } = await import("@/db");
+  const dbConfigured = databaseConfigured();
   try {
-    const t0 = Date.now();
-    await sql`select 1`;
-    dbLatencyMs = Date.now() - t0;
+    const t0 = performance.now();
+    const { db } = await import("@/db");
+    await db.execute(sql`select 1`);
+    dbLatencyMs = Math.round(performance.now() - t0);
     dbOk = true;
   } catch {
     dbOk = false;
   }
+  const redis = await redisStatus();
+  const providers = getProviderHealth();
+  const healthy = providers.filter((p) => p.status === "healthy").length;
+  const down = providers.filter((p) => p.status === "down").length;
 
-  // Provider health snapshot
-  const health = getProviderHealth();
-
-  // Network latency (cached probe)
+  ensureHeartbeatStarted();
+  // Non-blocking network latency: use cache if warm, else kick a background probe
   let network = getLastNetworkLatency();
   if (!network) {
-    try {
-      network = await probeNetworkLatency();
-    } catch {
-      network = null;
-    }
+    void probeNetworkLatency({ timeoutMs: 4_000 }).catch(() => null);
   }
-
-  // Heartbeat
-  ensureHeartbeatStarted();
-  const heartbeat = processHeartbeat();
-
-  const redis = redisStatus();
-  const cache = cacheStats();
+  const heartbeat = processHeartbeat.stats();
 
   return ok(
     {
-      version,
-      uptimeMs: Date.now() - startedAt,
-      nodeEnv: process.env.NODE_ENV ?? "development",
-      runtime: "nodejs",
-      database: { ok: dbOk, latencyMs: dbLatencyMs },
+      app: { name: "ORCA Financial", version, environment: process.env.NODE_ENV ?? "development", nodeEnv: process.env.NODE_ENV },
+      runtime: { uptimeSec: Math.round((Date.now() - startedAt) / 1000), serverTime: new Date().toISOString() },
+      database: { configured: dbConfigured, connected: dbOk, latencyMs: dbLatencyMs },
       redis,
-      cache,
-      network,
       heartbeat,
-      providers: health,
-      flags: {
-        ssiConfigured: Boolean(
-          process.env.SSI_FC_CONSUMER_ID?.trim() || process.env.SSI_API_KEY?.trim(),
-        ),
+      networkLatency: network
+        ? {
+            summary: network.summary,
+            probedAt: network.probedAt,
+            hosts: network.results.map((r) => ({
+              id: r.id,
+              ok: r.ok,
+              latencyMs: r.latencyMs,
+              error: r.error,
+            })),
+          }
+        : null,
+      dataEngine: {
+        providersTotal: providers.length,
+        providersHealthy: healthy,
+        providersDown: down,
+        cache: cacheStats(),
+      },
+      features: {
         vnstockConfigured: Boolean(process.env.VNSTOCK_API_KEY?.trim()),
         biquoteConfigured: Boolean(process.env.BIQUOTE_API_KEY?.trim()),
         simplizeConfigured: Boolean(process.env.SIMPLIZE_API_KEY?.trim()),
@@ -78,6 +81,6 @@ export async function GET() {
         msnCommodityMap: Boolean(process.env.MSN_COMMODITY_MAP?.trim()),
       },
     },
-    { source: "orca-system-info" },
+    { source: "orca-ops" },
   );
 }
