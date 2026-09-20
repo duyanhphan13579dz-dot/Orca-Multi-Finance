@@ -76,8 +76,8 @@ function mapRow(r: VpsRow): Quote | null {
 async function fetchChunk(syms: string[]): Promise<Quote[]> {
   const res = await httpJson<VpsRow[]>(`${BASE}/getliststockdata/${syms.join(",")}`, {
     provider: "vps",
-    timeoutMs: 4_000,
-    retries: 0,
+    timeoutMs: 6_000,
+    retries: 1,
     headers: {
       Accept: "application/json",
       "User-Agent": "Orca-Multi-Finance/1.0",

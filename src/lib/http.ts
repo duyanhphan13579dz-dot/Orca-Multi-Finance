@@ -5,7 +5,7 @@ import { isCircuitOpen, recordFailure, recordSuccess } from "./health";
  * Resilient HTTP client for all outbound provider traffic.
  * timeout + retry with exponential backoff + circuit breaker + health recording.
  *
- * Speed defaults (phase speed): timeout 5s, retries 1 — override per-call for heavy boards.
+ * Speed defaults (phase speed): timeout 7s, retries 1 — override per-call for heavy boards.
  */
 
 const DEFAULT_UA =
@@ -45,9 +45,9 @@ export async function httpText(url: string, opts: HttpOptions): Promise<HttpResu
 
 async function httpRequest<T>(url: string, opts: HttpOptions): Promise<HttpResult<T>> {
   const provider = opts.provider;
-  const timeoutMs = opts.timeoutMs ?? 5_000;
+  const timeoutMs = opts.timeoutMs ?? 7_000;
   const retries = opts.retries ?? 1;
-  const backoffBase = opts.backoffBaseMs ?? 250;
+  const backoffBase = opts.backoffBaseMs ?? 350;
 
   if (isCircuitOpen(provider)) {
     return { ok: false, status: 0, data: null, text: null, error: `circuit_open:${provider}`, latencyMs: 0, attempts: 0 };
