@@ -56,6 +56,17 @@ export type PortfolioPerformanceDatum = {
   winRate: number | null;
 };
 
+export type PortfolioVolatilityDatum = {
+  label: PortfolioAssetType;
+  volatilityPct: number | null;
+  positionCount: number;
+  markedPositions: number;
+  exposurePct: number;
+  level: "low" | "elevated" | "high" | "extreme" | "unavailable";
+  highThresholdPct: number;
+  extremeThresholdPct: number;
+};
+
 export type PortfolioSnapshot = {
   positions: PortfolioPosition[];
   closed: PortfolioTrade[];
@@ -70,6 +81,7 @@ export type PortfolioSnapshot = {
   averageR: number | null;
   allocation: { label: string; value: number; percentage: number }[];
   performanceByAsset: PortfolioPerformanceDatum[];
+  volatilityByAsset: PortfolioVolatilityDatum[];
   alerts: PortfolioAlert[];
   disciplineScore: number;
 };
@@ -158,6 +170,50 @@ export function buildPortfolioSnapshot(
     .map(([label, value]) => ({ ...value, label, winRate: value.trades ? value.wins / value.trades : null }))
     .sort((a, b) => b.pnl - a.pnl);
 
+  const volatilityThresholds: Record<PortfolioAssetType, { high: number; extreme: number }> = {
+    crypto: { high: 4, extreme: 7 },
+    stock: { high: 2.5, extreme: 5 },
+    forex: { high: 0.8, extreme: 1.5 },
+    commodity: { high: 2, extreme: 4 },
+  };
+  const volatilityMap = new Map<PortfolioAssetType, { weightedAbsChange: number; exposure: number; marked: number }>();
+  for (const position of positions) {
+    const mark = markMap.get(`${position.assetType}:${position.symbol.toUpperCase()}`);
+    if (!mark || mark.changePercent == null || !Number.isFinite(mark.changePercent)) continue;
+    const current = volatilityMap.get(position.assetType) ?? { weightedAbsChange: 0, exposure: 0, marked: 0 };
+    current.weightedAbsChange += Math.abs(mark.changePercent) * position.exposure;
+    current.exposure += position.exposure;
+    current.marked += 1;
+    volatilityMap.set(position.assetType, current);
+  }
+  const volatilityByAsset = (["stock", "crypto", "forex", "commodity"] as PortfolioAssetType[])
+    .map((label) => {
+      const groupPositions = positions.filter((position) => position.assetType === label);
+      const current = volatilityMap.get(label);
+      const thresholds = volatilityThresholds[label];
+      const volatilityPct = current && current.exposure > 0 ? current.weightedAbsChange / current.exposure : null;
+      const level = volatilityPct == null
+        ? "unavailable"
+        : volatilityPct >= thresholds.extreme
+          ? "extreme"
+          : volatilityPct >= thresholds.high
+            ? "high"
+            : volatilityPct >= thresholds.high * 0.6
+              ? "elevated"
+              : "low";
+      return {
+        label,
+        volatilityPct,
+        positionCount: groupPositions.length,
+        markedPositions: current?.marked ?? 0,
+        exposurePct: totalExposure > 0 ? (groupPositions.reduce((sum, position) => sum + position.exposure, 0) / totalExposure) * 100 : 0,
+        level,
+        highThresholdPct: thresholds.high,
+        extremeThresholdPct: thresholds.extreme,
+      } satisfies PortfolioVolatilityDatum;
+    })
+    .filter((item) => item.positionCount > 0);
+
   const alerts: PortfolioAlert[] = [];
   for (const position of positions) {
     if (position.stopLoss == null) alerts.push({ tone: "warning", title: "Thiếu stop loss", detail: "Vị thế chưa có mức thoát rủi ro rõ ràng.", symbol: position.symbol });
@@ -170,6 +226,16 @@ export function buildPortfolioSnapshot(
   }
   if (allocation[0]?.percentage >= 60) alerts.push({ tone: "warning", title: "Tập trung cao", detail: `${allocation[0].label} chiếm ${allocation[0].percentage.toFixed(0)}% exposure.`, symbol: allocation[0].label });
   if (positions.length > 0 && totalRisk == null) alerts.push({ tone: "warning", title: "Chưa đo được rủi ro", detail: "Thêm stop loss cho vị thế mở để hệ thống tính risk budget." });
+  for (const item of volatilityByAsset) {
+    if (item.level === "extreme" || item.level === "high") {
+      alerts.push({
+        tone: item.level === "extreme" ? "danger" : "warning",
+        title: `Biến động ${item.level === "extreme" ? "cực cao" : "cao"}`,
+        detail: `${item.label} đang có biến động tức thời ~${item.volatilityPct?.toFixed(2)}% trên ${item.markedPositions}/${item.positionCount} vị thế có mark; ngưỡng cảnh báo ${item.highThresholdPct}%.`,
+        symbol: item.label,
+      });
+    }
+  }
 
   const disciplineInputs = [
     open.length ? (open.filter((trade) => trade.stopLoss != null).length / open.length) * 50 : 50,
@@ -192,6 +258,7 @@ export function buildPortfolioSnapshot(
     averageR: rValues.length ? rValues.reduce((sum, value) => sum + value, 0) / rValues.length : null,
     allocation,
     performanceByAsset,
+    volatilityByAsset,
     alerts: alerts.slice(0, 8),
     disciplineScore,
   };

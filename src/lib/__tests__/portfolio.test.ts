@@ -58,3 +58,14 @@ test("open positions without stop loss create a discipline alert", () => {
   assert.equal(snapshot.alerts.some((alert) => alert.title === "Thiếu stop loss"), true);
   assert.equal(snapshot.totalRisk, null);
 });
+
+test("high asset volatility creates an automatic risk alert", () => {
+  const snapshot = buildPortfolioSnapshot(
+    [baseTrade({ id: "volatile", stopLoss: 90 })],
+    [],
+    [{ assetType: "crypto", symbol: "BTCUSDT", price: 110, changePercent: 8 }],
+  );
+
+  assert.equal(snapshot.volatilityByAsset[0]?.level, "extreme");
+  assert.equal(snapshot.alerts.some((alert) => alert.title === "Biến động cực cao"), true);
+});

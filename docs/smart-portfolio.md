@@ -10,6 +10,12 @@ Engine `src/lib/portfolio.ts` là pure TypeScript và không gọi provider. Eng
 
 Overview hiển thị hai biểu đồ lấy trực tiếp từ snapshot: biểu đồ cột ngang PnL theo nhóm tài sản, có phân biệt lãi/lỗ và win rate; và biểu đồ tròn allocation exposure, có màu lát, phần trăm và tổng exposure ở tâm. Cả hai dùng HTML/CSS native, không thêm dependency chart nặng, có trạng thái rỗng khi chưa đủ dữ liệu và co giãn theo màn hình.
 
+## Risk alert theo biến động
+
+Engine xuất thêm `volatilityByAsset`. Với mỗi nhóm tài sản có vị thế mở, hệ thống lấy giá trị tuyệt đối của `changePercent` từ quote hiện tại và tính trung bình có trọng số theo exposure. Đây là **proxy biến động tức thời**, không phải historical volatility hay ATR. Ngưỡng được đặt thận trọng theo asset class: Crypto cảnh báo cao từ 4% và cực cao từ 7%; Stock từ 2,5%/5%; Forex từ 0,8%/1,5%; Commodity từ 2%/4%.
+
+Khi nhóm tài sản đạt mức cao hoặc cực cao, engine tự thêm risk alert vào action queue. UI đồng thời hiển thị volatility monitor với mức Thấp, Tăng, Cao, Cực cao hoặc Chưa có mark. Cơ chế chỉ cảnh báo và không tự đóng lệnh. Chu kỳ cập nhật tuân theo polling quote hiện có của trang (Crypto khoảng 20 giây, Forex khoảng 60 giây); chưa gửi thông báo ra email/push và không chạy khi người dùng đóng trình duyệt.
+
 Giá mark chỉ được lấy từ API nội bộ hiện có cho crypto và forex. Cổ phiếu Việt Nam hoặc hàng hóa chưa có mark thì hiển thị trạng thái chưa có giá, không dùng giá giả và không cộng vào unrealized PnL. Đây là cách tuân thủ nguyên tắc freshness/provenance của ORCA.
 
 ## Quyết định thiết kế

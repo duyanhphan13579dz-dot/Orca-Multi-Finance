@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, ArrowRight, BarChart3, BrainCircuit, CircleAlert, Eye, Gauge, LayoutDashboard, PieChart, ShieldCheck, Target, TrendingDown, TrendingUp } from "lucide-react";
+import { Activity, AlertTriangle, ArrowRight, BarChart3, BrainCircuit, CircleAlert, Eye, Gauge, LayoutDashboard, PieChart, ShieldCheck, Target, TrendingDown, TrendingUp } from "lucide-react";
 import { useApi } from "@/lib/hooks";
 import { Badge, Chg, Panel, fmtNum } from "@/components/ui";
 import {
@@ -114,8 +114,25 @@ function Overview({ snapshot }: { snapshot: ReturnType<typeof buildPortfolioSnap
       <Panel className="lg:col-span-2" title="Smart readout">
         <div className="grid gap-3 sm:grid-cols-3"><Readout label="Trạng thái book" value={snapshot.positions.length ? `${snapshot.positions.length} vị thế đang mở` : "Chưa có vị thế"} note={snapshot.totalExposure ? `Exposure ${fmtNum(snapshot.totalExposure, 2)}` : "Watchlist vẫn hoạt động độc lập"} /><Readout label="Chất lượng hiệu suất" value={snapshot.profitFactor == null ? "Chưa đủ mẫu" : snapshot.profitFactor >= 1.5 ? "Có lợi thế" : snapshot.profitFactor >= 1 ? "Cần theo dõi" : "Đang suy yếu"} note={snapshot.winRate == null ? "Cần lệnh đã đóng" : `Win rate ${(snapshot.winRate * 100).toFixed(0)}%`} /><Readout label="Việc nên làm trước" value={snapshot.alerts[0]?.title ?? "Tiếp tục ghi nhận"} note={snapshot.alerts[0]?.detail ?? "Ghi entry, SL, TP và exit để analytics đáng tin cậy hơn."} /></div>
       </Panel>
+      <VolatilityMonitor snapshot={snapshot} />
       <PortfolioCharts snapshot={snapshot} />
     </div>
+  );
+}
+
+const volatilityLabels = { low: "Thấp", elevated: "Tăng", high: "Cao", extreme: "Cực cao", unavailable: "Chưa có mark" } as const;
+const volatilityTone = { low: "text-positive", elevated: "text-warning", high: "text-warning", extreme: "text-negative", unavailable: "text-text-muted" } as const;
+
+function VolatilityMonitor({ snapshot }: { snapshot: ReturnType<typeof buildPortfolioSnapshot> }) {
+  return (
+    <Panel className="lg:col-span-2" title={<span className="flex items-center gap-1.5"><Activity className="size-3.5 text-accent-primary" /> Risk alert theo biến động</span>} right={<span className="text-[10px] text-text-muted">Tự cập nhật theo mark</span>}>
+      {snapshot.volatilityByAsset.length ? <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">{snapshot.volatilityByAsset.map((item) => {
+        const thresholdMax = item.extremeThresholdPct * 1.25;
+        const width = item.volatilityPct == null ? 0 : Math.min(100, (item.volatilityPct / thresholdMax) * 100);
+        return <div key={item.label} className="rounded-md border border-border-subtle bg-surface-base/60 p-2.5"><div className="flex items-center justify-between gap-2"><span className="text-[12px] font-medium">{assetLabels[item.label] ?? item.label}</span><span className={`text-[10px] font-semibold ${volatilityTone[item.level]}`}>{volatilityLabels[item.level]}</span></div><div className="mt-2 flex items-end justify-between"><span className="num text-[16px] font-semibold">{item.volatilityPct == null ? "—" : `${item.volatilityPct.toFixed(2)}%`}</span><span className="text-[10px] text-text-muted">{item.markedPositions}/{item.positionCount} mark</span></div><div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-surface-modal"><div className={`h-full rounded-full ${item.level === "extreme" ? "bg-negative" : item.level === "high" || item.level === "elevated" ? "bg-warning" : "bg-positive"}`} style={{ width: `${width}%` }} /></div><div className="mt-1 flex justify-between text-[9px] text-text-muted"><span>Ngưỡng cao {item.highThresholdPct}%</span><span>Alert {item.extremeThresholdPct}%</span></div></div>;
+      })}</div> : <ChartEmpty text="Chưa có vị thế mở để đo biến động theo nhóm tài sản." />}
+      <p className="mt-3 text-[10px] text-text-muted">Biến động là proxy tức thời: trung bình có trọng số exposure của |% thay đổi| từ quote hiện tại. Cảnh báo chỉ mang tính thông tin, không tự đóng lệnh.</p>
+    </Panel>
   );
 }
 
