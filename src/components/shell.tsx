@@ -28,6 +28,7 @@ import {
   Grid2x2,
   Home,
   Landmark,
+  LayoutDashboard,
   LogOut,
   Menu,
   Newspaper,
@@ -77,6 +78,7 @@ const NAV_SECTIONS: {
   {
     title: "LÀM VIỆC",
     items: [
+      { href: "/portfolio", label: "Smart Portfolio", icon: LayoutDashboard },
       { href: "/watchlist", label: "Danh mục theo dõi", icon: Eye },
       { href: "/journal", label: "Nhật ký lệnh", icon: NotebookPen },
       { href: "/settings", label: "Cài đặt", icon: Settings },

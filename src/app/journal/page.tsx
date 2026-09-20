@@ -72,6 +72,7 @@ export default function JournalPage() {
   const persist = (t: Trade[]) => {
     setTrades(t);
     localStorage.setItem(KEY, JSON.stringify(t));
+    window.dispatchEvent(new Event("orca:journal"));
   };
 
   const add = () => {
