@@ -6,6 +6,25 @@ export const runtime = "nodejs";
 /** Vercel serverless budget — keep under this for cascade + data-engine */
 export const maxDuration = 60;
 
+type AgentRequestBody = {
+  question?: string;
+  history?: AgentHistoryTurn[];
+  preferences?: {
+    depth?: "concise" | "standard" | "deep";
+    style?: "analyst" | "technical" | "brief";
+    language?: "vi" | "en";
+    riskDisclosure?: "standard" | "detailed" | "off";
+  };
+};
+
+async function parseAgentRequestBody(req: Request): Promise<AgentRequestBody | null> {
+  try {
+    return (await req.json()) as AgentRequestBody;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * ORCA AI Agent — fetch-data-first reasoning over live platform data.
  * POST { question: string, history?: { role, content }[], preferences? }
@@ -13,30 +32,15 @@ export const maxDuration = 60;
  * Always returns JSON (never hangs naked): degraded answer if LLM/data fails.
  */
 export async function POST(req: Request) {
-  type AgentRequestBody = {
-    question?: string;
-    history?: AgentHistoryTurn[];
-    preferences?: {
-      depth?: "concise" | "standard" | "deep";
-      style?: "analyst" | "technical" | "brief";
-      language?: "vi" | "en";
-      riskDisclosure?: "standard" | "detailed" | "off";
-    };
-  };
-  let body: AgentRequestBody;
+  const body = await parseAgentRequestBody(req);
+  if (!body) return badRequest("Body JSON không hợp lệ");
 
-  try {
-    body = (await req.json()) as AgentRequestBody;
-  } catch {
-    return badRequest("Body JSON không hợp lệ");
-  }
-
-  const question = body?.question?.trim();
+  const question = typeof body.question === "string" ? body.question.trim() : "";
   if (!question || question.length < 3) return badRequest("Câu hỏi quá ngắn");
   if (question.length > 800) return badRequest("Câu hỏi quá dài (tối đa 800 ký tự)");
 
-  const history = Array.isArray(body?.history)
-    ? body!.history
+  const history = Array.isArray(body.history)
+    ? body.history
         .filter(
           (h) =>
             h &&
@@ -51,7 +55,7 @@ export async function POST(req: Request) {
     : [];
 
   try {
-    const { result, meta } = await answerQuestion(question, body?.preferences ?? {}, history);
+    const { result, meta } = await answerQuestion(question, body.preferences ?? {}, history);
     return ok(result, meta);
   } catch (e) {
     // answerQuestion already degrades internally — this is last-resort
