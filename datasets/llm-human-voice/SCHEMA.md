@@ -23,9 +23,55 @@ Giống SFT, thêm:
 | `preferred` | string | yes (thay preferred_answer) |
 | `rejected` | string | yes |
 
-## Hard filters
+Có thể giữ `preferred_answer` = `preferred` để tool dùng chung.
 
-1. Numeric claims in preferred must trace to context_contract
-2. No absolute buy/sell advice
-3. Length bands by depth
-4. Rejected must differ clearly from preferred
+## context_contract — ví dụ tối thiểu theo nhánh
+
+### market
+```json
+{
+  "vnIndex": { "last": 1285.4, "changePercent": 0.82, "volume": 812e9 },
+  "breadth": { "advancers": 318, "decliners": 176 },
+  "foreign": { "net": -248e9, "unit": "VND" },
+  "sectors": [{ "name": "Ngân hàng", "changePercent": 1.4 }],
+  "asOf": "2026-09-20T07:30:00+07:00"
+}
+```
+
+### stock
+```json
+{
+  "symbol": "FPT",
+  "quote": { "price": 112500, "changePercent": 1.2 },
+  "technical": { "rsi14": 58.2, "trend": "up" },
+  "valuation": { "pe": 22.1, "pb": 4.8 },
+  "financials": { "period": "Q2/2026", "revenue": 1.52e13, "source": "VNStock" }
+}
+```
+
+### commodity
+```json
+{
+  "name": "Vàng",
+  "price": 2485.2,
+  "unit": "USD/oz",
+  "changePercent": 0.6,
+  "asOf": "2026-09-20T08:00:00Z",
+  "source": "simplize"
+}
+```
+
+## rejected — các lỗi điển hình cần “dạy tránh”
+
+1. **Robotic list**: chỉ bullet số, không diễn giải
+2. **Meta talk**: “Dựa trên CONTEXT JSON…”, “Theo dữ liệu được cung cấp…”
+3. **Hallucination nhẹ**: số không có trong contract
+4. **Quá ngắn** so với depth=deep
+5. **Khuyến nghị cứng**: “Nên mua FPT ngay”
+6. **Trộn kỳ báo cáo** hoặc thiếu nguồn khi nêu financials
+
+## File format
+
+- Encoding: UTF-8
+- JSONL: một object / dòng
+- Số lớn: giữ nguyên number trong contract
