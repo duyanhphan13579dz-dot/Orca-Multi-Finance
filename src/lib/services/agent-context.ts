@@ -10,6 +10,7 @@ import { computeInvestmentPerformance } from "../financial/investment-performanc
 import { fetchVndDchartHistory } from "../providers/vndirect-dchart";
 import { getVndValuationRatios, getVndEquitySnapshot } from "../providers/vndirect-company";
 import { buildVn } from "./agent-vn-stock";
+import { getSectorTrendSnapshot } from "./sector-trend";
 import type { EconomicSnapshot } from "../economic-data";
 import type { FreshnessStatus } from "../types";
 
@@ -234,32 +235,93 @@ export async function buildCommodityContext(query: string): Promise<AgentBuilt> 
   const q = query.toLowerCase();
   const focused =
     items.find((i) => {
-      const hay = `${i.name ?? ""} ${i.symbol ?? ""}`.toLowerCase();
-      if (/vàng|gold|xau/.test(q)) return /gold|vàng|xau/i.test(hay);
+      const hay = `${i.name ?? ""} ${i.symbol ?? ""} ${i.commodity ?? ""}`.toLowerCase();
+      if (/vàng|gold|xau|sjc/.test(q)) return /gold|vàng|xau|sjc/i.test(hay);
       if (/bạc|silver|xag/.test(q)) return /silver|bạc|xag/i.test(hay);
       if (/dầu|oil|wti|brent/.test(q)) return /oil|wti|brent|dầu/i.test(hay);
+      if (/hrc|quặng sắt|iron|thép/.test(q)) return /hrc|quặng|iron|thép/i.test(hay);
+      if (/robusta|arabica|cà phê|coffee/.test(q)) return /robusta|arabica|cà phê|coffee/i.test(hay);
+      if (/đồng|copper/.test(q)) return /đồng|copper/i.test(hay);
       return false;
     }) ?? items[0];
 
+  const hay = `${focused?.name ?? ""} ${focused?.symbol ?? ""} ${focused?.commodity ?? ""}`.toLowerCase();
+  const transmission = /dầu|oil|wti|brent/.test(hay)
+    ? { industries: ["Dầu khí"], symbols: ["GAS", "PVD", "PVS"], mechanism: "Giá dầu có thể truyền dẫn khác nhau qua upstream, midstream và downstream; cần dữ liệu cơ cấu doanh thu/độ nhạy từng doanh nghiệp trước khi kết luận lợi ích." }
+    : /hrc|thép|quặng|iron/.test(hay)
+      ? { industries: ["Thép"], symbols: ["HPG", "HSG", "NKG"], mechanism: "HRC là đầu vào/giá tham chiếu quan trọng của một số phân khúc thép; tác động phụ thuộc giá bán, tồn kho, sản lượng và biên gộp." }
+      : /robusta|arabica|cà phê|coffee/.test(hay)
+        ? { industries: ["Nông nghiệp", "Thực phẩm & Đồ uống"], symbols: [], mechanism: "Giá cà phê tác động qua giá nguyên liệu, khả năng chuyển giá và tỷ trọng doanh thu liên quan; chưa khẳng định doanh nghiệp hưởng lợi nếu thiếu dữ liệu." }
+        : { industries: [], symbols: [], mechanism: "Chưa có mapping truyền dẫn đủ cụ thể trong commodity context." };
+
+  const direction = focused?.changePercent == null ? "chưa xác định hướng" : focused.changePercent > 0 ? "tăng trong dữ liệu hiện tại" : focused.changePercent < 0 ? "giảm trong dữ liệu hiện tại" : "đi ngang trong dữ liệu hiện tại";
+  const source = focused?.sourceRecords?.[0];
+  const currentLine = focused
+    ? `Giá hiện tại: **${fmtNum(focused.price, 4)} ${focused.currency ?? ""}/${focused.unit ?? "đơn vị"}** · thay đổi phiên: **${fmtPct(focused.changePercent ?? null)}** · ${direction}.`
+    : "Chưa có giá hiện tại.";
+
   const lines = items
     .slice(0, 10)
-    .map((i) => `- **${i.name ?? i.symbol}**: ${fmtNum(i.price, 2)} (${fmtPct(i.changePercent ?? null)})`);
+    .map((i) => `- **${i.name ?? i.symbol}**: ${fmtNum(i.price, 4)} ${i.currency ?? ""}/${i.unit ?? "đơn vị"} · ${fmtPct(i.changePercent ?? null)} · cập nhật ${i.updatedAt ?? "—"}`);
   const narrative = [
     "## Hàng hóa",
-    focused
-      ? `Tiêu điểm: **${focused.name ?? focused.symbol}** — ${fmtNum(focused.price, 2)} (${fmtPct(focused.changePercent ?? null)})`
-      : null,
-    lines.join("\n"),
+    focused ? `Tiêu điểm: **${focused.name ?? focused.symbol}** (${focused.group ?? "chưa phân nhóm"}).\n${currentLine}` : null,
+    focused ? `**Nguồn & thời điểm:** ${source?.source ?? "chưa có nguồn"} · ${focused.updatedAt ?? "chưa có timestamp"} · timeframe được hỗ trợ trong context: **current/session**; chưa tự tạo day/week/month nếu engine không cung cấp.` : null,
+    focused ? `**Commodity → Industry → Stock:** ${transmission.mechanism}\nNgành có thể liên quan: ${transmission.industries.join(", ") || "chưa xác định"}. Mã cần kiểm chứng thêm: ${transmission.symbols.join(", ") || "chưa có mapping mã"}.` : null,
+    focused ? "**Technical / cung cầu / tin tức:** chưa có các trường tương ứng trong commodity aggregator; không suy diễn thay thế." : null,
+    lines.join("\n\n"),
   ]
     .filter(Boolean)
     .join("\n\n");
 
   return {
     narrative,
-    contract: { items: items.slice(0, 12), focus: focused },
+    contract: {
+      items: items.slice(0, 12),
+      focus: focused,
+      metadata: focused ? { price: focused.price, unit: focused.unit, currency: focused.currency, changePercent: focused.changePercent, updatedAt: focused.updatedAt, sourceRecords: focused.sourceRecords } : null,
+      transmission,
+      timeframe: "current/session",
+      missing: ["dayChangeHistory", "weekChangeHistory", "monthChangeHistory", "technical", "inventory", "supplyDemand", "news"],
+      drivers: focused ? [`Biến động hiện tại ${fmtPct(focused.changePercent ?? null)}`] : [],
+      risks: ["Giá có thể khác thời điểm giữa các nguồn", "Tác động truyền dẫn có độ trễ và phụ thuộc phân khúc/doanh nghiệp"],
+      catalysts: [],
+      sources: focused?.sourceRecords ?? [],
+    },
     sectionsUsed: ["commodities"],
     symbols: focused?.symbol ? [String(focused.symbol)] : [],
     freshnesses: r.meta?.freshness ? [r.meta.freshness] : [],
+  };
+}
+
+/** Xu hướng ngành — dùng sector-trend engine, không tạo score mới bằng LLM. */
+export async function buildIndustryContext(query: string): Promise<AgentBuilt> {
+  const needle = query.match(/ngân hàng|banking|dầu khí|oil.?gas|thép|steel|công nghệ|technology|bất động sản|bán lẻ/i)?.[0];
+  const r = await getSectorTrendSnapshot(needle ? { sector: needle } : undefined).catch(() => null);
+  if (!r?.snapshot?.sectors?.length) {
+    return { narrative: "Chưa lấy được bảng xu hướng ngành.", contract: {}, sectionsUsed: [], symbols: [], freshnesses: [], unavailable: true };
+  }
+  const rows = r.snapshot.sectors.slice(0, 8);
+  const focus = rows[0];
+  const lines = rows.map((x) => `- **${x.sector}**: ${x.trendLabelVi} · trend score ${x.trendScore ?? "—"} · thay đổi TB ${fmtPct(x.avgChangePercent)} · breadth ${x.advances} tăng / ${x.declines} giảm / ${x.unchanged} tham chiếu · thanh khoản ${fmtNum(x.totalValue, 0)}`);
+  const leaders = focus?.topGainers?.slice(0, 5).map((x) => `${x.symbol} ${fmtPct(x.changePercent)}`).join(", ") || "chưa có";
+  const laggards = focus?.topLosers?.slice(0, 5).map((x) => `${x.symbol} ${fmtPct(x.changePercent)}`).join(", ") || "chưa có";
+  return {
+    narrative: [`## Ngành${focus ? ` — ${focus.sector}` : ""}`, focus ? `**Tóm tắt xu hướng:** ${focus.trendLabelVi}; relative strength theo trend score engine **${focus.trendScore ?? "chưa có"}**.` : null, focus ? `**Breadth & thanh khoản:** ${focus.advances} tăng / ${focus.declines} giảm / ${focus.unchanged} tham chiếu; giá trị giao dịch cộng dồn ${fmtNum(focus.totalValue, 0)}.` : null, focus ? `**Cổ phiếu dẫn dắt:** ${leaders}.\n**Cổ phiếu yếu:** ${laggards}.` : null, lines.join("\n"), "**Kết quả kinh doanh, định giá, NIM/NPL/CASA, biên lợi nhuận và catalyst:** chưa có trong sector-trend context; không suy diễn thay thế.", "**Rủi ro:** trend score và breadth phản ánh dữ liệu bảng giá phiên, có thể đảo chiều; cần đối chiếu thêm dữ liệu cơ bản và hàng hóa/vĩ mô khi câu hỏi yêu cầu.", `**Timestamp phiên:** ${r.snapshot.sessionDate ?? "—"}.`].filter(Boolean).join("\n\n"),
+    contract: {
+      focus,
+      sectors: rows,
+      marketAvgChangePercent: r.snapshot.marketAvgChangePercent,
+      sessionDate: r.snapshot.sessionDate,
+      criteria: ["trendScore", "avgChangePercent", "breadth", "totalValue"],
+      drivers: focus ? [`${focus.trendLabelVi} theo trend score engine`, `Breadth ${focus.advances} tăng / ${focus.declines} giảm`] : [],
+      risks: ["Trend score và breadth chỉ phản ánh dữ liệu bảng giá phiên", "Chưa có earnings/valuation trong context ngành"],
+      catalysts: [],
+      missing: ["earnings", "valuation", "macro", "relatedCommodity", "news"],
+    },
+    sectionsUsed: ["sector-trend"],
+    symbols: focus?.topGainers?.map((x) => x.symbol).slice(0, 5) ?? [],
+    freshnesses: [r.meta.freshness],
   };
 }
 

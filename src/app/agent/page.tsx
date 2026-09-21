@@ -5,6 +5,8 @@ import { Bot, CornerDownLeft, ShieldCheck } from "lucide-react";
 import type { ApiResponse, Meta } from "@/lib/types";
 import { Badge, Panel } from "@/components/ui";
 import { useSettings } from "@/lib/settings";
+import { AgentDomainHeader } from "@/components/agent-domain-header";
+import type { AgentResponseContext, AgentRoute } from "@/lib/services/agent-router";
 
 interface AgentResult {
   answer: string;
@@ -15,6 +17,8 @@ interface AgentResult {
   dataQuality: "HIGH" | "MEDIUM" | "LOW";
   dataFreshness: string;
   context: { sectionsUsed: string[]; symbols: string[] };
+  route: AgentRoute;
+  responses: AgentResponseContext[];
 }
 
 interface Msg {
@@ -26,6 +30,7 @@ interface Msg {
   confidence?: string;
   dataQuality?: string;
   model?: string | null;
+  responses?: AgentResponseContext[];
 }
 
 const SUGGESTED = [
@@ -91,6 +96,27 @@ export default function AgentPage() {
         </p>
       );
     });
+  }
+
+  function renderStructured(m: Msg) {
+    if (!m.responses?.length) return null;
+    return (
+      <div className="mb-3 space-y-2">
+        <div className="flex flex-wrap gap-1.5">
+          {m.responses.map((ctx) => (
+            <AgentDomainHeader key={ctx.domain} domain={ctx.domain} title={ctx.title} entity={ctx.relatedEntities[0]} updatedAt={m.meta?.sourceTimestamp ?? m.meta?.ingestedAt ?? ctx.dataMeta.freshestAt} />
+          ))}
+        </div>
+        {m.responses.map((ctx) => (
+          <section key={`${ctx.domain}-body`} className="rounded-md border border-line/70 bg-canvas/30 p-2.5">
+            <h4 className="text-[12px] font-semibold text-accent">Tóm tắt · {ctx.title}</h4>
+            <p className="mt-1">{ctx.summary}</p>
+            {ctx.analysis.length > 1 ? <div className="mt-1.5 space-y-0.5 text-ink-2">{ctx.analysis.slice(1, 4).map((line, i) => <p key={i}>• {line}</p>)}</div> : null}
+            {ctx.risks.length ? <p className="mt-1.5 text-[11px] text-ink-3"><strong>Rủi ro:</strong> {ctx.risks.join(" ")}</p> : null}
+          </section>
+        ))}
+      </div>
+    );
   }
 
   const messagesRef = useRef(messages);
@@ -171,6 +197,7 @@ export default function AgentPage() {
                 confidence: json.data.confidence,
                 dataQuality: json.data.dataQuality,
                 model: json.data.model,
+                responses: json.data.responses,
               },
             ]);
             return;
@@ -246,7 +273,7 @@ export default function AgentPage() {
               }`}
             >
               <div className="space-y-1.5 break-words [overflow-wrap:anywhere] [word-break:break-word]">
-                {m.role === "agent" ? renderAnswer(m.text) : m.text}
+                {m.role === "agent" ? <>{renderStructured(m)}{renderAnswer(m.text)}</> : m.text}
               </div>
             </div>
           </div>

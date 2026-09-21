@@ -13,7 +13,7 @@ export const maxDuration = 60;
  * Always returns JSON (never hangs naked): degraded answer if LLM/data fails.
  */
 export async function POST(req: Request) {
-  let body: {
+  type AgentRequestBody = {
     question?: string;
     history?: AgentHistoryTurn[];
     preferences?: {
@@ -22,10 +22,11 @@ export async function POST(req: Request) {
       language?: "vi" | "en";
       riskDisclosure?: "standard" | "detailed" | "off";
     };
-  } | null = null;
+  };
+  let body: AgentRequestBody;
 
   try {
-    body = (await req.json()) as typeof body;
+    body = (await req.json()) as AgentRequestBody;
   } catch {
     return badRequest("Body JSON không hợp lệ");
   }

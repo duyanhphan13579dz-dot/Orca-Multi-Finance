@@ -8,6 +8,8 @@ import { getVndValuationRatios, getVndEquitySnapshot, getVndCompanyProfile } fro
 import { computeFinancialHealth } from "../engines/fundamental";
 import { analyzeSeries, detectPatterns } from "../technical";
 import { computeInvestmentPerformance } from "../financial/investment-performance";
+import { buildMarketIntel } from "./market-intel";
+import { getSectorTrendForSymbol } from "./sector-trend";
 import type { FreshnessStatus, OhlcvBar, Quote, TechnicalSnapshot } from "../types";
 
 type Persona = "stock_analyst" | "personal_finance" | "wealth";
@@ -69,7 +71,7 @@ async function buildVn(symbol: string, deep: boolean): Promise<Built> {
   const analysis = await buildStockAnalysis(sym).catch(() => null);
 
   // 2) Song song fallback trực tiếp VNDirect / multi-quote
-  const [quotePack, bars, fs, ratios, equity, profile, idxBars, news] = await Promise.all([
+  const [quotePack, bars, fs, ratios, equity, profile, idxBars, news, marketPack, sectorPack] = await Promise.all([
     getVnQuotes([sym]).catch(() => null),
     loadBars(sym),
     fetchVndirectFinancials(sym, { limitPeriods: 12 }).catch(() => null),
@@ -78,6 +80,8 @@ async function buildVn(symbol: string, deep: boolean): Promise<Built> {
     getVndCompanyProfile(sym).catch(() => null),
     fetchVndDchartHistory("VNINDEX", "D", 280).catch(() => [] as OhlcvBar[]),
     getNews({ symbol: sym, limit: deep ? 5 : 3 }).catch(() => null),
+    buildMarketIntel().catch(() => null),
+    getSectorTrendForSymbol(sym).catch(() => null),
   ]);
 
   let quote: Quote | null =
@@ -171,6 +175,22 @@ async function buildVn(symbol: string, deep: boolean): Promise<Built> {
   // —— Narrative ——
   const sections: string[] = [];
   sections.push(`## ${sym}${name ? ` — ${name}` : ""}`);
+
+  if (marketPack?.intel) {
+    sectionsUsed.push("market-context");
+    freshnesses.push(marketPack.meta.freshness);
+    const m = marketPack.intel;
+    const idx = m.indices?.slice(0, 3).map((x) => `${x.code} ${fmtPct(x.changePercent)}`).join(", ") || "chưa có";
+    sections.push(`## Bối cảnh thị trường\nChỉ số: ${idx}. Regime/điều kiện thị trường: **${m.condition.rating}**${m.condition.confidence ? ` (độ tin cậy ${m.condition.confidence})` : ""}. Breadth: ${m.breadth.available ? `${m.breadth.advancers} tăng / ${m.breadth.decliners} giảm` : "chưa có"}; thanh khoản: ${m.liquidity.available ? fmtTy(m.liquidity.valueTraded) : "chưa có"}.`);
+  }
+
+  if (sectorPack?.row) {
+    sectionsUsed.push("industry-context");
+    freshnesses.push(sectorPack.meta.freshness);
+    const row = sectorPack.row;
+    const leaders = row.topGainers.slice(0, 3).map((x) => x.symbol).join(", ") || "chưa có";
+    sections.push(`## Bối cảnh ngành — ${sectorPack.sector}\nXu hướng ngành: **${row.trendLabelVi}** · trend score ${row.trendScore ?? "—"} · thay đổi TB ${fmtPct(row.avgChangePercent)} · breadth ${row.advances} tăng / ${row.declines} giảm. Mã dẫn dắt trong nhóm: ${leaders}.`);
+  }
 
   // Giá
   if (quote?.price != null) {
@@ -304,45 +324,15 @@ async function buildVn(symbol: string, deep: boolean): Promise<Built> {
     sections.push(parts.join("\n"));
   }
 
-  // Tổng kết quant
+  // Tổng hợp bằng chứng — không tạo score/ranking mới trong agent.
   {
-    let score = 50;
-    let factors = 0;
-    if (technical?.trend?.score != null) {
-      score += Math.max(-20, Math.min(20, technical.trend.score * 8));
-      factors++;
-    }
-    if (technical?.rsi14 != null) {
-      if (technical.rsi14 >= 70) score -= 8;
-      else if (technical.rsi14 <= 30) score += 6;
-      else if (technical.rsi14 >= 55) score += 4;
-      else if (technical.rsi14 <= 45) score -= 4;
-      factors++;
-    }
-    if (technical?.macd?.histogram != null) {
-      score += technical.macd.histogram > 0 ? 6 : -6;
-      factors++;
-    }
-    if (health?.scores?.overall != null) {
-      score += (health.scores.overall - 50) * 0.25;
-      factors++;
-    }
-    score = Math.round(Math.max(5, Math.min(95, score)));
-    let stance: string;
-    if (score >= 68) stance = "Nghiêng **TÍCH CỰC / theo dõi mua** (research stance)";
-    else if (score >= 55) stance = "Nghiêng **TRUNG LẬP — hơi tích cực**";
-    else if (score >= 45) stance = "Nghiêng **TRUNG LẬP**";
-    else if (score >= 32) stance = "Nghiêng **TRUNG LẬP — hơi thận trọng**";
-    else stance = "Nghiêng **THẬN TRỌNG / giảm tỷ trọng** (research stance)";
-
-    sections.push(
-      [
-        "## Tổng kết & góc nhìn ORCA",
-        stance + ".",
-        `Độ tin cậy định lượng: **${score}%**${factors ? ` · ${factors} nhóm tín hiệu` : ""}.`,
-        "Phục vụ **nghiên cứu** — **không phải khuyến nghị mua/bán**.",
-      ].join("\n"),
-    );
+    const evidence: string[] = ["## Tổng hợp bằng chứng"];
+    if (technical?.trend?.label) evidence.push(`**Technical trend engine:** ${technical.trend.label}${technical.trend.score != null ? ` (score ${technical.trend.score.toFixed(1)})` : ""}.`);
+    if (health?.scores?.overall != null) evidence.push(`**Financial health engine:** ${Math.round(health.scores.overall)}/100.`);
+    if (perf.sampleDays >= 5 && perf.alpha != null) evidence.push(`**Relative performance:** Alpha Jensen ${(perf.alpha * 100).toFixed(1)}% trên mẫu ${perf.sampleDays} phiên.`);
+    if (!evidence.length) evidence.push("Chưa có đủ tín hiệu engine để tổng hợp.");
+    evidence.push("Đây là tổng hợp dữ liệu kỹ thuật, tài chính và hiệu suất đã tính; không phải điểm khuyến nghị mới.");
+    sections.push(evidence.join("\n"));
   }
 
   if (news?.articles?.length) {
@@ -373,6 +363,19 @@ async function buildVn(symbol: string, deep: boolean): Promise<Built> {
     valuation: { pe, pb, ps, eps, dividendYield: dy },
   };
   contract.performance = perf;
+  contract.market_context = marketPack?.intel
+    ? { indices: marketPack.intel.indices, condition: marketPack.intel.condition, breadth: marketPack.intel.breadth, liquidity: marketPack.intel.liquidity, crossAsset: marketPack.intel.crossAsset, timestamp: marketPack.meta.sourceTimestamp }
+    : null;
+  contract.industry_context = sectorPack?.row
+    ? { sector: sectorPack.sector, trend: sectorPack.row.trendLabelVi, trendScore: sectorPack.row.trendScore, avgChangePercent: sectorPack.row.avgChangePercent, medianChangePercent: sectorPack.row.medianChangePercent, breadth: { advances: sectorPack.row.advances, declines: sectorPack.row.declines, unchanged: sectorPack.row.unchanged }, leaders: sectorPack.row.topGainers, laggards: sectorPack.row.topLosers, sessionDate: sectorPack.snapshot.sessionDate }
+    : null;
+  contract.news = news?.articles?.slice(0, deep ? 5 : 3).map((a) => ({ title: a.title, publishedAt: a.publishedAt, source: a.source })) ?? [];
+  contract.risks = health?.riskFlags ?? [];
+  contract.catalysts = [];
+  contract.data_quality = {
+    financialPeriods: fs?.periods?.map((p) => ({ year: p.year, quarter: p.quarter })) ?? [],
+    missing: [!health && "financial-health", !(pe != null || pb != null || ps != null || eps != null) && "valuation-ratios", !technical && "technical", !marketPack && "market-context", !sectorPack?.row && "industry-context"].filter(Boolean),
+  };
   contract.profile = profile
     ? { vnName: profile.vnName, floor: profile.floor }
     : null;

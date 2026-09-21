@@ -2,6 +2,7 @@ import "server-only";
 import { buildMarketIntel } from "./market-intel";
 import * as vndirect from "../providers/vndirect";
 import { getVnQuotes } from "./stocks";
+import { getSectorTrendSnapshot } from "./sector-trend";
 import type { FreshnessStatus } from "../types";
 
 export type MarketBriefingBuilt = {
@@ -40,7 +41,7 @@ export async function buildVnMarketBriefing(): Promise<MarketBriefingBuilt> {
   const freshnesses: FreshnessStatus[] = [];
   const symbols: string[] = [];
 
-  const [intelPack, foreignPack, idxStats, boardQuotes] = await Promise.all([
+  const [intelPack, foreignPack, idxStats, boardQuotes, sectorPack] = await Promise.all([
     buildMarketIntel().catch(() => null),
     vndirect.getVndForeignFlow().catch(() => null),
     vndirect.getVndIndexSessionStats("VNINDEX").catch(() => null),
@@ -61,6 +62,7 @@ export async function buildVnMarketBriefing(): Promise<MarketBriefingBuilt> {
       "VNM",
       "SSI",
     ]).catch(() => null),
+    getSectorTrendSnapshot().catch(() => null),
   ]);
 
   if (!intelPack) {
@@ -82,6 +84,7 @@ export async function buildVnMarketBriefing(): Promise<MarketBriefingBuilt> {
   const vn = intel.indices?.find((i) => i.code === "VNINDEX") ?? null;
   const vn30 = intel.indices?.find((i) => i.code === "VN30") ?? null;
   const hnx = intel.indices?.find((i) => /HNX/.test(i.code)) ?? null;
+  const upcom = intel.indices?.find((i) => /UPCOM/.test(i.code)) ?? null;
 
   // —— 1. Chỉ số & dẫn dắt ——
   const part1: string[] = ["## 1. Biến động chỉ số & cổ phiếu dẫn dắt"];
@@ -99,6 +102,9 @@ export async function buildVnMarketBriefing(): Promise<MarketBriefingBuilt> {
   }
   if (hnx) {
     part1.push(`**${hnx.code}**: ${fmtPts(hnx.value)} (${fmtPct(hnx.changePercent)}).`);
+  }
+  if (upcom) {
+    part1.push(`**${upcom.code}**: ${fmtPts(upcom.value)} (${fmtPct(upcom.changePercent)}).`);
   }
 
   const pos = intel.contributors?.positive?.slice(0, 6) ?? [];
@@ -290,6 +296,20 @@ export async function buildVnMarketBriefing(): Promise<MarketBriefingBuilt> {
     );
   }
 
+  if (sectorPack?.snapshot?.sectors?.length) {
+    const leaders = sectorPack.snapshot.leaders.slice(0, 3).map((s) => `${s.sector} (${s.trendLabelVi}, ${fmtPct(s.avgChangePercent)})`).join("; ");
+    const laggards = sectorPack.snapshot.laggards.slice(0, 3).map((s) => `${s.sector} (${s.trendLabelVi}, ${fmtPct(s.avgChangePercent)})`).join("; ");
+    if (leaders) part4.push(`**Ngành mạnh:** ${leaders}.`);
+    if (laggards) part4.push(`**Ngành yếu:** ${laggards}.`);
+  } else {
+    part4.push("Chưa lấy được bảng xếp hạng ngành trong phiên; không suy diễn nhóm dẫn dắt.");
+  }
+
+  if (intel.crossAsset.length) {
+    const cross = intel.crossAsset.filter((x) => x.changePercent != null).slice(0, 6).map((x) => `${x.label} ${fmtPct(x.changePercent)}`).join("; ");
+    if (cross) part4.push(`**Liên thị trường:** ${cross}.`);
+  }
+
   part4.push(
     "**Tâm lý:** " +
       (vn && vn.changePercent != null
@@ -301,8 +321,9 @@ export async function buildVnMarketBriefing(): Promise<MarketBriefingBuilt> {
         : "Chưa đủ biến động chỉ số để kết luận tâm lý phiên."),
   );
 
+  const updatedAt = meta.sourceTimestamp ? new Date(meta.sourceTimestamp).toLocaleString("vi-VN") : "chưa xác định";
   const header =
-    "Bản nhận định thị trường được xây dựng theo cấu trúc **4 phần chuẩn hóa**, đi từ biến động chỉ số vĩ mô đến hành vi dòng vốn và đánh giá tổng quan.\n";
+    `Bản nhận định thị trường được xây dựng theo cấu trúc **4 phần chuẩn hóa**, đi từ biến động chỉ số đến hành vi dòng vốn và yếu tố liên thị trường. **Thời điểm dữ liệu:** ${updatedAt}.\n`;
 
   const narrative = [header, part1.join("\n\n"), part2.join("\n\n"), part3.join("\n\n"), part4.join("\n\n")].join(
     "\n\n",
@@ -314,6 +335,8 @@ export async function buildVnMarketBriefing(): Promise<MarketBriefingBuilt> {
       scope: "vn-market-briefing-v1",
       vnIndex: vn,
       vn30,
+      hnx,
+      upcom,
       foreign: foreignPack
         ? {
             net: foreignPack.netVal,
@@ -327,6 +350,9 @@ export async function buildVnMarketBriefing(): Promise<MarketBriefingBuilt> {
       breadth: intel.breadth,
       liquidity: { valueTraded: val },
       condition: intel.condition,
+      crossAsset: intel.crossAsset,
+      sectors: sectorPack?.snapshot?.sectors?.slice(0, 10) ?? [],
+      dataTimestamp: meta.sourceTimestamp,
     },
     sectionsUsed: [...new Set(sectionsUsed)],
     symbols: [...new Set(symbols)],

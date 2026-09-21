@@ -8,6 +8,7 @@ import { llmChat, llmConfigured } from "../ai/gateway";
 import {
   buildUniverseOverview,
   buildForexContext,
+  buildIndustryContext,
   buildCommodityContext,
   buildRatesMacroContext,
   buildVnStockFull,
@@ -15,6 +16,7 @@ import {
   type AgentBuilt,
 } from "./agent-context";
 import { buildVnMarketBriefing } from "./market-briefing";
+import { createResponseContext, domainsForRoute, routeQuestion, type AgentResponseContext, type AgentRoute } from "./agent-router";
 
 /** Hard wall for data-engine calls so agent never hangs past Vercel budget */
 function withTimeout<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> {
@@ -73,6 +75,8 @@ interface AgentAnswer {
   dataQuality: "HIGH" | "MEDIUM" | "LOW";
   dataFreshness: FreshnessStatus;
   context: { sectionsUsed: string[]; symbols: string[] };
+  route: AgentRoute;
+  responses: AgentResponseContext[];
 }
 
 const KNOWN_CRYPTO = new Set([
@@ -201,12 +205,28 @@ BẮT BUỘC giữ đúng 4 phần (tiêu đề ##):
 4. Tổng quan ngành & nguyên nhân vĩ mô
 Chỉ làm mượt câu chữ / bổ sung liên kết logic từ CONTEXT; KHÔNG đổi cấu trúc, KHÔNG bịa số liệu.`
       : "";
+    const marketRule = /thị trường|vn-?index|vn30|hose|hnx|upcom|khối ngoại|ngành dẫn dắt/i.test(question)
+      ? `
+Đây là câu hỏi nhánh THỊ TRƯỜNG. Ưu tiên trạng thái VN-Index/VN30/HNX/UPCoM, mức tăng giảm và thanh khoản, breadth, leadership/ngành mạnh yếu, flow, macro/cross-asset, rủi ro và kết luận ngắn. Chỉ dùng các trường đã có trong CONTEXT; không tự tạo market score, xác suất hay khuyến nghị cá nhân hóa. Phân biệt rõ dữ liệu với diễn giải và nhắc timestamp khi có.`
+      : "";
+    const industryRule = /ngành|sector|banking|dầu khí|thép|công nghệ|bất động sản|bán lẻ/i.test(question)
+      ? `
+Đây là câu hỏi nhánh NGÀNH. Phân tích toàn ngành trước: xu hướng/relative strength, breadth, thanh khoản, leadership/laggards; chỉ liên hệ doanh nghiệp khi CONTEXT chứng minh được. Không lấy một vài mã đại diện để gọi là toàn ngành. Earnings, valuation, NIM/NPL/CASA, hàng hóa, macro, news hoặc catalyst chỉ được nêu khi có dữ liệu; nếu thiếu phải nói rõ. Không tự tạo ranking mới.`
+      : "";
+    const stockRule = /phân tích|cổ phiếu|mã cổ phiếu|định giá|p\/e|p\/b|eps|so sánh|\bFPT\b|\bCMG\b|\bGAS\b/i.test(question)
+      ? `
+Đây là câu hỏi nhánh CỔ PHIẾU. Đọc theo thứ tự thị trường → ngành → doanh nghiệp → cổ phiếu; financial statements phải giữ đúng kỳ báo cáo và nguồn. Chỉ giải thích technical/fundamental/valuation/performance scores đã có, không tạo điểm tổng hợp mới. Khi so sánh, đối chiếu từng chỉ tiêu cùng kỳ và đánh dấu thiếu/discrepancy; không kết luận rẻ/đắt từ một ratio.`
+      : "";
+    const commodityRule = /vàng|gold|bạc|silver|dầu|oil|wti|brent|hrc|đồng|cà phê|robusta|arabica|hàng hóa|commodity/i.test(question)
+      ? `
+Đây là câu hỏi nhánh HÀNG HÓA. Luôn nêu giá, đơn vị, currency, timestamp, timeframe và nguồn nếu có. Chỉ dùng timeframe được engine cung cấp; không gọi dữ liệu hiện tại nếu timestamp thiếu. Khi phân tích tác động, đi theo COMMODITY → cơ chế truyền dẫn → INDUSTRY → DOANH NGHIỆP → STOCK; không suy diễn mọi mã đều hưởng lợi và phải nêu độ trễ/rủi ro.`
+      : "";
 
     const system = `Bạn là ORCA Agent — trợ lý phân tích tài chính toàn diện của nền tảng ORCA Multi-Finance.
 Chỉ được dùng số liệu trong CONTEXT JSON và NARRATIVE đã tính sẵn từ hệ thống (chứng khoán VN, crypto, forex, hàng hóa, lãi suất, vĩ mô).
 KHÔNG bịa số, KHÔNG bịa nguồn. Nếu thiếu dữ liệu, nói rõ "chưa có trong hệ thống".
 Trả lời tiếng ${prefs.language === "en" ? "Anh" : "Việt"}, cấu trúc rõ (tiêu đề ##, gạch đầu dòng).
-Không đưa khuyến nghị mua/bán tuyệt đối; nhấn mạnh phục vụ nghiên cứu.${briefingRule}`;
+Không đưa khuyến nghị mua/bán tuyệt đối; nhấn mạnh phục vụ nghiên cứu.${briefingRule}${marketRule}${industryRule}${stockRule}${commodityRule}`;
 
     const user = `CÂU HỎI: ${question}
 
@@ -236,20 +256,61 @@ Hãy tổng hợp phân tích chuyên sâu, bám số liệu trên.`;
   }
 }
 
+async function buildRoutedContext(route: AgentRoute, question: string, deep: boolean): Promise<{ built: AgentBuilt; responses: AgentResponseContext[] }> {
+  const domains = domainsForRoute(route);
+  const jobs = domains.map(async (domain) => {
+    if (domain === "market") return { domain, built: await withTimeout(buildVnMarketBriefing(), 22_000, EMPTY_BUILT) };
+    if (domain === "industry") return { domain, built: await withTimeout(buildIndustryContext(question), 22_000, EMPTY_BUILT) };
+    if (domain === "commodity") return { domain, built: await withTimeout(buildCommodityContext(question), 22_000, EMPTY_BUILT) };
+    const symbols = route.entities.symbols.length > 1 ? route.entities.symbols.slice(0, 4) : [route.entities.symbols[0] ?? "FPT"];
+    if (symbols.length > 1 && route.task === "compare") {
+      const stocks = await Promise.all(symbols.map((symbol) => withTimeout(buildVnStockFull(symbol, deep), 22_000, { ...EMPTY_BUILT, symbols: [symbol] })));
+      return {
+        domain,
+        built: {
+          narrative: stocks.map((stock) => stock.narrative).join("\n\n---\n\n"),
+          contract: { comparison: stocks.map((stock, index) => ({ symbol: symbols[index], ...stock.contract })) },
+          sectionsUsed: [...new Set(stocks.flatMap((stock) => stock.sectionsUsed))],
+          symbols,
+          freshnesses: stocks.flatMap((stock) => stock.freshnesses),
+          unavailable: stocks.every((stock) => stock.unavailable),
+        },
+      };
+    }
+    return { domain, built: await withTimeout(buildVnStockFull(symbols[0]!, deep), 22_000, { ...EMPTY_BUILT, symbols: [symbols[0]!] }) };
+  });
+  const parts = await Promise.all(jobs);
+  const merged: AgentBuilt = {
+    narrative: parts.map((x) => x.built.narrative).join("\n\n---\n\n"),
+    contract: Object.fromEntries(parts.map((x) => [x.domain, x.built.contract])),
+    sectionsUsed: [...new Set(parts.flatMap((x) => x.built.sectionsUsed))],
+    symbols: [...new Set(parts.flatMap((x) => x.built.symbols))],
+    freshnesses: parts.flatMap((x) => x.built.freshnesses),
+    unavailable: parts.every((x) => x.built.unavailable),
+  };
+  return { built: merged, responses: parts.map((x) => createResponseContext(x.domain, x.built)) };
+}
+
 export async function answerQuestion(
   question: string,
   prefs: AgentPrefs = {},
   history: AgentHistoryTurn[] = [],
 ): Promise<{ result: AgentAnswer; meta: Meta }> {
   const intent = detectIntent(question);
+  const route = routeQuestion(question);
   const deep = prefs.depth === "deep";
   let built: AgentBuilt;
+  let responses: AgentResponseContext[] = [];
   let persona: Persona = "stock_analyst";
   let forceBriefingFormat = false;
   const DATA_MS = 22_000;
 
   try {
-    if (intent.kind === "vn-market" || intent.kind === "market") {
+    if (domainsForRoute(route).length > 0) {
+      const routed = await buildRoutedContext(route, question, deep);
+      built = routed.built;
+      responses = routed.responses;
+    } else if (intent.kind === "vn-market" || intent.kind === "market") {
       built = await withTimeout(buildVnMarketBriefing(), DATA_MS, EMPTY_BUILT);
       forceBriefingFormat = !built.unavailable;
     } else if (intent.kind === "vn-stock") {
@@ -403,6 +464,8 @@ export async function answerQuestion(
         dataQuality: built.unavailable ? "LOW" : built.sectionsUsed.length >= 3 ? "HIGH" : "MEDIUM",
         dataFreshness,
         context: { sectionsUsed: built.sectionsUsed, symbols: built.symbols },
+        route,
+        responses,
       },
       meta,
     };
@@ -426,6 +489,8 @@ export async function answerQuestion(
         dataQuality: "LOW" as const,
         dataFreshness: "UNAVAILABLE" as const,
         context: { sectionsUsed: [], symbols: [] },
+        route: routeQuestion(question),
+        responses: [],
       },
       meta,
     };
