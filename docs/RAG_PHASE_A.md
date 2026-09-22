@@ -1,32 +1,22 @@
-# ORCA — Lộ trình RAG / Train (Phase A đã triển khai code)
+# ORCA — Phase A (HOÀN THÀNH trên main)
 
-## Mục tiêu Phase A (không train LLM)
+## Checklist Phase A
 
-1. Giữ **quant engines** làm nguồn số liệu chính (structured RAG).
-2. Thêm **document RAG lexical**: AI guides + news DB + bảng `rag_chunks`.
-3. Gắn passages vào `synthesizeWithLlm` (agent).
-4. Giữ anti-hallucination `validate.ts` + prompt human-like.
+| Hạng mục | Status |
+|----------|--------|
+| `src/lib/rag/*` lexical retrieve | ✅ |
+| Guides corpus (market/stock/industry/commodity) | ✅ |
+| News + `rag_chunks` retrieve | ✅ |
+| `agent-synthesize.ts` inject TÀI LIỆU TRUY XUẤT | ✅ |
+| `agent.ts` full intent router | ✅ |
+| Schema `rag_chunks` + Neon table | ✅ (user SQL Editor) |
+| Human-like prompt + validate | ✅ |
+| Không train LLM | ✅ (đúng thiết kế A) |
 
-## Đã thêm trong repo
+## Phase B (đã mở)
 
-| Path | Vai trò |
-|------|---------|
-| `src/lib/rag/*` | chunk, guides corpus, retrieve, format prompt |
-| `src/db/schema.ts` → `rag_chunks` | Lưu note/BCTC text (chưa cần pgvector) |
-| `src/lib/services/agent.ts` | Gọi `retrieveRag` trước khi LLM |
+Xem **[docs/RAG_PHASE_B.md](./RAG_PHASE_B.md)** — dataset RAG-SFT/DPO, format chat, QLoRA + vLLM + `AI_BASE_URL`.
 
-## Vận hành
+## Phase C (sau)
 
-```bash
-npx drizzle-kit push
-```
-
-Guides đã embed trong code. News lấy từ bảng `news` nếu có DB.
-
-## Phase B
-
-Base Qwen2.5/3-Instruct + SFT/DPO format RAG → vLLM → `AI_BASE_URL`.
-
-## Phase C
-
-pgvector, embedding, A/B, BCTC PDF có chọn lọc.
+pgvector / embedding / A/B traffic.
