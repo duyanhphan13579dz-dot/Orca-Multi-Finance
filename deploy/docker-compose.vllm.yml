@@ -1,0 +1,40 @@
+services:
+  orca-vllm:
+    image: vllm/vllm-openai:latest
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=0
+      - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./orca-analyst-lora:/adapters/orca-analyst-lora:ro
+      - hf-cache:/root/.cache/huggingface
+    command:
+      - "--model"
+      - "Qwen/Qwen2.5-7B-Instruct"
+      - "--enable-lora"
+      - "--lora-modules"
+      - "orca-analyst-v1=/adapters/orca-analyst-lora"
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "8000"
+      - "--max-model-len"
+      - "4096"
+      - "--gpu-memory-utilization"
+      - "0.90"
+      - "--trust-remote-code"
+      - "--dtype"
+      - "auto"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped
+
+volumes:
+  hf-cache:
