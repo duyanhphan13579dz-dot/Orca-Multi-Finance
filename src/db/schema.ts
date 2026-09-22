@@ -42,7 +42,7 @@ export const watchlists = pgTable("watchlists", {
 export const watchlistItems = pgTable("watchlist_items", {
   id: uuid("id").defaultRandom().primaryKey(),
   watchlistId: uuid("watchlist_id").notNull().references(() => watchlists.id, { onDelete: "cascade" }),
-  assetType: text("asset_type").notNull(), // stock | crypto | forex | commodity
+  assetType: text("asset_type").notNull(),
   symbol: text("symbol").notNull(),
   sortOrder: integer("sort_order").default(0),
   addedAt: timestamp("added_at", { withTimezone: true }).defaultNow().notNull(),
@@ -53,7 +53,7 @@ export const watchlistItems = pgTable("watchlist_items", {
 export const stockSymbols = pgTable("stock_symbols", {
   symbol: text("symbol").primaryKey(),
   name: text("name"),
-  exchange: text("exchange"), // HOSE | HNX | UPCOM
+  exchange: text("exchange"),
   industry: text("industry"),
   sector: text("sector"),
   source: text("source"),
@@ -78,7 +78,7 @@ export const stockOhlcv = pgTable(
   "stock_ohlcv",
   {
     symbol: text("symbol").notNull(),
-    date: text("date").notNull(), // YYYY-MM-DD
+    date: text("date").notNull(),
     open: numeric("open"), high: numeric("high"), low: numeric("low"), close: numeric("close"),
     volume: numeric("volume"),
     source: text("source"),
@@ -93,8 +93,8 @@ export const financialStatements = pgTable(
     id: bigint("id", { mode: "number" }).primaryKey().generatedAlwaysAsIdentity(),
     symbol: text("symbol").notNull(),
     periodYear: integer("period_year").notNull(),
-    periodQuarter: integer("period_quarter"), // null = annual
-    reportType: text("report_type").notNull(), // income | balance | cashflow | ratios
+    periodQuarter: integer("period_quarter"),
+    reportType: text("report_type").notNull(),
     metrics: jsonb("metrics").notNull(),
     source: text("source").notNull(),
     sourceTimestamp: timestamp("source_timestamp", { withTimezone: true }),
@@ -165,7 +165,7 @@ export const commodityQuotes = pgTable(
     id: bigint("id", { mode: "number" }).primaryKey().generatedAlwaysAsIdentity(),
     commodity: text("commodity").notNull(),
     symbol: text("symbol").notNull(),
-    group: text("group").notNull(), // metals | energy | industrial | agriculture | vietnam
+    group: text("group").notNull(),
     price: numeric("price"),
     change: numeric("change"),
     changePercent: numeric("change_percent"),
@@ -189,7 +189,7 @@ export const newsArticles = pgTable(
     title: text("title").notNull(),
     summary: text("summary"),
     source: text("source").notNull(),
-    category: text("category"), // market | corporate | macro | crypto | forex | commodities
+    category: text("category"),
     publishedAt: timestamp("published_at", { withTimezone: true }).notNull(),
     relatedSymbols: jsonb("related_symbols"),
     relatedSector: text("related_sector"),
@@ -203,7 +203,7 @@ export const newsArticles = pgTable(
 
 export const reports = pgTable("reports", {
   id: uuid("id").defaultRandom().primaryKey(),
-  type: text("type").notNull(), // morning_brief | market_summary | sector | stock | custom
+  type: text("type").notNull(),
   title: text("title").notNull(),
   body: jsonb("body").notNull(),
   marketDataTimestamp: timestamp("market_data_timestamp", { withTimezone: true }),
@@ -216,14 +216,14 @@ export const reports = pgTable("reports", {
 
 export const marketSnapshots = pgTable("market_snapshots", {
   id: bigint("id", { mode: "number" }).primaryKey().generatedAlwaysAsIdentity(),
-  scope: text("scope").notNull(), // global | crypto | forex | commodities | vn_stocks
+  scope: text("scope").notNull(),
   payload: jsonb("payload").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
 
 export const providerHealth = pgTable("provider_health", {
   provider: text("provider").primaryKey(),
-  status: text("status").notNull().default("unknown"), // healthy | degraded | down | unknown
+  status: text("status").notNull().default("unknown"),
   lastSuccessAt: timestamp("last_success_at", { withTimezone: true }),
   lastFailureAt: timestamp("last_failure_at", { withTimezone: true }),
   lastLatencyMs: integer("last_latency_ms"),
@@ -240,7 +240,7 @@ export const providerLogs = pgTable(
   {
     id: bigint("id", { mode: "number" }).primaryKey().generatedAlwaysAsIdentity(),
     provider: text("provider").notNull(),
-    event: text("event").notNull(), // success | failure | circuit_open
+    event: text("event").notNull(),
     message: text("message"),
     latencyMs: integer("latency_ms"),
     meta: jsonb("meta"),
@@ -284,9 +284,32 @@ export const alerts = pgTable("alerts", {
   userId: uuid("user_id"),
   assetType: text("asset_type").notNull(),
   symbol: text("symbol").notNull(),
-  condition: text("condition").notNull(), // price_above | price_below | pct_change | rsi | volume_spike
+  condition: text("condition").notNull(),
   threshold: numeric("threshold"),
   active: boolean("active").default(true),
   triggeredAt: timestamp("triggered_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
+
+/* ---------------------------------- RAG ----------------------------------- */
+
+/** Phase A document chunks (lexical retrieve). Vector column optional in Phase B. */
+export const ragChunks = pgTable(
+  "rag_chunks",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    source: text("source").notNull(),
+    symbol: text("symbol"),
+    sector: text("sector"),
+    title: text("title"),
+    content: text("content").notNull(),
+    sourceUrl: text("source_url"),
+    sourceTs: timestamp("source_ts", { withTimezone: true }),
+    metadata: jsonb("metadata"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index("rag_chunks_symbol_idx").on(t.symbol),
+    index("rag_chunks_source_idx").on(t.source),
+  ],
+);
