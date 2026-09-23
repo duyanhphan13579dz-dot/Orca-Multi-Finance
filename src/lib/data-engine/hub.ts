@@ -39,6 +39,73 @@ export function hubFinancialPackagePeek(symbol: string) {
   return hubPeek(kFin(symbol.trim().toUpperCase()));
 }
 
+/** VN multi-quote — shared in request */
+export async function hubVnQuotes(symbols: string[]) {
+  const key = `market:quotes:${[...symbols].map((s) => s.toUpperCase()).sort().join(",")}`;
+  return coalesce(
+    key,
+    async () => {
+      const { getVnQuotes } = await import("../services/stocks");
+      return getVnQuotes(symbols);
+    },
+    { sourceIds: ["vndirect"] },
+  );
+}
+
+/** Crypto detail (Binance path via service) */
+export async function hubCryptoDetail(symbol: string, interval = "1h") {
+  const sym = symbol.trim().toUpperCase();
+  return coalesce(
+    `${kCrypto(sym)}:${interval}`,
+    async () => {
+      const { getCryptoDetail } = await import("../services/crypto");
+      return getCryptoDetail(sym, interval);
+    },
+    { sourceIds: ["binance", "coingecko"] },
+  );
+}
+
+/** Forex pair detail */
+export async function hubForexDetail(pair: string) {
+  const p = pair.trim().toUpperCase().replace("/", "");
+  return coalesce(
+    kForex(p),
+    async () => {
+      const { getForexDetail } = await import("../services/forex");
+      return getForexDetail(p);
+    },
+    { sourceIds: ["forex-feed", "yahoo"] },
+  );
+}
+
+/** Commodity market snapshot (shared — one board for whole request) */
+export async function hubCommodityMarket() {
+  return coalesce(
+    kCommodity("market"),
+    async () => {
+      const { getCommodityMarket } = await import("../services/commodities");
+      return getCommodityMarket();
+    },
+    { sourceIds: ["commodities"] },
+  );
+}
+
+/** News by symbol or general */
+export async function hubNews(opts: { symbol?: string; query?: string; limit?: number }) {
+  const key = kNews(opts.symbol ?? opts.query ?? "general");
+  return coalesce(
+    key,
+    async () => {
+      const { getNews } = await import("../services/news");
+      return getNews({
+        symbol: opts.symbol,
+        limit: opts.limit ?? 5,
+      });
+    },
+    { sourceIds: ["news-bundle", "cafef"] },
+  );
+}
+
 export function hubCrossCheckNumbers(
   pairs: Array<{ label: string; a: number | null | undefined; b: number | null | undefined; tolPct?: number }>,
 ): { ok: boolean; details: Array<{ label: string; ok: boolean; a: number | null; b: number | null }> } {
