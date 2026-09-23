@@ -1,6 +1,15 @@
 import "server-only";
 import { getHubStore, type HubEntry } from "./request-scope";
 
+/**
+ * Singleflight loader:
+ * 1) If request hub has value → return it (no source call)
+ * 2) If same key in-flight in this request → await that promise
+ * 3) Else run producer once, store in hub
+ *
+ * Outside hub scope, still singleflights process-wide for the duration of the promise.
+ */
+
 const globalInflight = new Map<string, Promise<unknown>>();
 
 export async function coalesce<T>(
@@ -33,7 +42,12 @@ export async function coalesce<T>(
     }
     const value = await producer();
     if (store) {
-      const entry: HubEntry = { key, sourceIds, producedAt: Date.now(), value };
+      const entry: HubEntry = {
+        key,
+        sourceIds,
+        producedAt: Date.now(),
+        value,
+      };
       store.values.set(key, entry);
       store.inflight.delete(key);
     } else {
@@ -54,6 +68,7 @@ export async function coalesce<T>(
   }
 }
 
+/** Read-only peek (no fetch). */
 export function hubPeek<T>(key: string): T | undefined {
   const store = getHubStore();
   return store?.values.get(key)?.value as T | undefined;
