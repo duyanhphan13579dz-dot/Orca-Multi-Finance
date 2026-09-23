@@ -1,6 +1,7 @@
 import "server-only";
 import { cached } from "../cache";
 import { getFinancialPackage } from "./service";
+import { hubFinancialPackage } from "../data-engine";
 import { persistFinancialPackageAsync } from "./persist";
 import type { FinancialPackage } from "./types";
 import type { FinancialHealthResult } from "../engines/fundamental";
@@ -10,7 +11,7 @@ import type { GrowthSnapshot } from "./types";
  * Bulk fundamental snapshots — shared layer for screeners (Fundamental, CANSLIM, Valuation).
  *
  * Strategy:
- *  1. Parallel getFinancialPackage (already TTL-cached 6h / stale 90d) with pool limit
+ *  1. Parallel hubFinancialPackage (request hub + TTL cache) with pool limit
  *  2. Flatten health + growth into a filter-friendly snapshot (extra cache 12h)
  *  3. Best-effort persist periods → financial_statements
  *  4. CANSLIM / Valuation reuse the same package map
@@ -19,7 +20,6 @@ import type { GrowthSnapshot } from "./types";
 export type FundamentalSnapshot = {
   symbol: string;
   reportDate: string | null;
-  /** ratios as percent points, e.g. 18.5 = 18.5% */
   roe: number | null;
   roa: number | null;
   ros: number | null;
@@ -34,7 +34,6 @@ export type FundamentalSnapshot = {
   netDebtToEbitda: number | null;
   fcfTtm: number | null;
   ocfTtm: number | null;
-  /** Anchors for valuation (VND full units where applicable) */
   revenue: number | null;
   netProfit: number | null;
   equity: number | null;
@@ -158,7 +157,7 @@ export async function getFinancialPackagesBulk(
 
   await mapPool(uniq, concurrency, async (symbol) => {
     try {
-      const r = await getFinancialPackage(symbol);
+      const r = await hubFinancialPackage(symbol);
       if (!r) return;
       const has =
         r.pkg.income.length + r.pkg.balance.length + r.pkg.cashflow.length > 0 ||
