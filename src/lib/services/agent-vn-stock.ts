@@ -1,9 +1,9 @@
 import "server-only";
-import { getNews } from "./news";
 import { buildStockAnalysis } from "./intelligence";
-import { getVnQuotes, getVnOhlcv } from "./stocks";
+import { getVnOhlcv } from "./stocks";
 import { fetchVndDchartHistory } from "../providers/vndirect-dchart";
-import { fetchVndirectFinancials, periodsToLegacyRows } from "../financial/vndirect-fs";
+import { periodsToLegacyRows } from "../financial/vndirect-fs";
+import { hubFinancialPackage, hubVnQuotes, hubNews } from "../data-engine";
 import { getVndValuationRatios, getVndEquitySnapshot, getVndCompanyProfile } from "../providers/vndirect-company";
 import { computeFinancialHealth } from "../engines/fundamental";
 import { analyzeSeries, detectPatterns } from "../technical";
@@ -56,8 +56,7 @@ async function loadBars(symbol: string): Promise<OhlcvBar[]> {
 }
 
 /**
- * Phân tích cổ phiếu VN — luôn kéo multi-source (không phụ thuộc VNSTOCK_API_KEY).
- * Quote · OHLCV/dchart · BCTC · ratios · performance.
+ * Phân tích cổ phiếu VN — multi-source via Data Engine Hub (shared request scope).
  */
 async function buildVn(symbol: string, deep: boolean): Promise<Built> {
   const sym = symbol.trim().toUpperCase();
@@ -67,19 +66,19 @@ async function buildVn(symbol: string, deep: boolean): Promise<Built> {
     asset: { symbol: sym, asset_type: "stock" },
   };
 
-  // 1) Thử pipeline intelligence đầy đủ
   const analysis = await buildStockAnalysis(sym).catch(() => null);
 
-  // 2) Song song fallback trực tiếp VNDirect / multi-quote
   const [quotePack, bars, fs, ratios, equity, profile, idxBars, news, marketPack, sectorPack] = await Promise.all([
-    getVnQuotes([sym]).catch(() => null),
+    hubVnQuotes([sym]).catch(() => null),
     loadBars(sym),
-    fetchVndirectFinancials(sym, { limitPeriods: 12 }).catch(() => null),
+    hubFinancialPackage(sym)
+      .then((r) => (r?.pkg?.periods?.length ? { periods: r.pkg.periods } : null))
+      .catch(() => null),
     getVndValuationRatios(sym).catch(() => null),
     getVndEquitySnapshot(sym).catch(() => null),
     getVndCompanyProfile(sym).catch(() => null),
     fetchVndDchartHistory("VNINDEX", "D", 280).catch(() => [] as OhlcvBar[]),
-    getNews({ symbol: sym, limit: deep ? 5 : 3 }).catch(() => null),
+    hubNews({ symbol: sym, limit: deep ? 5 : 3 }).catch(() => null),
     buildMarketIntel().catch(() => null),
     getSectorTrendForSymbol(sym).catch(() => null),
   ]);
@@ -96,7 +95,6 @@ async function buildVn(symbol: string, deep: boolean): Promise<Built> {
     quote?.name ??
     null;
 
-  // Technical
   let technical: TechnicalSnapshot | null =
     analysis?.detail?.technical ?? null;
   let patterns = analysis?.detail?.patterns ?? [];
@@ -111,7 +109,6 @@ async function buildVn(symbol: string, deep: boolean): Promise<Built> {
   if (bars.length) sectionsUsed.push("ohlcv");
   if (technical) sectionsUsed.push("technical");
 
-  // BCTC + health
   let health = analysis?.detail?.financialHealth ?? null;
   let income0: Record<string, unknown> = {};
   if (fs?.periods?.length) {
@@ -137,7 +134,6 @@ async function buildVn(symbol: string, deep: boolean): Promise<Built> {
   }
   if (health) sectionsUsed.push("financial-health");
 
-  // Valuation
   const pe = ratios?.pe ?? null;
   const pb = ratios?.pb ?? null;
   const ps = ratios?.ps ?? null;
@@ -145,7 +141,6 @@ async function buildVn(symbol: string, deep: boolean): Promise<Built> {
   const dy = ratios?.dividendYield ?? null;
   if (ratios) sectionsUsed.push("valuation-ratios");
 
-  // Performance
   const closes = bars.map((b) => Number(b.close)).filter((c) => Number.isFinite(c) && c > 0);
   const indexCloses = (idxBars ?? [])
     .map((b) => Number(b.close))
@@ -172,7 +167,6 @@ async function buildVn(symbol: string, deep: boolean): Promise<Built> {
   });
   if (perf.sampleDays >= 5) sectionsUsed.push("performance");
 
-  // —— Narrative ——
   const sections: string[] = [];
   sections.push(`## ${sym}${name ? ` — ${name}` : ""}`);
 
@@ -192,7 +186,6 @@ async function buildVn(symbol: string, deep: boolean): Promise<Built> {
     sections.push(`## Bối cảnh ngành — ${sectorPack.sector}\nXu hướng ngành: **${row.trendLabelVi}** · trend score ${row.trendScore ?? "—"} · thay đổi TB ${fmtPct(row.avgChangePercent)} · breadth ${row.advances} tăng / ${row.declines} giảm. Mã dẫn dắt trong nhóm: ${leaders}.`);
   }
 
-  // Giá
   if (quote?.price != null) {
     sectionsUsed.push("quote");
     const bits = [
@@ -214,7 +207,6 @@ async function buildVn(symbol: string, deep: boolean): Promise<Built> {
     sections.push(`## Giá & khối lượng\n${sym}: chưa lấy được quote realtime — đang thử lại từ multi-source.`);
   }
 
-  // Kỹ thuật
   if (technical) {
     const parts: string[] = ["## Tín hiệu kỹ thuật"];
     if (technical.trend?.label) {
@@ -265,7 +257,6 @@ async function buildVn(symbol: string, deep: boolean): Promise<Built> {
     );
   }
 
-  // Sức khỏe TC
   if (health?.scores) {
     const sc = health.scores;
     const parts = ["## Sức khỏe tài chính"];
@@ -287,11 +278,10 @@ async function buildVn(symbol: string, deep: boolean): Promise<Built> {
     sections.push(parts.join("\n"));
   } else {
     sections.push(
-      "## Sức khỏe tài chính\nChưa đủ BCTC chuẩn hóa để chấm điểm — đã thử kéo trực tiếp từ VNDirect.",
+      "## Sức khỏe tài chính\nChưa đủ BCTC chuẩn hóa để chấm điểm — đã thử qua Data Engine Hub / VNDirect.",
     );
   }
 
-  // Định giá
   {
     const parts = ["## Định giá"];
     const has = pe != null || pb != null || ps != null || eps != null;
@@ -314,7 +304,6 @@ async function buildVn(symbol: string, deep: boolean): Promise<Built> {
     sections.push(parts.join("\n"));
   }
 
-  // Hiệu suất
   if (perf.sampleDays >= 5) {
     const parts = ["## Hiệu suất đầu tư"];
     if (perf.tsr1y != null) parts.push(`TSR ~12 tháng: **${(perf.tsr1y * 100).toFixed(1)}%**.`);
@@ -324,13 +313,12 @@ async function buildVn(symbol: string, deep: boolean): Promise<Built> {
     sections.push(parts.join("\n"));
   }
 
-  // Tổng hợp bằng chứng — không tạo score/ranking mới trong agent.
   {
     const evidence: string[] = ["## Tổng hợp bằng chứng"];
     if (technical?.trend?.label) evidence.push(`**Technical trend engine:** ${technical.trend.label}${technical.trend.score != null ? ` (score ${technical.trend.score.toFixed(1)})` : ""}.`);
     if (health?.scores?.overall != null) evidence.push(`**Financial health engine:** ${Math.round(health.scores.overall)}/100.`);
     if (perf.sampleDays >= 5 && perf.alpha != null) evidence.push(`**Relative performance:** Alpha Jensen ${(perf.alpha * 100).toFixed(1)}% trên mẫu ${perf.sampleDays} phiên.`);
-    if (!evidence.length) evidence.push("Chưa có đủ tín hiệu engine để tổng hợp.");
+    if (evidence.length <= 1) evidence.push("Chưa có đủ tín hiệu engine để tổng hợp.");
     evidence.push("Đây là tổng hợp dữ liệu kỹ thuật, tài chính và hiệu suất đã tính; không phải điểm khuyến nghị mới.");
     sections.push(evidence.join("\n"));
   }
@@ -341,7 +329,7 @@ async function buildVn(symbol: string, deep: boolean): Promise<Built> {
       "## Tin liên quan\n" +
         news.articles
           .slice(0, 3)
-          .map((a) => `- ${a.title}`)
+          .map((a: { title: string }) => `- ${a.title}`)
           .join("\n"),
     );
   }
@@ -369,11 +357,11 @@ async function buildVn(symbol: string, deep: boolean): Promise<Built> {
   contract.industry_context = sectorPack?.row
     ? { sector: sectorPack.sector, trend: sectorPack.row.trendLabelVi, trendScore: sectorPack.row.trendScore, avgChangePercent: sectorPack.row.avgChangePercent, medianChangePercent: sectorPack.row.medianChangePercent, breadth: { advances: sectorPack.row.advances, declines: sectorPack.row.declines, unchanged: sectorPack.row.unchanged }, leaders: sectorPack.row.topGainers, laggards: sectorPack.row.topLosers, sessionDate: sectorPack.snapshot.sessionDate }
     : null;
-  contract.news = news?.articles?.slice(0, deep ? 5 : 3).map((a) => ({ title: a.title, publishedAt: a.publishedAt, source: a.source })) ?? [];
+  contract.news = news?.articles?.slice(0, deep ? 5 : 3).map((a: { title: string; publishedAt?: string; source?: string }) => ({ title: a.title, publishedAt: a.publishedAt, source: a.source })) ?? [];
   contract.risks = health?.riskFlags ?? [];
   contract.catalysts = [];
   contract.data_quality = {
-    financialPeriods: fs?.periods?.map((p) => ({ year: p.year, quarter: p.quarter })) ?? [],
+    financialPeriods: fs?.periods?.map((p: { year?: number; quarter?: number }) => ({ year: p.year, quarter: p.quarter })) ?? [],
     missing: [!health && "financial-health", !(pe != null || pb != null || ps != null || eps != null) && "valuation-ratios", !technical && "technical", !marketPack && "market-context", !sectorPack?.row && "industry-context"].filter(Boolean),
   };
   contract.profile = profile
