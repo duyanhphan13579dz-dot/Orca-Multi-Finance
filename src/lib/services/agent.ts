@@ -18,6 +18,7 @@ import {
 } from "./agent-context";
 import { buildVnMarketBriefing } from "./market-briefing";
 import { createResponseContext, domainsForRoute, routeQuestion, type AgentResponseContext, type AgentRoute } from "./agent-router";
+import { runInDataHub } from "../data-engine";
 
 /** Hard wall for data-engine calls so agent never hangs past Vercel budget */
 function withTimeout<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> {
@@ -217,6 +218,14 @@ async function buildRoutedContext(route: AgentRoute, question: string, deep: boo
 }
 
 export async function answerQuestion(
+  question: string,
+  prefs: AgentPrefs = {},
+  history: AgentHistoryTurn[] = [],
+): Promise<{ result: AgentAnswer; meta: Meta }> {
+  return runInDataHub(() => answerQuestionInner(question, prefs, history));
+}
+
+async function answerQuestionInner(
   question: string,
   prefs: AgentPrefs = {},
   history: AgentHistoryTurn[] = [],
