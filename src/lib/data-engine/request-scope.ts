@@ -14,8 +14,11 @@ export type HubEntry = {
 };
 
 export type DataHubStore = {
+  /** Resolved values (success) */
   values: Map<string, HubEntry>;
+  /** In-flight producers (singleflight within this request) */
   inflight: Map<string, Promise<unknown>>;
+  /** Source touch log for diagnostics */
   touches: Array<{ key: string; sourceId: string; at: number; hit: "fresh" | "hub" | "inflight" | "fetch" }>;
 };
 
@@ -33,7 +36,7 @@ export function getHubStore(): DataHubStore | undefined {
   return als.getStore();
 }
 
-/** Run fn inside a hub scope. Nested calls reuse outer store. */
+/** Run fn inside a hub scope (agent entry / API handler). Nested calls reuse outer store. */
 export function runInDataHub<T>(fn: () => Promise<T>): Promise<T> {
   const existing = als.getStore();
   if (existing) return fn();
