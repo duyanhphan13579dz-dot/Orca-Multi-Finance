@@ -361,7 +361,11 @@ async function buildVn(symbol: string, deep: boolean): Promise<Built> {
   contract.risks = health?.riskFlags ?? [];
   contract.catalysts = [];
   contract.data_quality = {
-    financialPeriods: fs?.periods?.map((p: { year?: number; quarter?: number }) => ({ year: p.year, quarter: p.quarter })) ?? [],
+    financialPeriods:
+      fs?.periods?.map((p) => ({
+        year: p.year ?? undefined,
+        quarter: p.quarter ?? undefined,
+      })) ?? [],
     missing: [!health && "financial-health", !(pe != null || pb != null || ps != null || eps != null) && "valuation-ratios", !technical && "technical", !marketPack && "market-context", !sectorPack?.row && "industry-context"].filter(Boolean),
   };
   contract.profile = profile
