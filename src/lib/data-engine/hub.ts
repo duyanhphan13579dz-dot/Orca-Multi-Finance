@@ -51,6 +51,7 @@ export function hubFinancialPackagePeek(symbol: string) {
  * VN market quotes — batch singleflight.
  * Key is sorted symbol list so agent + valuation + screener share one call.
  */
+/** Loose quote shape from multi-source VN providers (extra fields allowed). */
 export type HubVnQuote = {
   symbol?: string;
   name?: string | null;
@@ -64,6 +65,7 @@ export type HubVnQuote = {
   open?: number | null;
   referencePrice?: number | null;
   updatedAt?: number | null;
+  [key: string]: unknown;
 };
 
 export type HubVnQuotesResult = {
