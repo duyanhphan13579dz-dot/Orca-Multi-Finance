@@ -89,7 +89,28 @@ export function CryptoMarketPage() {
           </div>
         }
       >
-        <div className="overflow-x-auto">
+        <div className="divide-y divide-line/50 md:hidden">
+          {rows.map((r, i) => (
+            <Link
+              key={r.symbol}
+              href={`/crypto/${r.symbol}`}
+              className="flex items-center gap-3 px-3.5 py-3 transition-colors hover:bg-panel-2 active:bg-panel-2"
+            >
+              <span className="num w-5 shrink-0 text-[10px] text-ink-3">{i + 1}</span>
+              <span className="min-w-0 flex-1">
+                <span className="block text-[13px] font-semibold text-ink">
+                  {r.baseAsset}<span className="ml-1 text-[10px] font-normal text-ink-3">USDT</span>
+                </span>
+                <span className="mt-0.5 block text-[10px] text-ink-3">Vol {fmtUsd(r.quoteVolume)}</span>
+              </span>
+              <span className="shrink-0 text-right">
+                <span className="num block text-[13px] font-medium text-ink">{fmtNum(r.price, priceDigits(r.price))}</span>
+                <Chg value={r.changePercent} arrow={false} className="text-[11px]" />
+              </span>
+            </Link>
+          ))}
+        </div>
+        <div className="hidden overflow-x-auto md:block">
           <table className="w-full min-w-[640px] text-[12px]">
             <thead>
               <tr className="border-b border-line text-left text-[10px] uppercase tracking-wider text-ink-3">

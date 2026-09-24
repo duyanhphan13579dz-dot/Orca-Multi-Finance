@@ -215,7 +215,23 @@ function VnScreener({ defaultSector }: { defaultSector: string | null }) {
         right={filters}
         pad={false}
       >
-        <div className={`overflow-x-auto transition-opacity duration-200 ${isValidating ? "opacity-70" : "opacity-100"}`}>
+        <div className={`divide-y divide-line/50 md:hidden transition-opacity duration-200 ${isValidating ? "opacity-70" : "opacity-100"}`}>
+          {rows.length === 0 ? (
+            <div className="px-3.5 py-6 text-center text-text-muted">Không có mã khớp. Thử xóa ô tìm hoặc nới điều kiện lọc.</div>
+          ) : rows.map((row) => (
+            <Link key={row.symbol} href={`/stocks/${row.symbol}`} className="flex items-center gap-3 px-3.5 py-3 transition-colors hover:bg-panel-2 active:bg-panel-2">
+              <span className="min-w-0 flex-1">
+                <span className="block text-[13px] font-semibold text-ink">{row.symbol}</span>
+                <span className="mt-0.5 block truncate text-[10px] text-text-muted">{sectorOf(row.symbol)} · GT {fmtCompact(row.quoteVolume ?? row.volume)}</span>
+              </span>
+              <span className="shrink-0 text-right">
+                <span className="num block text-[13px] font-medium text-ink">{fmtNum(row.price, 2)}</span>
+                <Chg value={row.changePercent} arrow={false} className="text-[11px]" />
+              </span>
+            </Link>
+          ))}
+        </div>
+        <div className={`hidden overflow-x-auto transition-opacity duration-200 md:block ${isValidating ? "opacity-70" : "opacity-100"}`}>
           <table className="w-full min-w-[560px] text-[12px]">
             <thead>
               <tr className="border-b border-line text-left text-[10px] uppercase tracking-wider text-ink-3">
@@ -262,7 +278,7 @@ function VnScreener({ defaultSector }: { defaultSector: string | null }) {
       <Panel title="CANSLIM · Minervini · Wyckoff">
         <div className="space-y-1 text-[12px] leading-relaxed text-ink-2">
           <div>
-            Tab <strong>CANSLIM</strong>: quét growth leaders (EPS/ROE/RS/new high) theo O'Neil.
+            Tab <strong>CANSLIM</strong>: quét growth leaders (EPS/ROE/RS/new high) theo O&apos;Neil.
           </div>
           <div>
             Tab <strong>Minervini</strong>: Trend Template 8 tiêu chí Stage 2 (SEPA).

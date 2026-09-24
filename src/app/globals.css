@@ -226,6 +226,7 @@ body {
   align-items: flex-start;
   justify-content: space-between;
   gap: 0.75rem;
+  min-width: 0;
   padding: 0.7rem 0.95rem 0.55rem;
   border-bottom: 1px solid color-mix(in srgb, var(--color-border-subtle) 85%, transparent);
   background: color-mix(in srgb, var(--color-surface-primary) 92%, var(--color-surface-elevated));
@@ -257,7 +258,24 @@ body {
   display: flex;
   flex-shrink: 0;
   align-items: center;
+  min-width: 0;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 0.5rem;
+}
+@media (max-width: 639px) {
+  .panel-header {
+    flex-wrap: wrap;
+    gap: 0.55rem;
+    padding: 0.75rem;
+  }
+  .panel-header > :first-child { flex: 1 1 100%; }
+  .panel-actions {
+    width: 100%;
+    justify-content: flex-start;
+    gap: 0.45rem;
+  }
+  .panel-actions > * { max-width: 100%; }
 }
 .panel-body {
   padding: 0.8rem 0.95rem 0.95rem;

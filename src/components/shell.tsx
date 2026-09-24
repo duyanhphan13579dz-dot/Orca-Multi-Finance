@@ -427,6 +427,9 @@ export function AppShell({ children }: { children: ReactNode }) {
               <UserMenu />
             </div>
           </header>
+          <div className="border-b border-border-subtle bg-surface-base/95 px-3 py-2 lg:hidden">
+            <GlobalSearch />
+          </div>
 
           <header className="hidden h-12 items-center gap-3 border-b border-border-subtle bg-surface-base/90 px-4 backdrop-blur lg:flex">
             <div className="min-w-0 flex-1">

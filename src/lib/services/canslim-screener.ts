@@ -267,7 +267,7 @@ export async function screenCanslim(args?: {
     marketDetail: market.detail,
     coverage,
     meta: buildMeta({
-      source: [quotesPack?.meta.source, "bctc-bulk", "vnd-ratios", "ohlcv", market.source].filter(Boolean).join("+") || "canslim-pipeline",
+      source: [quotesPack?.meta?.source, "bctc-bulk", "vnd-ratios", "ohlcv", market.source].filter(Boolean).join("+") || "canslim-pipeline",
       sourceTimestampMs: Date.now(),
       partial: skipped > 0 || coverage.withGrowth < valid.length * 0.5,
       note: `CANSLIM · quét ${uniq.length} · ${covNote} · ${market.detail} · không phải tín hiệu GD`,
