@@ -53,13 +53,22 @@ export function hubFinancialPackagePeek(symbol: string) {
  */
 export type HubVnQuote = {
   symbol?: string;
+  name?: string | null;
   price?: number | null;
+  change?: number | null;
+  changePercent?: number | null;
+  volume?: number | null;
+  high?: number | null;
+  low?: number | null;
+  open?: number | null;
+  referencePrice?: number | null;
+  updatedAt?: number | null;
 };
 
 export type HubVnQuotesResult = {
   quotes: HubVnQuote[];
   sourceTs?: number | null;
-  meta?: unknown;
+  meta?: { freshness?: string; source?: string } | null;
   sessionDate?: string;
 };
 
