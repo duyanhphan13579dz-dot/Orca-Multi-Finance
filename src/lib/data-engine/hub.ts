@@ -54,7 +54,6 @@ export function hubFinancialPackagePeek(symbol: string) {
 export type HubVnQuote = {
   symbol?: string;
   price?: number | null;
-  [key: string]: unknown;
 };
 
 export type HubVnQuotesResult = {
@@ -77,7 +76,7 @@ export async function hubVnQuotes(symbols: string[]): Promise<HubVnQuotesResult>
       if (stocks && typeof stocks.getVnQuotes === "function") {
         const r = await stocks.getVnQuotes(uniq);
         if (Array.isArray(r)) {
-          return { quotes: r as HubVnQuote[], sourceTs: null };
+          return { quotes: r as unknown as HubVnQuote[], sourceTs: null };
         }
         if (r && typeof r === "object" && Array.isArray((r as HubVnQuotesResult).quotes)) {
           return r as HubVnQuotesResult;
@@ -89,7 +88,7 @@ export async function hubVnQuotes(symbols: string[]): Promise<HubVnQuotesResult>
     const { getVndQuotes } = await import("../providers/vndirect");
     const r = await getVndQuotes(uniq);
     return {
-      quotes: (r.quotes ?? []) as HubVnQuote[],
+      quotes: (r.quotes ?? []) as unknown as HubVnQuote[],
       sourceTs: r.sourceTs ?? null,
       meta: r.sourceTs != null ? { freshness: "FRESH" as const } : null,
     };
