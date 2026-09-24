@@ -37,84 +37,86 @@ export const TickerTape = memo(function TickerTape() {
   const items = useMemo(() => {
     const result: { key: string; label: string; href: string; price: number; chg: number | null; digits: number }[] = [];
 
-  if (data?.indices?.length) {
-    const sorted = [...data.indices].sort((a, b) => {
-      const ia = INDEX_PRIORITY.indexOf(a.code);
-      const ib = INDEX_PRIORITY.indexOf(b.code);
-      return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
-    });
-    for (const i of sorted.slice(0, narrow ? 4 : 6)) {
-      result.push({
-        key: `idx-${i.code}`,
-        label: i.code === "VNINDEX" ? "VN-Index" : i.code,
-        href: "/stocks",
-        price: i.value,
-        chg: i.changePercent,
-        digits: 2,
+    if (data?.indices?.length) {
+      const sorted = [...data.indices].sort((a, b) => {
+        const ia = INDEX_PRIORITY.indexOf(a.code);
+        const ib = INDEX_PRIORITY.indexOf(b.code);
+        return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
       });
+      for (const i of sorted.slice(0, narrow ? 4 : 6)) {
+        result.push({
+          key: `idx-${i.code}`,
+          label: i.code === "VNINDEX" ? "VN-Index" : i.code,
+          href: "/stocks",
+          price: i.value,
+          chg: i.changePercent,
+          digits: 2,
+        });
+      }
     }
-  }
-  if (data?.crypto) {
-    for (const c of data.crypto.top.slice(0, narrow ? 6 : 14)) {
-      result.push({
-        key: `c-${c.symbol}`,
-        label: c.baseAsset,
-        href: `/crypto/${c.symbol}`,
-        price: c.price,
-        chg: c.changePercent,
-        digits: c.price >= 100 ? 2 : c.price >= 1 ? 3 : 6,
-      });
+    if (data?.crypto) {
+      for (const c of data.crypto.top.slice(0, narrow ? 6 : 14)) {
+        result.push({
+          key: `c-${c.symbol}`,
+          label: c.baseAsset,
+          href: `/crypto/${c.symbol}`,
+          price: c.price,
+          chg: c.changePercent,
+          digits: c.price >= 100 ? 2 : c.price >= 1 ? 3 : 6,
+        });
+      }
     }
-  }
-  if (data?.forex) {
-    for (const f of data.forex.rows.filter((r) => r.group === "major").slice(0, narrow ? 3 : 5)) {
-      result.push({
-        key: `f-${f.pair}`,
-        label: f.symbol,
-        href: `/forex/${f.pair}`,
-        price: f.price,
-        chg: f.changePercent,
-        digits: f.price >= 100 ? 2 : 4,
-      });
+    if (data?.forex) {
+      for (const f of data.forex.rows.filter((r) => r.group === "major").slice(0, narrow ? 3 : 5)) {
+        result.push({
+          key: `f-${f.pair}`,
+          label: f.symbol,
+          href: `/forex/${f.pair}`,
+          price: f.price,
+          chg: f.changePercent,
+          digits: f.price >= 100 ? 2 : 4,
+        });
+      }
     }
-  }
-  if (data?.commodities) {
-    for (const c of data.commodities.filter((x) => ["XAUUSD", "CL"].includes(x.symbol))) {
-      result.push({
-        key: `cm-${c.symbol}`,
-        label: c.symbol === "XAUUSD" ? "GOLD" : c.symbol,
-        href: "/commodities",
-        price: c.price,
-        chg: c.changePercent,
-        digits: 2,
-      });
+    if (data?.commodities) {
+      for (const c of data.commodities.filter((x) => ["XAUUSD", "CL"].includes(x.symbol))) {
+        result.push({
+          key: `cm-${c.symbol}`,
+          label: c.symbol === "XAUUSD" ? "GOLD" : c.symbol,
+          href: "/commodities",
+          price: c.price,
+          chg: c.changePercent,
+          digits: 2,
+        });
+      }
     }
-  }
 
     return result;
   }, [data, narrow]);
 
   if (!items.length) {
     return (
-      <div className="flex h-7 items-center border-t border-line bg-canvas-2 px-4 text-[11px] text-ink-3 sm:h-8">
+      <div className="ticker-bar flex items-center px-4 text-[11px] text-ink-3">
         <span className="size-1.5 animate-pulse rounded-full bg-accent/60" />
         <span className="ml-2">Đang kết nối luồng dữ liệu thị trường…</span>
       </div>
     );
   }
 
-  const doubled = [...items, ...items];
+  // Duplicate strip — CSS translates -50% for a seamless loop
+  const loop = [...items, ...items];
   return (
-    <div className="relative h-7 overflow-hidden border-t border-line bg-canvas-2 sm:h-8">
+    <div className="ticker-bar">
       <div
         ref={trackRef}
-        className={`ticker-track flex h-7 items-center sm:h-8 ${paused ? "is-paused" : ""}`}
+        className={`ticker-track ${paused ? "is-paused" : ""}`}
+        aria-label="Bảng giá chạy"
       >
-        {doubled.map((it, i) => (
+        {loop.map((it, i) => (
           <Link
             key={`${it.key}-${i}`}
             href={it.href}
-            className="num mx-3 flex shrink-0 items-center gap-1.5 whitespace-nowrap text-[11px] text-ink-2 hover:text-ink sm:mx-4 sm:text-[12px]"
+            className="num mx-3 flex shrink-0 items-center gap-1.5 whitespace-nowrap text-[11px] text-ink-2 transition-colors hover:text-ink sm:mx-4 sm:text-[12px]"
           >
             <span className="font-medium text-ink">{it.label}</span>
             <span>
@@ -131,8 +133,8 @@ export const TickerTape = memo(function TickerTape() {
           </Link>
         ))}
       </div>
-      <div className="pointer-events-none absolute inset-y-0 left-0 w-8 bg-gradient-to-r from-canvas-2 to-transparent sm:w-10" />
-      <div className="pointer-events-none absolute inset-y-0 right-0 w-8 bg-gradient-to-l from-canvas-2 to-transparent sm:w-10" />
+      <div className="pointer-events-none absolute inset-y-0 left-0 z-[1] w-8 bg-gradient-to-r from-[var(--color-canvas)] to-transparent sm:w-10" />
+      <div className="pointer-events-none absolute inset-y-0 right-0 z-[1] w-8 bg-gradient-to-l from-[var(--color-canvas)] to-transparent sm:w-10" />
     </div>
   );
 });
