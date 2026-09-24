@@ -1,44 +1,39 @@
 @import "tailwindcss";
 
-/* RESTORED — full tokens live in prior commit history; smoothness utilities below. */
-/* If build misses design tokens, redeploy from parent of SEE_LOCAL commit. */
-
 /* ==========================================================================
- * ORCA UX smoothness — tab hop + main scroll
+ * ORCA Financial — design tokens
+ * Terminal-first dark theme with optional light variant via data-theme="light".
  * ========================================================================== */
 
-.orca-main-scroll {
-  overscroll-behavior-y: contain;
-  -webkit-overflow-scrolling: touch;
-  scroll-behavior: auto;
-  transform: translateZ(0);
-  will-change: scroll-position;
-  contain: layout style;
-}
+@theme {
+  --font-sans: Arial, "Helvetica Neue", "Segoe UI", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 
-.orca-page-surface {
-  content-visibility: auto;
-  contain-intrinsic-size: 1px 800px;
-}
-
-.orca-card,
-.panel-card,
-[data-orca-card] {
-  content-visibility: auto;
-  contain-intrinsic-size: 1px 120px;
-  contain: layout style paint;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .orca-main-scroll {
-    scroll-behavior: auto;
-  }
-  * {
-    animation-duration: 0.01ms !important;
-    transition-duration: 0.01ms !important;
-  }
-}
-
-a[data-active="true"] {
-  transform: translateZ(0);
+  --color-background-primary: #070b16;
+  --color-background-secondary: #0a1224;
+  --color-surface-primary: #0d1528;
+  --color-surface-elevated: #121c33;
+  --color-surface-modal: #0f1830;
+  --color-border-subtle: #1a2744;
+  --color-border-default: #243556;
+  --color-text-primary: #e8eefc;
+  --color-text-secondary: #9aadc8;
+  --color-text-muted: #6b7f9e;
+  --color-accent-primary: #3b82f6;
+  --color-accent-2: #60a5fa;
+  --color-positive: #22c55e;
+  --color-negative: #ef4444;
+  --color-warning: #f59e0b;
+  --color-warn: #fbbf24;
+  --color-canvas: #070b16;
+  --color-ink: #e8eefc;
+  --color-ink-2: #9aadc8;
+  --color-ink-3: #6b7f9e;
+  --color-line: #1a2744;
+  --color-panel: #0b1730;
+  --color-panel-2: #0f1e3d;
+  --color-panel-3: #14264c;
+  --color-accent: #3b82f6;
+  --color-up: #22c55e;
+  --color-down: #ef4444;
 }
