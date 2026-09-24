@@ -58,6 +58,7 @@ export type HubVnQuote = {
   change?: number | null;
   changePercent?: number | null;
   volume?: number | null;
+  quoteVolume?: number | null;
   high?: number | null;
   low?: number | null;
   open?: number | null;
