@@ -24,10 +24,10 @@ export function Panel({
 }) {
   const toneClass = tone === "elevated" ? "panel-elevated" : tone === "inset" ? "panel-inset" : "";
   return (
-    <section className={`panel ${toneClass} ${className}`}>
+    <section data-orca-card className={`panel ${toneClass} ${className}`.trim()}>
       {(title != null || right != null || eyebrow != null || subtitle != null) && (
         <header className="panel-header">
-          <div className="min-w-0 space-y-0.5">
+          <div className="min-w-0">
             {eyebrow != null && <div className="panel-eyebrow">{eyebrow}</div>}
             {title != null && <h3 className="panel-title">{title}</h3>}
             {subtitle != null && <p className="panel-subtitle">{subtitle}</p>}
@@ -35,7 +35,7 @@ export function Panel({
           {right != null && <div className="panel-actions">{right}</div>}
         </header>
       )}
-      <div className={pad ? "panel-body" : ""}>{children}</div>
+      <div className={pad ? "panel-body" : "min-w-0"}>{children}</div>
       {footer != null && <footer className="panel-footer">{footer}</footer>}
     </section>
   );
