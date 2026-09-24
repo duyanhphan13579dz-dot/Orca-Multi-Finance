@@ -6,7 +6,7 @@ import {
   normalizeSymbols,
   type FundamentalSnapshot,
 } from "../financial/snapshots";
-import { getVnQuotes } from "./stocks";
+import { hubVnQuotes } from "../data-engine";
 import { sectorOf } from "../vn/master";
 import { DEFAULT_SYMBOLS } from "./valuation-screener";
 
@@ -165,7 +165,7 @@ export async function screenFundamental(opts: FundamentalFilterOpts = {}) {
     producer: async () => {
       const [snapPack, quotes] = await Promise.all([
         getFundamentalSnapshots(symbols, { concurrency: 5 }),
-        getVnQuotes(symbols).catch(() => null),
+        hubVnQuotes(symbols).catch(() => null),
       ]);
       const quoteMap = new Map((quotes?.quotes ?? []).map((q) => [q.symbol, q]));
 
