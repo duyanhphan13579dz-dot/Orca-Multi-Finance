@@ -48,73 +48,88 @@ export const SOURCE_CATALOG: SourceCatalogEntry[] = [
     domain: "market",
     role: "secondary",
     module: "providers/ssi-iboard.ts",
-    description: "SSI iBoard secondary quotes",
+    description: "SSI iBoard board / secondary feed",
   },
   {
-    id: "tcbs",
+    id: "vps",
     domain: "market",
     role: "secondary",
-    module: "providers/tcbs.ts",
-    description: "TCBS market quotes",
+    module: "providers/vps.ts",
+    description: "VPS market feed",
   },
   {
-    id: "cafef",
+    id: "vietcap",
+    domain: "market",
+    role: "secondary",
+    module: "providers/vietcap.ts",
+    description: "Vietcap market / research endpoints",
+  },
+  {
+    id: "public-vn-feed",
     domain: "market",
     role: "enrichment",
-    module: "providers/cafef.ts",
-    description: "CafeF quotes + news",
+    module: "providers/public-vn-feed.ts",
+    description: "Public VN board enrichment",
   },
-  // Financial package
+  // Financial statements
   {
     id: "vndirect-fs",
     domain: "financial",
     role: "primary",
-    module: "providers/vndirect.ts",
-    description: "VNDIRECT financial statements (income/balance/cashflow)",
+    module: "financial/vndirect-fs.ts",
+    description: "BCTC / financial statements PRIMARY",
   },
   {
-    id: "ssi-fs",
-    domain: "financial",
-    role: "fallback",
-    module: "providers/ssi.ts",
-    description: "SSI financials fallback",
-  },
-  {
-    id: "cafef-fs",
-    domain: "financial",
-    role: "secondary",
-    module: "providers/cafef.ts",
-    description: "CafeF financials",
-  },
-  {
-    id: "fireant",
+    id: "vnstock",
     domain: "financial",
     role: "enrichment",
-    module: "providers/fireant.ts",
-    description: "FireAnt fundamentals / screener",
+    module: "providers/vnstock.ts",
+    description: "VNStock enrichment metrics",
+  },
+  {
+    id: "vndirect-company",
+    domain: "financial",
+    role: "enrichment",
+    module: "providers/vndirect-company.ts",
+    description: "Company profile enrichment",
+  },
+  // Official filings
+  {
+    id: "ssc-official",
+    domain: "official",
+    role: "primary",
+    module: "financial/official/*",
+    description: "SSC / official document pipeline",
   },
   // Crypto
   {
     id: "binance",
     domain: "crypto",
     role: "primary",
-    module: "providers/binance.ts",
-    description: "Binance spot tickers",
+    module: "providers/binance.ts + realtime/binance-ws.ts",
+    description: "Crypto spot / klines",
   },
   {
     id: "coingecko",
     domain: "crypto",
     role: "fallback",
     module: "providers/coingecko.ts",
-    description: "CoinGecko market data",
+    description: "Crypto metadata / fallback prices",
   },
-  // Forex
+  // Forex / FX
   {
     id: "forex-feed",
     domain: "forex",
     role: "primary",
     module: "providers/forex.ts",
-    description: "FX pair rates",
+    description: "FX pairs",
+  },
+  {
+    id: "yahoo",
+    domain: "forex",
+    role: "fallback",
+    module: "providers/yahoo.ts",
+    description: "Yahoo fallback for global symbols",
   },
   // Commodity
   {
@@ -122,45 +137,36 @@ export const SOURCE_CATALOG: SourceCatalogEntry[] = [
     domain: "commodity",
     role: "primary",
     module: "providers/commodities.ts",
-    description: "VietnamBiz goods / commodities",
+    description: "Gold oil softs",
   },
-  // News
+  // News / macro
+  {
+    id: "cafef",
+    domain: "news",
+    role: "primary",
+    module: "providers/cafef.ts",
+    description: "CafeF news",
+  },
   {
     id: "news-bundle",
     domain: "news",
     role: "primary",
     module: "providers/news.ts",
-    description: "Aggregated RSS news bundle",
+    description: "Aggregated news providers",
   },
-  // Macro
+  {
+    id: "vietnambiz-economy",
+    domain: "macro",
+    role: "primary",
+    module: "providers/vietnambiz-economy.ts",
+    description: "Macro / economy articles",
+  },
   {
     id: "economic-data",
     domain: "macro",
     role: "primary",
     module: "economic-data.ts",
-    description: "Macro / economic series",
-  },
-  {
-    id: "fred",
-    domain: "macro",
-    role: "secondary",
-    module: "providers/fred.ts",
-    description: "FRED series",
-  },
-  // Rates / official
-  {
-    id: "sbv",
-    domain: "rates",
-    role: "primary",
-    module: "providers/sbv.ts",
-    description: "State Bank of Vietnam rates",
-  },
-  {
-    id: "official-stats",
-    domain: "official",
-    role: "primary",
-    module: "providers/official.ts",
-    description: "Official statistics feeds",
+    description: "Structured macro series",
   },
 ];
 
@@ -173,14 +179,5 @@ export function catalogSummary() {
   for (const s of SOURCE_CATALOG) {
     byDomain[s.domain] = (byDomain[s.domain] ?? 0) + 1;
   }
-  return {
-    total: SOURCE_CATALOG.length,
-    byDomain,
-    sources: SOURCE_CATALOG.map((s) => ({
-      id: s.id,
-      domain: s.domain,
-      role: s.role,
-      module: s.module,
-    })),
-  };
+  return { total: SOURCE_CATALOG.length, byDomain, sources: SOURCE_CATALOG };
 }
