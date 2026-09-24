@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useRef, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 import useSWR from "swr";
 import type { ApiResponse } from "./types";
 import { getSettingsSnapshot, resolveRefresh } from "./settings";
+import { clientCacheGet, clientCacheSet } from "./client-cache";
 
 /**
  * Client data hooks — every call goes through the internal API only.
@@ -13,15 +14,16 @@ import { getSettingsSnapshot, resolveRefresh } from "./settings";
  * Tab hidden → polling paused (saves battery + backend load).
  * Adaptive: LIVE → tighter poll; STALE/UNAVAILABLE → back off.
  * Rapid in-app navigation → short revalidate freeze to avoid request storms.
+ * Session last-good cache → instant paint when remounting after tab hop.
  */
 
-const FETCH_TIMEOUT_MS = 22_000;
-const CLIENT_DEDUPE_MS = 2_800;
+const FETCH_TIMEOUT_MS = 14_000;
+const CLIENT_DEDUPE_MS = 3_200;
 const pendingFetches = new Map<string, { promise: Promise<ApiResponse<unknown>>; startedAt: number }>();
 
 /** Soft freeze window after route change — skip non-critical revalidations. */
 let navFreezeUntil = 0;
-export function markAppNavigating(ms = 450) {
+export function markAppNavigating(ms = 520) {
   navFreezeUntil = Date.now() + ms;
 }
 
@@ -57,6 +59,7 @@ const fetcherUncached = async <T>(url: string, timeoutMs = FETCH_TIMEOUT_MS): Pr
     });
     const json = (await res.json().catch(() => null)) as ApiResponse<T> | null;
     if (!json) throw new Error(`bad_response:${res.status}`);
+    if (json.success) clientCacheSet(url, json);
     return json;
   } finally {
     clearTimeout(timer);
@@ -116,6 +119,11 @@ export function useApi<T>(url: string | null, opts?: { refreshInterval?: number;
   const inNavFreeze = typeof window !== "undefined" && Date.now() < navFreezeUntil;
   const refreshInterval = visible && rt.liveUpdates && !inNavFreeze ? adaptiveBase : 0;
 
+  const fallbackData = useMemo(() => {
+    if (!url) return undefined;
+    return clientCacheGet<ApiResponse<T>>(url, 180_000);
+  }, [url]);
+
   const { data, error, isLoading, isValidating, mutate } = useSWR<ApiResponse<T>>(
     url,
     (key: string) => fetcher<T>(key, opts?.timeoutMs ?? FETCH_TIMEOUT_MS),
@@ -123,18 +131,19 @@ export function useApi<T>(url: string | null, opts?: { refreshInterval?: number;
       refreshInterval,
       revalidateOnFocus: rt.backgroundRefresh && !inNavFreeze,
       revalidateOnReconnect: rt.autoReconnect,
-      focusThrottleInterval: rt.lowDataMode ? 60_000 : 45_000,
+      focusThrottleInterval: rt.lowDataMode ? 60_000 : 35_000,
       shouldRetryOnError: rt.autoReconnect,
-      errorRetryInterval: rt.lowDataMode ? 60_000 : 15_000,
-      errorRetryCount: rt.autoReconnect ? 3 : 0,
+      errorRetryInterval: rt.lowDataMode ? 45_000 : 12_000,
+      errorRetryCount: rt.autoReconnect ? 2 : 0,
       keepPreviousData: true,
-      // Prefer cached paint when hopping tabs; background revalidate after freeze
+      fallbackData,
       revalidateIfStale: true,
-      dedupingInterval: rt.lowDataMode ? 24_000 : 8_000,
+      dedupingInterval: rt.lowDataMode ? 20_000 : 6_000,
       suspense: false,
       onSuccess: (payload) => {
-        if (payload?.success && payload.meta?.freshness) {
-          freshnessRef.current = payload.meta.freshness;
+        if (payload?.success) {
+          clientCacheSet(url!, payload);
+          if (payload.meta?.freshness) freshnessRef.current = payload.meta.freshness;
         }
       },
     },
