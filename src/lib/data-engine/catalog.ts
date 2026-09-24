@@ -24,16 +24,21 @@ export type SourceCatalogEntry = {
   module: string;
   description: string;
   envHints?: string[];
+  /** Soft per-call budget hint (ms) for hub resilience layer */
+  timeoutMs?: number;
+  /** Cross-request cache TTL hint (ms) — informational; cache.ts owns enforcement */
+  ttlMs?: number;
 };
 
 export const SOURCE_CATALOG: SourceCatalogEntry[] = [
-  // Market VN
   {
     id: "vndirect",
     domain: "market",
     role: "primary",
     module: "providers/vndirect.ts",
     description: "VN market quotes, OHLCV, universe (DStock)",
+    timeoutMs: 3500,
+    ttlMs: 15_000,
   },
   {
     id: "ssi-fcdata",
@@ -42,6 +47,8 @@ export const SOURCE_CATALOG: SourceCatalogEntry[] = [
     module: "providers/ssi-fcdata.ts",
     description: "SSI FastConnect market fallback",
     envHints: ["SSI_API_KEY", "SSI_API_SECRET"],
+    timeoutMs: 3500,
+    ttlMs: 15_000,
   },
   {
     id: "ssi-iboard",
@@ -71,7 +78,6 @@ export const SOURCE_CATALOG: SourceCatalogEntry[] = [
     module: "providers/public-vn-feed.ts",
     description: "Public VN board enrichment",
   },
-  // Financial statements
   {
     id: "vndirect-fs",
     domain: "financial",
@@ -93,7 +99,6 @@ export const SOURCE_CATALOG: SourceCatalogEntry[] = [
     module: "providers/vndirect-company.ts",
     description: "Company profile enrichment",
   },
-  // Official filings
   {
     id: "ssc-official",
     domain: "official",
@@ -101,13 +106,14 @@ export const SOURCE_CATALOG: SourceCatalogEntry[] = [
     module: "financial/official/*",
     description: "SSC / official document pipeline",
   },
-  // Crypto
   {
     id: "binance",
     domain: "crypto",
     role: "primary",
     module: "providers/binance.ts + realtime/binance-ws.ts",
     description: "Crypto spot / klines",
+    timeoutMs: 3000,
+    ttlMs: 10_000,
   },
   {
     id: "coingecko",
@@ -116,13 +122,14 @@ export const SOURCE_CATALOG: SourceCatalogEntry[] = [
     module: "providers/coingecko.ts",
     description: "Crypto metadata / fallback prices",
   },
-  // Forex / FX
   {
     id: "forex-feed",
     domain: "forex",
     role: "primary",
     module: "providers/forex.ts",
     description: "FX pairs",
+    timeoutMs: 3000,
+    ttlMs: 30_000,
   },
   {
     id: "yahoo",
@@ -131,15 +138,15 @@ export const SOURCE_CATALOG: SourceCatalogEntry[] = [
     module: "providers/yahoo.ts",
     description: "Yahoo fallback for global symbols",
   },
-  // Commodity
   {
     id: "commodities",
     domain: "commodity",
     role: "primary",
     module: "providers/commodities.ts",
     description: "Gold oil softs",
+    timeoutMs: 4000,
+    ttlMs: 60_000,
   },
-  // News / macro
   {
     id: "cafef",
     domain: "news",
