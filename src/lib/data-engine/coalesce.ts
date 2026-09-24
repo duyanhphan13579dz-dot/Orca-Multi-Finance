@@ -37,23 +37,36 @@ export async function coalesce<T>(
   }
 
   const run = (async () => {
+    const t0 = Date.now();
     if (store) {
-      store.touches.push({ key, sourceId: sourceIds[0] ?? "fetch", at: Date.now(), hit: "fetch" });
+      store.touches.push({ key, sourceId: sourceIds[0] ?? "fetch", at: t0, hit: "fetch" });
     }
-    const value = await producer();
-    if (store) {
-      const entry: HubEntry = {
-        key,
-        sourceIds,
-        producedAt: Date.now(),
-        value,
-      };
-      store.values.set(key, entry);
-      store.inflight.delete(key);
-    } else {
-      globalInflight.delete(key);
+    try {
+      const value = await producer();
+      if (store) {
+        const entry: HubEntry = {
+          key,
+          sourceIds,
+          producedAt: Date.now(),
+          value,
+        };
+        store.values.set(key, entry);
+        store.inflight.delete(key);
+        store.touches.push({
+          key,
+          sourceId: sourceIds[0] ?? "fetch",
+          at: Date.now(),
+          hit: "fresh",
+        });
+      } else {
+        globalInflight.delete(key);
+      }
+      return value;
+    } catch (e) {
+      if (store) store.inflight.delete(key);
+      else globalInflight.delete(key);
+      throw e;
     }
-    return value;
   })();
 
   if (store) store.inflight.set(key, run);
