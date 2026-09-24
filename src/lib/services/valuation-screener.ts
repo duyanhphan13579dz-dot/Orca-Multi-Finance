@@ -1,7 +1,7 @@
 import "server-only";
 import { cached } from "../cache";
 import { buildMeta } from "../freshness";
-import { getVnQuotes } from "./stocks";
+import { hubVnQuotes } from "../data-engine";
 import { getVndValuationRatios, priceQuoteToVnd } from "../providers/vndirect-company";
 import { getFundamentalSnapshots, mapPool, normalizeSymbols, type FundamentalSnapshot } from "../financial/snapshots";
 import { sectorOf } from "../vn/master";
@@ -195,7 +195,7 @@ export async function screenValuation(opts: ValuationFilterOpts = {}) {
     staleMs: 40 * 60_000,
     producer: async () => {
       const [quotes, snapPack] = await Promise.all([
-        getVnQuotes(symbols).catch(() => null),
+        hubVnQuotes(symbols).catch(() => null),
         getFundamentalSnapshots(symbols, { concurrency: 5 }),
       ]);
       const quoteMap = new Map((quotes?.quotes ?? []).map((q) => [q.symbol, q]));
