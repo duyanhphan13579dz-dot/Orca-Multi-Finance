@@ -58,10 +58,11 @@ export async function hubVnQuotes(symbols: string[]) {
   return coalesce(key, async () => {
     // Prefer multi-source path when services/stocks exists; else VNDIRECT primary.
     try {
-      const stocks = await import("../services/stocks").catch(() => null);
-      if (stocks && typeof (stocks as { getVnQuotes?: unknown }).getVnQuotes === "function") {
-        const r = await (stocks as { getVnQuotes: (s: string[]) => Promise<unknown> }).getVnQuotes(uniq);
-        return r;
+      const stocks = (await import("../services/stocks").catch(() => null)) as unknown as {
+        getVnQuotes?: (s: string[]) => Promise<unknown>;
+      } | null;
+      if (stocks && typeof stocks.getVnQuotes === "function") {
+        return stocks.getVnQuotes(uniq);
       }
     } catch {
       /* fall through */
@@ -136,9 +137,13 @@ export async function hubNews(opts?: { symbol?: string; limit?: number }) {
 /** Macro / economic series by id (structured). */
 export async function hubMacro(id: string) {
   return coalesce(kMacro(id), async () => {
-    const econ = await import("../economic-data").catch(() => null);
-    if (econ && typeof (econ as { getSeries?: unknown }).getSeries === "function") {
-      return (econ as { getSeries: (id: string) => Promise<unknown> }).getSeries(id);
+    // economic-data has helpers only; optional getSeries if added later.
+    // Cast via unknown so TS does not require getSeries on the module type.
+    const econ = (await import("../economic-data").catch(() => null)) as unknown as {
+      getSeries?: (id: string) => Promise<unknown>;
+    } | null;
+    if (econ && typeof econ.getSeries === "function") {
+      return econ.getSeries(id);
     }
     return null;
   }, { sourceIds: ["economic-data"] });
