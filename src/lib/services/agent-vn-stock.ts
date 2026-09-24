@@ -84,8 +84,10 @@ async function buildVn(symbol: string, deep: boolean): Promise<Built> {
   ]);
 
   let quote: Quote | null =
-    analysis?.detail?.quote ?? quotePack?.quotes?.[0] ?? null;
-  if (quotePack?.meta?.freshness) freshnesses.push(quotePack.meta.freshness);
+    analysis?.detail?.quote ??
+    ((quotePack?.quotes?.[0] as unknown as Quote | undefined) ?? null);
+  const qMeta = quotePack?.meta as { freshness?: FreshnessStatus } | undefined | null;
+  if (qMeta?.freshness) freshnesses.push(qMeta.freshness);
   if (analysis?.meta?.freshness) freshnesses.push(analysis.meta.freshness);
 
   const name =
