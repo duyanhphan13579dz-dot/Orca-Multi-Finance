@@ -137,13 +137,16 @@ export async function hubNews(opts?: { symbol?: string; limit?: number }) {
 /** Macro / economic series by id (structured). */
 export async function hubMacro(id: string) {
   return coalesce(kMacro(id), async () => {
-    // economic-data has helpers only; optional getSeries if added later.
-    // Cast via unknown so TS does not require getSeries on the module type.
-    const econ = (await import("../economic-data").catch(() => null)) as unknown as {
-      getSeries?: (id: string) => Promise<unknown>;
-    } | null;
-    if (econ && typeof econ.getSeries === "function") {
-      return econ.getSeries(id);
+    // Load via services/economy when present; avoid static type coupling.
+    try {
+      const mod = (await import("../services/economy")) as unknown as {
+        getEconomicData?: (id: string) => Promise<unknown>;
+      };
+      if (typeof mod.getEconomicData === "function") {
+        return mod.getEconomicData(id);
+      }
+    } catch {
+      /* optional */
     }
     return null;
   }, { sourceIds: ["economic-data"] });
