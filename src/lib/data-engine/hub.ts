@@ -2,6 +2,8 @@ import "server-only";
 import { coalesce, hubPeek } from "./coalesce";
 import { hubStats, runInDataHub } from "./request-scope";
 import { catalogSummary, SOURCE_CATALOG } from "./catalog";
+import { firstHealthy, withTimeout } from "./resilience";
+import { routeForDomain, syncAllSources } from "./source-sync";
 
 /**
  * Data Engine Hub — shared accessors for modules.
@@ -37,8 +39,10 @@ export async function hubLoad<T>(
 export async function hubFinancialPackage(symbol: string) {
   const sym = symbol.trim().toUpperCase();
   return coalesce(kFin(sym), async () => {
-    const { getFinancialPackage } = await import("../financial/service");
-    return getFinancialPackage(sym);
+    return withTimeout(10_000, async () => {
+      const { getFinancialPackage } = await import("../financial/service");
+      return getFinancialPackage(sym);
+    }, "hubFinancialPackage");
   }, { sourceIds: ["vndirect-fs"] });
 }
 
@@ -47,10 +51,6 @@ export function hubFinancialPackagePeek(symbol: string) {
   return hubPeek(kFin(symbol.trim().toUpperCase()));
 }
 
-/**
- * VN market quotes — batch singleflight.
- * Key is sorted symbol list so agent + valuation + screener share one call.
- */
 /** Loose quote shape from multi-source VN providers (extra fields allowed). */
 export type HubVnQuote = {
   symbol?: string;
@@ -75,36 +75,97 @@ export type HubVnQuotesResult = {
   sessionDate?: string;
 };
 
+function normalizeQuotes(r: unknown, source: string): HubVnQuotesResult | null {
+  if (Array.isArray(r)) {
+    return { quotes: r as unknown as HubVnQuote[], sourceTs: null, meta: { source } };
+  }
+  if (r && typeof r === "object") {
+    const o = r as HubVnQuotesResult & { quotes?: HubVnQuote[] };
+    if (Array.isArray(o.quotes)) {
+      return {
+        quotes: o.quotes as unknown as HubVnQuote[],
+        sourceTs: o.sourceTs ?? null,
+        meta: { ...(typeof o.meta === "object" && o.meta ? o.meta : {}), source },
+      };
+    }
+  }
+  return null;
+}
+
 export async function hubVnQuotes(symbols: string[]): Promise<HubVnQuotesResult> {
   const uniq = [...new Set(symbols.map((s) => s.trim().toUpperCase()).filter(Boolean))].sort();
   if (!uniq.length) return { quotes: [], sourceTs: null, meta: null };
   const key = kQuote(uniq.join(","));
   return coalesce(key, async (): Promise<HubVnQuotesResult> => {
-    // Prefer multi-source path when services/stocks exists; else VNDIRECT primary.
+    void syncAllSources().catch(() => null);
+    const preferred = routeForDomain("market");
+
+    const attempts = [
+      {
+        id: "stocks-service",
+        run: async () => {
+          const stocks = (await import("../services/stocks").catch(() => null)) as unknown as {
+            getVnQuotes?: (s: string[]) => Promise<unknown>;
+          } | null;
+          if (!stocks || typeof stocks.getVnQuotes !== "function") {
+            throw new Error("stocks_service_unavailable");
+          }
+          return stocks.getVnQuotes(uniq);
+        },
+        accept: (v: unknown) => normalizeQuotes(v, "stocks-service") != null,
+      },
+      {
+        id: "vndirect",
+        run: async () => {
+          const { getVndQuotes } = await import("../providers/vndirect");
+          return getVndQuotes(uniq);
+        },
+        accept: (v: unknown) => normalizeQuotes(v, "vndirect") != null,
+      },
+      {
+        id: "ssi-fcdata",
+        run: async () => {
+          const mod = (await import("../providers/ssi-fcdata").catch(() => null)) as unknown as {
+            getSsiQuotes?: (s: string[]) => Promise<unknown>;
+          } | null;
+          if (!mod || typeof mod.getSsiQuotes !== "function") {
+            throw new Error("ssi_unavailable");
+          }
+          return mod.getSsiQuotes(uniq);
+        },
+        accept: (v: unknown) => normalizeQuotes(v, "ssi-fcdata") != null,
+      },
+    ];
+
+    const order = ["stocks-service", ...preferred.filter((id) => id !== "stocks-service")];
+    attempts.sort((a, b) => {
+      const ia = order.indexOf(a.id);
+      const ib = order.indexOf(b.id);
+      return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
+    });
+
     try {
-      const stocks = (await import("../services/stocks").catch(() => null)) as unknown as {
-        getVnQuotes?: (s: string[]) => Promise<unknown>;
-      } | null;
-      if (stocks && typeof stocks.getVnQuotes === "function") {
-        const r = await stocks.getVnQuotes(uniq);
-        if (Array.isArray(r)) {
-          return { quotes: r as unknown as HubVnQuote[], sourceTs: null };
-        }
-        if (r && typeof r === "object" && Array.isArray((r as HubVnQuotesResult).quotes)) {
-          return r as HubVnQuotesResult;
-        }
+      const hit = await firstHealthy(attempts, {
+        budgetMs: 8_000,
+        perAttemptMs: 3_500,
+        label: "hubVnQuotes",
+      });
+      const norm = normalizeQuotes(hit.value, hit.sourceId);
+      if (norm) {
+        return {
+          ...norm,
+          meta: {
+            ...(norm.meta ?? {}),
+            source: hit.sourceId,
+            freshness: "FRESH",
+          },
+        };
       }
     } catch {
-      /* fall through */
+      /* empty pack */
     }
-    const { getVndQuotes } = await import("../providers/vndirect");
-    const r = await getVndQuotes(uniq);
-    return {
-      quotes: (r.quotes ?? []) as unknown as HubVnQuote[],
-      sourceTs: r.sourceTs ?? null,
-      meta: r.sourceTs != null ? { freshness: "FRESH" as const } : null,
-    };
-  }, { sourceIds: ["vndirect", "ssi-fcdata"] });
+    return { quotes: [], sourceTs: null, meta: { source: "none", freshness: "STALE" } };
+  }, { sourceIds: ["vndirect", "ssi-fcdata", "stocks-service"] });
 }
 
 export function hubVnQuotesPeek(symbols: string[]) {
@@ -116,8 +177,10 @@ export function hubVnQuotesPeek(symbols: string[]) {
 export async function hubCryptoDetail(symbol: string) {
   const sym = symbol.trim().toUpperCase().replace(/USDT$/, "") + "USDT";
   return coalesce(kCrypto(sym), async () => {
-    const { getSpotTicker } = await import("../providers/binance");
-    return getSpotTicker(sym);
+    return withTimeout(3_500, async () => {
+      const { getSpotTicker } = await import("../providers/binance");
+      return getSpotTicker(sym);
+    }, "hubCryptoDetail");
   }, { sourceIds: ["binance"] });
 }
 
@@ -125,9 +188,11 @@ export async function hubCryptoDetail(symbol: string) {
 export async function hubForexDetail(pair: string) {
   const p = pair.trim().toUpperCase().replace(/[\/\s]/g, "");
   return coalesce(kForex(p), async () => {
-    const { getBiquoteQuotes } = await import("../providers/forex");
-    const r = await getBiquoteQuotes([p]);
-    return { pair: p, rate: r.rates[p] ?? null, ts: r.ts, rates: r.rates };
+    return withTimeout(3_500, async () => {
+      const { getBiquoteQuotes } = await import("../providers/forex");
+      const r = await getBiquoteQuotes([p]);
+      return { pair: p, rate: r.rates[p] ?? null, ts: r.ts, rates: r.rates };
+    }, "hubForexDetail");
   }, { sourceIds: ["forex-feed"] });
 }
 
@@ -135,8 +200,10 @@ export async function hubForexDetail(pair: string) {
 export async function hubCommodityMarket(id = "all") {
   const key = kCommodity(id || "all");
   return coalesce(key, async () => {
-    const { fetchVietnambizGoods } = await import("../providers/commodities");
-    return fetchVietnambizGoods();
+    return withTimeout(4_500, async () => {
+      const { fetchVietnambizGoods } = await import("../providers/commodities");
+      return fetchVietnambizGoods();
+    }, "hubCommodityMarket");
   }, { sourceIds: ["commodities"] });
 }
 
@@ -171,7 +238,6 @@ export async function hubNews(opts?: { symbol?: string; limit?: number }) {
 /** Macro / economic series by id (structured). */
 export async function hubMacro(id: string) {
   return coalesce(kMacro(id), async () => {
-    // Load via services/economy when present; avoid static type coupling.
     try {
       const mod = (await import("../services/economy")) as unknown as {
         getEconomicData?: (id: string) => Promise<unknown>;
@@ -188,7 +254,6 @@ export async function hubMacro(id: string) {
 
 /**
  * Cross-check helper: compare two numeric fields already in the hub bag.
- * Returns agreement ratio for diagnostics (modules verify each other offline).
  */
 export function hubCrossCheckNumbers(
   pairs: Array<{ label: string; a: number | null | undefined; b: number | null | undefined; tolPct?: number }>,
@@ -203,6 +268,69 @@ export function hubCrossCheckNumbers(
   });
   return { ok: details.every((d) => d.ok), details };
 }
+
+/**
+ * Parallel warm-up of independent domains.
+ */
+export async function hubPrefetch(opts?: {
+  symbols?: string[];
+  commodity?: boolean;
+  newsSymbol?: string;
+}): Promise<{ ok: string[]; failed: string[]; ms: number }> {
+  const t0 = performance.now();
+  const ok: string[] = [];
+  const failed: string[] = [];
+  const jobs: Array<Promise<void>> = [];
+
+  jobs.push(
+    syncAllSources()
+      .then(() => {
+        ok.push("source-sync");
+      })
+      .catch(() => {
+        failed.push("source-sync");
+      }),
+  );
+
+  if (opts?.symbols?.length) {
+    jobs.push(
+      hubVnQuotes(opts.symbols)
+        .then(() => {
+          ok.push("vn-quotes");
+        })
+        .catch(() => {
+          failed.push("vn-quotes");
+        }),
+    );
+  }
+  if (opts?.commodity !== false) {
+    jobs.push(
+      hubCommodityMarket()
+        .then(() => {
+          ok.push("commodity");
+        })
+        .catch(() => {
+          failed.push("commodity");
+        }),
+    );
+  }
+  if (opts?.newsSymbol) {
+    jobs.push(
+      hubNews({ symbol: opts.newsSymbol, limit: 5 })
+        .then(() => {
+          ok.push("news");
+        })
+        .catch(() => {
+          failed.push("news");
+        }),
+    );
+  }
+
+  await Promise.all(jobs);
+  return { ok, failed, ms: Math.round(performance.now() - t0) };
+}
+
+export { syncAllSources, getLastSync, routeForDomain } from "./source-sync";
 
 export const HubKeys = {
   financial: kFin,
