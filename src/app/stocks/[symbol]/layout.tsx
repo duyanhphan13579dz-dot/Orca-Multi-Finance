@@ -37,7 +37,7 @@ export default function StockSymbolLayout({
   return (
     <div className="stock-workspace stock-page-body">
       <Panel pad={false} className="sticky top-0 z-20 overflow-visible shadow-sm shadow-black/20">
-        <div className="stock-hero flex flex-col gap-4 md:flex-row md:items-end md:justify-between md:gap-6">
+        <div className="stock-hero flex flex-col gap-3.5 md:flex-row md:items-end md:justify-between md:gap-6">
           <div className="min-w-0 flex-1">
             <div className="stock-hero-title-row">
               <h1 className="text-[1.25rem] font-semibold tracking-tight sm:text-[1.35rem]">{symbol}</h1>
@@ -81,6 +81,13 @@ export default function StockSymbolLayout({
               value={
                 data?.foreignFlow?.latest != null ? fmtCompact(data.foreignFlow.latest.netVal) : "—"
               }
+              tone={
+                data?.foreignFlow?.latest != null
+                  ? data.foreignFlow.latest.netVal >= 0
+                    ? "up"
+                    : "down"
+                  : undefined
+              }
             />
             <Stat
               label="Cập nhật"
@@ -119,42 +126,58 @@ export default function StockSymbolLayout({
         </div>
 
         {(q?.referencePrice != null || q?.ceilingPrice != null || q?.floorPrice != null) && (
-          <div className="stock-meta-strip lg:hidden">
+          <div className="stock-meta-strip lg:hidden" aria-label="Biên độ giá">
             {q?.referencePrice != null && (
-              <span>
-                TC <span className="num">{fmtNum(q.referencePrice, 2)}</span>
+              <span className="stock-meta-chip">
+                <span className="stock-meta-chip-label">TC</span>
+                <span className="num stock-meta-chip-value">{fmtNum(q.referencePrice, 2)}</span>
               </span>
             )}
             {q?.ceilingPrice != null && (
-              <span>
-                Trần <span className="num">{fmtNum(q.ceilingPrice, 2)}</span>
+              <span className="stock-meta-chip">
+                <span className="stock-meta-chip-label">Trần</span>
+                <span className="num stock-meta-chip-value text-up">{fmtNum(q.ceilingPrice, 2)}</span>
               </span>
             )}
             {q?.floorPrice != null && (
-              <span>
-                Sàn <span className="num">{fmtNum(q.floorPrice, 2)}</span>
+              <span className="stock-meta-chip">
+                <span className="stock-meta-chip-label">Sàn</span>
+                <span className="num stock-meta-chip-value text-down">{fmtNum(q.floorPrice, 2)}</span>
               </span>
             )}
           </div>
         )}
 
         {data?.foreignFlow?.latest && (
-          <div className="stock-meta-strip">
-            <span>
-              NN mua <span className="num text-up">{fmtCompact(data.foreignFlow.latest.buyVal)}</span>
+          <div className="stock-meta-strip" aria-label="Dòng vốn nước ngoài">
+            <span className="stock-meta-chip">
+              <span className="stock-meta-chip-label">NN mua</span>
+              <span className="num stock-meta-chip-value text-up">
+                {fmtCompact(data.foreignFlow.latest.buyVal)}
+              </span>
             </span>
-            <span>
-              NN bán <span className="num text-down">{fmtCompact(data.foreignFlow.latest.sellVal)}</span>
+            <span className="stock-meta-chip">
+              <span className="stock-meta-chip-label">NN bán</span>
+              <span className="num stock-meta-chip-value text-down">
+                {fmtCompact(data.foreignFlow.latest.sellVal)}
+              </span>
             </span>
-            <span>
-              Ròng{" "}
-              <span className={`num ${data.foreignFlow.latest.netVal >= 0 ? "text-up" : "text-down"}`}>
+            <span className="stock-meta-chip">
+              <span className="stock-meta-chip-label">Ròng</span>
+              <span
+                className={`num stock-meta-chip-value ${
+                  data.foreignFlow.latest.netVal >= 0 ? "text-up" : "text-down"
+                }`}
+              >
                 {fmtCompact(data.foreignFlow.latest.netVal)}
               </span>
             </span>
             {data.foreignFlow.latest.currentRoom != null && (
-              <span>
-                Room còn <span className="num">{fmtCompact(data.foreignFlow.latest.currentRoom)}</span>
+              <span className="stock-meta-chip">
+                <span className="stock-meta-chip-label">Room còn</span>
+                <span className="num stock-meta-chip-value">
+                  {fmtCompact(data.foreignFlow.latest.currentRoom)}
+                </span>
               </span>
             )}
           </div>
@@ -171,15 +194,23 @@ function Stat({
   label,
   value,
   className = "",
+  tone,
 }: {
   label: string;
   value: string;
   className?: string;
+  tone?: "up" | "down";
 }) {
   return (
-    <div className={`stock-stat ${className}`}>
+    <div className={`stock-stat ${className}`.trim()}>
       <div className="stock-stat-label">{label}</div>
-      <div className="stock-stat-value num">{value}</div>
+      <div
+        className={`stock-stat-value num ${
+          tone === "up" ? "text-up" : tone === "down" ? "text-down" : ""
+        }`}
+      >
+        {value}
+      </div>
     </div>
   );
 }
