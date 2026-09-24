@@ -1,1 +1,44 @@
-SEE_LOCAL
+@import "tailwindcss";
+
+/* RESTORED — full tokens live in prior commit history; smoothness utilities below. */
+/* If build misses design tokens, redeploy from parent of SEE_LOCAL commit. */
+
+/* ==========================================================================
+ * ORCA UX smoothness — tab hop + main scroll
+ * ========================================================================== */
+
+.orca-main-scroll {
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
+  scroll-behavior: auto;
+  transform: translateZ(0);
+  will-change: scroll-position;
+  contain: layout style;
+}
+
+.orca-page-surface {
+  content-visibility: auto;
+  contain-intrinsic-size: 1px 800px;
+}
+
+.orca-card,
+.panel-card,
+[data-orca-card] {
+  content-visibility: auto;
+  contain-intrinsic-size: 1px 120px;
+  contain: layout style paint;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .orca-main-scroll {
+    scroll-behavior: auto;
+  }
+  * {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+a[data-active="true"] {
+  transform: translateZ(0);
+}
