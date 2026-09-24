@@ -7,19 +7,32 @@ type Props = {
   /** Optional label for diagnostics */
   name?: string;
   fallback?: ReactNode;
+  /**
+   * When this value changes (e.g. pathname), auto-reset error state
+   * so a broken page does not stick after the user navigates away.
+   */
+  resetKey?: string | number;
 };
 
-type State = { error: Error | null };
+type State = { error: Error | null; resetKey: string | number | undefined };
 
 /**
  * Soft boundary — one subtree crash does not take down the whole shell.
  * Used around main page content when hopping tabs rapidly.
+ * Auto-recovers on route change via resetKey.
  */
 export class ErrorBoundary extends Component<Props, State> {
-  state: State = { error: null };
+  state: State = { error: null, resetKey: this.props.resetKey };
 
-  static getDerivedStateFromError(error: Error): State {
+  static getDerivedStateFromError(error: Error): Partial<State> {
     return { error };
+  }
+
+  static getDerivedStateFromProps(props: Props, state: State): Partial<State> | null {
+    if (props.resetKey !== state.resetKey) {
+      return { error: null, resetKey: props.resetKey };
+    }
+    return null;
   }
 
   componentDidCatch(error: Error, info: ErrorInfo) {

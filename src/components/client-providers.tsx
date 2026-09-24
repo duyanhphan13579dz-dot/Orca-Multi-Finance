@@ -22,12 +22,14 @@ export function ClientProviders({ children }: { children: ReactNode }) {
         revalidateOnFocus: true,
         revalidateOnReconnect: true,
         keepPreviousData: true,
-        dedupingInterval: 6_000,
-        focusThrottleInterval: 35_000,
+        dedupingInterval: 4_000,
+        focusThrottleInterval: 28_000,
         errorRetryCount: 2,
-        errorRetryInterval: 12_000,
+        errorRetryInterval: 10_000,
         shouldRetryOnError: true,
         suspense: false,
+        // Prefer showing stale over blank during concurrent navigations
+        revalidateIfStale: true,
       }}
     >
       <ErrorBoundary name="app-root">

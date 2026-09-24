@@ -4,27 +4,29 @@ import { useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 import useSWR from "swr";
 import type { ApiResponse } from "./types";
 import { getSettingsSnapshot, resolveRefresh } from "./settings";
-import { clientCacheGet, clientCacheSet } from "./client-cache";
+import { clientCacheGet, clientCacheSet, clientCacheHas } from "./client-cache";
 
 /**
  * Client data hooks — every call goes through the internal API only.
- * Refresh behavior follows the user's Data & Realtime settings:
- * liveUpdates off → no polling; lowDataMode → aggressively throttled;
- * backgroundRefresh → revalidate on window focus; autoReconnect → SWR retry.
- * Tab hidden → polling paused (saves battery + backend load).
- * Adaptive: LIVE → tighter poll; STALE/UNAVAILABLE → back off.
- * Rapid in-app navigation → short revalidate freeze to avoid request storms.
- * Session last-good cache → instant paint when remounting after tab hop.
+ * Tuned for fastest perceived load:
+ *  - last-good cache → instant paint on tab hop
+ *  - short client dedupe + nav freeze to avoid request storms
+ *  - adaptive poll; pause when tab hidden
+ *  - isLoading only when no fallback (no blank flash)
  */
 
-const FETCH_TIMEOUT_MS = 14_000;
-const CLIENT_DEDUPE_MS = 3_200;
+const FETCH_TIMEOUT_MS = 11_000;
+const CLIENT_DEDUPE_MS = 2_400;
 const pendingFetches = new Map<string, { promise: Promise<ApiResponse<unknown>>; startedAt: number }>();
 
 /** Soft freeze window after route change — skip non-critical revalidations. */
 let navFreezeUntil = 0;
-export function markAppNavigating(ms = 520) {
+export function markAppNavigating(ms = 380) {
   navFreezeUntil = Date.now() + ms;
+}
+
+export function isNavFrozen(): boolean {
+  return typeof window !== "undefined" && Date.now() < navFreezeUntil;
 }
 
 const fetcher = async <T>(url: string, timeoutMs = FETCH_TIMEOUT_MS): Promise<ApiResponse<T>> => {
@@ -116,12 +118,14 @@ export function useApi<T>(url: string | null, opts?: { refreshInterval?: number;
   })();
 
   // During rapid tab switches, hold polling so the UI paints first
-  const inNavFreeze = typeof window !== "undefined" && Date.now() < navFreezeUntil;
+  const inNavFreeze = isNavFrozen();
+  // If we already have warm cache for this URL, shorten freeze impact (revalidate sooner)
+  const hasWarm = url ? clientCacheHas(url, 90_000) : false;
   const refreshInterval = visible && rt.liveUpdates && !inNavFreeze ? adaptiveBase : 0;
 
   const fallbackData = useMemo(() => {
     if (!url) return undefined;
-    return clientCacheGet<ApiResponse<T>>(url, 180_000);
+    return clientCacheGet<ApiResponse<T>>(url);
   }, [url]);
 
   const { data, error, isLoading, isValidating, mutate } = useSWR<ApiResponse<T>>(
@@ -131,20 +135,26 @@ export function useApi<T>(url: string | null, opts?: { refreshInterval?: number;
       refreshInterval,
       revalidateOnFocus: rt.backgroundRefresh && !inNavFreeze,
       revalidateOnReconnect: rt.autoReconnect,
-      focusThrottleInterval: rt.lowDataMode ? 60_000 : 35_000,
+      focusThrottleInterval: rt.lowDataMode ? 60_000 : 28_000,
       shouldRetryOnError: rt.autoReconnect,
-      errorRetryInterval: rt.lowDataMode ? 45_000 : 12_000,
+      errorRetryInterval: rt.lowDataMode ? 45_000 : 10_000,
       errorRetryCount: rt.autoReconnect ? 2 : 0,
       keepPreviousData: true,
+      // Instant paint from session last-good when remounting after tab hop
       fallbackData,
+      // Warm cache → revalidate in background; cold → still fetch
       revalidateIfStale: true,
-      dedupingInterval: rt.lowDataMode ? 20_000 : 6_000,
+      // Short dedupe so parallel widgets share one flight; long enough for tab hop
+      dedupingInterval: rt.lowDataMode ? 16_000 : 4_000,
       suspense: false,
       onSuccess: (payload) => {
         if (payload?.success) {
           clientCacheSet(url!, payload);
           if (payload.meta?.freshness) freshnessRef.current = payload.meta.freshness;
         }
+      },
+      onError: () => {
+        // Keep showing last-good; SWR already falls back via keepPreviousData/fallbackData
       },
     },
   );
@@ -161,16 +171,19 @@ export function useApi<T>(url: string | null, opts?: { refreshInterval?: number;
     if (left <= 0) return;
     const t = window.setTimeout(() => {
       void mutate();
-    }, left + 40);
+    }, left + 30);
     return () => window.clearTimeout(t);
-  }, [url, visible, mutate]);
+  }, [url, visible, mutate, hasWarm]);
+
+  // Never treat as "loading" when we already have paintable data (cache or previous)
+  const effectiveLoading = Boolean(isLoading && !data && !fallbackData);
 
   return {
-    res: data ?? null,
-    data: data?.success ? data.data : null,
-    meta: data?.success ? data.meta : null,
+    res: data ?? fallbackData ?? null,
+    data: data?.success ? data.data : fallbackData?.success ? (fallbackData.data as T) : null,
+    meta: data?.success ? data.meta : fallbackData?.success ? fallbackData.meta : null,
     error,
-    isLoading,
+    isLoading: effectiveLoading,
     isValidating,
     mutate,
   };
