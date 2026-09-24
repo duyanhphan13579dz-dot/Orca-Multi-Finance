@@ -51,25 +51,48 @@ export function hubFinancialPackagePeek(symbol: string) {
  * VN market quotes — batch singleflight.
  * Key is sorted symbol list so agent + valuation + screener share one call.
  */
-export async function hubVnQuotes(symbols: string[]) {
+export type HubVnQuote = {
+  symbol?: string;
+  price?: number | null;
+  [key: string]: unknown;
+};
+
+export type HubVnQuotesResult = {
+  quotes: HubVnQuote[];
+  sourceTs?: number | null;
+  meta?: unknown;
+  sessionDate?: string;
+};
+
+export async function hubVnQuotes(symbols: string[]): Promise<HubVnQuotesResult> {
   const uniq = [...new Set(symbols.map((s) => s.trim().toUpperCase()).filter(Boolean))].sort();
-  if (!uniq.length) return { quotes: [] as unknown[], sourceTs: null as number | null, meta: null as unknown };
+  if (!uniq.length) return { quotes: [], sourceTs: null, meta: null };
   const key = kQuote(uniq.join(","));
-  return coalesce(key, async () => {
+  return coalesce(key, async (): Promise<HubVnQuotesResult> => {
     // Prefer multi-source path when services/stocks exists; else VNDIRECT primary.
     try {
       const stocks = (await import("../services/stocks").catch(() => null)) as unknown as {
         getVnQuotes?: (s: string[]) => Promise<unknown>;
       } | null;
       if (stocks && typeof stocks.getVnQuotes === "function") {
-        return stocks.getVnQuotes(uniq);
+        const r = await stocks.getVnQuotes(uniq);
+        if (Array.isArray(r)) {
+          return { quotes: r as HubVnQuote[], sourceTs: null };
+        }
+        if (r && typeof r === "object" && Array.isArray((r as HubVnQuotesResult).quotes)) {
+          return r as HubVnQuotesResult;
+        }
       }
     } catch {
       /* fall through */
     }
     const { getVndQuotes } = await import("../providers/vndirect");
     const r = await getVndQuotes(uniq);
-    return { ...r, meta: r.sourceTs != null ? { freshness: "FRESH" as const } : null };
+    return {
+      quotes: (r.quotes ?? []) as HubVnQuote[],
+      sourceTs: r.sourceTs ?? null,
+      meta: r.sourceTs != null ? { freshness: "FRESH" as const } : null,
+    };
   }, { sourceIds: ["vndirect", "ssi-fcdata"] });
 }
 
