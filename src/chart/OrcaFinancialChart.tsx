@@ -64,10 +64,6 @@ function normalizeKind(raw: string | undefined): ChartKind {
   return "candles";
 }
 
-/**
- * Độ sâu lịch sử theo asset / timeframe.
- * Cổ phiếu VN: 1D ~3–4 năm phiên, 1W ~5 năm, 1H/4H sâu hơn để zoom.
- */
 function historyLimit(assetType: ChartAssetType, tf: string): number {
   const isDailyPlus = tf === "1d" || tf === "1w" || tf === "1M";
   const isHighTf = isDailyPlus || tf === "4h" || tf === "6h" || tf === "12h" || tf === "2h";
@@ -440,7 +436,7 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
         </div>
       </div>
 
-      <div className="flex flex-wrap items-end gap-3 border-b border-border-subtle px-3 py-2.5">
+      <div className="chart-toolbar-row">
         <div className="chart-control-group">
           <span className="chart-control-label">Dạng biểu đồ</span>
           <div className="seg" role="group" aria-label="Dạng biểu đồ">
@@ -460,11 +456,11 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
 
         <div className="chart-control-group min-w-0 flex-1">
           <span className="chart-control-label">Chỉ báo</span>
-          <div className="flex min-w-0 flex-wrap items-center gap-1">
-            <span className="mr-0.5 text-[9.5px] font-semibold tracking-wide text-text-muted">Overlay</span>
+          <div className="chart-ind-row">
+            <span className="text-[9.5px] font-semibold tracking-wide text-text-muted">Overlay</span>
             {OVERLAY_INDS.map(renderChip)}
-            <span className="mx-1 hidden h-3.5 w-px bg-border-subtle sm:inline-block" />
-            <span className="mr-0.5 text-[9.5px] font-semibold tracking-wide text-text-muted">Osc</span>
+            <span className="mx-0.5 hidden h-3.5 w-px bg-border-subtle sm:inline-block" aria-hidden />
+            <span className="text-[9.5px] font-semibold tracking-wide text-text-muted">Osc</span>
             {OSC_INDS.map(renderChip)}
           </div>
         </div>
