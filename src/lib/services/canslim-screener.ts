@@ -93,39 +93,6 @@ async function resolveMarketDirection(): Promise<{
 
     if (ret63 != null) {
       votes += 1;
-      const ret63 = bars.length >= 65 ? retPct(bars, 63) : null;
-
-    const parts: string[] = [];
-    let score = 0;
-    let votes = 0;
-
-    if (vn?.changePercent != null) {
-      votes += 1;
-      if (vn.changePercent > 0.3) {
-        score += 1;
-        parts.push(`phiên +${vn.changePercent.toFixed(1)}%`);
-      } else if (vn.changePercent < -1.2) {
-        score -= 1;
-        parts.push(`phiên ${vn.changePercent.toFixed(1)}%`);
-      } else {
-        parts.push(`phiên ${vn.changePercent.toFixed(1)}%`);
-      }
-    }
-
-    if (last != null && ma50 != null && ma50 > 0) {
-      votes += 1;
-      const vsMa = ((last - ma50) / ma50) * 100;
-      if (vsMa > 0) {
-        score += 1;
-        parts.push(`trên MA50 (+${vsMa.toFixed(1)}%)`);
-      } else {
-        score -= 1;
-        parts.push(`dưới MA50 (${vsMa.toFixed(1)}%)`);
-      }
-    }
-
-    if (ret63 != null) {
-      votes += 1;
       if (ret63 > 3) {
         score += 1;
         parts.push(`3M +${ret63.toFixed(0)}%`);
