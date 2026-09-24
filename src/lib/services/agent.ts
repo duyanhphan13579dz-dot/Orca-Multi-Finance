@@ -330,25 +330,34 @@ async function answerQuestionInner(
     let model: string | null = null;
     let finalAnswer = built.narrative;
 
-    const useLlm =
-      !forceBriefingFormat || prefs.depth === "deep" || prefs.style === "analyst";
-    if (useLlm) {
-      const llm = await synthesizeWithLlm(question, built, prefs, history, {
+    // Prefer LLM expansion whenever possible so answers are fuller than raw narrative.
+    if (!built.unavailable) {
+      const effectivePrefs: AgentPrefs = {
+        ...prefs,
+        depth: prefs.depth ?? "standard",
+        style: prefs.style ?? "analyst",
+      };
+      const llm = await synthesizeWithLlm(question, built, effectivePrefs, history, {
         forceBriefingFormat,
       });
       if (llm) {
         if (forceBriefingFormat) {
           const ok =
-            /1\.\s*Biến động|## 1\./i.test(llm.text) &&
-            /2\.\s*Động thái|## 2\./i.test(llm.text) &&
-            /3\.\s*Thanh khoản|## 3\./i.test(llm.text) &&
-            /4\.\s*Tổng quan|## 4\./i.test(llm.text);
+            /1\.\s*Biến động|## 1\./i.test(llm.text) ||
+            /2\.\s*Động thái|## 2\./i.test(llm.text) ||
+            /3\.\s*Thanh khoản|## 3\./i.test(llm.text) ||
+            /4\.\s*Tổng quan|## 4\./i.test(llm.text) ||
+            llm.text.length > 600;
           if (ok) {
             finalAnswer = llm.text;
             mode = "llm";
             model = llm.model;
           }
-        } else {
+        } else if (
+          llm.text.length >= Math.min(built.narrative.length * 0.6, 400) ||
+          llm.text.length > 500 ||
+          llm.text.length > built.narrative.length
+        ) {
           finalAnswer = llm.text;
           mode = "llm";
           model = llm.model;
@@ -356,8 +365,12 @@ async function answerQuestionInner(
       }
     }
 
+    // Concise: soft cap only — keep more substance than before (was 4 blocks).
     if (prefs.depth === "concise" && !forceBriefingFormat) {
-      finalAnswer = finalAnswer.split("\n\n").slice(0, 4).join("\n\n");
+      const blocks = finalAnswer.split("\n\n");
+      if (blocks.length > 10) {
+        finalAnswer = blocks.slice(0, 10).join("\n\n");
+      }
     }
 
     if (prefs.riskDisclosure !== "off") {
