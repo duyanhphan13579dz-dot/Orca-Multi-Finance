@@ -56,7 +56,7 @@ export default function VnMarketCenterPage() {
           </Link>
           {data?.sessionDate && <Badge tone="neutral">Phiên {data.sessionDate}</Badge>}
           {data?.count != null && <Badge tone="neutral">{data.count} mã</Badge>}
-          {session && <Badge tone={session.trading ? "up" : "warn"}>{session.labelVi}</Badge>}
+          {session && <Badge tone={session.trading ? "up" : "warn">{session.labelVi}</Badge>}
           <span className="ml-auto flex items-center gap-2">
             <FreshnessDot status={meta?.freshness} ageMs={meta?.ageMs} />
             <span className="hidden sm:inline">
@@ -166,42 +166,53 @@ export default function VnMarketCenterPage() {
               )}
             </div>
 
-            <div className="table-scroll hidden max-h-[min(60vh,560px)] md:block">
-              <table className="stock-table text-left">
+            <div className="table-scroll hidden max-h-[min(70vh,720px)] w-full md:block">
+              <table className="stock-table w-full table-fixed text-left">
+                <colgroup>
+                  <col className="w-[22%]" />
+                  <col className="w-[12%]" />
+                  <col className="w-[12%]" />
+                  <col className="w-[11%]" />
+                  <col className="w-[13%]" />
+                  <col className="w-[14%]" />
+                  <col className="w-[16%]" />
+                </colgroup>
                 <thead className="sticky top-0 z-10 bg-background-secondary text-[10px] uppercase tracking-wider text-text-muted">
                   <tr>
-                    <th className="pl-1 text-left">Mã</th>
+                    <th className="pl-2 text-left sm:pl-3">Mã</th>
                     <th className="text-right">Giá</th>
                     <th className="text-right">%</th>
-                    <th className="hidden text-right lg:table-cell">TC</th>
+                    <th className="text-right">TC</th>
                     <th className="text-right">KL</th>
-                    <th className="hidden py-2 text-right sm:table-cell">GT</th>
-                    <th className="pr-3.5 text-right" />
+                    <th className="text-right">GT</th>
+                    <th className="pr-2 text-right sm:pr-3">Theo dõi</th>
                   </tr>
                 </thead>
                 <tbody>
                   {quotes.map((qu) => (
                     <tr key={qu.symbol} className="border-t border-border-subtle/70 hover:bg-surface-elevated/50">
-                      <td className="py-2 pl-1">
+                      <td className="py-2 pl-2 sm:pl-3">
                         <Link href={`/stocks/${qu.symbol}`} className="font-semibold text-accent-primary hover:underline">
                           {qu.symbol}
                         </Link>
                         {qu.name && (
-                          <div className="max-w-[160px] truncate text-[10px] text-text-muted">{qu.name}</div>
+                          <div className="truncate text-[10px] text-text-muted" title={qu.name}>
+                            {qu.name}
+                          </div>
                         )}
                       </td>
                       <td className="num py-2 text-right font-medium">{fmtNum(qu.price, 2)}</td>
                       <td className="py-2 text-right">
                         <Chg value={qu.changePercent} arrow={false} />
                       </td>
-                      <td className="num hidden py-2 text-right text-text-muted lg:table-cell">
+                      <td className="num py-2 text-right text-text-muted">
                         {qu.referencePrice != null ? fmtNum(qu.referencePrice, 2) : "—"}
                       </td>
                       <td className="num py-2 text-right text-text-secondary">{fmtCompact(qu.volume)}</td>
-                      <td className="num hidden py-2 text-right text-text-secondary sm:table-cell">
+                      <td className="num py-2 text-right text-text-secondary">
                         {fmtCompact(qu.quoteVolume)}
                       </td>
-                      <td className="py-2 pr-3.5 text-right">
+                      <td className="py-2 pr-2 text-right sm:pr-3">
                         <AddToWatchlist assetType="stock" symbol={qu.symbol} />
                       </td>
                     </tr>
