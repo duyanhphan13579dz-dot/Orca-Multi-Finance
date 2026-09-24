@@ -9,6 +9,7 @@ import { TechnicalPanel } from "@/components/technical-panel";
 import { TechRecoPanel } from "@/components/stocks/tech-reco-panel";
 import { StockNewsSentiment } from "@/components/stocks/news-sentiment-chip";
 import { ValuationPanel } from "@/components/stocks/valuation-panel";
+import { ForecastPanel } from "@/components/stocks/forecast-panel";
 import { StockStructurePanel } from "@/components/stocks/structure-panel";
 import { OrderBookPanel } from "@/components/stocks/order-book-panel";
 
@@ -53,7 +54,6 @@ export default function StockOverviewPage({ params }: { params: Promise<{ symbol
 
   return (
     <div className="stock-workspace">
-      {/* Chart + Order book */}
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(280px,360px)] xl:items-start">
         <div className="min-w-0">
           {q || data.bars.length > 0 ? (
@@ -86,7 +86,6 @@ export default function StockOverviewPage({ params }: { params: Promise<{ symbol
         </div>
       </div>
 
-      {/* Signal + Structure */}
       <div className="grid gap-4 lg:grid-cols-2 lg:items-start">
         <TechRecoPanel symbol={data.symbol} />
         <StockStructurePanel symbol={data.symbol} />
@@ -95,6 +94,8 @@ export default function StockOverviewPage({ params }: { params: Promise<{ symbol
       {data.technical ? <TechnicalPanel tech={data.technical} patterns={data.patterns} /> : null}
 
       <ValuationPanel symbol={data.symbol} compact showAnalyst={false} />
+
+      <ForecastPanel symbol={data.symbol} compact />
 
       <div className="grid gap-4 md:grid-cols-2 md:items-start">
         <Panel title="Trạng thái cổ phiếu">
