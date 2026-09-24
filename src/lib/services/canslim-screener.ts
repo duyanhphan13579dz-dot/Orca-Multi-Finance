@@ -2,7 +2,8 @@ import "server-only";
 import { buildMeta } from "../freshness";
 import { analyzeCanslim, retPct, type CanslimLetter, type CanslimSnapshot } from "../engines/canslim";
 import { getFinancialPackagesBulk, mapPool } from "../financial/snapshots";
-import { getVnIndices, getVnOhlcv, getVnQuotes } from "./stocks";
+import { getVnIndices, getVnOhlcv } from "./stocks";
+import { hubVnQuotes } from "../data-engine";
 import { LIQUID_BOARD } from "../providers/public-vn-feed";
 import { getVndSymbolForeignFlow } from "../providers/vndirect-foreign-symbol";
 import { getVndEquitySnapshot, getVndValuationRatios } from "../providers/vndirect-company";
@@ -92,6 +93,39 @@ async function resolveMarketDirection(): Promise<{
 
     if (ret63 != null) {
       votes += 1;
+      const ret63 = bars.length >= 65 ? retPct(bars, 63) : null;
+
+    const parts: string[] = [];
+    let score = 0;
+    let votes = 0;
+
+    if (vn?.changePercent != null) {
+      votes += 1;
+      if (vn.changePercent > 0.3) {
+        score += 1;
+        parts.push(`phiên +${vn.changePercent.toFixed(1)}%`);
+      } else if (vn.changePercent < -1.2) {
+        score -= 1;
+        parts.push(`phiên ${vn.changePercent.toFixed(1)}%`);
+      } else {
+        parts.push(`phiên ${vn.changePercent.toFixed(1)}%`);
+      }
+    }
+
+    if (last != null && ma50 != null && ma50 > 0) {
+      votes += 1;
+      const vsMa = ((last - ma50) / ma50) * 100;
+      if (vsMa > 0) {
+        score += 1;
+        parts.push(`trên MA50 (+${vsMa.toFixed(1)}%)`);
+      } else {
+        score -= 1;
+        parts.push(`dưới MA50 (${vsMa.toFixed(1)}%)`);
+      }
+    }
+
+    if (ret63 != null) {
+      votes += 1;
       if (ret63 > 3) {
         score += 1;
         parts.push(`3M +${ret63.toFixed(0)}%`);
@@ -136,7 +170,7 @@ export async function screenCanslim(args?: {
     ...new Set((args?.symbols?.length ? args.symbols : LIQUID_BOARD).map((s) => s.toUpperCase()).filter(Boolean)),
   ].slice(0, 48);
 
-  const [quotesPack, market] = await Promise.all([getVnQuotes(uniq).catch(() => null), resolveMarketDirection()]);
+  const [quotesPack, market] = await Promise.all([hubVnQuotes(uniq).catch(() => null), resolveMarketDirection()]);
   const quoteMap = new Map((quotesPack?.quotes ?? []).map((q) => [q.symbol, q]));
 
   let skipped = 0;
