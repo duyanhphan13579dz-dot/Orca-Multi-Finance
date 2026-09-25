@@ -34,11 +34,25 @@ export function Row({ label, hint, children }: { label: string; hint?: string; c
   );
 }
 
-export function Seg<T extends string>({ value, onChange, options }: { value: T; onChange: (v: T) => void; options: { value: T; label: React.ReactNode }[] }) {
+export function Seg<T extends string>({
+  value,
+  onChange,
+  options,
+}: {
+  value: T;
+  onChange: (v: T) => void;
+  options: { value: T; label: React.ReactNode }[];
+}) {
   return (
     <div className="seg" role="radiogroup">
       {options.map((o) => (
-        <button key={o.value} data-active={value === o.value} onClick={() => onChange(o.value)} role="radio" aria-checked={value === o.value}>
+        <button
+          key={o.value}
+          data-active={value === o.value}
+          onClick={() => onChange(o.value)}
+          role="radio"
+          aria-checked={value === o.value}
+        >
           {o.label}
         </button>
       ))}
@@ -48,7 +62,14 @@ export function Seg<T extends string>({ value, onChange, options }: { value: T; 
 
 export function Switch({ on, onChange, label }: { on: boolean; onChange: (v: boolean) => void; label?: string }) {
   return (
-    <button className="switch" data-on={on} onClick={() => onChange(!on)} role="switch" aria-checked={on} aria-label={label} />
+    <button
+      className="switch"
+      data-on={on}
+      onClick={() => onChange(!on)}
+      role="switch"
+      aria-checked={on}
+      aria-label={label}
+    />
   );
 }
 
@@ -60,14 +81,25 @@ export function SavedNote({ show }: { show: boolean }) {
 /* --------------------------------- PROFILE -------------------------------- */
 
 const TIMEZONES = [
-  "Asia/Ho_Chi_Minh", "Asia/Bangkok", "Asia/Singapore", "Asia/Tokyo", "Asia/Seoul",
-  "Australia/Sydney", "Europe/London", "Europe/Berlin", "America/New_York", "America/Chicago",
-  "America/Los_Angeles", "UTC",
+  "Asia/Ho_Chi_Minh",
+  "Asia/Bangkok",
+  "Asia/Singapore",
+  "Asia/Tokyo",
+  "Asia/Seoul",
+  "Australia/Sydney",
+  "Europe/London",
+  "Europe/Berlin",
+  "America/New_York",
+  "America/Chicago",
+  "America/Los_Angeles",
+  "UTC",
 ];
 
 export function ProfileTab() {
   const { settings, update } = useSettings();
-  const { data: me, mutate } = useApi<{ user: { id: string; email: string; name: string | null } }>("/api/v1/auth/me");
+  const { data: me, mutate } = useApi<{ user: { id: string; email: string; name: string | null } }>(
+    "/api/v1/auth/me",
+  );
   const [name, setName] = useState("");
   const [saved, setSaved] = useState(false);
 
@@ -90,50 +122,203 @@ export function ProfileTab() {
   return (
     <>
       <Section title="Thông tin tài khoản" desc="Tên hiển thị, avatar và tuỳ chọn khu vực.">
-        <Row label="Tên hiển thị" hint={me?.user ? me.user.email : "Đăng nhập để đồng bộ tài khoản giữa các thiết bị"}>
+        <Row
+          label="Tên hiển thị"
+          hint={me?.user ? me.user.email : "Đăng nhập để đồng bộ tài khoản giữa các thiết bị"}
+        >
           <div className="flex items-center gap-2">
-            <input value={effectiveName} onChange={(e) => setName(e.target.value)} placeholder="Tên của bạn" className="input w-44" />
-            <button onClick={saveName} className="rounded-md bg-accent-primary px-2.5 py-1.5 text-[12px] font-semibold text-white">Lưu</button>
+            <input
+              value={effectiveName}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Tên của bạn"
+              className="input w-44"
+            />
+            <button
+              onClick={saveName}
+              className="rounded-md bg-accent-primary px-2.5 py-1.5 text-[12px] font-semibold text-white"
+            >
+              Lưu
+            </button>
             <SavedNote show={saved} />
           </div>
         </Row>
-        <Row label="Avatar" hint="Phong cách hiển thị ở góc phải header">
-          <div className="flex gap-1.5">
-            {(
-              [
-                ["orca", null],
-                ["initials-ocean", "bg-gradient-to-br from-accent-primary to-accent-2"],
-                ["initials-slate", "bg-surface-modal"],
-                ["initials-amber", "bg-gradient-to-br from-warn to-warning"],
-              ] as const
-            ).map(([style, cls]) => (
-              <button
-                key={style}
-                onClick={() => update({ profile: { ...settings.profile, avatarStyle: style } })}
-                aria-label={`Avatar ${style}`}
-                className={`grid size-9 place-items-center overflow-hidden rounded-lg border-2 transition-all ${
-                  settings.profile.avatarStyle === style ? "border-accent-primary" : "border-transparent opacity-70 hover:opacity-100"
-                } ${cls ?? ""}`}
-              >
-                {style === "orca" ? <OrcaMark size={34} className="rounded-lg" /> : <span className="text-[10px] font-bold text-white">{effectiveName.slice(0, 2).toUpperCase() || "OR"}</span>}
-              </button>
-            ))}
+
+        <div className="space-y-3">
+          <div className="text-[12.5px] text-text-primary">Avatar</div>
+          <p className="text-[11px] text-text-muted">
+            Chọn phong cách sẵn có hoặc tải ảnh tùy chỉnh (sau khi đăng nhập ảnh được đồng bộ qua
+            settings).
+          </p>
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="grid size-16 place-items-center overflow-hidden rounded-xl border border-border-subtle bg-surface-elevated">
+              {settings.profile.avatarUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={settings.profile.avatarUrl} alt="Avatar" className="size-full object-cover" />
+              ) : settings.profile.avatarStyle === "orca" ? (
+                <OrcaMark size={48} className="rounded-lg" />
+              ) : (
+                <span
+                  className={`grid size-full place-items-center text-[14px] font-bold text-white ${
+                    settings.profile.avatarStyle === "initials-ocean"
+                      ? "bg-gradient-to-br from-accent-primary to-accent-2"
+                      : settings.profile.avatarStyle === "initials-amber"
+                        ? "bg-gradient-to-br from-warn to-warning"
+                        : "bg-surface-modal text-text-primary"
+                  }`}
+                >
+                  {effectiveName.slice(0, 2).toUpperCase() || "OR"}
+                </span>
+              )}
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <div className="flex flex-wrap gap-1.5">
+                {(
+                  [
+                    ["orca", null],
+                    ["initials-ocean", "bg-gradient-to-br from-accent-primary to-accent-2"],
+                    ["initials-slate", "bg-surface-modal"],
+                    ["initials-amber", "bg-gradient-to-br from-warn to-warning"],
+                  ] as const
+                ).map(([style, cls]) => (
+                  <button
+                    key={style}
+                    type="button"
+                    onClick={() =>
+                      update({
+                        profile: {
+                          ...settings.profile,
+                          avatarStyle: style,
+                          avatarUrl: null,
+                        },
+                      })
+                    }
+                    aria-label={`Avatar ${style}`}
+                    className={`grid size-9 place-items-center overflow-hidden rounded-lg border-2 transition-all ${
+                      !settings.profile.avatarUrl && settings.profile.avatarStyle === style
+                        ? "border-accent-primary"
+                        : "border-transparent opacity-70 hover:opacity-100"
+                    } ${cls ?? ""}`}
+                  >
+                    {style === "orca" ? (
+                      <OrcaMark size={34} className="rounded-lg" />
+                    ) : (
+                      <span className="text-[10px] font-bold text-white">
+                        {effectiveName.slice(0, 2).toUpperCase() || "OR"}
+                      </span>
+                    )}
+                  </button>
+                ))}
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <label className="cursor-pointer rounded-md border border-border-subtle bg-surface-elevated px-2.5 py-1.5 text-[12px] font-medium text-text-primary hover:border-accent-primary">
+                  Tải ảnh lên
+                  <input
+                    type="file"
+                    accept="image/png,image/jpeg,image/webp,image/gif"
+                    className="hidden"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      e.target.value = "";
+                      if (!file) return;
+                      if (file.size > 4 * 1024 * 1024) {
+                        alert("Ảnh tối đa 4MB. Hãy chọn ảnh nhỏ hơn.");
+                        return;
+                      }
+                      const reader = new FileReader();
+                      reader.onload = () => {
+                        const dataUrl = String(reader.result || "");
+                        const img = new Image();
+                        img.onload = () => {
+                          const size = 160;
+                          const canvas = document.createElement("canvas");
+                          canvas.width = size;
+                          canvas.height = size;
+                          const ctx = canvas.getContext("2d");
+                          if (!ctx) return;
+                          const min = Math.min(img.width, img.height);
+                          const sx = (img.width - min) / 2;
+                          const sy = (img.height - min) / 2;
+                          ctx.drawImage(img, sx, sy, min, min, 0, 0, size, size);
+                          const out = canvas.toDataURL("image/jpeg", 0.85);
+                          update({
+                            profile: {
+                              ...settings.profile,
+                              avatarStyle: "custom",
+                              avatarUrl: out,
+                            },
+                          });
+                        };
+                        img.src = dataUrl;
+                      };
+                      reader.readAsDataURL(file);
+                    }}
+                  />
+                </label>
+                {settings.profile.avatarUrl ? (
+                  <button
+                    type="button"
+                    className="rounded-md px-2.5 py-1.5 text-[12px] text-text-muted hover:text-negative"
+                    onClick={() =>
+                      update({
+                        profile: {
+                          ...settings.profile,
+                          avatarUrl: null,
+                          avatarStyle: "orca",
+                        },
+                      })
+                    }
+                  >
+                    Xóa ảnh
+                  </button>
+                ) : null}
+              </div>
+              {!me?.user ? (
+                <p className="text-[10.5px] text-text-muted">
+                  Đăng nhập để đồng bộ avatar giữa các thiết bị.
+                </p>
+              ) : (
+                <p className="text-[10.5px] text-text-muted">
+                  Đã đăng nhập — avatar lưu local và đồng bộ settings server.
+                </p>
+              )}
+            </div>
           </div>
-        </Row>
+        </div>
       </Section>
+
       <Section title="Ngôn ngữ & Khu vực" desc="Múi giờ áp dụng cho đồng hồ và mọi timestamp hiển thị.">
         <Row label="Ngôn ngữ giao diện">
-          <Seg value={settings.profile.language} onChange={(v) => update({ profile: { ...settings.profile, language: v } })}
-            options={[{ value: "vi", label: "Tiếng Việt" }, { value: "en", label: "English" }]} />
+          <Seg
+            value={settings.profile.language}
+            onChange={(v) => update({ profile: { ...settings.profile, language: v } })}
+            options={[
+              { value: "vi", label: "Tiếng Việt" },
+              { value: "en", label: "English" },
+            ]}
+          />
         </Row>
         <Row label="Múi giờ">
-          <select value={settings.profile.timezone} onChange={(e) => update({ profile: { ...settings.profile, timezone: e.target.value } })} className="input w-48">
-            {TIMEZONES.map((tz) => <option key={tz} value={tz}>{tz}</option>)}
+          <select
+            value={settings.profile.timezone}
+            onChange={(e) => update({ profile: { ...settings.profile, timezone: e.target.value } })}
+            className="input w-48"
+          >
+            {TIMEZONES.map((tz) => (
+              <option key={tz} value={tz}>
+                {tz}
+              </option>
+            ))}
           </select>
         </Row>
         <Row label="Khu vực ưu tiên" hint="Ảnh hưởng thứ tự gợi ý tài sản">
-          <Seg value={settings.profile.region} onChange={(v) => update({ profile: { ...settings.profile, region: v } })}
-            options={[{ value: "vn", label: "Việt Nam" }, { value: "global", label: "Toàn cầu" }]} />
+          <Seg
+            value={settings.profile.region}
+            onChange={(v) => update({ profile: { ...settings.profile, region: v } })}
+            options={[
+              { value: "vn", label: "Việt Nam" },
+              { value: "global", label: "Toàn cầu" },
+            ]}
+          />
         </Row>
       </Section>
     </>
@@ -149,36 +334,91 @@ export function AppearanceTab() {
     <>
       <Section title="Theme" desc="Deep Navy Professional là theme mặc định của ORCA Financial.">
         <Row label="Chế độ hiển thị">
-          <Seg value={a.mode} onChange={(v) => update({ appearance: { ...a, mode: v } })}
+          <Seg
+            value={a.mode}
+            onChange={(v) => update({ appearance: { ...a, mode: v } })}
             options={[
-              { value: "navy", label: <span className="flex items-center gap-1"><Moon className="size-3" /> Navy</span> },
-              { value: "light", label: <span className="flex items-center gap-1"><Sun className="size-3" /> Light</span> },
-              { value: "system", label: <span className="flex items-center gap-1"><Monitor className="size-3" /> System</span> },
-            ]} />
+              {
+                value: "navy",
+                label: (
+                  <span className="flex items-center gap-1">
+                    <Moon className="size-3" /> Navy
+                  </span>
+                ),
+              },
+              {
+                value: "light",
+                label: (
+                  <span className="flex items-center gap-1">
+                    <Sun className="size-3" /> Light
+                  </span>
+                ),
+              },
+              {
+                value: "system",
+                label: (
+                  <span className="flex items-center gap-1">
+                    <Monitor className="size-3" /> System
+                  </span>
+                ),
+              },
+            ]}
+          />
         </Row>
         <Row label="Mật độ hiển thị (density)" hint="Compact phù hợp màn hình dữ liệu dày đặc">
-          <Seg value={a.density} onChange={(v) => update({ appearance: { ...a, density: v } })}
-            options={[{ value: "compact", label: "Compact" }, { value: "normal", label: "Normal" }, { value: "comfortable", label: "Comfortable" }]} />
+          <Seg
+            value={a.density}
+            onChange={(v) => update({ appearance: { ...a, density: v } })}
+            options={[
+              { value: "compact", label: "Compact" },
+              { value: "normal", label: "Normal" },
+              { value: "comfortable", label: "Comfortable" },
+            ]}
+          />
         </Row>
         <Row label="Cỡ chữ">
-          <Seg value={a.fontSize} onChange={(v) => update({ appearance: { ...a, fontSize: v } })}
-            options={[{ value: "sm", label: "Nhỏ" }, { value: "md", label: "Vừa" }, { value: "lg", label: "Lớn" }]} />
+          <Seg
+            value={a.fontSize}
+            onChange={(v) => update({ appearance: { ...a, fontSize: v } })}
+            options={[
+              { value: "sm", label: "S" },
+              { value: "md", label: "M" },
+              { value: "lg", label: "L" },
+            ]}
+          />
         </Row>
-      </Section>
-      <Section title="Định dạng số & tiền tệ" desc="Áp dụng toàn cục cho mọi bảng giá và chỉ số.">
-        <Row label="Định dạng số" hint={a.numberFormat === "vi-VN" ? "1.234.567,89" : "1,234,567.89"}>
-          <Seg value={a.numberFormat} onChange={(v) => update({ appearance: { ...a, numberFormat: v } })}
-            options={[{ value: "en-US", label: "1,234,567.89" }, { value: "vi-VN", label: "1.234.567,89" }]} />
+        <Row label="Định dạng số">
+          <Seg
+            value={a.numberFormat}
+            onChange={(v) => update({ appearance: { ...a, numberFormat: v } })}
+            options={[
+              { value: "en-US", label: "1,234.56" },
+              { value: "vi-VN", label: "1.234,56" },
+            ]}
+          />
         </Row>
-        <Row label="Tiền tệ hiển thị quy đổi" hint="Quy đổi khối lượng/giá trị USD → ₫ theo tỷ giá USD/VND realtime">
-          <Seg value={a.currency} onChange={(v) => update({ appearance: { ...a, currency: v } })}
-            options={[{ value: "USD", label: "USD $" }, { value: "VND", label: "VND ₫" }]} />
+        <Row
+          label="Đơn vị tiền"
+          hint="Quy đổi khối lượng/giá trị USD → ₫ theo tỷ giá USD/VND realtime"
+        >
+          <Seg
+            value={a.currency}
+            onChange={(v) => update({ appearance: { ...a, currency: v } })}
+            options={[
+              { value: "USD", label: "USD $" },
+              { value: "VND", label: "VND ₫" },
+            ]}
+          />
         </Row>
         <div className="panel-inset p-3">
           <div className="mb-1 text-[10px] uppercase tracking-wider text-text-muted">Xem trước</div>
-          <div className="num text-[15px] text-text-primary">{fmtNum(1234567.891, 2)} <span className="text-text-muted">USD</span></div>
+          <div className="num text-[15px] text-text-primary">
+            {fmtNum(1234567.891, 2)} <span className="text-text-muted">USD</span>
+          </div>
           <div className="text-[11px] text-text-muted">
-            <span className="text-positive">+2.48%</span> · <span className="text-negative">-1.63%</span> · {new Date().toLocaleDateString(settings.profile.language)}
+            <span className="text-positive">+2.48%</span> ·{" "}
+            <span className="text-negative">-1.63%</span> ·{" "}
+            {new Date().toLocaleDateString(settings.profile.language)}
           </div>
         </div>
       </Section>
