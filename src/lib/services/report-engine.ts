@@ -36,9 +36,7 @@ export interface DailyReport {
   marketDataTimestamp: string | null;
   freshness: Record<string, FreshnessStatus>;
   sections: { heading: string; tone: "up" | "down" | "neutral"; paragraphs: string[] }[];
-  /** Always empty — product decision: no Base/Bull/Bear block on any report type. */
   scenarios: ReportScenario[];
-  /** Always empty — product decision: no "Giả định & giới hạn" footer on any report type. */
   assumptions: string[];
 }
 
@@ -77,7 +75,7 @@ async function loadLatestByType(type: DailyReportType): Promise<DailyReport | nu
   }
 }
 
-async function loadWeekMarketSummaries(): Promise<{ title: string; generatedAt: string }[]> {
+async function loadWeekSummaries(): Promise<{ title: string; generatedAt: string }[]> {
   try {
     const { db } = await import("@/db");
     const { reports } = await import("@/db/schema");
@@ -98,67 +96,49 @@ async function loadWeekMarketSummaries(): Promise<{ title: string; generatedAt: 
 }
 
 async function buildCtx(): Promise<DailyCtx> {
+  const now = new Date();
+  const vnNow = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Ho_Chi_Minh" }));
+  const dateVi = vnNow.toLocaleDateString("vi-VN", {
+    weekday: "long",
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  });
+  const timeLabel = vnNow.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" });
+  const session = getVnSession();
+  const slot = detectIntradaySlot(vnNow.getHours(), vnNow.getMinutes());
+
   const [s, intelRes, morningReport, priorStrategy, weekSummaries] = await Promise.all([
     buildMarketSnapshot(),
     buildMarketIntel().catch(() => null),
     loadLatestByType("morning_brief"),
     loadLatestByType("strategy"),
-    loadWeekMarketSummaries(),
+    loadWeekSummaries(),
   ]);
-  const session = getVnSession();
-  const vnNow = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Ho_Chi_Minh" }));
-  const vnHour = vnNow.getHours();
-  const vnMinute = vnNow.getMinutes();
-  const timeLabel = `${String(vnHour).padStart(2, "0")}:${String(vnMinute).padStart(2, "0")}`;
-  const slot = detectIntradaySlot(vnHour, vnMinute);
 
-  const intelSections = intelRes?.intel.sections ?? {};
-  const snapSections = (s.meta.sections ?? {}) as Record<string, FreshnessStatus>;
-  const allStatuses = { ...snapSections, ...intelSections };
-  const statuses = Object.values(allStatuses);
-  const sourcesLive = statuses.filter((x) => x === "LIVE" || x === "FRESH").length;
-  const sourcesTotal = Math.max(statuses.length, 5);
+  const snap = await enrichSnapshotForReports(s.snapshot);
+  const news = await resolveReportNews().catch(() => []);
+  const cross = pickCrossHighlights(snap);
 
-  const crossHighlights = pickCrossHighlights(intelRes?.intel.crossAsset, 8);
-  const mergedNews = resolveReportNews(
-    s.snapshot,
-    { news: intelRes?.intel.news ?? null },
-    30,
-  );
-
+  const breadth = intelRes?.intel?.breadth ?? null;
   const intel: MorningIntelSlice = {
-    breadth: intelRes?.intel.breadth ?? null,
-    flow: intelRes?.intel.flow ?? null,
-    liquidity: intelRes?.intel.liquidity ?? null,
-    contributors: intelRes?.intel.contributors ?? null,
-    conditionScore: intelRes?.intel.condition?.score ?? null,
-    conditionRating: intelRes?.intel.condition?.rating ?? null,
-    news: mergedNews.length ? mergedNews : null,
+    indices: intelRes?.intel?.indices ?? null,
+    breadth,
+    flow: intelRes?.intel?.flow ?? null,
+    condition: intelRes?.intel?.condition ?? null,
+    news: news.slice(0, 6),
+    crossHighlights: cross,
   };
-
-  // Overlay richer news (intel deep fetch + snapshot, deduped) onto snapshot for all composers
-  const snap = enrichSnapshotForReports(s.snapshot, {
-    news: mergedNews.length ? mergedNews : null,
-  });
-  void crossHighlights; // reserved for composer wiring
-
-  const metaSections = { ...snapSections, ...intelSections } as Record<string, FreshnessStatus>;
-  const meta = { ...s.meta, sections: metaSections };
 
   return {
     snap,
-    meta,
+    meta: s.meta,
     sessionState: session.state,
-    dateVi: vnNow.toLocaleDateString("vi-VN", {
-      weekday: "long",
-      day: "2-digit",
-      month: "2-digit",
-      year: "numeric",
-    }),
-    breadth: intelRes?.intel.breadth ?? null,
+    dateVi,
+    breadth,
     intel,
-    sourcesLive,
-    sourcesTotal,
+    sourcesLive: 1,
+    sourcesTotal: 1,
     morningReport,
     priorStrategy,
     weekSummaries,
@@ -167,10 +147,22 @@ async function buildCtx(): Promise<DailyCtx> {
   };
 }
 
-/** Empty — product no longer surfaces assumptions footer. */
 const EMPTY_ASSUMPTIONS: string[] = [];
 
-function composeIntraday(ctx: DailyCtx): { sections: DailyReport["sections"]; assumptions: string[] } {
+function composeMorning(ctx: DailyCtx) {
+  return composeMorningFramework(
+    {
+      snap: ctx.snap,
+      sessionState: ctx.sessionState,
+      dateVi: ctx.dateVi,
+      intel: ctx.intel,
+      morningReport: ctx.morningReport,
+    },
+    EMPTY_ASSUMPTIONS,
+  );
+}
+
+function composeIntraday(ctx: DailyCtx) {
   return composeIntradayFramework(
     {
       snap: ctx.snap,
@@ -185,21 +177,7 @@ function composeIntraday(ctx: DailyCtx): { sections: DailyReport["sections"]; as
   );
 }
 
-function composeMorning(ctx: DailyCtx): { sections: DailyReport["sections"]; assumptions: string[] } {
-  return composeMorningFramework(
-    {
-      snap: ctx.snap,
-      sessionState: ctx.sessionState,
-      dateVi: ctx.dateVi,
-      intel: ctx.intel,
-      sourcesLive: ctx.sourcesLive,
-      sourcesTotal: ctx.sourcesTotal,
-    },
-    EMPTY_ASSUMPTIONS,
-  );
-}
-
-function composeSummary(ctx: DailyCtx): { sections: DailyReport["sections"]; assumptions: string[] } {
+function composeSummary(ctx: DailyCtx) {
   return composeMarketSummaryFramework(
     {
       snap: ctx.snap,
@@ -212,7 +190,7 @@ function composeSummary(ctx: DailyCtx): { sections: DailyReport["sections"]; ass
   );
 }
 
-function composeStrategy(ctx: DailyCtx): { sections: DailyReport["sections"]; assumptions: string[] } {
+function composeStrategy(ctx: DailyCtx) {
   return composeWeeklyStrategyFramework(
     {
       snap: ctx.snap,
@@ -283,22 +261,34 @@ export async function generateDailyReport(
     subtitle:
       type === "morning_brief"
         ? morningTitle().includes("Prep")
-          ? "Chuẩn bị phiên giao dịch kế tiếp — 10 khối Framework · no-mock-data (phát hành ngoài cửa sổ pre-ATO)"
-          : "Chuẩn bị hành động trước ATO — 10 khối theo ORCA Morning Brief Framework · no-mock-data"
+          ? "Chuẩn bị phiên · dữ liệu mới nhất trước mở cửa"
+          : "Khung phân tích đầu ngày · không mock data"
         : type === "intraday_brief"
           ? intradaySubtitle(ctx.slot)
           : type === "market_summary"
-            ? "Tổng kết phiên · scorecard · timeline · bàn giao Morning Brief mai · no-mock-data"
-            : "Chiến lược tuần · tự chấm điểm tuần trước · phân bổ ngành · khung tuần · no-mock-data",
+            ? "Tổng kết phiên · bài học và setup ngày kế"
+            : "Chiến lược tuần · định hướng trung hạn",
     generatedAt: new Date().toISOString(),
     sessionState: ctx.sessionState,
-    marketDataTimestamp: ctx.meta.sourceTimestamp,
-    freshness: (ctx.meta.sections ?? {}) as Record<string, FreshnessStatus>,
+    marketDataTimestamp: ctx.meta.sourceTimestamp ?? null,
+    freshness: (ctx.meta.sections as Record<string, FreshnessStatus>) ?? {},
     sections,
     scenarios: [],
     assumptions: [],
   };
+
   const persistResult = await persist(report);
+  try {
+    const { dispatchReportReadyNotify } = await import("./report-notify");
+    await dispatchReportReadyNotify({
+      type: report.type,
+      title: report.title,
+      subtitle: report.subtitle,
+      generatedAt: report.generatedAt,
+    });
+  } catch {
+    /* notify optional */
+  }
   const meta = buildMeta({
     source: "orca-report-engine",
     sourceTimestampMs: ctx.meta.sourceTimestamp ? Date.parse(ctx.meta.sourceTimestamp) : null,
@@ -377,5 +367,4 @@ export async function getReportById(id: string): Promise<DailyReport | null> {
   }
 }
 
-// silence unused until sector rotation module lands
 void VN_SECTOR_MAP;
