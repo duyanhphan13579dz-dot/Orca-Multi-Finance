@@ -15,6 +15,7 @@ import {
   usePriceAlertsList,
 } from "@/lib/hooks/use-price-alerts";
 import {
+  isValidTelegramConfig,
   isValidWebhookUrl,
   loadWebhookConfig,
   saveWebhookConfig,
@@ -47,6 +48,17 @@ export function PriceAlertsPanel() {
 
   const active = alerts.filter((a) => a.status === "active");
   const triggered = alerts.filter((a) => a.status === "triggered");
+
+  const canSaveWebhook =
+    webhook.url.length === 0 ||
+    (webhook.provider === "telegram"
+      ? isValidTelegramConfig(webhook.url, webhook.secret)
+      : isValidWebhookUrl(webhook.url, webhook.provider));
+
+  const canTest =
+    webhook.provider === "telegram"
+      ? isValidTelegramConfig(webhook.url, webhook.secret)
+      : isValidWebhookUrl(webhook.url, webhook.provider);
 
   const submit = async () => {
     const sym = symbol.trim().toUpperCase();
@@ -84,7 +96,7 @@ export function PriceAlertsPanel() {
         targetPrice: 100,
         direction: "above",
         kind: "price",
-        reason: "Kiem tra webhook Discord Orca",
+        reason: "Kiem tra Telegram/Discord Orca",
         status: "triggered",
         createdAt: Date.now(),
         triggeredAt: Date.now(),
@@ -113,9 +125,7 @@ export function PriceAlertsPanel() {
           <BellRing className="size-4 text-accent-primary" />
           Canh bao gia
           <Badge tone={permTone}>{permLabel}</Badge>
-          {webhook.enabled && webhook.url ? (
-            <Badge tone="accent">Webhook bat</Badge>
-          ) : null}
+          {webhook.enabled && webhook.url ? <Badge tone="accent">Webhook bat</Badge> : null}
         </span>
       }
       right={
@@ -151,21 +161,20 @@ export function PriceAlertsPanel() {
     >
       <div className="space-y-3">
         <p className="text-[11.5px] text-text-muted">
-          Dat muc gia / tran / san. Khi kich hoat: thong bao trinh duyet + Discord webhook.
-          Poll mac dinh 5s (tuy chinh trong Webhook).
+          Dat muc gia / tran / san. Khi kich hoat: thong bao trinh duyet + Discord / Telegram.
         </p>
 
         {showWebhook ? (
           <div className="grid gap-2 rounded-lg border border-border-subtle bg-surface-elevated/40 p-3">
             <div className="flex items-center justify-between gap-2">
-              <span className="text-[12px] font-medium text-text-primary">Webhook Discord</span>
+              <span className="text-[12px] font-medium text-text-primary">Webhook / Telegram</span>
               <label className="flex items-center gap-1.5 text-[11px] text-text-secondary">
                 <input
                   type="checkbox"
                   checked={webhook.enabled}
                   onChange={(e) => setWebhook((w) => ({ ...w, enabled: e.target.checked }))}
                 />
-                Bat gui webhook
+                Bat gui
               </label>
             </div>
             <label className="block">
@@ -180,22 +189,21 @@ export function PriceAlertsPanel() {
                 className="input w-full"
               >
                 <option value="discord">Discord</option>
+                <option value="telegram">Telegram</option>
                 <option value="slack">Slack</option>
                 <option value="generic">Generic JSON</option>
               </select>
             </label>
             <label className="block">
               <span className="mb-0.5 block text-[10px] uppercase tracking-wider text-text-muted">
-                Toc do poll (canh bao gia)
+                Toc do poll
               </span>
               <select
                 value={String(webhook.pollMs || 5000)}
-                onChange={(e) =>
-                  setWebhook((w) => ({ ...w, pollMs: Number(e.target.value) }))
-                }
+                onChange={(e) => setWebhook((w) => ({ ...w, pollMs: Number(e.target.value) }))}
                 className="input w-full"
               >
-                <option value="3000">3 giay (nhanh)</option>
+                <option value="3000">3 giay</option>
                 <option value="5000">5 giay (khuyen nghi)</option>
                 <option value="10000">10 giay</option>
                 <option value="15000">15 giay</option>
@@ -204,7 +212,11 @@ export function PriceAlertsPanel() {
             </label>
             <label className="block">
               <span className="mb-0.5 block text-[10px] uppercase tracking-wider text-text-muted">
-                URL webhook Discord (https)
+                {webhook.provider === "telegram"
+                  ? "Bot token (@BotFather)"
+                  : webhook.provider === "discord"
+                    ? "URL Discord webhook"
+                    : "URL webhook"}
               </span>
               <input
                 value={webhook.url}
@@ -213,40 +225,63 @@ export function PriceAlertsPanel() {
                   const isDc =
                     url.includes("discord.com/api/webhooks") ||
                     url.includes("discordapp.com/api/webhooks");
-                  setWebhook((w) => ({ ...w, url, provider: isDc ? "discord" : w.provider }));
+                  const isTg = /^\d{6,}:[A-Za-z0-9_-]{20,}$/.test(url.trim());
+                  setWebhook((w) => ({
+                    ...w,
+                    url,
+                    provider: isDc ? "discord" : isTg ? "telegram" : w.provider,
+                  }));
                 }}
-                placeholder="https://discord.com/api/webhooks/ID/TOKEN"
+                placeholder={
+                  webhook.provider === "telegram"
+                    ? "123456789:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw"
+                    : "https://discord.com/api/webhooks/..."
+                }
                 className="input w-full font-mono text-[12px]"
                 autoComplete="off"
               />
             </label>
+            {webhook.provider === "telegram" ? (
+              <label className="block">
+                <span className="mb-0.5 block text-[10px] uppercase tracking-wider text-text-muted">
+                  Chat ID (ban / group)
+                </span>
+                <input
+                  value={webhook.secret}
+                  onChange={(e) => setWebhook((w) => ({ ...w, secret: e.target.value }))}
+                  placeholder="123456789  (group: -100...)"
+                  className="input w-full font-mono text-[12px]"
+                  autoComplete="off"
+                />
+              </label>
+            ) : null}
             <div className="flex flex-wrap items-center gap-2">
               <button
                 type="button"
                 onClick={saveWebhook}
-                disabled={webhook.url.length > 0 && !isValidWebhookUrl(webhook.url)}
+                disabled={!canSaveWebhook}
                 className="rounded-md bg-accent-primary px-3 py-1.5 text-[12px] font-semibold text-white disabled:opacity-40"
               >
-                Luu webhook
+                Luu
               </button>
               <button
                 type="button"
                 onClick={() => void testWebhook()}
-                disabled={!isValidWebhookUrl(webhook.url)}
+                disabled={!canTest}
                 className="rounded-md border border-border-subtle px-3 py-1.5 text-[12px] text-text-secondary disabled:opacity-40"
               >
-                Gui thu Discord
+                Gui thu
               </button>
               {webhookTest === "ok" ? (
                 <span className="text-[11px] text-up">Da gui thanh cong</span>
               ) : null}
               {webhookTest === "fail" ? (
-                <span className="text-[11px] text-down">That bai — kiem tra URL</span>
+                <span className="text-[11px] text-down">That bai — kiem tra token/chat_id</span>
               ) : null}
             </div>
             <p className="text-[10.5px] text-text-muted">
-              Discord: Server Settings → Integrations → Webhooks → New Webhook → Copy URL.
-              Dan URL vao o tren, bat "Gui webhook", bam Luu roi Gui thu.
+              Telegram: @BotFather → /newbot → copy token. Chat voi bot 1 lan, lay chat_id qua
+              @userinfobot (hoac API getUpdates). Group: them bot vao group, chat_id am (-100...).
             </p>
           </div>
         ) : null}
@@ -264,11 +299,7 @@ export function PriceAlertsPanel() {
             </label>
             <label className="block">
               <span className="mb-0.5 block text-[10px] uppercase tracking-wider text-text-muted">Loai</span>
-              <select
-                value={kind}
-                onChange={(e) => setKind(e.target.value as AlertKind)}
-                className="input w-full"
-              >
+              <select value={kind} onChange={(e) => setKind(e.target.value as AlertKind)} className="input w-full">
                 <option value="price">Muc gia</option>
                 <option value="ceiling">Cham tran</option>
                 <option value="floor">Cham san</option>
@@ -278,21 +309,11 @@ export function PriceAlertsPanel() {
               <>
                 <label className="block">
                   <span className="mb-0.5 block text-[10px] uppercase tracking-wider text-text-muted">Gia</span>
-                  <input
-                    value={price}
-                    onChange={(e) => setPrice(e.target.value)}
-                    placeholder="65000"
-                    inputMode="decimal"
-                    className="input w-full"
-                  />
+                  <input value={price} onChange={(e) => setPrice(e.target.value)} placeholder="65000" inputMode="decimal" className="input w-full" />
                 </label>
                 <label className="block">
                   <span className="mb-0.5 block text-[10px] uppercase tracking-wider text-text-muted">Dieu kien</span>
-                  <select
-                    value={direction}
-                    onChange={(e) => setDirection(e.target.value as AlertDirection)}
-                    className="input w-full"
-                  >
+                  <select value={direction} onChange={(e) => setDirection(e.target.value as AlertDirection)} className="input w-full">
                     <option value="above">Gia &gt;= muc</option>
                     <option value="below">Gia &lt;= muc</option>
                     <option value="cross">Cross</option>
@@ -306,12 +327,7 @@ export function PriceAlertsPanel() {
             )}
             <label className="block sm:col-span-2">
               <span className="mb-0.5 block text-[10px] uppercase tracking-wider text-text-muted">Ly do</span>
-              <input
-                value={reason}
-                onChange={(e) => setReason(e.target.value)}
-                className="input w-full"
-                maxLength={280}
-              />
+              <input value={reason} onChange={(e) => setReason(e.target.value)} className="input w-full" maxLength={280} />
             </label>
             <div className="flex gap-2 sm:col-span-2">
               <button type="button" onClick={() => void submit()} className="rounded-md bg-accent-primary px-3 py-1.5 text-[12px] font-semibold text-white">
@@ -349,22 +365,18 @@ function AlertRow({ alert, onRemove }: { alert: PriceAlert; onRemove: () => void
   else if (kind === "floor") dirLabel = "San";
   else if (alert.direction === "above") dirLabel = ">=";
   else if (alert.direction === "below") dirLabel = "<=";
-
   let kindTone = "text-text-secondary";
   if (kind === "ceiling") kindTone = "text-violet-300";
   else if (kind === "floor") kindTone = "text-sky-300";
-
   let rowClass = "border-border-subtle";
   if (isTrig) {
     if (kind === "ceiling") rowClass = "border-violet-500/30 bg-violet-500/5";
     else if (kind === "floor") rowClass = "border-sky-400/30 bg-sky-400/5";
     else rowClass = "border-positive/30 bg-positive/5";
   }
-
   const pricePart = kind === "price" ? " " + alert.targetPrice.toLocaleString("vi-VN") : "";
   const statusLabel = isTrig ? "Da kich hoat" : "Dang theo doi";
   const badgeTone: "up" | "neutral" = isTrig ? "up" : "neutral";
-
   return (
     <div className={"flex items-start gap-2 rounded-lg border px-3 py-2 " + rowClass}>
       <div className="min-w-0 flex-1">
