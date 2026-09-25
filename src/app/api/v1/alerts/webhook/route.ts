@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
 import { badRequest, fail, ok } from "@/lib/envelope";
+import { getGlobalDiscordWebhook, postGlobalDiscord } from "@/lib/services/discord-notify";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -65,7 +66,7 @@ function slackPayload(b: Body) {
 }
 
 function escapeHtml(s: string): string {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  return s.replace(/&/g, "&").replace(/</g, "<").replace(/>/g, ">");
 }
 
 function telegramText(b: Body): string {
@@ -98,8 +99,15 @@ function genericPayload(b: Body) {
 export async function POST(req: NextRequest) {
   try {
     const b = (await req.json()) as Body;
-    const url = typeof b.url === "string" ? b.url.trim() : "";
-    if (!url) return badRequest("url is required");
+    const globalUrl = getGlobalDiscordWebhook();
+    let url = typeof b.url === "string" ? b.url.trim() : "";
+    if (!url && globalUrl) {
+      url = globalUrl;
+      b.provider = "discord";
+    }
+    if (!url) {
+      return badRequest("url is required (or set DISCORD_WEBHOOK_URL on server)");
+    }
 
     let provider = b.provider ?? "discord";
     if (isDiscordUrl(url)) provider = "discord";
@@ -136,7 +144,22 @@ export async function POST(req: NextRequest) {
           502,
         );
       }
-      return ok({ delivered: true, status: upstream.status, provider: "telegram" });
+      const g = await postGlobalDiscord({
+        title: b.title || "Orca — Canh bao gia",
+        description: b.body,
+        color: b.color ?? 0xa78bfa,
+        username: "ORCA Alerts",
+        fields: [
+          ...(b.symbol ? [{ name: "Ma", value: "`" + b.symbol + "`", inline: true }] : []),
+          ...(b.price != null ? [{ name: "Gia", value: String(b.price), inline: true }] : []),
+        ],
+      });
+      return ok({
+        delivered: true,
+        status: upstream.status,
+        provider: "telegram",
+        globalMirrored: g.ok && !g.skipped,
+      });
     }
 
     let parsed: URL;
@@ -177,7 +200,28 @@ export async function POST(req: NextRequest) {
         502,
       );
     }
-    return ok({ delivered: true, status: upstream.status, provider });
+
+    const g = await postGlobalDiscord({
+      title: b.title || "Orca — Canh bao gia",
+      description: b.body,
+      color: b.color ?? 0xa78bfa,
+      username: "ORCA Alerts",
+      alreadyPostedUrl: url,
+      fields: [
+        ...(b.symbol ? [{ name: "Ma", value: "`" + b.symbol + "`", inline: true }] : []),
+        ...(b.price != null ? [{ name: "Gia", value: String(b.price), inline: true }] : []),
+        ...(b.targetPrice != null ? [{ name: "Muc", value: String(b.targetPrice), inline: true }] : []),
+        ...(b.direction ? [{ name: "Dieu kien", value: String(b.direction), inline: true }] : []),
+      ],
+    });
+
+    return ok({
+      delivered: true,
+      status: upstream.status,
+      provider,
+      globalMirrored: g.ok && !g.skipped,
+      globalConfigured: Boolean(getGlobalDiscordWebhook()),
+    });
   } catch (e) {
     return fail("WEBHOOK_FAILED", e instanceof Error ? e.message : "unknown", 502);
   }
