@@ -9,7 +9,6 @@ const opt = (v: string | undefined): string | undefined => {
   return t && t.length > 0 ? t : undefined;
 };
 
-/** Comma/semicolon-separated model list → unique non-empty ids */
 function parseModelList(v: string | undefined): string[] {
   if (!v?.trim()) return [];
   const seen = new Set<string>();
@@ -29,7 +28,7 @@ const redisNote = !redisCandidate
   ? undefined
   : redisIsTcp
     ? undefined
-    : "Giá trị Redis được cấu hình không phải redis:// hoặc rediss:// (Upstash REST URL không dùng được với ioredis) — mirror Redis đang TẮT, cache chỉ chạy in-memory.";
+    : "Gia tri Redis khong phai redis:// hoac rediss:// — mirror Redis TAT, cache in-memory.";
 
 export const env = {
   nodeEnv: process.env.NODE_ENV ?? "development",
@@ -49,6 +48,11 @@ export const env = {
   vietnambizBaseUrl: opt(process.env.VIETNAMBIZ_BASE_URL) ?? "https://vietnambiz.vn",
   simplizeBaseUrl: opt(process.env.SIMPLIZE_BASE_URL) ?? "https://api.simplize.vn",
   simplizeApiKey: opt(process.env.SIMPLIZE_API_KEY),
+
+  polygonApiKey: opt(process.env.POLYGON_API_KEY),
+  polygonBaseUrl: opt(process.env.POLYGON_API_BASE_URL) ?? "https://api.polygon.io",
+  coingeckoProApiKey: opt(process.env.COINGECKO_PRO_API_KEY),
+  coingeckoBaseUrl: opt(process.env.COINGECKO_BASE_URL) ?? "https://api.coingecko.com/api/v3",
 
   msnCommodityMap: (() => {
     try {
@@ -73,10 +77,7 @@ export const env = {
   groqBaseUrl: opt(process.env.GROQ_BASE_URL) ?? "https://api.groq.com/openai/v1",
   groqModel: opt(process.env.GROQ_MODEL),
 
-  /** Resolved API key for OpenAI-compatible calls: OpenRouter → Groq */
-  aiApiKey:
-    opt(process.env.OPENROUTER_API_KEY) ??
-    opt(process.env.GROQ_API_KEY),
+  aiApiKey: opt(process.env.OPENROUTER_API_KEY) ?? opt(process.env.GROQ_API_KEY),
   aiBaseUrl:
     opt(process.env.AI_BASE_URL) ??
     (opt(process.env.OPENROUTER_API_KEY) ? "https://openrouter.ai/api/v1" : undefined) ??
