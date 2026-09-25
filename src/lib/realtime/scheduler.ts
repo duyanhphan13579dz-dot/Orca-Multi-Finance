@@ -2,7 +2,7 @@ import "server-only";
 
 /**
  * REPORT SCHEDULER — timezone-aware (Asia/Ho_Chi_Minh), config-driven.
- * Fires each report type once per VN date after its configured time.
+ * Fires morning / intraday / market summary once per window.
  * Also refreshes commodities once per VN calendar day.
  * Started lazily by any report-center API hit; idempotent per date+type.
  */
@@ -31,7 +31,11 @@ class Scheduler {
 
   private vnNow(): { minutes: number; date: string; dow: number } {
     const now = new Date(Date.now() + 7 * 3_600_000 + new Date().getTimezoneOffset() * 60_000);
-    return { minutes: now.getHours() * 60 + now.getMinutes(), date: now.toISOString().slice(0, 10), dow: now.getDay() };
+    return {
+      minutes: now.getHours() * 60 + now.getMinutes(),
+      date: now.toISOString().slice(0, 10),
+      dow: now.getDay(),
+    };
   }
 
   private async loadCfg(): Promise<ScheduleCfg> {
@@ -60,16 +64,46 @@ class Scheduler {
     }
   }
 
-  private async fire(type: "morning_brief" | "market_summary") {
-    if (this.running.has(type)) return;
-    this.running.add(type);
+  /** True if a report of this type was generated in the last `withinMin` minutes. */
+  private async alreadyRecent(type: string, withinMin: number): Promise<boolean> {
+    try {
+      const { db } = await import("@/db");
+      const { reports } = await import("@/db/schema");
+      const { and, eq, gte } = await import("drizzle-orm");
+      const since = new Date(Date.now() - withinMin * 60_000);
+      const rows = await db
+        .select({ id: reports.id })
+        .from(reports)
+        .where(and(eq(reports.type, type), gte(reports.generatedAt, since)))
+        .limit(1);
+      return rows.length > 0;
+    } catch {
+      return true;
+    }
+  }
+
+  private async fire(type: "morning_brief" | "intraday_brief" | "market_summary") {
+    const key = type;
+    if (this.running.has(key)) return;
+    this.running.add(key);
     try {
       const { generateDailyReport } = await import("../services/report-engine");
-      await generateDailyReport(type);
+      const { report } = await generateDailyReport(type);
+      try {
+        const { dispatchReportReadyNotify } = await import("../services/report-notify");
+        await dispatchReportReadyNotify({
+          type: report.type,
+          title: report.title,
+          subtitle: report.subtitle,
+          generatedAt: report.generatedAt,
+        });
+      } catch {
+        /* notify optional */
+      }
     } catch {
       /* logged upstream via provider health */
     } finally {
-      this.running.delete(type);
+      this.running.delete(key);
     }
   }
 
@@ -96,22 +130,47 @@ class Scheduler {
     };
 
     if (cfg.autoDaily && dow !== 0 && dow !== 6) {
-      if (minutes >= parse(cfg.morningTime) && minutes < parse(cfg.summaryTime) && !(await this.already("morning_brief", date))) {
+      if (
+        minutes >= parse(cfg.morningTime) &&
+        minutes < parse(cfg.summaryTime) &&
+        !(await this.already("morning_brief", date))
+      ) {
         void this.fire("morning_brief");
       }
+
+      // Intraday slots (VN): 10:05 mid, 11:30 lunch, 14:10 pre-ATC
+      const intradayWindows: { start: number; end: number; tag: string }[] = [
+        { start: 10 * 60 + 5, end: 10 * 60 + 50, tag: "mid" },
+        { start: 11 * 60 + 25, end: 12 * 60 + 15, tag: "lunch" },
+        { start: 14 * 60 + 5, end: 14 * 60 + 40, tag: "atc" },
+      ];
+      for (const w of intradayWindows) {
+        if (minutes >= w.start && minutes < w.end) {
+          const key = `intraday_brief:${date}:${w.tag}`;
+          if (!this.running.has(key) && !(await this.alreadyRecent("intraday_brief", 90))) {
+            this.running.add(key);
+            void this.fire("intraday_brief").finally(() => this.running.delete(key));
+          }
+          break;
+        }
+      }
+
       if (minutes >= parse(cfg.summaryTime) && !(await this.already("market_summary", date))) {
         void this.fire("market_summary");
       }
     }
 
-    // Commodities: every calendar day (VN), once after configured time
     if (cfg.autoCommodities && minutes >= parse(cfg.commoditiesTime) && this.commoditiesDoneOn !== date) {
       void this.fireCommodities(date);
     }
   }
 
   stats() {
-    return { running: [...this.running], started: Boolean(this.timer), commoditiesDoneOn: this.commoditiesDoneOn };
+    return {
+      running: [...this.running],
+      started: Boolean(this.timer),
+      commoditiesDoneOn: this.commoditiesDoneOn,
+    };
   }
 }
 
