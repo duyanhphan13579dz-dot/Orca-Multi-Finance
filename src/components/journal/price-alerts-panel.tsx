@@ -163,21 +163,21 @@ export function PriceAlertsPanel() {
     >
       <div className="space-y-3">
         <p className="text-[11.5px] text-text-muted">
-          Dat muc gia / tran / san. Monitor dung API co phieu VN + SL/TP vi the Portfolio.
-          Kich hoat: thong bao + Discord/Telegram.
+          Đặt mức giá / trần / sàn. Khi giá chạm mức, Orca gửi thông báo trình duyệt và (nếu bật)
+          tin nhắn vào kênh Discord qua Webhook — giống bot đăng bài trong kênh của bạn.
         </p>
 
         {showWebhook ? (
           <div className="grid gap-2 rounded-lg border border-border-subtle bg-surface-elevated/40 p-3">
             <div className="flex items-center justify-between gap-2">
-              <span className="text-[12px] font-medium text-text-primary">Webhook / Telegram</span>
+              <span className="text-[12px] font-medium text-text-primary">Discord / Telegram</span>
               <label className="flex items-center gap-1.5 text-[11px] text-text-secondary">
                 <input
                   type="checkbox"
                   checked={webhook.enabled}
                   onChange={(e) => setWebhook((w) => ({ ...w, enabled: e.target.checked }))}
                 />
-                Bat gui
+                Bật gửi
               </label>
             </div>
             <label className="block">
@@ -194,34 +194,48 @@ export function PriceAlertsPanel() {
               </select>
             </label>
             <label className="block">
-              <span className="mb-0.5 block text-[10px] uppercase tracking-wider text-text-muted">Toc do poll</span>
+              <span className="mb-0.5 block text-[10px] uppercase tracking-wider text-text-muted">Tốc độ poll</span>
               <select
                 value={String(webhook.pollMs || 5000)}
                 onChange={(e) => setWebhook((w) => ({ ...w, pollMs: Number(e.target.value) }))}
                 className="input w-full"
               >
-                <option value="3000">3 giay</option>
-                <option value="5000">5 giay (khuyen nghi)</option>
-                <option value="10000">10 giay</option>
-                <option value="15000">15 giay</option>
-                <option value="30000">30 giay</option>
+                <option value="3000">3 giây</option>
+                <option value="5000">5 giây (khuyến nghị)</option>
+                <option value="10000">10 giây</option>
+                <option value="15000">15 giây</option>
+                <option value="30000">30 giây</option>
               </select>
             </label>
             <label className="block">
               <span className="mb-0.5 block text-[10px] uppercase tracking-wider text-text-muted">
-                {webhook.provider === "telegram" ? "Bot token" : "URL webhook"}
+                {webhook.provider === "telegram" ? "Bot token" : "URL webhook Discord"}
               </span>
               <input
                 value={webhook.url}
                 onChange={(e) => {
                   const url = e.target.value;
-                  const isDc = url.includes("discord.com/api/webhooks") || url.includes("discordapp.com/api/webhooks");
+                  const isDc =
+                    url.includes("discord.com/api/webhooks") ||
+                    url.includes("discordapp.com/api/webhooks");
                   const isTg = /^\d{6,}:[A-Za-z0-9_-]{20,}$/.test(url.trim());
-                  setWebhook((w) => ({ ...w, url, provider: isDc ? "discord" : isTg ? "telegram" : w.provider }));
+                  setWebhook((w) => ({
+                    ...w,
+                    url,
+                    provider: isDc ? "discord" : isTg ? "telegram" : w.provider,
+                  }));
                 }}
+                placeholder="https://discord.com/api/webhooks/..."
                 className="input w-full font-mono text-[12px]"
                 autoComplete="off"
               />
+              {webhook.provider === "discord" ? (
+                <p className="mt-1 text-[10.5px] leading-relaxed text-text-muted">
+                  Discord: Server → kênh bất kỳ → Edit channel → Integrations → Webhooks → New
+                  Webhook → Copy Webhook URL. Dán vào ô trên → bật "Bật gửi" → Lưu → Gửi thử. Khi
+                  cảnh báo kích hoạt, tin xuất hiện trong kênh đó (tên hiển thị: Orca Alerts).
+                </p>
+              ) : null}
             </label>
             {webhook.provider === "telegram" ? (
               <label className="block">
@@ -235,14 +249,24 @@ export function PriceAlertsPanel() {
               </label>
             ) : null}
             <div className="flex flex-wrap items-center gap-2">
-              <button type="button" onClick={saveWebhook} disabled={!canSaveWebhook} className="rounded-md bg-accent-primary px-3 py-1.5 text-[12px] font-semibold text-white disabled:opacity-40">
-                Luu
+              <button
+                type="button"
+                onClick={saveWebhook}
+                disabled={!canSaveWebhook}
+                className="rounded-md bg-accent-primary px-3 py-1.5 text-[12px] font-semibold text-white disabled:opacity-40"
+              >
+                Lưu
               </button>
-              <button type="button" onClick={() => void testWebhook()} disabled={!canTest} className="rounded-md border border-border-subtle px-3 py-1.5 text-[12px] disabled:opacity-40">
-                Gui thu
+              <button
+                type="button"
+                onClick={() => void testWebhook()}
+                disabled={!canTest}
+                className="rounded-md border border-border-subtle px-3 py-1.5 text-[12px] disabled:opacity-40"
+              >
+                Gửi thử
               </button>
               {webhookTest === "ok" ? <span className="text-[11px] text-up">OK</span> : null}
-              {webhookTest === "fail" ? <span className="text-[11px] text-down">Loi</span> : null}
+              {webhookTest === "fail" ? <span className="text-[11px] text-down">Lỗi</span> : null}
             </div>
           </div>
         ) : null}
@@ -251,11 +275,20 @@ export function PriceAlertsPanel() {
           <div className="grid gap-2 rounded-lg border border-border-subtle bg-surface-elevated/40 p-3 sm:grid-cols-2">
             <label className="block">
               <span className="mb-0.5 block text-[10px] uppercase tracking-wider text-text-muted">Ma</span>
-              <input value={symbol} onChange={(e) => setSymbol(e.target.value.toUpperCase())} placeholder="VCB" className="input w-full" />
+              <input
+                value={symbol}
+                onChange={(e) => setSymbol(e.target.value.toUpperCase())}
+                placeholder="VCB"
+                className="input w-full"
+              />
             </label>
             <label className="block">
               <span className="mb-0.5 block text-[10px] uppercase tracking-wider text-text-muted">Loai</span>
-              <select value={kind} onChange={(e) => setKind(e.target.value as AlertKind)} className="input w-full">
+              <select
+                value={kind}
+                onChange={(e) => setKind(e.target.value as AlertKind)}
+                className="input w-full"
+              >
                 <option value="price">Muc gia</option>
                 <option value="ceiling">Cham tran</option>
                 <option value="floor">Cham san</option>
@@ -265,11 +298,21 @@ export function PriceAlertsPanel() {
               <>
                 <label className="block">
                   <span className="mb-0.5 block text-[10px] uppercase tracking-wider text-text-muted">Gia</span>
-                  <input value={price} onChange={(e) => setPrice(e.target.value)} placeholder="65000" inputMode="decimal" className="input w-full" />
+                  <input
+                    value={price}
+                    onChange={(e) => setPrice(e.target.value)}
+                    placeholder="65000"
+                    inputMode="decimal"
+                    className="input w-full"
+                  />
                 </label>
                 <label className="block">
                   <span className="mb-0.5 block text-[10px] uppercase tracking-wider text-text-muted">Dieu kien</span>
-                  <select value={direction} onChange={(e) => setDirection(e.target.value as AlertDirection)} className="input w-full">
+                  <select
+                    value={direction}
+                    onChange={(e) => setDirection(e.target.value as AlertDirection)}
+                    className="input w-full"
+                  >
                     <option value="above">{"Gia >= muc"}</option>
                     <option value="below">{"Gia <= muc"}</option>
                     <option value="cross">Cross</option>
@@ -283,11 +326,28 @@ export function PriceAlertsPanel() {
             )}
             <label className="block sm:col-span-2">
               <span className="mb-0.5 block text-[10px] uppercase tracking-wider text-text-muted">Ly do</span>
-              <input value={reason} onChange={(e) => setReason(e.target.value)} className="input w-full" maxLength={280} />
+              <input
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
+                className="input w-full"
+                maxLength={280}
+              />
             </label>
             <div className="flex gap-2 sm:col-span-2">
-              <button type="button" onClick={() => void submit()} className="rounded-md bg-accent-primary px-3 py-1.5 text-[12px] font-semibold text-white">Luu</button>
-              <button type="button" onClick={() => setShowForm(false)} className="rounded-md px-3 py-1.5 text-[12px] text-text-muted">Huy</button>
+              <button
+                type="button"
+                onClick={() => void submit()}
+                className="rounded-md bg-accent-primary px-3 py-1.5 text-[12px] font-semibold text-white"
+              >
+                Luu
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowForm(false)}
+                className="rounded-md px-3 py-1.5 text-[12px] text-text-muted"
+              >
+                Huy
+              </button>
             </div>
           </div>
         ) : null}
