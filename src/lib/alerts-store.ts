@@ -2,15 +2,19 @@
 
 export type AlertDirection = "above" | "below" | "cross";
 
+/** price = mức cố định; ceiling/floor = biên độ phiên (từ quote) */
+export type AlertKind = "price" | "ceiling" | "floor";
+
 export type PriceAlertStatus = "active" | "triggered" | "dismissed";
 
 export interface PriceAlert {
   id: string;
   symbol: string;
-  /** Mức giá kích hoạt */
+  /** Mức giá kích hoạt (với kind=ceiling/floor có thể = 0 đến khi resolve) */
   targetPrice: number;
   /** above = giá >= target; below = giá <= target; cross = chạm từ hai phía */
   direction: AlertDirection;
+  kind?: AlertKind;
   reason: string;
   status: PriceAlertStatus;
   createdAt: number;
@@ -43,12 +47,15 @@ export function addAlert(input: {
   targetPrice: number;
   direction: AlertDirection;
   reason: string;
+  kind?: AlertKind;
 }): PriceAlert {
+  const kind = input.kind ?? "price";
   const alert: PriceAlert = {
     id: crypto.randomUUID(),
     symbol: input.symbol.toUpperCase().replace(/[^A-Z0-9]/g, ""),
-    targetPrice: input.targetPrice,
-    direction: input.direction,
+    targetPrice: kind === "price" ? input.targetPrice : input.targetPrice || 0,
+    direction: kind === "ceiling" ? "above" : kind === "floor" ? "below" : input.direction,
+    kind,
     reason: input.reason.trim().slice(0, 280),
     status: "active",
     createdAt: Date.now(),
@@ -83,13 +90,32 @@ export function activeSymbols(alerts: PriceAlert[] = loadAlerts()): string[] {
   return [...new Set(alerts.filter((a) => a.status === "active").map((a) => a.symbol))];
 }
 
-export function shouldTrigger(alert: PriceAlert, price: number, prevPrice: number | null): boolean {
+export function shouldTrigger(
+  alert: PriceAlert,
+  price: number,
+  prevPrice: number | null,
+  bands?: { ceiling?: number | null; floor?: number | null },
+): boolean {
   if (alert.status !== "active") return false;
+
+  const kind = alert.kind ?? "price";
+  if (kind === "ceiling") {
+    const ceil = bands?.ceiling;
+    if (ceil == null || !Number.isFinite(ceil)) return false;
+    return Math.abs(price - ceil) <= 0.051 || price >= ceil;
+  }
+  if (kind === "floor") {
+    const fl = bands?.floor;
+    if (fl == null || !Number.isFinite(fl)) return false;
+    return Math.abs(price - fl) <= 0.051 || price <= fl;
+  }
+
   const t = alert.targetPrice;
+  if (!Number.isFinite(t) || t <= 0) return false;
   if (alert.direction === "above") return price >= t;
   if (alert.direction === "below") return price <= t;
   // cross: đi qua mức target so với giá trước
-  if (prevPrice == null) return price === t;
+  if (prevPrice == null) return Math.abs(price - t) <= 0.051;
   const wasBelow = prevPrice < t;
   const wasAbove = prevPrice > t;
   if (wasBelow && price >= t) return true;
