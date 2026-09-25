@@ -6,7 +6,7 @@ import { ssiWs } from "@/lib/realtime/ssi-ws";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
-export const maxDuration = 15;
+export const maxDuration = 30;
 
 /** Warm full VN market board cache (indices + all quotes + universe). */
 export async function GET(req: Request) {
@@ -15,10 +15,13 @@ export async function GET(req: Request) {
     const auth = req.headers.get("authorization") ?? "";
     const querySecret = new URL(req.url).searchParams.get("secret") ?? "";
     if (auth !== `Bearer ${cronSecret}` && querySecret !== cronSecret) {
-      return new Response(JSON.stringify({ success: false, error: { code: "UNAUTHORIZED", message: "Invalid cron secret" } }), {
-        status: 401,
-        headers: { "Content-Type": "application/json" },
-      });
+      return new Response(
+        JSON.stringify({ success: false, error: { code: "UNAUTHORIZED", message: "Invalid cron secret" } }),
+        {
+          status: 401,
+          headers: { "Content-Type": "application/json" },
+        },
+      );
     }
   }
   const t0 = Date.now();
@@ -35,6 +38,15 @@ export async function GET(req: Request) {
   if (!market) {
     return unavailable("vn-cron-stocks", "Không refresh được bảng giá VN.");
   }
+
+  let alertMonitor: unknown = null;
+  try {
+    const { runServerAlertMonitor } = await import("@/lib/services/alert-engine");
+    alertMonitor = await runServerAlertMonitor();
+  } catch (e) {
+    alertMonitor = { error: e instanceof Error ? e.message : "alert monitor failed" };
+  }
+
   return ok({
     ok: true,
     sessionDate: market.sessionDate,
@@ -46,5 +58,6 @@ export async function GET(req: Request) {
     orderBookSnapshots: snapshots,
     orderBookCandidates: orderBooks.length,
     orderBookPipeline: pipeline,
+    alertMonitor,
   });
 }

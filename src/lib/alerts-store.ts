@@ -40,6 +40,24 @@ export function saveAlerts(alerts: PriceAlert[]): void {
   if (typeof window === "undefined") return;
   localStorage.setItem(KEY, JSON.stringify(alerts));
   window.dispatchEvent(new CustomEvent("orca-alerts-changed"));
+  // Đồng bộ lên Google Sheets để cron server monitor (Discord khi không mở tab)
+  void syncAlertsToServer(alerts);
+}
+
+/** Push alerts to Sheets backend (fire-and-forget). */
+export async function syncAlertsToServer(alerts?: PriceAlert[]): Promise<boolean> {
+  if (typeof window === "undefined") return false;
+  const list = alerts ?? loadAlerts();
+  try {
+    const res = await fetch("/api/v1/sheets", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "push", alerts: list }),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
 }
 
 export function addAlert(input: {
@@ -114,7 +132,6 @@ export function shouldTrigger(
   if (!Number.isFinite(t) || t <= 0) return false;
   if (alert.direction === "above") return price >= t;
   if (alert.direction === "below") return price <= t;
-  // cross: đi qua mức target so với giá trước
   if (prevPrice == null) return Math.abs(price - t) <= 0.051;
   const wasBelow = prevPrice < t;
   const wasAbove = prevPrice > t;

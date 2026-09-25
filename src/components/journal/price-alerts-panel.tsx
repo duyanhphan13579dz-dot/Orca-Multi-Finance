@@ -163,8 +163,13 @@ export function PriceAlertsPanel() {
     >
       <div className="space-y-3">
         <p className="text-[11.5px] text-text-muted">
-          Đặt mức giá / trần / sàn. Khi giá chạm mức, Orca gửi thông báo trình duyệt và (nếu bật)
-          tin nhắn vào kênh Discord qua Webhook — giống bot đăng bài trong kênh của bạn.
+          Đặt mức giá / trần / sàn. Khi chạm mức: thông báo trình duyệt + Discord (nếu bật Webhook).
+        </p>
+        <p className="rounded-md border border-border-subtle bg-surface-elevated/50 px-2.5 py-2 text-[10.5px] leading-relaxed text-text-muted">
+          <span className="font-semibold text-text-secondary">Tự động hóa (không cần mở tab):</span>{" "}
+          1) Env <code className="text-[10px]">DISCORD_WEBHOOK_URL</code> · 2) Google Sheets (Portfolio
+          → Sheets → Đẩy lên) · 3) Cron mỗi 15 phút trong phiên kiểm tra giá và gửi Discord. Tab mở vẫn
+          monitor nhanh hơn (3–15s).
         </p>
 
         {showWebhook ? (
@@ -184,7 +189,9 @@ export function PriceAlertsPanel() {
               <span className="mb-0.5 block text-[10px] uppercase tracking-wider text-text-muted">Provider</span>
               <select
                 value={webhook.provider}
-                onChange={(e) => setWebhook((w) => ({ ...w, provider: e.target.value as WebhookProvider }))}
+                onChange={(e) =>
+                  setWebhook((w) => ({ ...w, provider: e.target.value as WebhookProvider }))
+                }
                 className="input w-full"
               >
                 <option value="discord">Discord</option>
@@ -231,9 +238,8 @@ export function PriceAlertsPanel() {
               />
               {webhook.provider === "discord" ? (
                 <p className="mt-1 text-[10.5px] leading-relaxed text-text-muted">
-                  Discord: Server → kênh bất kỳ → Edit channel → Integrations → Webhooks → New
-                  Webhook → Copy Webhook URL. Dán vào ô trên → bật "Bật gửi" → Lưu → Gửi thử. Khi
-                  cảnh báo kích hoạt, tin xuất hiện trong kênh đó (tên hiển thị: Orca Alerts).
+                  Discord: Server → kênh → Edit channel → Integrations → Webhooks → New Webhook →
+                  Copy URL. Dán vào đây → Bật gửi → Lưu → Gửi thử.
                 </p>
               ) : null}
             </label>
