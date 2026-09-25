@@ -12,6 +12,7 @@ import { useApi } from "@/lib/hooks";
 import type { ProviderStatus } from "@/lib/types";
 import { ProfileTab, AppearanceTab } from "@/components/settings-panels-extra";
 import { SecurityTab, SystemTab, DataRealtimeTab, AiTab, DashboardTab, NotificationsTab } from "@/components/settings-panels";
+import { SheetsSyncPanel } from "@/components/sheets-sync-panel";
 
 const TABS = [
   { id: "profile", label: "Profile", icon: User2 },
@@ -33,9 +34,9 @@ export function SettingsPage() {
 
   return (
     <div className="mx-auto max-w-4xl">
-      <h1 className="mb-1 text-lg font-semibold">Cài đặt</h1>
+      <h1 className="mb-1 text-lg font-semibold">Cai dat</h1>
       <p className="mb-4 text-[12px] text-text-muted">
-        Mọi thay đổi được lưu tức thờ (local) và đồng bộ tài khoản khi đã đăng nhập — không bao giờ reset khi refresh.
+        Thay doi luu local; Google Sheets dong bo qua tab Data & Realtime.
       </p>
       <div className="grid grid-cols-12 gap-3">
         <Panel className="col-span-12 md:col-span-3" pad={false}>
@@ -58,11 +59,16 @@ export function SettingsPage() {
             })}
           </nav>
         </Panel>
-        <div className="col-span-12 min-w-0 md:col-span-9">
+        <div className="col-span-12 min-w-0 space-y-3 md:col-span-9">
           {tab === "profile" && <ProfileTab />}
           {tab === "appearance" && <AppearanceTab />}
           {tab === "dashboard" && <DashboardTab />}
-          {tab === "realtime" && <DataRealtimeTab />}
+          {tab === "realtime" && (
+            <>
+              <DataRealtimeTab />
+              <SheetsSyncPanel />
+            </>
+          )}
           {tab === "notifications" && <NotificationsTab />}
           {tab === "ai" && <AiTab />}
           {tab === "security" && <SecurityTab />}
