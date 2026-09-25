@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useEffect, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 
 /**
  * ORCA Settings System — client store + server persistence.
@@ -14,7 +14,7 @@ export interface UserSettings {
   profile: {
     displayName: string;
     avatarStyle: "orca" | "initials-ocean" | "initials-slate" | "initials-amber" | "custom";
-    /** Data URL (jpeg/png) or https URL — max ~120KB recommended */
+    /** Data URL (jpeg) sau khi crop 160px — đồng bộ qua /api/v1/settings khi đăng nhập */
     avatarUrl: string | null;
     language: "vi" | "en";
     timezone: string; // IANA
@@ -81,7 +81,14 @@ export const DASHBOARD_WIDGETS: { id: string; label: string; hint: string }[] = 
 ];
 
 export const DEFAULT_SETTINGS: UserSettings = {
-  profile: { displayName: "", avatarStyle: "orca", avatarUrl: null, language: "vi", timezone: "Asia/Ho_Chi_Minh", region: "vn" },
+  profile: {
+    displayName: "",
+    avatarStyle: "orca",
+    avatarUrl: null,
+    language: "vi",
+    timezone: "Asia/Ho_Chi_Minh",
+    region: "vn",
+  },
   appearance: { mode: "navy", density: "normal", fontSize: "md", numberFormat: "en-US", currency: "USD" },
   dashboard: {
     widgets: DASHBOARD_WIDGETS.map((w, i) => ({ id: w.id, visible: true, order: i })),
@@ -108,8 +115,6 @@ export const DEFAULT_SETTINGS: UserSettings = {
 const KEY = "orca.settings.v1";
 const FONT_MAP = { sm: "14px", md: "15px", lg: "16px" } as const;
 
-/* ------------------------------ store core -------------------------------- */
-
 let snapshot: UserSettings = DEFAULT_SETTINGS;
 let loggedIn = false;
 const listeners = new Set<() => void>();
@@ -134,7 +139,7 @@ function persistLocal() {
   try {
     localStorage.setItem(KEY, JSON.stringify(snapshot));
   } catch {
-    /* private mode */
+    /* private mode / quota */
   }
 }
 
@@ -157,18 +162,16 @@ function notify() {
 function applyHtmlAttrs(s: UserSettings) {
   if (typeof document === "undefined") return;
   const el = document.documentElement;
-  el.dataset.theme = s.appearance.mode === "system" ? (window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "navy") : s.appearance.mode;
+  const mode =
+    s.appearance.mode === "system"
+      ? window.matchMedia("(prefers-color-scheme: light)").matches
+        ? "light"
+        : "navy"
+      : s.appearance.mode;
+  el.dataset.theme = mode;
   el.dataset.density = s.appearance.density;
   el.style.fontSize = FONT_MAP[s.appearance.fontSize];
   el.lang = s.profile.language;
-}
-
-export function getSettingsSnapshot() {
-  return snapshot;
-}
-
-export function setLoggedInFlag(v: boolean) {
-  loggedIn = v;
 }
 
 function hydrateFromLocal() {
@@ -182,7 +185,36 @@ function hydrateFromLocal() {
   }
 }
 
-export function useSettings() {
+export function getSettingsSnapshot(): UserSettings {
+  return snapshot;
+}
+
+export function updateSettings(patch: Partial<UserSettings>) {
+  snapshot = mergeDeep(snapshot, { ...patch, updatedAt: Date.now() });
+  persistLocal();
+  applyHtmlAttrs(snapshot);
+  scheduleServerSync();
+  notify();
+}
+
+export function setLoggedInFlag(v: boolean) {
+  loggedIn = v;
+}
+
+type SettingsCtxValue = {
+  settings: UserSettings;
+  update: (patch: Partial<UserSettings>) => void;
+  reset: () => void;
+};
+
+const SettingsCtx = createContext<SettingsCtxValue | null>(null);
+
+export function SettingsProvider({ children }: { children: ReactNode }) {
+  const value = useSettings();
+  return <SettingsCtx.Provider value={value}>{children}</SettingsCtx.Provider>;
+}
+
+export function useSettings(): SettingsCtxValue {
   const [, setTick] = useState(0);
   const hydrated = useRef(false);
 
@@ -212,7 +244,7 @@ export function useSettings() {
         setLoggedInFlag(true);
         const setRes = await fetch("/api/v1/settings");
         if (!setRes.ok || cancelled) return;
-        const json = (await setRes.json()) as { data?: { settings?: Partial<UserSettings> } };
+        const json = (await setRes.json()) as { data?: { settings?: Partial<UserSettings> | null } };
         const remote = json?.data?.settings;
         if (remote && !cancelled) {
           snapshot = mergeDeep(snapshot, remote);
@@ -230,11 +262,7 @@ export function useSettings() {
   }, []);
 
   const update = (patch: Partial<UserSettings>) => {
-    snapshot = mergeDeep(snapshot, { ...patch, updatedAt: Date.now() });
-    persistLocal();
-    applyHtmlAttrs(snapshot);
-    scheduleServerSync();
-    notify();
+    updateSettings(patch);
   };
 
   const reset = () => {
@@ -248,14 +276,15 @@ export function useSettings() {
   return { settings: snapshot, update, reset };
 }
 
-const SettingsCtx = createContext<ReturnType<typeof useSettings> | null>(null);
-
-export function SettingsProvider({ children }: { children: React.ReactNode }) {
-  const value = useSettings();
-  return <SettingsCtx.Provider value={value}>{children}</SettingsCtx.Provider>;
+export function resolveRefresh(baseMs: number | undefined): number {
+  const s = snapshot.realtime;
+  if (!s.liveUpdates) return Math.max(baseMs ?? 60_000, 60_000);
+  if (s.lowDataMode) return Math.max(baseMs ?? 30_000, 30_000);
+  const sec = s.refreshSeconds || 15;
+  return Math.max(sec * 1000, baseMs ?? 0);
 }
 
-export function useSettingsContext() {
+export function useSettingsContext(): SettingsCtxValue {
   const ctx = useContext(SettingsCtx);
   if (!ctx) throw new Error("useSettingsContext outside provider");
   return ctx;
