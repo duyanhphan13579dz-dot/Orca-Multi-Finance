@@ -15,8 +15,7 @@ type PermissionState = NotificationPermission | "unsupported";
 async function ensureServiceWorker(): Promise<ServiceWorkerRegistration | null> {
   if (typeof window === "undefined" || !("serviceWorker" in navigator)) return null;
   try {
-    const reg = await navigator.serviceWorker.register("/sw.js", { scope: "/" });
-    return reg;
+    return await navigator.serviceWorker.register("/sw.js", { scope: "/" });
   } catch {
     return null;
   }
@@ -64,7 +63,6 @@ function alertBody(alert: PriceAlert, price: number): string {
 async function showAlertNotification(alert: PriceAlert, price: number) {
   const title = alertTitle(alert);
   const body = alertBody(alert, price);
-
   const opts: NotificationOptions = {
     body,
     tag: "orca-alert-" + alert.id,
@@ -73,7 +71,6 @@ async function showAlertNotification(alert: PriceAlert, price: number) {
     data: { url: "/stocks/" + encodeURIComponent(alert.symbol), alertId: alert.id },
     requireInteraction: true,
   };
-
   try {
     const reg = await ensureServiceWorker();
     if (reg?.showNotification) {
@@ -90,7 +87,9 @@ async function showAlertNotification(alert: PriceAlert, price: number) {
 
 export async function dispatchAlertWebhook(alert: PriceAlert, price: number): Promise<boolean> {
   const cfg = loadWebhookConfig();
-  if (!cfg.enabled || !cfg.url || !isValidWebhookUrl(cfg.url)) return false;
+  if (!cfg.enabled || !cfg.url) return false;
+  if (cfg.provider !== "telegram" && !isValidWebhookUrl(cfg.url, cfg.provider)) return false;
+  if (cfg.provider === "telegram" && !cfg.secret) return false;
 
   const kind = alert.kind ?? "price";
   const color = kind === "ceiling" ? 0xa78bfa : kind === "floor" ? 0x38bdf8 : 0x22c55e;
@@ -119,6 +118,38 @@ export async function dispatchAlertWebhook(alert: PriceAlert, price: number): Pr
   }
 }
 
+function loadOpenStockPositions(): {
+  id: string;
+  symbol: string;
+  side: "long" | "short";
+  stopLoss: number | null;
+  takeProfit: number | null;
+}[] {
+  try {
+    const raw = JSON.parse(localStorage.getItem("orca.journal.v1") ?? "[]") as {
+      id: string;
+      assetType?: string;
+      symbol: string;
+      side: "long" | "short";
+      exit: number | null;
+      stopLoss: number | null;
+      takeProfit: number | null;
+    }[];
+    if (!Array.isArray(raw)) return [];
+    return raw
+      .filter((t) => (t.assetType ?? "stock") === "stock" && t.exit == null && t.symbol)
+      .map((t) => ({
+        id: t.id,
+        symbol: String(t.symbol).toUpperCase(),
+        side: t.side === "short" ? "short" : "long",
+        stopLoss: t.stopLoss,
+        takeProfit: t.takeProfit,
+      }));
+  } catch {
+    return [];
+  }
+}
+
 export function usePriceAlertMonitor(pollMs = 15_000) {
   const prevPrices = useRef<Record<string, number>>({});
   const firing = useRef<Set<string>>(new Set());
@@ -132,11 +163,15 @@ export function usePriceAlertMonitor(pollMs = 15_000) {
     const tick = async () => {
       if (cancelled || document.visibilityState === "hidden") return;
       const alerts = loadAlerts().filter((a) => a.status === "active");
-      const symbols = activeSymbols(alerts);
-      if (symbols.length === 0) return;
+      const positions = loadOpenStockPositions();
+      const symSet = new Set<string>([
+        ...activeSymbols(alerts),
+        ...positions.map((p) => p.symbol),
+      ]);
+      if (symSet.size === 0) return;
 
       try {
-        const qs = symbols.slice(0, 40).join(",");
+        const qs = [...symSet].slice(0, 40).join(",");
         const res = await fetch("/api/v1/stocks?symbols=" + encodeURIComponent(qs), {
           cache: "no-store",
         });
@@ -154,22 +189,72 @@ export function usePriceAlertMonitor(pollMs = 15_000) {
         const quotes = json.data?.quotes ?? [];
         for (const q of quotes) {
           if (!q?.symbol || !Number.isFinite(q.price)) continue;
-          const prev = prevPrices.current[q.symbol] ?? null;
+          const sym = String(q.symbol).toUpperCase();
+          const prev = prevPrices.current[sym] ?? null;
+
           const matched = alerts.filter(
             (a) =>
-              a.symbol === q.symbol &&
+              a.symbol === sym &&
               shouldTrigger(a, q.price, prev, {
                 ceiling: q.ceilingPrice,
                 floor: q.floorPrice,
               }),
           );
-          prevPrices.current[q.symbol] = q.price;
+          prevPrices.current[sym] = q.price;
+
           for (const a of matched) {
             if (firing.current.has(a.id)) continue;
             firing.current.add(a.id);
             markTriggered(a.id, q.price);
             await showAlertNotification(a, q.price);
             void dispatchAlertWebhook(a, q.price);
+          }
+
+          for (const pos of positions.filter((p) => p.symbol === sym)) {
+            const keySl = "pos-sl-" + pos.id;
+            const keyTp = "pos-tp-" + pos.id;
+            if (pos.stopLoss != null && Number.isFinite(pos.stopLoss)) {
+              const hit =
+                pos.side === "long" ? q.price <= pos.stopLoss : q.price >= pos.stopLoss;
+              if (hit && !firing.current.has(keySl)) {
+                firing.current.add(keySl);
+                const synthetic: PriceAlert = {
+                  id: keySl,
+                  symbol: sym,
+                  targetPrice: pos.stopLoss,
+                  direction: pos.side === "long" ? "below" : "above",
+                  kind: "price",
+                  reason: "Portfolio SL · vi the " + pos.side,
+                  status: "triggered",
+                  createdAt: Date.now(),
+                  triggeredAt: Date.now(),
+                  triggeredPrice: q.price,
+                };
+                await showAlertNotification(synthetic, q.price);
+                void dispatchAlertWebhook(synthetic, q.price);
+              }
+            }
+            if (pos.takeProfit != null && Number.isFinite(pos.takeProfit)) {
+              const hit =
+                pos.side === "long" ? q.price >= pos.takeProfit : q.price <= pos.takeProfit;
+              if (hit && !firing.current.has(keyTp)) {
+                firing.current.add(keyTp);
+                const synthetic: PriceAlert = {
+                  id: keyTp,
+                  symbol: sym,
+                  targetPrice: pos.takeProfit,
+                  direction: pos.side === "long" ? "above" : "below",
+                  kind: "price",
+                  reason: "Portfolio TP · vi the " + pos.side,
+                  status: "triggered",
+                  createdAt: Date.now(),
+                  triggeredAt: Date.now(),
+                  triggeredPrice: q.price,
+                };
+                await showAlertNotification(synthetic, q.price);
+                void dispatchAlertWebhook(synthetic, q.price);
+              }
+            }
           }
         }
       } catch {
