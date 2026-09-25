@@ -1,4 +1,5 @@
 import "server-only";
+import { postGlobalDiscord } from "./discord-notify";
 
 export type ReportNotifyPayload = {
   type: string;
@@ -16,10 +17,21 @@ function store(): NotifyEntry[] {
   return g.__orcaReportNotifies;
 }
 
-/**
- * After a daily report is persisted: keep a short in-memory feed for the UI
- * and optionally POST to REPORT_WEBHOOK_URL / DISCORD (env).
- */
+const TYPE_LABEL: Record<string, string> = {
+  morning_brief: "Morning Brief",
+  intraday_brief: "Intraday Brief",
+  market_summary: "Market Summary",
+  strategy: "Weekly Strategy",
+};
+
+const TYPE_COLOR: Record<string, number> = {
+  morning_brief: 0xf59e0b,
+  intraday_brief: 0x38bdf8,
+  market_summary: 0x22c55e,
+  strategy: 0xa78bfa,
+};
+
+/** After a daily report is persisted — notify shared Discord + in-memory feed. */
 export async function dispatchReportReadyNotify(payload: ReportNotifyPayload): Promise<void> {
   const entry: NotifyEntry = {
     ...payload,
@@ -30,40 +42,26 @@ export async function dispatchReportReadyNotify(payload: ReportNotifyPayload): P
   list.unshift(entry);
   if (list.length > 30) list.length = 30;
 
-  const webhook =
-    process.env.REPORT_WEBHOOK_URL?.trim() ||
-    process.env.DISCORD_REPORT_WEBHOOK?.trim() ||
-    process.env.DISCORD_WEBHOOK_URL?.trim();
-
-  if (!webhook) return;
-
-  const typeLabel: Record<string, string> = {
-    morning_brief: "Morning Brief",
-    intraday_brief: "Intraday Brief",
-    market_summary: "Market Summary",
-    strategy: "Weekly Strategy",
-  };
-  const label = typeLabel[payload.type] ?? payload.type;
-  const content =
-    `**ORCA · ${label} sẵn sàng**\n` +
-    `${payload.title}\n` +
-    (payload.subtitle ? `_${payload.subtitle}_\n` : "") +
-    `<https://orca-multi-finance.vercel.app/reports>`;
-
-  try {
-    const isDiscord = /discord\.com\/api\/webhooks/i.test(webhook);
-    await fetch(webhook, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(
-        isDiscord
-          ? { content: content.slice(0, 1900) }
-          : { text: content, type: payload.type, title: payload.title, at: payload.generatedAt },
-      ),
-    });
-  } catch {
-    /* non-fatal */
-  }
+  const label = TYPE_LABEL[payload.type] ?? payload.type;
+  await postGlobalDiscord({
+    title: `ORCA · ${label} sẵn sàng`,
+    description:
+      `${payload.title}\n` +
+      (payload.subtitle ? `_${payload.subtitle}_\n` : "") +
+      `\n[Mở Bản tin](https://orca-multi-finance.vercel.app/reports)`,
+    color: TYPE_COLOR[payload.type] ?? 0x6366f1,
+    username: "ORCA Reports",
+    fields: [
+      { name: "Loại", value: label, inline: true },
+      {
+        name: "Thời gian",
+        value: new Date(payload.generatedAt).toLocaleString("vi-VN", {
+          timeZone: "Asia/Ho_Chi_Minh",
+        }),
+        inline: true,
+      },
+    ],
+  });
 }
 
 export function listRecentReportNotifies(limit = 10): NotifyEntry[] {
