@@ -152,9 +152,15 @@ export default function VnMarketCenterPage() {
                         <AddToWatchlist assetType="stock" symbol={qu.symbol} />
                       </div>
                       {qu.name ? <div className="truncate text-[11px] text-text-muted">{qu.name}</div> : null}
-                      <div className="mt-0.5 flex gap-3 text-[10px] text-text-muted">
+                      <div className="mt-0.5 flex flex-wrap gap-x-3 gap-y-0.5 text-[10px] text-text-muted">
                         <span className="num">KL {fmtCompact(qu.volume)}</span>
                         <span className="num">GT {fmtCompact(qu.quoteVolume)}</span>
+                        {qu.ceilingPrice != null ? (
+                          <span className="num text-up/80">Trần {fmtNum(qu.ceilingPrice, 2)}</span>
+                        ) : null}
+                        {qu.floorPrice != null ? (
+                          <span className="num text-down/80">Sàn {fmtNum(qu.floorPrice, 2)}</span>
+                        ) : null}
                       </div>
                     </div>
                     <div className="shrink-0 text-right">
@@ -169,12 +175,14 @@ export default function VnMarketCenterPage() {
             <div className="table-scroll hidden max-h-[min(70vh,720px)] w-full md:block">
               <table className="stock-table w-full table-fixed text-left">
                 <colgroup>
-                  <col className="w-[22%]" />
-                  <col className="w-[12%]" />
-                  <col className="w-[12%]" />
+                  <col className="w-[16%]" />
+                  <col className="w-[9%]" />
+                  <col className="w-[9%]" />
+                  <col className="w-[9%]" />
+                  <col className="w-[9%]" />
+                  <col className="w-[9%]" />
                   <col className="w-[11%]" />
-                  <col className="w-[13%]" />
-                  <col className="w-[14%]" />
+                  <col className="w-[12%]" />
                   <col className="w-[16%]" />
                 </colgroup>
                 <thead className="sticky top-0 z-10 bg-background-secondary text-[10px] uppercase tracking-wider text-text-muted">
@@ -183,6 +191,8 @@ export default function VnMarketCenterPage() {
                     <th className="text-right">Giá</th>
                     <th className="text-right">%</th>
                     <th className="text-right">TC</th>
+                    <th className="text-right text-up/90">Trần</th>
+                    <th className="text-right text-down/90">Sàn</th>
                     <th className="text-right">KL</th>
                     <th className="text-right">GT</th>
                     <th className="pr-2 text-right sm:pr-3">Theo dõi</th>
@@ -210,6 +220,12 @@ export default function VnMarketCenterPage() {
                       </td>
                       <td className="num py-2 text-right text-text-muted">
                         {qu.referencePrice != null ? fmtNum(qu.referencePrice, 2) : "—"}
+                      </td>
+                      <td className="num py-2 text-right text-up/90">
+                        {qu.ceilingPrice != null ? fmtNum(qu.ceilingPrice, 2) : "—"}
+                      </td>
+                      <td className="num py-2 text-right text-down/90">
+                        {qu.floorPrice != null ? fmtNum(qu.floorPrice, 2) : "—"}
                       </td>
                       <td className="num py-2 text-right text-text-secondary">{fmtCompact(qu.volume)}</td>
                       <td className="num py-2 text-right text-text-secondary">{fmtCompact(qu.quoteVolume)}</td>
