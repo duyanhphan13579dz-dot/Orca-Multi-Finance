@@ -8,6 +8,13 @@ import { useSettings } from "@/lib/settings";
 import { loadAlerts } from "@/lib/alerts-store";
 import type { NewsArticle } from "@/lib/types";
 
+type ReportItem = {
+  id: string;
+  type: string;
+  title: string;
+  generatedAt: string;
+};
+
 function vnMinutesNow(): number {
   try {
     const parts = new Intl.DateTimeFormat("en-GB", {
@@ -37,6 +44,33 @@ function vnDateKey(): string {
   }
 }
 
+function seenReportIds(): Set<string> {
+  try {
+    const raw = localStorage.getItem("orca.reports.seen.ids") ?? "[]";
+    return new Set(JSON.parse(raw) as string[]);
+  } catch {
+    return new Set();
+  }
+}
+
+function markReportsSeen(ids: string[]) {
+  try {
+    const set = seenReportIds();
+    for (const id of ids) set.add(id);
+    const arr = [...set].slice(-40);
+    localStorage.setItem("orca.reports.seen.ids", JSON.stringify(arr));
+  } catch {
+    /* */
+  }
+}
+
+const TYPE_LABEL: Record<string, string> = {
+  morning_brief: "Morning Brief",
+  intraday_brief: "Intraday Brief",
+  market_summary: "Market Summary",
+  strategy: "Weekly Strategy",
+};
+
 export function NotifBell() {
   const { settings } = useSettings();
   const n = settings.notifications;
@@ -44,8 +78,14 @@ export function NotifBell() {
     n.marketNews ? "/api/v1/news?limit=8" : null,
     { refreshInterval: 90_000 },
   );
+  const { data: reportData, mutate: mutateReports } = useApi<{ items: ReportItem[] }>(
+    n.reportReady || n.digestMorning ? "/api/v1/reports?limit=7" : null,
+    { refreshInterval: 120_000 },
+  );
   const [open, setOpen] = useState(false);
   const [alertTick, setAlertTick] = useState(0);
+  const [reportTick, setReportTick] = useState(0);
+  const notifiedRef = useRef<Set<string>>(new Set());
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -77,6 +117,8 @@ export function NotifBell() {
     : [];
 
   void alertTick;
+  void reportTick;
+
   const triggeredAlerts =
     n.priceAlerts && typeof window !== "undefined"
       ? loadAlerts()
@@ -90,183 +132,233 @@ export function NotifBell() {
           }))
       : [];
 
+  const reportItems = (reportData?.items ?? []).filter((r) =>
+    ["morning_brief", "intraday_brief", "market_summary"].includes(r.type),
+  );
+
+  const recentReports = reportItems
+    .filter((r) => {
+      const t = Date.parse(r.generatedAt);
+      return Number.isFinite(t) && now - t < 18 * 60 * 60_000;
+    })
+    .slice(0, 5);
+
+  const seen = typeof window !== "undefined" ? seenReportIds() : new Set<string>();
+  const unreadReports = n.reportReady ? recentReports.filter((r) => !seen.has(r.id)) : [];
+
+  useEffect(() => {
+    if (!n.reportReady || typeof window === "undefined") return;
+    if (!("Notification" in window) || Notification.permission !== "granted") return;
+    for (const r of unreadReports) {
+      if (notifiedRef.current.has(r.id)) continue;
+      notifiedRef.current.add(r.id);
+      try {
+        new Notification(`ORCA · ${TYPE_LABEL[r.type] ?? "Bản tin"} sẵn sàng`, {
+          body: r.title,
+          tag: `orca-report-${r.id}`,
+        });
+      } catch {
+        /* */
+      }
+    }
+  }, [unreadReports, n.reportReady]);
+
   const mins = vnMinutesNow();
   const inMorningWindow = mins >= 7 * 60 && mins < 10 * 60;
   const digestKey = "orca.digest.seen." + vnDateKey();
-  const reportKey = "orca.report.seen." + vnDateKey();
   let digestSeen = false;
-  let reportSeen = false;
   if (typeof window !== "undefined") {
     try {
       digestSeen = localStorage.getItem(digestKey) === "1";
-      reportSeen = localStorage.getItem(reportKey) === "1";
     } catch {
-      /* ignore */
+      /* */
     }
   }
   const showDigest = n.digestMorning && inMorningWindow && !digestSeen;
-  const showReport =
-    n.reportReady && !reportSeen && (inMorningWindow || (mins >= 15 * 60 && mins < 17 * 60));
 
   const badgeCount =
     (freshNews.length > 0 ? 1 : 0) +
     (triggeredAlerts.length > 0 ? 1 : 0) +
     (showDigest ? 1 : 0) +
-    (showReport ? 1 : 0);
+    (unreadReports.length > 0 ? unreadReports.length : 0);
 
   const markDigest = () => {
     try {
       localStorage.setItem(digestKey, "1");
+      setReportTick((t) => t + 1);
     } catch {
-      /* ignore */
+      /* */
     }
-    setAlertTick((t) => t + 1);
-  };
-  const markReport = () => {
-    try {
-      localStorage.setItem(reportKey, "1");
-    } catch {
-      /* ignore */
-    }
-    setAlertTick((t) => t + 1);
   };
 
-  const anyEnabled = n.marketNews || n.priceAlerts || n.reportReady || n.digestMorning;
+  const markAllReports = () => {
+    markReportsSeen(recentReports.map((r) => r.id));
+    setReportTick((t) => t + 1);
+  };
 
   return (
     <div className="relative" ref={ref}>
       <button
         type="button"
-        onClick={() => setOpen((o) => !o)}
-        aria-label="Thong bao"
-        className="relative grid size-9 place-items-center rounded-lg text-text-secondary transition-colors hover:bg-surface-elevated hover:text-text-primary active:scale-95"
+        onClick={() => {
+          setOpen((o) => !o);
+          if (!open) void mutateReports?.();
+        }}
+        className="relative grid size-9 place-items-center rounded-lg text-text-secondary hover:bg-surface-elevated hover:text-text-primary"
+        aria-label="Thông báo"
       >
-        <Bell className="size-4.5" />
+        <Bell className="size-4" />
         {badgeCount > 0 ? (
-          <span className="absolute right-1 top-1 flex min-w-[14px] items-center justify-center rounded-full bg-accent-primary px-0.5 text-[9px] font-bold leading-none text-white">
+          <span className="absolute right-1.5 top-1.5 min-w-[14px] rounded-full bg-accent-primary px-1 text-center text-[9px] font-bold leading-[14px] text-white">
             {badgeCount > 9 ? "9+" : badgeCount}
           </span>
         ) : null}
       </button>
+
       {open ? (
-        <div className="absolute right-0 z-50 mt-1.5 w-[min(360px,92vw)] overflow-hidden rounded-xl border border-border-default bg-surface-modal shadow-2xl">
+        <div className="absolute right-0 z-50 mt-1.5 w-[min(100vw-1.5rem,320px)] overflow-hidden rounded-xl border border-border-default bg-surface-modal shadow-2xl">
           <div className="flex items-center justify-between border-b border-border-subtle px-3 py-2">
-            <span className="text-[12.5px] font-semibold text-text-primary">Thong bao</span>
-            <Link
-              href="/settings"
-              onClick={() => setOpen(false)}
-              className="text-[10px] text-text-muted hover:text-accent-primary"
-            >
-              Cai dat
-            </Link>
+            <span className="text-[12px] font-semibold text-text-primary">Thông báo</span>
+            {unreadReports.length ? (
+              <button
+                type="button"
+                onClick={markAllReports}
+                className="text-[10.5px] text-accent-primary hover:underline"
+              >
+                Đánh dấu đã đọc
+              </button>
+            ) : null}
           </div>
-
-          {!anyEnabled ? (
-            <div className="px-3 py-6 text-center text-[12px] text-text-muted">
-              Tat ca kenh thong bao dang tat. Bat trong Settings.
-            </div>
-          ) : (
-            <div className="max-h-[420px] overflow-y-auto">
-              {showDigest ? (
-                <Link
-                  href="/reports"
-                  onClick={() => {
-                    markDigest();
-                    setOpen(false);
-                  }}
-                  className="block border-b border-border-subtle bg-accent-primary/5 px-3 py-2.5 hover:bg-accent-primary/10"
-                >
-                  <span className="text-[11px] font-semibold text-accent-primary">Digest buoi sang</span>
-                  <span className="mt-0.5 block text-[12px] text-text-primary">
-                    Tom tat dau phien — mo Ban tin
-                  </span>
-                </Link>
-              ) : null}
-
-              {showReport ? (
-                <Link
-                  href="/reports"
-                  onClick={() => {
-                    markReport();
-                    setOpen(false);
-                  }}
-                  className="block border-b border-border-subtle px-3 py-2.5 hover:bg-surface-elevated"
-                >
-                  <span className="text-[11px] font-semibold text-text-secondary">Ban tin moi</span>
-                  <span className="mt-0.5 block text-[12px] text-text-primary">
-                    Morning Brief / Market Summary — /reports
-                  </span>
-                </Link>
-              ) : null}
-
-              {n.priceAlerts && triggeredAlerts.length > 0 ? (
-                <div className="border-b border-border-subtle">
-                  <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-text-muted">
-                    Canh bao gia
-                  </div>
-                  <ul>
-                    {triggeredAlerts.map((a) => (
-                      <li key={a.id}>
+          <div className="max-h-[70vh] overflow-y-auto">
+            {unreadReports.length || recentReports.length ? (
+              <div>
+                <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-text-muted">
+                  Bản tin tự động
+                </div>
+                <ul>
+                  {(unreadReports.length ? unreadReports : recentReports).map((r) => {
+                    const unread = !seen.has(r.id);
+                    return (
+                      <li key={r.id}>
                         <Link
-                          href={`/stocks/${encodeURIComponent(a.symbol)}`}
-                          onClick={() => setOpen(false)}
-                          className="block px-3 py-2 hover:bg-surface-elevated"
+                          href="/reports"
+                          onClick={() => {
+                            markReportsSeen([r.id]);
+                            setOpen(false);
+                            setReportTick((t) => t + 1);
+                          }}
+                          className="block border-b border-border-subtle px-3 py-2.5 hover:bg-surface-elevated"
                         >
-                          <span className="font-semibold text-accent-primary">{a.symbol}</span>
-                          <span className="ml-2 num text-[12px] text-text-secondary">
-                            {a.price != null ? a.price.toLocaleString("vi-VN") : "—"}
+                          <span className="text-[10px] font-semibold uppercase tracking-wider text-accent-primary">
+                            {unread ? "• " : ""}
+                            {TYPE_LABEL[r.type] ?? r.type}
+                          </span>
+                          <span className="mt-0.5 line-clamp-2 block text-[12.5px] font-medium text-text-primary">
+                            {r.title}
+                          </span>
+                          <span className="mt-0.5 block text-[10px] text-text-muted">
+                            {new Date(r.generatedAt).toLocaleString("vi-VN", {
+                              timeZone: "Asia/Ho_Chi_Minh",
+                            })}
                           </span>
                         </Link>
                       </li>
-                    ))}
-                  </ul>
-                  <Link
-                    href="/journal"
-                    onClick={() => setOpen(false)}
-                    className="block px-3 py-1.5 text-[11px] text-accent-primary hover:underline"
-                  >
-                    Quan ly canh bao
-                  </Link>
-                </div>
-              ) : null}
+                    );
+                  })}
+                </ul>
+              </div>
+            ) : null}
 
-              {n.marketNews ? (
-                <div>
-                  <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-text-muted">
-                    Tin thi truong
-                  </div>
-                  {articles.length === 0 ? (
-                    <div className="px-3 py-4 text-center text-[12px] text-text-muted">Chua co tin</div>
-                  ) : (
-                    <ul>
-                      {articles.slice(0, 8).map((a) => {
-                        const isFresh = freshNews.some((f) => f.id === a.id || f.url === a.url);
-                        return (
-                          <li key={a.id || a.url}>
-                            <a
-                              href={a.url}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              onClick={() => setOpen(false)}
-                              className="block border-b border-border-subtle px-3 py-2.5 text-left hover:bg-surface-elevated"
-                            >
-                              <span className="line-clamp-2 text-[12.5px] font-medium text-text-primary">
-                                {isFresh ? "• " : ""}
-                                {a.title}
-                              </span>
-                              <span className="mt-0.5 block text-[10px] text-text-muted">
-                                {a.source}
-                              </span>
-                            </a>
-                          </li>
-                        );
-                      })}
-                    </ul>
-                  )}
+            {showDigest ? (
+              <div className="border-b border-border-subtle px-3 py-2.5">
+                <div className="text-[12px] font-medium text-text-primary">Digest buổi sáng</div>
+                <p className="mt-0.5 text-[11px] text-text-muted">
+                  Morning Brief trong khung 07:00–10:00 — mở Bản tin để đọc.
+                </p>
+                <div className="mt-1.5 flex gap-2">
+                  <Link
+                    href="/reports"
+                    onClick={() => {
+                      markDigest();
+                      setOpen(false);
+                    }}
+                    className="text-[11px] text-accent-primary hover:underline"
+                  >
+                    Xem bản tin
+                  </Link>
+                  <button type="button" onClick={markDigest} className="text-[11px] text-text-muted hover:underline">
+                    Bỏ qua
+                  </button>
                 </div>
-              ) : null}
-            </div>
-          )}
+              </div>
+            ) : null}
+
+            {triggeredAlerts.length ? (
+              <div>
+                <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-text-muted">
+                  Cảnh báo giá
+                </div>
+                <ul>
+                  {triggeredAlerts.map((a) => (
+                    <li key={a.id}>
+                      <Link
+                        href="/portfolio"
+                        onClick={() => setOpen(false)}
+                        className="block border-b border-border-subtle px-3 py-2 hover:bg-surface-elevated"
+                      >
+                        <span className="font-semibold text-accent-primary">{a.symbol}</span>
+                        <span className="ml-2 num text-[12px] text-text-secondary">
+                          {a.price != null ? a.price.toLocaleString("vi-VN") : "—"}
+                        </span>
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+
+            {n.marketNews ? (
+              <div>
+                <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-text-muted">
+                  Tin thị trường
+                </div>
+                {articles.length === 0 ? (
+                  <div className="px-3 py-4 text-center text-[12px] text-text-muted">Chưa có tin</div>
+                ) : (
+                  <ul>
+                    {articles.slice(0, 8).map((a) => {
+                      const isFresh = freshNews.some((f) => f.id === a.id || f.url === a.url);
+                      return (
+                        <li key={a.id || a.url}>
+                          <a
+                            href={a.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            onClick={() => setOpen(false)}
+                            className="block border-b border-border-subtle px-3 py-2.5 text-left hover:bg-surface-elevated"
+                          >
+                            <span className="line-clamp-2 text-[12.5px] font-medium text-text-primary">
+                              {isFresh ? "• " : ""}
+                              {a.title}
+                            </span>
+                            <span className="mt-0.5 block text-[10px] text-text-muted">{a.source}</span>
+                          </a>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+              </div>
+            ) : null}
+
+            {!unreadReports.length &&
+            !recentReports.length &&
+            !showDigest &&
+            !triggeredAlerts.length &&
+            !articles.length ? (
+              <div className="px-3 py-6 text-center text-[12px] text-text-muted">Chưa có thông báo mới</div>
+            ) : null}
+          </div>
         </div>
       ) : null}
     </div>
