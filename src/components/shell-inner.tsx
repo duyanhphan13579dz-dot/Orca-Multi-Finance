@@ -54,33 +54,33 @@ const NAV_SECTIONS: {
   }[];
 }[] = [
   {
-    title: "THI TRUONG",
+    title: "THỊ TRƯỜNG",
     items: [
-      { href: "/", label: "Tong quan", icon: Home, core: true },
-      { href: "/stocks", label: "Co phieu VN", icon: CandlestickChart, core: true },
-      { href: "/crypto", label: "Tien ma hoa", icon: Coins, core: true },
-      { href: "/forex", label: "Ngoai hoi", icon: DollarSign },
-      { href: "/commodities", label: "Hang hoa", icon: Boxes },
-      { href: "/macro-economic", label: "Kinh te vi mo", icon: ChartNoAxesCombined },
-      { href: "/currency-interest-rate", label: "Lai suat tien te", icon: Landmark },
+      { href: "/", label: "Tổng quan", icon: Home, core: true },
+      { href: "/stocks", label: "Cổ phiếu VN", icon: CandlestickChart, core: true },
+      { href: "/crypto", label: "Tiền mã hóa", icon: Coins, core: true },
+      { href: "/forex", label: "Ngoại hối", icon: DollarSign },
+      { href: "/commodities", label: "Hàng hóa", icon: Boxes },
+      { href: "/macro-economic", label: "Kinh tế vĩ mô", icon: ChartNoAxesCombined },
+      { href: "/currency-interest-rate", label: "Lãi suất tiền tệ", icon: Landmark },
     ],
   },
   {
-    title: "CONG CU",
+    title: "CÔNG CỤ",
     items: [
-      { href: "/heatmap", label: "Ban do nhiet", icon: Grid2x2 },
-      { href: "/screener", label: "Bo loc", icon: FlaskConical },
-      { href: "/news", label: "Tin tuc", icon: Newspaper, core: true },
-      { href: "/reports", label: "Ban tin", icon: Globe2 },
-      { href: "/agent", label: "Tro ly AI", icon: Bot },
+      { href: "/heatmap", label: "Bản đồ nhiệt", icon: Grid2x2 },
+      { href: "/screener", label: "Bộ lọc", icon: FlaskConical },
+      { href: "/news", label: "Tin tức", icon: Newspaper, core: true },
+      { href: "/reports", label: "Bản tin", icon: Globe2 },
+      { href: "/agent", label: "Trợ lý AI", icon: Bot },
     ],
   },
   {
-    title: "DANH MUC",
+    title: "DANH MỤC",
     items: [
       { href: "/portfolio", label: "Smart Portfolio", icon: LayoutDashboard },
-      { href: "/watchlist", label: "Danh muc theo doi", icon: Eye },
-      { href: "/settings", label: "Cai dat", icon: Settings },
+      { href: "/watchlist", label: "Danh mục theo dõi", icon: Eye },
+      { href: "/settings", label: "Cài đặt", icon: Settings },
     ],
   },
 ];
@@ -161,7 +161,7 @@ export function ShellInner({ children }: { children: ReactNode }) {
           type="button"
           className="hidden rounded-md p-1 text-text-muted hover:bg-surface-elevated md:inline-flex"
           onClick={() => setCollapsed((v) => !v)}
-          aria-label="Collapse"
+          aria-label="Thu gọn"
         >
           {collapsed ? <ChevronsRight className="size-4" /> : <ChevronsLeft className="size-4" />}
         </button>
@@ -169,7 +169,7 @@ export function ShellInner({ children }: { children: ReactNode }) {
           type="button"
           className="inline-flex rounded-md p-1 text-text-muted hover:bg-surface-elevated md:hidden"
           onClick={() => setMobileOpen(false)}
-          aria-label="Close"
+          aria-label="Đóng menu"
         >
           <X className="size-4" />
         </button>
@@ -217,7 +217,7 @@ export function ShellInner({ children }: { children: ReactNode }) {
             <button
               type="button"
               className="absolute inset-0 bg-black/50"
-              aria-label="Dong menu"
+              aria-label="Đóng menu"
               onClick={() => setMobileOpen(false)}
             />
             <aside className="absolute left-0 top-0 h-full w-[260px] bg-surface-base shadow-xl">
@@ -243,7 +243,7 @@ export function ShellInner({ children }: { children: ReactNode }) {
             <Link
               href="/settings"
               className="grid size-9 place-items-center rounded-lg text-text-secondary hover:bg-surface-elevated hover:text-text-primary"
-              aria-label="Cai dat"
+              aria-label="Cài đặt"
             >
               <Settings className="size-4" />
             </Link>
@@ -302,7 +302,7 @@ function UserMenu({ collapsed }: { collapsed: boolean }) {
         </span>
         {!collapsed ? (
           <span className="min-w-0 flex-1 truncate text-[12px] text-text-secondary">
-            {me?.user ? displayName || me.user.email : "Dang nhap"}
+            {me?.user ? displayName || me.user.email : "Đăng nhập"}
           </span>
         ) : null}
       </button>
@@ -319,14 +319,14 @@ function UserMenu({ collapsed }: { collapsed: boolean }) {
                 onClick={() => setOpen(false)}
                 className="flex items-center gap-2 px-3 py-2.5 text-[12.5px] text-text-secondary hover:bg-surface-elevated"
               >
-                <Settings className="size-3.5" /> Cai dat
+                <Settings className="size-3.5" /> Cài đặt
               </Link>
               <button
                 type="button"
                 onClick={() => void logout()}
                 className="flex w-full items-center gap-2 px-3 py-2.5 text-[12.5px] text-negative hover:bg-surface-elevated"
               >
-                <LogOut className="size-3.5" /> Dang xuat
+                <LogOut className="size-3.5" /> Đăng xuất
               </button>
             </>
           ) : (
@@ -335,7 +335,7 @@ function UserMenu({ collapsed }: { collapsed: boolean }) {
               onClick={() => setOpen(false)}
               className="block px-3 py-2.5 text-[12.5px] text-accent-primary hover:bg-surface-elevated"
             >
-              Dang nhap
+              Đăng nhập
             </Link>
           )}
         </div>
