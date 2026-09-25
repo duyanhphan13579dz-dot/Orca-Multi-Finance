@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { AlertLiveQuotesBar, useAlertLiveQuotes } from "@/components/journal/alert-live-quotes";
 import { Badge, Panel } from "@/components/ui";
 import {
   addAlert,
@@ -48,6 +49,7 @@ export function PriceAlertsPanel() {
 
   const active = alerts.filter((a) => a.status === "active");
   const triggered = alerts.filter((a) => a.status === "triggered");
+  const { liveSymbols, liveMap } = useAlertLiveQuotes(alerts);
 
   const canSaveWebhook =
     webhook.url.length === 0 ||
@@ -161,7 +163,8 @@ export function PriceAlertsPanel() {
     >
       <div className="space-y-3">
         <p className="text-[11.5px] text-text-muted">
-          Dat muc gia / tran / san. Khi kich hoat: thong bao trinh duyet + Discord / Telegram.
+          Dat muc gia / tran / san. Monitor dung API co phieu VN + SL/TP vi the Portfolio.
+          Kich hoat: thong bao + Discord/Telegram.
         </p>
 
         {showWebhook ? (
@@ -178,14 +181,10 @@ export function PriceAlertsPanel() {
               </label>
             </div>
             <label className="block">
-              <span className="mb-0.5 block text-[10px] uppercase tracking-wider text-text-muted">
-                Provider
-              </span>
+              <span className="mb-0.5 block text-[10px] uppercase tracking-wider text-text-muted">Provider</span>
               <select
                 value={webhook.provider}
-                onChange={(e) =>
-                  setWebhook((w) => ({ ...w, provider: e.target.value as WebhookProvider }))
-                }
+                onChange={(e) => setWebhook((w) => ({ ...w, provider: e.target.value as WebhookProvider }))}
                 className="input w-full"
               >
                 <option value="discord">Discord</option>
@@ -195,9 +194,7 @@ export function PriceAlertsPanel() {
               </select>
             </label>
             <label className="block">
-              <span className="mb-0.5 block text-[10px] uppercase tracking-wider text-text-muted">
-                Toc do poll
-              </span>
+              <span className="mb-0.5 block text-[10px] uppercase tracking-wider text-text-muted">Toc do poll</span>
               <select
                 value={String(webhook.pollMs || 5000)}
                 onChange={(e) => setWebhook((w) => ({ ...w, pollMs: Number(e.target.value) }))}
@@ -212,77 +209,41 @@ export function PriceAlertsPanel() {
             </label>
             <label className="block">
               <span className="mb-0.5 block text-[10px] uppercase tracking-wider text-text-muted">
-                {webhook.provider === "telegram"
-                  ? "Bot token (@BotFather)"
-                  : webhook.provider === "discord"
-                    ? "URL Discord webhook"
-                    : "URL webhook"}
+                {webhook.provider === "telegram" ? "Bot token" : "URL webhook"}
               </span>
               <input
                 value={webhook.url}
                 onChange={(e) => {
                   const url = e.target.value;
-                  const isDc =
-                    url.includes("discord.com/api/webhooks") ||
-                    url.includes("discordapp.com/api/webhooks");
+                  const isDc = url.includes("discord.com/api/webhooks") || url.includes("discordapp.com/api/webhooks");
                   const isTg = /^\d{6,}:[A-Za-z0-9_-]{20,}$/.test(url.trim());
-                  setWebhook((w) => ({
-                    ...w,
-                    url,
-                    provider: isDc ? "discord" : isTg ? "telegram" : w.provider,
-                  }));
+                  setWebhook((w) => ({ ...w, url, provider: isDc ? "discord" : isTg ? "telegram" : w.provider }));
                 }}
-                placeholder={
-                  webhook.provider === "telegram"
-                    ? "123456789:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw"
-                    : "https://discord.com/api/webhooks/..."
-                }
                 className="input w-full font-mono text-[12px]"
                 autoComplete="off"
               />
             </label>
             {webhook.provider === "telegram" ? (
               <label className="block">
-                <span className="mb-0.5 block text-[10px] uppercase tracking-wider text-text-muted">
-                  Chat ID (ban / group)
-                </span>
+                <span className="mb-0.5 block text-[10px] uppercase tracking-wider text-text-muted">Chat ID</span>
                 <input
                   value={webhook.secret}
                   onChange={(e) => setWebhook((w) => ({ ...w, secret: e.target.value }))}
-                  placeholder="123456789  (group: -100...)"
                   className="input w-full font-mono text-[12px]"
                   autoComplete="off"
                 />
               </label>
             ) : null}
             <div className="flex flex-wrap items-center gap-2">
-              <button
-                type="button"
-                onClick={saveWebhook}
-                disabled={!canSaveWebhook}
-                className="rounded-md bg-accent-primary px-3 py-1.5 text-[12px] font-semibold text-white disabled:opacity-40"
-              >
+              <button type="button" onClick={saveWebhook} disabled={!canSaveWebhook} className="rounded-md bg-accent-primary px-3 py-1.5 text-[12px] font-semibold text-white disabled:opacity-40">
                 Luu
               </button>
-              <button
-                type="button"
-                onClick={() => void testWebhook()}
-                disabled={!canTest}
-                className="rounded-md border border-border-subtle px-3 py-1.5 text-[12px] text-text-secondary disabled:opacity-40"
-              >
+              <button type="button" onClick={() => void testWebhook()} disabled={!canTest} className="rounded-md border border-border-subtle px-3 py-1.5 text-[12px] disabled:opacity-40">
                 Gui thu
               </button>
-              {webhookTest === "ok" ? (
-                <span className="text-[11px] text-up">Da gui thanh cong</span>
-              ) : null}
-              {webhookTest === "fail" ? (
-                <span className="text-[11px] text-down">That bai — kiem tra token/chat_id</span>
-              ) : null}
+              {webhookTest === "ok" ? <span className="text-[11px] text-up">OK</span> : null}
+              {webhookTest === "fail" ? <span className="text-[11px] text-down">Loi</span> : null}
             </div>
-            <p className="text-[10.5px] text-text-muted">
-              Telegram: @BotFather → /newbot → copy token. Chat voi bot 1 lan, lay chat_id qua
-              @userinfobot (hoac API getUpdates). Group: them bot vao group, chat_id am (-100...).
-            </p>
           </div>
         ) : null}
 
@@ -290,12 +251,7 @@ export function PriceAlertsPanel() {
           <div className="grid gap-2 rounded-lg border border-border-subtle bg-surface-elevated/40 p-3 sm:grid-cols-2">
             <label className="block">
               <span className="mb-0.5 block text-[10px] uppercase tracking-wider text-text-muted">Ma</span>
-              <input
-                value={symbol}
-                onChange={(e) => setSymbol(e.target.value.toUpperCase())}
-                placeholder="VCB"
-                className="input w-full"
-              />
+              <input value={symbol} onChange={(e) => setSymbol(e.target.value.toUpperCase())} placeholder="VCB" className="input w-full" />
             </label>
             <label className="block">
               <span className="mb-0.5 block text-[10px] uppercase tracking-wider text-text-muted">Loai</span>
@@ -314,8 +270,8 @@ export function PriceAlertsPanel() {
                 <label className="block">
                   <span className="mb-0.5 block text-[10px] uppercase tracking-wider text-text-muted">Dieu kien</span>
                   <select value={direction} onChange={(e) => setDirection(e.target.value as AlertDirection)} className="input w-full">
-                    <option value="above">Gia &gt;= muc</option>
-                    <option value="below">Gia &lt;= muc</option>
+                    <option value="above">Gia >= muc</option>
+                    <option value="below">Gia <= muc</option>
                     <option value="cross">Cross</option>
                   </select>
                 </label>
@@ -330,18 +286,16 @@ export function PriceAlertsPanel() {
               <input value={reason} onChange={(e) => setReason(e.target.value)} className="input w-full" maxLength={280} />
             </label>
             <div className="flex gap-2 sm:col-span-2">
-              <button type="button" onClick={() => void submit()} className="rounded-md bg-accent-primary px-3 py-1.5 text-[12px] font-semibold text-white">
-                Luu
-              </button>
-              <button type="button" onClick={() => setShowForm(false)} className="rounded-md px-3 py-1.5 text-[12px] text-text-muted">
-                Huy
-              </button>
+              <button type="button" onClick={() => void submit()} className="rounded-md bg-accent-primary px-3 py-1.5 text-[12px] font-semibold text-white">Luu</button>
+              <button type="button" onClick={() => setShowForm(false)} className="rounded-md px-3 py-1.5 text-[12px] text-text-muted">Huy</button>
             </div>
           </div>
         ) : null}
 
+        <AlertLiveQuotesBar symbols={liveSymbols} liveMap={liveMap} />
+
         {active.length === 0 && triggered.length === 0 ? (
-          <p className="text-[12px] text-text-muted">Chua co canh bao.</p>
+          <p className="text-[12px] text-text-muted">Chua co canh bao. Them alert hoac mo vi the co SL/TP.</p>
         ) : (
           <div className="space-y-2">
             {active.map((a) => (
