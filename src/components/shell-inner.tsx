@@ -42,6 +42,7 @@ import { useApi } from "@/lib/hooks";
 import { useSettings } from "@/lib/settings";
 import { ErrorBoundary } from "@/components/error-boundary";
 import { NotifBell } from "@/components/notif-bell";
+import { PriceAlertEngine } from "@/components/price-alert-engine";
 
 const NAV_SECTIONS: {
   title: string;
@@ -197,6 +198,7 @@ export function ShellInner({ children }: { children: ReactNode }) {
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-background-primary text-text-primary">
+      <PriceAlertEngine />
       <div className="border-b border-border-subtle">
         <TickerTape />
       </div>
