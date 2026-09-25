@@ -36,26 +36,26 @@ export async function requestNotificationPermission(): Promise<PermissionState> 
 
 function alertTitle(alert: PriceAlert): string {
   const kind = alert.kind ?? "price";
-  if (kind === "ceiling") return `Chạm trần · ${alert.symbol}`;
-  if (kind === "floor") return `Chạm sàn · ${alert.symbol}`;
-  return `Cảnh báo ${alert.symbol}`;
+  if (kind === "ceiling") return "Cham tran · " + alert.symbol;
+  if (kind === "floor") return "Cham san · " + alert.symbol;
+  return "Canh bao " + alert.symbol;
 }
 
 function alertBody(alert: PriceAlert, price: number): string {
   const kind = alert.kind ?? "price";
   if (kind === "ceiling") {
-    return [`Giá ${price.toLocaleString("vi-VN")} chạm trần phiên`, alert.reason ? `Lý do: ${alert.reason}` : null]
+    return ["Gia " + price.toLocaleString("vi-VN") + " cham tran phien", alert.reason ? "Ly do: " + alert.reason : null]
       .filter(Boolean)
       .join("\n");
   }
   if (kind === "floor") {
-    return [`Giá ${price.toLocaleString("vi-VN")} chạm sàn phiên`, alert.reason ? `Lý do: ${alert.reason}` : null]
+    return ["Gia " + price.toLocaleString("vi-VN") + " cham san phien", alert.reason ? "Ly do: " + alert.reason : null]
       .filter(Boolean)
       .join("\n");
   }
   return [
-    `Giá ${price.toLocaleString("vi-VN")} đã chạm mức ${alert.targetPrice.toLocaleString("vi-VN")}`,
-    alert.reason ? `Lý do: ${alert.reason}` : null,
+    "Gia " + price.toLocaleString("vi-VN") + " da cham muc " + alert.targetPrice.toLocaleString("vi-VN"),
+    alert.reason ? "Ly do: " + alert.reason : null,
   ]
     .filter(Boolean)
     .join("\n");
@@ -67,10 +67,10 @@ async function showAlertNotification(alert: PriceAlert, price: number) {
 
   const opts: NotificationOptions = {
     body,
-    tag: `orca-alert-${alert.id}`,
+    tag: "orca-alert-" + alert.id,
     icon: "/favicon.ico",
     badge: "/favicon.ico",
-    data: { url: `/stocks/${encodeURIComponent(alert.symbol)}`, alertId: alert.id },
+    data: { url: "/stocks/" + encodeURIComponent(alert.symbol), alertId: alert.id },
     requireInteraction: true,
   };
 
@@ -88,7 +88,6 @@ async function showAlertNotification(alert: PriceAlert, price: number) {
   }
 }
 
-/** POST alert to configured webhook via server proxy (Discord / Slack / generic). */
 export async function dispatchAlertWebhook(alert: PriceAlert, price: number): Promise<boolean> {
   const cfg = loadWebhookConfig();
   if (!cfg.enabled || !cfg.url || !isValidWebhookUrl(cfg.url)) return false;
@@ -120,15 +119,13 @@ export async function dispatchAlertWebhook(alert: PriceAlert, price: number): Pr
   }
 }
 
-/**
- * Giám sát cảnh báo toàn app: poll giá các mã active,
- * kích hoạt + push notification + webhook khi chạm mức.
- */
 export function usePriceAlertMonitor(pollMs = 15_000) {
-  const prevPrices = useRef<Record<string, number>>( {} );
+  const prevPrices = useRef<Record<string, number>>({});
   const firing = useRef<Set<string>>(new Set());
 
   useEffect(() => {
+    if (!pollMs || pollMs <= 0) return;
+
     let cancelled = false;
     let timer: number | undefined;
 
@@ -140,7 +137,7 @@ export function usePriceAlertMonitor(pollMs = 15_000) {
 
       try {
         const qs = symbols.slice(0, 40).join(",");
-        const res = await fetch(`/api/v1/stocks?symbols=${encodeURIComponent(qs)}`, {
+        const res = await fetch("/api/v1/stocks?symbols=" + encodeURIComponent(qs), {
           cache: "no-store",
         });
         if (!res.ok) return;
