@@ -68,13 +68,13 @@ export default function SmartPortfolioPage() {
       source: "coingecko",
       fresh: true,
     }));
-    const forexMarks: PortfolioMark[] = (forex?.pairs ?? []).map((row: ForexRow) => ({
+    const forexMarks: PortfolioMark[] = (forex?.rows ?? []).map((row: ForexRow) => ({
       assetType: "forex" as const,
-      symbol: String(row.symbol ?? "").toUpperCase(),
+      symbol: String(row.pair ?? row.symbol ?? "").toUpperCase(),
       price: row.price == null ? null : Number(row.price),
       changePercent: row.changePercent == null ? null : Number(row.changePercent),
       change: row.change == null ? null : Number(row.change),
-      updatedAt: null,
+      updatedAt: row.updatedAt ?? null,
       source: "forex",
       fresh: true,
     }));
@@ -126,7 +126,7 @@ export default function SmartPortfolioPage() {
             <Badge tone="accent">Local-first</Badge>
           </div>
           <p className="mt-1 max-w-2xl text-[12px] text-text-muted">
-            Watchlist, nhat ky lenh, canh bao gia (Discord webhook) trong mot noi.
+            Watchlist, nhat ky lenh, canh bao gia (Discord) trong mot noi.
           </p>
         </div>
         <Link
@@ -149,7 +149,7 @@ export default function SmartPortfolioPage() {
         <Metric label="Score" value={`${snapshot.portfolioScore}/100`} icon={<Activity />} />
       </div>
 
-      <nav className="flex flex-wrap gap-1 rounded-lg border border-border-subtle bg-surface-base p-1" aria-label="Portfolio views">
+      <nav className="flex flex-wrap gap-1 rounded-lg border border-border-subtle bg-surface-base p-1">
         {(
           [
             ["overview", "Tong quan"],
@@ -182,10 +182,6 @@ export default function SmartPortfolioPage() {
       {activeTab === "journal" && <JournalView trades={trades} setTrades={setTrades} />}
       {activeTab === "alerts" && <PriceAlertsPanel />}
       {activeTab === "watchlist" && <Watchlist items={watchlist} marks={watchMarkMap} />}
-
-      <p className="text-[10px] text-text-muted">
-        Smart Portfolio khong phai khuyen nghi dau tu. Canh bao gia can bat Settings → Notifications.
-      </p>
     </div>
   );
 }
@@ -229,7 +225,7 @@ function Overview({
   watchlistCount: number;
 }) {
   return (
-    <div className="grid gap-3 lg:grid-cols-[1.15fr_0.85fr]">
+    <div className="grid gap-3 lg:grid-cols-2">
       <div className="lg:col-span-2">
         <PortfolioAiPanel
           trades={trades}
@@ -247,62 +243,38 @@ function Overview({
           }}
         />
       </div>
-      <Panel
-        title="Action queue"
-        right={
-          <Badge tone={snapshot.alerts.length ? "warn" : "up"}>{snapshot.alerts.length} canh bao</Badge>
-        }
-      >
+      <Panel title="Action queue" right={<Badge tone={snapshot.alerts.length ? "warn" : "up"}>{snapshot.alerts.length} canh bao</Badge>}>
         {snapshot.alerts.length ? (
           <div className="space-y-2">
             {snapshot.alerts.map((alert, index) => (
-              <div
-                key={`${alert.title}-${alert.symbol}-${index}`}
-                className="flex gap-2 rounded-md border border-border-subtle bg-surface-base/60 p-2.5"
-              >
+              <div key={index} className="flex gap-2 rounded-md border border-border-subtle p-2.5">
                 <div className={toneClass[alert.tone]}>
-                  {alert.tone === "danger" ? (
-                    <CircleAlert className="size-4" />
-                  ) : alert.tone === "warning" ? (
-                    <AlertTriangle className="size-4" />
-                  ) : (
-                    <ShieldCheck className="size-4" />
-                  )}
+                  {alert.tone === "danger" ? <CircleAlert className="size-4" /> : alert.tone === "warning" ? <AlertTriangle className="size-4" /> : <ShieldCheck className="size-4" />}
                 </div>
-                <div className="min-w-0">
-                  <div className="text-[12px] font-medium">
-                    {alert.symbol ? `${alert.symbol} · ` : ""}
-                    {alert.title}
-                  </div>
-                  <p className="mt-0.5 text-[11px] text-text-muted">{alert.detail}</p>
+                <div>
+                  <div className="text-[12px] font-medium">{alert.symbol ? `${alert.symbol} · ` : ""}{alert.title}</div>
+                  <p className="text-[11px] text-text-muted">{alert.detail}</p>
                 </div>
               </div>
             ))}
           </div>
         ) : (
-          <div className="flex items-center gap-2 rounded-md bg-positive/10 p-3 text-[12px] text-positive">
-            <ShieldCheck className="size-4" /> Chua phat hien vi pham ky luat ro rang.
-          </div>
+          <p className="text-[12px] text-positive">Chua phat hien vi pham ky luat.</p>
         )}
       </Panel>
-      <Panel title="Risk & allocation">
+      <Panel title="Allocation">
         {snapshot.allocation.length ? (
-          <div className="space-y-2">
-            {snapshot.allocation.map((item) => (
-              <div key={item.label}>
-                <div className="mb-1 flex justify-between text-[11px]">
-                  <span>{item.label}</span>
-                  <span className="num text-text-muted">{(item.weight * 100).toFixed(0)}%</span>
-                </div>
-                <div className="h-1.5 overflow-hidden rounded-full bg-surface-elevated">
-                  <div
-                    className="h-full rounded-full bg-accent-primary/70"
-                    style={{ width: `${Math.min(100, item.weight * 100)}%` }}
-                  />
-                </div>
+          snapshot.allocation.map((item) => (
+            <div key={item.label} className="mb-2">
+              <div className="mb-1 flex justify-between text-[11px]">
+                <span>{item.label}</span>
+                <span className="num">{(item.weight * 100).toFixed(0)}%</span>
               </div>
-            ))}
-          </div>
+              <div className="h-1.5 rounded-full bg-surface-elevated">
+                <div className="h-full rounded-full bg-accent-primary/70" style={{ width: `${Math.min(100, item.weight * 100)}%` }} />
+              </div>
+            </div>
+          ))
         ) : (
           <p className="text-[12px] text-text-muted">Chua co allocation.</p>
         )}
@@ -316,53 +288,27 @@ function Positions({ snapshot }: { snapshot: ReturnType<typeof buildPortfolioSna
     <Panel title="Vi the dang mo" pad={false}>
       {snapshot.positions.length ? (
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[560px] text-[12px]">
+          <table className="w-full min-w-[520px] text-[12px]">
             <thead>
               <tr className="border-b border-border-subtle text-left text-[10px] uppercase text-text-muted">
-                <th className="px-3.5 py-2">Ma</th>
+                <th className="px-3 py-2">Ma</th>
                 <th className="py-2">Entry → Mark</th>
                 <th className="py-2 text-right">uPnL</th>
-                <th className="py-2 text-right">Exposure</th>
-                <th className="py-2 pr-3.5 text-right">SL</th>
+                <th className="py-2 pr-3 text-right">SL</th>
               </tr>
             </thead>
             <tbody>
-              {snapshot.positions.map((position) => (
-                <tr key={position.id} className="border-b border-border-subtle/60">
-                  <td className="px-3.5 py-2.5">
-                    <div className="font-semibold">{position.symbol}</div>
-                    <div className="text-[10px] text-text-muted">
-                      {formatAssetType(position.assetType)} · {position.side}
-                    </div>
+              {snapshot.positions.map((p) => (
+                <tr key={p.id} className="border-b border-border-subtle/60">
+                  <td className="px-3 py-2.5">
+                    <div className="font-semibold">{p.symbol}</div>
+                    <div className="text-[10px] text-text-muted">{formatAssetType(p.assetType)} · {p.side}</div>
                   </td>
-                  <td className="num py-2.5">
-                    {fmtNum(position.entry, 4)} →{" "}
-                    {position.mark == null ? (
-                      <span className="text-text-muted">—</span>
-                    ) : (
-                      fmtNum(position.mark, 4)
-                    )}
+                  <td className="num py-2.5">{fmtNum(p.entry, 4)} → {p.mark == null ? "—" : fmtNum(p.mark, 4)}</td>
+                  <td className={"num py-2.5 text-right " + (p.unrealizedPnl == null ? "" : p.unrealizedPnl >= 0 ? "text-positive" : "text-negative")}>
+                    {p.unrealizedPnl == null ? "—" : fmtNum(p.unrealizedPnl, 2)}
                   </td>
-                  <td
-                    className={
-                      "num py-2.5 text-right " +
-                      (position.unrealizedPnl == null
-                        ? "text-text-muted"
-                        : position.unrealizedPnl >= 0
-                          ? "text-positive"
-                          : "text-negative")
-                    }
-                  >
-                    {position.unrealizedPnl == null ? "—" : fmtNum(position.unrealizedPnl, 2)}
-                  </td>
-                  <td className="num py-2.5 text-right">{fmtNum(position.exposure, 2)}</td>
-                  <td className="py-2.5 pr-3.5 text-right">
-                    {position.stopLoss == null ? (
-                      <Badge tone="warn">Thieu SL</Badge>
-                    ) : (
-                      <Badge tone="up">Co SL</Badge>
-                    )}
-                  </td>
+                  <td className="py-2.5 pr-3 text-right">{p.stopLoss == null ? <Badge tone="warn">Thieu SL</Badge> : <Badge tone="up">Co SL</Badge>}</td>
                 </tr>
               ))}
             </tbody>
@@ -375,49 +321,22 @@ function Positions({ snapshot }: { snapshot: ReturnType<typeof buildPortfolioSna
   );
 }
 
-function JournalView({
-  trades,
-  setTrades,
-}: {
-  trades: PortfolioTrade[];
-  setTrades: (t: PortfolioTrade[]) => void;
-}) {
+function JournalView({ trades, setTrades }: { trades: PortfolioTrade[]; setTrades: (t: PortfolioTrade[]) => void }) {
   return <SmartPortfolioJournal trades={trades} onChange={setTrades} />;
 }
 
-function Watchlist({
-  items,
-  marks,
-}: {
-  items: PortfolioWatchItem[];
-  marks: Map<string, PortfolioMark>;
-}) {
+function Watchlist({ items, marks }: { items: PortfolioWatchItem[]; marks: Map<string, PortfolioMark> }) {
   return (
-    <Panel
-      title="Watchlist"
-      right={
-        <Link href="/watchlist" className="inline-flex items-center gap-1 text-[11px] text-accent-primary">
-          Quan ly <ArrowRight className="size-3" />
-        </Link>
-      }
-      pad={false}
-    >
+    <Panel title="Watchlist" right={<Link href="/watchlist" className="text-[11px] text-accent-primary">Quan ly <ArrowRight className="inline size-3" /></Link>} pad={false}>
       {items.length ? (
         <ul className="divide-y divide-border-subtle">
           {items.map((item) => {
             const mark = marks.get(`${item.assetType}:${item.symbol.toUpperCase()}`);
-            const href =
-              item.assetType === "crypto"
-                ? `/crypto/${item.symbol}`
-                : item.assetType === "forex"
-                  ? `/forex/${item.symbol}`
-                  : item.assetType === "stock"
-                    ? `/stocks/${item.symbol}`
-                    : "/commodities";
+            const href = item.assetType === "crypto" ? `/crypto/${item.symbol}` : item.assetType === "forex" ? `/forex/${item.symbol}` : item.assetType === "stock" ? `/stocks/${item.symbol}` : "/commodities";
             return (
               <li key={`${item.assetType}-${item.symbol}`} className="flex items-center gap-3 px-3.5 py-3">
                 <Link href={href} className="min-w-0 flex-1">
-                  <div className="font-semibold hover:text-accent-primary">{item.symbol}</div>
+                  <div className="font-semibold">{item.symbol}</div>
                   <div className="text-[10px] text-text-muted">{formatAssetType(item.assetType)}</div>
                 </Link>
                 {mark ? (
@@ -426,7 +345,7 @@ function Watchlist({
                     <Chg value={mark.changePercent} className="text-[11px]" arrow={false} />
                   </div>
                 ) : (
-                  <Badge tone="warn">Chua co gia</Badge>
+                  <Badge tone="warn">—</Badge>
                 )}
               </li>
             );
