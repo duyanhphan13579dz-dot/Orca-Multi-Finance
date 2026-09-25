@@ -8,6 +8,7 @@ import {
   shouldTrigger,
   type PriceAlert,
 } from "@/lib/alerts-store";
+import { isValidWebhookUrl, loadWebhookConfig } from "@/lib/webhook-store";
 
 type PermissionState = NotificationPermission | "unsupported";
 
@@ -33,14 +34,36 @@ export async function requestNotificationPermission(): Promise<PermissionState> 
   return p;
 }
 
-async function showAlertNotification(alert: PriceAlert, price: number) {
-  const title = `Cảnh báo ${alert.symbol}`;
-  const body = [
+function alertTitle(alert: PriceAlert): string {
+  const kind = alert.kind ?? "price";
+  if (kind === "ceiling") return `Chạm trần · ${alert.symbol}`;
+  if (kind === "floor") return `Chạm sàn · ${alert.symbol}`;
+  return `Cảnh báo ${alert.symbol}`;
+}
+
+function alertBody(alert: PriceAlert, price: number): string {
+  const kind = alert.kind ?? "price";
+  if (kind === "ceiling") {
+    return [`Giá ${price.toLocaleString("vi-VN")} chạm trần phiên`, alert.reason ? `Lý do: ${alert.reason}` : null]
+      .filter(Boolean)
+      .join("\n");
+  }
+  if (kind === "floor") {
+    return [`Giá ${price.toLocaleString("vi-VN")} chạm sàn phiên`, alert.reason ? `Lý do: ${alert.reason}` : null]
+      .filter(Boolean)
+      .join("\n");
+  }
+  return [
     `Giá ${price.toLocaleString("vi-VN")} đã chạm mức ${alert.targetPrice.toLocaleString("vi-VN")}`,
     alert.reason ? `Lý do: ${alert.reason}` : null,
   ]
     .filter(Boolean)
     .join("\n");
+}
+
+async function showAlertNotification(alert: PriceAlert, price: number) {
+  const title = alertTitle(alert);
+  const body = alertBody(alert, price);
 
   const opts: NotificationOptions = {
     body,
@@ -65,12 +88,44 @@ async function showAlertNotification(alert: PriceAlert, price: number) {
   }
 }
 
+/** POST alert to configured webhook via server proxy (Discord / Slack / generic). */
+export async function dispatchAlertWebhook(alert: PriceAlert, price: number): Promise<boolean> {
+  const cfg = loadWebhookConfig();
+  if (!cfg.enabled || !cfg.url || !isValidWebhookUrl(cfg.url)) return false;
+
+  const kind = alert.kind ?? "price";
+  const color = kind === "ceiling" ? 0xa78bfa : kind === "floor" ? 0x38bdf8 : 0x22c55e;
+
+  try {
+    const res = await fetch("/api/v1/alerts/webhook", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        url: cfg.url,
+        provider: cfg.provider,
+        secret: cfg.secret || undefined,
+        title: alertTitle(alert),
+        body: alertBody(alert, price),
+        symbol: alert.symbol,
+        price,
+        targetPrice: alert.targetPrice || undefined,
+        direction: kind === "price" ? alert.direction : kind,
+        reason: alert.reason || undefined,
+        color,
+      }),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Giám sát cảnh báo toàn app: poll giá các mã active,
- * kích hoạt + push notification khi chạm mức.
+ * kích hoạt + push notification + webhook khi chạm mức.
  */
 export function usePriceAlertMonitor(pollMs = 15_000) {
-  const prevPrices = useRef<Record<string, number>>({});
+  const prevPrices = useRef<Record<string, number>>( {} );
   const firing = useRef<Set<string>>(new Set());
 
   useEffect(() => {
@@ -90,14 +145,26 @@ export function usePriceAlertMonitor(pollMs = 15_000) {
         });
         if (!res.ok) return;
         const json = (await res.json()) as {
-          data?: { quotes?: { symbol: string; price: number }[] };
+          data?: {
+            quotes?: {
+              symbol: string;
+              price: number;
+              ceilingPrice?: number | null;
+              floorPrice?: number | null;
+            }[];
+          };
         };
         const quotes = json.data?.quotes ?? [];
         for (const q of quotes) {
           if (!q?.symbol || !Number.isFinite(q.price)) continue;
           const prev = prevPrices.current[q.symbol] ?? null;
           const matched = alerts.filter(
-            (a) => a.symbol === q.symbol && shouldTrigger(a, q.price, prev),
+            (a) =>
+              a.symbol === q.symbol &&
+              shouldTrigger(a, q.price, prev, {
+                ceiling: q.ceilingPrice,
+                floor: q.floorPrice,
+              }),
           );
           prevPrices.current[q.symbol] = q.price;
           for (const a of matched) {
@@ -105,6 +172,7 @@ export function usePriceAlertMonitor(pollMs = 15_000) {
             firing.current.add(a.id);
             markTriggered(a.id, q.price);
             await showAlertNotification(a, q.price);
+            void dispatchAlertWebhook(a, q.price);
           }
         }
       } catch {
