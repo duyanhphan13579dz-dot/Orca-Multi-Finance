@@ -18,21 +18,34 @@ type Body = {
   color?: number;
 };
 
+function isDiscordUrl(url: string): boolean {
+  try {
+    const u = new URL(url);
+    return (
+      (u.hostname === "discord.com" || u.hostname === "discordapp.com") &&
+      u.pathname.startsWith("/api/webhooks/")
+    );
+  } catch {
+    return false;
+  }
+}
+
 function discordPayload(b: Body) {
-  const lines = [
-    b.body,
-    b.symbol ? `**Mã:** ${b.symbol}` : null,
-    b.price != null ? `**Giá:** ${b.price}` : null,
-    b.targetPrice != null ? `**Mức:** ${b.targetPrice}` : null,
-    b.direction ? `**Điều kiện:** ${b.direction}` : null,
-    b.reason ? `**Lý do:** ${b.reason}` : null,
-  ].filter(Boolean);
+  const fields: { name: string; value: string; inline: boolean }[] = [];
+  if (b.symbol) fields.push({ name: "Ma", value: "`" + b.symbol + "`", inline: true });
+  if (b.price != null) fields.push({ name: "Gia", value: String(b.price), inline: true });
+  if (b.targetPrice != null) fields.push({ name: "Muc", value: String(b.targetPrice), inline: true });
+  if (b.direction) fields.push({ name: "Dieu kien", value: String(b.direction), inline: true });
+  if (b.reason) fields.push({ name: "Ly do", value: b.reason.slice(0, 200), inline: false });
+
   return {
+    username: "Orca Alerts",
     embeds: [
       {
-        title: b.title || "Orca — Cảnh báo giá",
-        description: lines.join("\n"),
+        title: b.title || "Orca — Canh bao gia",
+        description: b.body || undefined,
         color: b.color ?? 0xa78bfa,
+        fields: fields.length ? fields : undefined,
         timestamp: new Date().toISOString(),
         footer: { text: "Orca Multi-Finance" },
       },
@@ -41,7 +54,7 @@ function discordPayload(b: Body) {
 }
 
 function slackPayload(b: Body) {
-  const text = [b.title || "Orca — Cảnh báo giá", b.body, b.symbol && `Mã: ${b.symbol}`, b.price != null && `Giá: ${b.price}`]
+  const text = [b.title || "Orca — Canh bao gia", b.body, b.symbol && "Ma: " + b.symbol, b.price != null && "Gia: " + b.price]
     .filter(Boolean)
     .join("\n");
   return { text };
@@ -50,7 +63,7 @@ function slackPayload(b: Body) {
 function genericPayload(b: Body) {
   return {
     event: "price_alert",
-    title: b.title || "Orca — Cảnh báo giá",
+    title: b.title || "Orca — Canh bao gia",
     body: b.body ?? null,
     symbol: b.symbol ?? null,
     price: b.price ?? null,
@@ -76,7 +89,9 @@ export async function POST(req: NextRequest) {
       return badRequest("url must be http(s)");
     }
 
-    const provider = b.provider ?? "discord";
+    let provider = b.provider ?? "discord";
+    if (isDiscordUrl(url)) provider = "discord";
+
     const payload =
       provider === "slack"
         ? slackPayload(b)
@@ -94,14 +109,14 @@ export async function POST(req: NextRequest) {
       method: "POST",
       headers,
       body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(12_000),
+      signal: AbortSignal.timeout(10_000),
     });
 
     const text = await upstream.text().catch(() => "");
     if (!upstream.ok) {
       return fail(
         "WEBHOOK_UPSTREAM",
-        `Webhook responded ${upstream.status}: ${text.slice(0, 200)}`,
+        "Webhook responded " + upstream.status + ": " + text.slice(0, 200),
         502,
       );
     }
