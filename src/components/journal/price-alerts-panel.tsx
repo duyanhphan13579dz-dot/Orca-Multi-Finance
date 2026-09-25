@@ -33,7 +33,10 @@ export function PriceAlertsPanel() {
   const [direction, setDirection] = useState<AlertDirection>("above");
   const [kind, setKind] = useState<AlertKind>("price");
   const [reason, setReason] = useState("");
-  const [webhook, setWebhook] = useState<WebhookConfig>(() => loadWebhookConfig());
+  const [webhook, setWebhook] = useState<WebhookConfig>(() => {
+    const cfg = loadWebhookConfig();
+    return { ...cfg, pollMs: cfg.pollMs || 5000 };
+  });
   const [webhookTest, setWebhookTest] = useState<"idle" | "ok" | "fail">("idle");
 
   useEffect(() => {
@@ -81,7 +84,7 @@ export function PriceAlertsPanel() {
         targetPrice: 100,
         direction: "above",
         kind: "price",
-        reason: "Kiem tra webhook Orca",
+        reason: "Kiem tra webhook Discord Orca",
         status: "triggered",
         createdAt: Date.now(),
         triggeredAt: Date.now(),
@@ -148,14 +151,14 @@ export function PriceAlertsPanel() {
     >
       <div className="space-y-3">
         <p className="text-[11.5px] text-text-muted">
-          Dat muc gia, tran/san + ly do. Khi kich hoat (app dang mo), gui thong bao trinh duyet va
-          (tuy chon) webhook Discord / Slack / generic.
+          Dat muc gia / tran / san. Khi kich hoat: thong bao trinh duyet + Discord webhook.
+          Poll mac dinh 5s (tuy chinh trong Webhook).
         </p>
 
         {showWebhook ? (
           <div className="grid gap-2 rounded-lg border border-border-subtle bg-surface-elevated/40 p-3">
             <div className="flex items-center justify-between gap-2">
-              <span className="text-[12px] font-medium text-text-primary">Webhook canh bao</span>
+              <span className="text-[12px] font-medium text-text-primary">Webhook Discord</span>
               <label className="flex items-center gap-1.5 text-[11px] text-text-secondary">
                 <input
                   type="checkbox"
@@ -183,26 +186,37 @@ export function PriceAlertsPanel() {
             </label>
             <label className="block">
               <span className="mb-0.5 block text-[10px] uppercase tracking-wider text-text-muted">
-                URL webhook (https)
+                Toc do poll (canh bao gia)
               </span>
-              <input
-                value={webhook.url}
-                onChange={(e) => setWebhook((w) => ({ ...w, url: e.target.value }))}
-                placeholder="https://discord.com/api/webhooks/..."
-                className="input w-full font-mono text-[12px]"
-                autoComplete="off"
-              />
+              <select
+                value={String(webhook.pollMs || 5000)}
+                onChange={(e) =>
+                  setWebhook((w) => ({ ...w, pollMs: Number(e.target.value) }))
+                }
+                className="input w-full"
+              >
+                <option value="3000">3 giay (nhanh)</option>
+                <option value="5000">5 giay (khuyen nghi)</option>
+                <option value="10000">10 giay</option>
+                <option value="15000">15 giay</option>
+                <option value="30000">30 giay</option>
+              </select>
             </label>
             <label className="block">
               <span className="mb-0.5 block text-[10px] uppercase tracking-wider text-text-muted">
-                Secret (tuy chon — header X-Orca-Secret)
+                URL webhook Discord (https)
               </span>
               <input
-                value={webhook.secret}
-                onChange={(e) => setWebhook((w) => ({ ...w, secret: e.target.value }))}
-                placeholder="********"
+                value={webhook.url}
+                onChange={(e) => {
+                  const url = e.target.value;
+                  const isDc =
+                    url.includes("discord.com/api/webhooks") ||
+                    url.includes("discordapp.com/api/webhooks");
+                  setWebhook((w) => ({ ...w, url, provider: isDc ? "discord" : w.provider }));
+                }}
+                placeholder="https://discord.com/api/webhooks/ID/TOKEN"
                 className="input w-full font-mono text-[12px]"
-                type="password"
                 autoComplete="off"
               />
             </label>
@@ -221,18 +235,18 @@ export function PriceAlertsPanel() {
                 disabled={!isValidWebhookUrl(webhook.url)}
                 className="rounded-md border border-border-subtle px-3 py-1.5 text-[12px] text-text-secondary disabled:opacity-40"
               >
-                Gui thu
+                Gui thu Discord
               </button>
               {webhookTest === "ok" ? (
                 <span className="text-[11px] text-up">Da gui thanh cong</span>
               ) : null}
               {webhookTest === "fail" ? (
-                <span className="text-[11px] text-down">Gui that bai — kiem tra URL</span>
+                <span className="text-[11px] text-down">That bai — kiem tra URL</span>
               ) : null}
             </div>
             <p className="text-[10.5px] text-text-muted">
-              Discord: Server Settings - Integrations - Webhooks. Slack: Incoming Webhook app.
-              Payload qua proxy /api/v1/alerts/webhook de tranh CORS.
+              Discord: Server Settings → Integrations → Webhooks → New Webhook → Copy URL.
+              Dan URL vao o tren, bat "Gui webhook", bam Luu roi Gui thu.
             </p>
           </div>
         ) : null}
@@ -240,9 +254,7 @@ export function PriceAlertsPanel() {
         {showForm ? (
           <div className="grid gap-2 rounded-lg border border-border-subtle bg-surface-elevated/40 p-3 sm:grid-cols-2">
             <label className="block">
-              <span className="mb-0.5 block text-[10px] uppercase tracking-wider text-text-muted">
-                Ma co phieu
-              </span>
+              <span className="mb-0.5 block text-[10px] uppercase tracking-wider text-text-muted">Ma</span>
               <input
                 value={symbol}
                 onChange={(e) => setSymbol(e.target.value.toUpperCase())}
@@ -251,25 +263,21 @@ export function PriceAlertsPanel() {
               />
             </label>
             <label className="block">
-              <span className="mb-0.5 block text-[10px] uppercase tracking-wider text-text-muted">
-                Loai canh bao
-              </span>
+              <span className="mb-0.5 block text-[10px] uppercase tracking-wider text-text-muted">Loai</span>
               <select
                 value={kind}
                 onChange={(e) => setKind(e.target.value as AlertKind)}
                 className="input w-full"
               >
-                <option value="price">Muc gia co dinh</option>
-                <option value="ceiling">Cham tran phien</option>
-                <option value="floor">Cham san phien</option>
+                <option value="price">Muc gia</option>
+                <option value="ceiling">Cham tran</option>
+                <option value="floor">Cham san</option>
               </select>
             </label>
             {kind === "price" ? (
               <>
                 <label className="block">
-                  <span className="mb-0.5 block text-[10px] uppercase tracking-wider text-text-muted">
-                    Gia canh bao
-                  </span>
+                  <span className="mb-0.5 block text-[10px] uppercase tracking-wider text-text-muted">Gia</span>
                   <input
                     value={price}
                     onChange={(e) => setPrice(e.target.value)}
@@ -279,9 +287,7 @@ export function PriceAlertsPanel() {
                   />
                 </label>
                 <label className="block">
-                  <span className="mb-0.5 block text-[10px] uppercase tracking-wider text-text-muted">
-                    Dieu kien
-                  </span>
+                  <span className="mb-0.5 block text-[10px] uppercase tracking-wider text-text-muted">Dieu kien</span>
                   <select
                     value={direction}
                     onChange={(e) => setDirection(e.target.value as AlertDirection)}
@@ -289,42 +295,29 @@ export function PriceAlertsPanel() {
                   >
                     <option value="above">Gia &gt;= muc</option>
                     <option value="below">Gia &lt;= muc</option>
-                    <option value="cross">Gia di qua muc (cross)</option>
+                    <option value="cross">Cross</option>
                   </select>
                 </label>
               </>
             ) : (
               <p className="sm:col-span-2 text-[11.5px] text-text-muted">
-                {kind === "ceiling"
-                  ? "Kich hoat khi gia khop ~ tran phien (mau tim)."
-                  : "Kich hoat khi gia khop ~ san phien (mau xanh lam)."}
+                {kind === "ceiling" ? "Kich hoat khi gia ~ tran." : "Kich hoat khi gia ~ san."}
               </p>
             )}
             <label className="block sm:col-span-2">
-              <span className="mb-0.5 block text-[10px] uppercase tracking-wider text-text-muted">
-                Ly do dat canh bao
-              </span>
+              <span className="mb-0.5 block text-[10px] uppercase tracking-wider text-text-muted">Ly do</span>
               <input
                 value={reason}
                 onChange={(e) => setReason(e.target.value)}
-                placeholder="Vi du: test lai vung ho tro tuan..."
                 className="input w-full"
                 maxLength={280}
               />
             </label>
             <div className="flex gap-2 sm:col-span-2">
-              <button
-                type="button"
-                onClick={() => void submit()}
-                className="rounded-md bg-accent-primary px-3 py-1.5 text-[12px] font-semibold text-white"
-              >
-                Luu canh bao
+              <button type="button" onClick={() => void submit()} className="rounded-md bg-accent-primary px-3 py-1.5 text-[12px] font-semibold text-white">
+                Luu
               </button>
-              <button
-                type="button"
-                onClick={() => setShowForm(false)}
-                className="rounded-md px-3 py-1.5 text-[12px] text-text-muted"
-              >
+              <button type="button" onClick={() => setShowForm(false)} className="rounded-md px-3 py-1.5 text-[12px] text-text-muted">
                 Huy
               </button>
             </div>
@@ -332,7 +325,7 @@ export function PriceAlertsPanel() {
         ) : null}
 
         {active.length === 0 && triggered.length === 0 ? (
-          <p className="text-[12px] text-text-muted">Chua co canh bao nao.</p>
+          <p className="text-[12px] text-text-muted">Chua co canh bao.</p>
         ) : (
           <div className="space-y-2">
             {active.map((a) => (
@@ -351,7 +344,6 @@ export function PriceAlertsPanel() {
 function AlertRow({ alert, onRemove }: { alert: PriceAlert; onRemove: () => void }) {
   const kind = alert.kind ?? "price";
   const isTrig = alert.status === "triggered";
-
   let dirLabel = "~";
   if (kind === "ceiling") dirLabel = "Tran";
   else if (kind === "floor") dirLabel = "San";
@@ -369,17 +361,9 @@ function AlertRow({ alert, onRemove }: { alert: PriceAlert; onRemove: () => void
     else rowClass = "border-positive/30 bg-positive/5";
   }
 
-  const pricePart =
-    kind === "price" ? " " + alert.targetPrice.toLocaleString("vi-VN") : "";
+  const pricePart = kind === "price" ? " " + alert.targetPrice.toLocaleString("vi-VN") : "";
   const statusLabel = isTrig ? "Da kich hoat" : "Dang theo doi";
   const badgeTone: "up" | "neutral" = isTrig ? "up" : "neutral";
-
-  let metaLine = "Tao " + new Date(alert.createdAt).toLocaleString("vi-VN");
-  if (alert.triggeredAt) {
-    const tp = alert.triggeredPrice?.toLocaleString("vi-VN") ?? "";
-    const tt = new Date(alert.triggeredAt).toLocaleString("vi-VN");
-    metaLine += " · Cham " + tp + " luc " + tt;
-  }
 
   return (
     <div className={"flex items-start gap-2 rounded-lg border px-3 py-2 " + rowClass}>
@@ -392,17 +376,9 @@ function AlertRow({ alert, onRemove }: { alert: PriceAlert; onRemove: () => void
           </span>
           <Badge tone={badgeTone}>{statusLabel}</Badge>
         </div>
-        {alert.reason ? (
-          <p className="mt-0.5 text-[11.5px] text-text-muted">{alert.reason}</p>
-        ) : null}
-        <p className="mt-0.5 text-[10px] text-text-muted">{metaLine}</p>
+        {alert.reason ? <p className="mt-0.5 text-[11.5px] text-text-muted">{alert.reason}</p> : null}
       </div>
-      <button
-        type="button"
-        onClick={onRemove}
-        className="text-text-muted hover:text-negative"
-        aria-label="Xoa"
-      >
+      <button type="button" onClick={onRemove} className="text-text-muted hover:text-negative" aria-label="Xoa">
         <Trash2 className="size-4" />
       </button>
     </div>
