@@ -270,8 +270,8 @@ export function PriceAlertsPanel() {
                 <label className="block">
                   <span className="mb-0.5 block text-[10px] uppercase tracking-wider text-text-muted">Dieu kien</span>
                   <select value={direction} onChange={(e) => setDirection(e.target.value as AlertDirection)} className="input w-full">
-                    <option value="above">Gia >= muc</option>
-                    <option value="below">Gia <= muc</option>
+                    <option value="above">{"Gia >= muc"}</option>
+                    <option value="below">{"Gia <= muc"}</option>
                     <option value="cross">Cross</option>
                   </select>
                 </label>
