@@ -5,6 +5,7 @@ import { isCircuitOpen, recordFailure, recordSuccess } from "../health";
  * Connection resilience primitives for the Data Engine Hub:
  * - hard timeout per attempt
  * - sequential primary → fallback with shared deadline budget
+ * - parallel race / gather for multi-source
  * - circuit-aware skip of known-bad providers
  */
 
@@ -42,9 +43,7 @@ export function withTimeout<T>(
 
 export type FallbackAttempt<T> = {
   id: string;
-  /** Prefer skipping when circuit is open (unless force). */
   run: (signal: AbortSignal) => Promise<T>;
-  /** Optional accept predicate — reject soft-empty results so next source runs. */
   accept?: (value: T) => boolean;
 };
 
@@ -57,16 +56,12 @@ export type FallbackResult<T> = {
 
 /**
  * Try sources in order until one accepts, respecting a shared wall-clock budget.
- * Skips providers with open circuit breakers (health registry).
  */
 export async function firstHealthy<T>(
   attempts: FallbackAttempt<T>[],
   opts?: {
-    /** Total budget for the whole chain (ms). Default 8s. */
     budgetMs?: number;
-    /** Per-attempt timeout; remaining budget is also applied. Default 3.5s. */
     perAttemptMs?: number;
-    /** If true, ignore circuit open state. */
     force?: boolean;
     label?: string;
   },
@@ -125,7 +120,7 @@ export async function firstHealthy<T>(
   throw err;
 }
 
-/** Rank source ids: healthy + lower avg latency first. Uses process health registry. */
+/** Rank source ids: healthy + lower avg latency first. */
 export function rankSourceIds(
   ids: string[],
   health: Array<{ provider: string; status: string; avgLatencyMs: number | null; circuit?: string }>,
@@ -140,4 +135,121 @@ export function rankSourceIds(
     return h.avgLatencyMs ?? 500;
   };
   return [...ids].sort((a, b) => score(a) - score(b));
+}
+
+/**
+ * Fire all attempts in parallel; return the first that accepts.
+ */
+export async function raceHealthy<T>(
+  attempts: FallbackAttempt<T>[],
+  opts?: {
+    perAttemptMs?: number;
+    force?: boolean;
+    label?: string;
+  },
+): Promise<FallbackResult<T>> {
+  const perAttemptMs = opts?.perAttemptMs ?? 4_000;
+  const label = opts?.label ?? "raceHealthy";
+  const chainStarted = performance.now();
+  const active = attempts.filter((a) => opts?.force || !isCircuitOpen(a.id));
+  if (!active.length) {
+    throw new Error(`${label}: no sources (all circuits open)`);
+  }
+
+  return new Promise<FallbackResult<T>>((resolve, reject) => {
+    let remaining = active.length;
+    let settled = false;
+    const log: FallbackResult<T>["attempts"] = [];
+
+    for (const a of active) {
+      const t0 = performance.now();
+      void withTimeout(perAttemptMs, (signal) => a.run(signal), `${label}:${a.id}`)
+        .then((value) => {
+          const ms = Math.round(performance.now() - t0);
+          const ok = a.accept ? a.accept(value) : value != null;
+          if (!ok) {
+            log.push({ id: a.id, ok: false, ms, error: "empty" });
+            recordFailure(a.id, "empty_result");
+            remaining -= 1;
+            if (!settled && remaining <= 0) {
+              reject(new Error(`${label}: all empty`));
+            }
+            return;
+          }
+          log.push({ id: a.id, ok: true, ms });
+          recordSuccess(a.id, ms);
+          if (!settled) {
+            settled = true;
+            resolve({
+              value,
+              sourceId: a.id,
+              attempts: log,
+              totalMs: Math.round(performance.now() - chainStarted),
+            });
+          }
+        })
+        .catch((e) => {
+          const ms = Math.round(performance.now() - t0);
+          const msg = e instanceof Error ? e.message : String(e);
+          log.push({ id: a.id, ok: false, ms, error: msg.slice(0, 160) });
+          recordFailure(a.id, msg.slice(0, 200));
+          remaining -= 1;
+          if (!settled && remaining <= 0) {
+            reject(new Error(`${label}: all failed`));
+          }
+        });
+    }
+  });
+}
+
+/**
+ * Run all attempts in parallel; return every accepted result (for merge).
+ */
+export async function gatherHealthy<T>(
+  attempts: FallbackAttempt<T>[],
+  opts?: {
+    perAttemptMs?: number;
+    force?: boolean;
+    label?: string;
+  },
+): Promise<{
+  hits: Array<{ sourceId: string; value: T; ms: number }>;
+  attempts: FallbackResult<T>["attempts"];
+  totalMs: number;
+}> {
+  const perAttemptMs = opts?.perAttemptMs ?? 5_000;
+  const label = opts?.label ?? "gatherHealthy";
+  const t0 = performance.now();
+  const log: FallbackResult<T>["attempts"] = [];
+  const hits: Array<{ sourceId: string; value: T; ms: number }> = [];
+
+  await Promise.all(
+    attempts.map(async (a) => {
+      if (!opts?.force && isCircuitOpen(a.id)) {
+        log.push({ id: a.id, ok: false, ms: 0, error: "circuit_open" });
+        return;
+      }
+      const started = performance.now();
+      try {
+        const value = await withTimeout(perAttemptMs, (signal) => a.run(signal), `${label}:${a.id}`);
+        const ms = Math.round(performance.now() - started);
+        const ok = a.accept ? a.accept(value) : value != null;
+        if (!ok) {
+          log.push({ id: a.id, ok: false, ms, error: "empty" });
+          recordFailure(a.id, "empty_result");
+          return;
+        }
+        log.push({ id: a.id, ok: true, ms });
+        recordSuccess(a.id, ms);
+        hits.push({ sourceId: a.id, value, ms });
+      } catch (e) {
+        const ms = Math.round(performance.now() - started);
+        const msg = e instanceof Error ? e.message : String(e);
+        log.push({ id: a.id, ok: false, ms, error: msg.slice(0, 160) });
+        recordFailure(a.id, msg.slice(0, 200));
+      }
+    }),
+  );
+
+  return { hits, attempts: log, totalMs: Math.round(performance.now() - t0) };
 }
