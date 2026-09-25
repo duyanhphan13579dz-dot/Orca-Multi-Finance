@@ -4,7 +4,6 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import { useApi } from "@/lib/hooks";
 import { VN_SECTOR_MAP, DEFAULT_VN_WATCHLIST, sectorOf } from "@/lib/vn/master";
-import type { MarketSnapshot } from "@/lib/services/market";
 import type { IndexQuote, Quote } from "@/lib/types";
 import { Badge, Chg, fmtCompact, fmtNum, FreshnessDot, Loading, MetaLine, Panel, Unavailable } from "@/components/ui";
 import { AddToWatchlist } from "@/components/watchlist-button";
@@ -19,20 +18,20 @@ type StocksData = {
 };
 
 export default function VnMarketCenterPage() {
-  const { res, data, meta, isLoading } = useApi<StocksData>(`/api/v1/stocks?board=full`, { refreshInterval: 45_000 });
-  const { data: snap } = useApi<MarketSnapshot>("/api/v1/market/snapshot", { refreshInterval: 30_000 });
+  const { res, data, meta, isLoading } = useApi<StocksData>(`/api/v1/stocks?board=full`, {
+    refreshInterval: 45_000,
+  });
   const [q, setQ] = useState("");
-  const [sector, setSector] = useState<string>("");
+  const [sector, setSector] = useState("");
 
-  const session = snap?.vnSession;
   const quotes = useMemo(() => {
     let list = data?.quotes ?? [];
-    if (q)
+    if (q) {
+      const qq = q.toUpperCase();
       list = list.filter(
-        (x) =>
-          x.symbol.includes(q.toUpperCase()) ||
-          (x.name ?? "").toUpperCase().includes(q.toUpperCase()),
+        (x) => x.symbol.includes(qq) || (x.name ?? "").toUpperCase().includes(qq),
       );
+    }
     if (sector) list = list.filter((x) => sectorOf(x.symbol) === sector);
     return list;
   }, [data, q, sector]);
@@ -54,10 +53,11 @@ export default function VnMarketCenterPage() {
           >
             Xu hướng ngành
           </Link>
-          {data?.sessionDate && <Badge tone="neutral">Phiên {data.sessionDate}</Badge>}
-          {data?.count != null && <Badge tone="neutral">{data.count} mã</Badge>}
-          {session ? (
-            <Badge tone={session.trading ? "up" : "warn">{session.labelVi}</Badge>
+          {data?.sessionDate ? (
+            <Badge tone="neutral">{`Phiên ${data.sessionDate}`}</Badge>
+          ) : null}
+          {data?.count != null ? (
+            <Badge tone="neutral">{`${data.count} mã`}</Badge>
           ) : null}
           <span className="ml-auto flex items-center gap-2">
             <FreshnessDot status={meta?.freshness} ageMs={meta?.ageMs} />
@@ -82,14 +82,12 @@ export default function VnMarketCenterPage() {
                   <Chg value={i.changePercent} arrow={false} />
                 </div>
                 <div className="num mt-1 text-[17px] font-semibold sm:text-[19px]">{fmtNum(i.value, 2)}</div>
-                {i.volume != null && (
+                {i.volume != null ? (
                   <div className="num text-[10px] text-text-muted">KL {fmtCompact(i.volume)}</div>
-                )}
+                ) : null}
               </div>
             ))}
           </div>
-        ) : session ? (
-          <p className="px-3 pb-3 text-[11px] text-text-muted sm:px-4">{snap?.vnSessionHint}</p>
         ) : null}
       </Panel>
 
@@ -153,7 +151,7 @@ export default function VnMarketCenterPage() {
                         <span className="font-semibold text-accent-primary">{qu.symbol}</span>
                         <AddToWatchlist assetType="stock" symbol={qu.symbol} />
                       </div>
-                      {qu.name && <div className="truncate text-[11px] text-text-muted">{qu.name}</div>}
+                      {qu.name ? <div className="truncate text-[11px] text-text-muted">{qu.name}</div> : null}
                       <div className="mt-0.5 flex gap-3 text-[10px] text-text-muted">
                         <span className="num">KL {fmtCompact(qu.volume)}</span>
                         <span className="num">GT {fmtCompact(qu.quoteVolume)}</span>
@@ -194,14 +192,17 @@ export default function VnMarketCenterPage() {
                   {quotes.map((qu) => (
                     <tr key={qu.symbol} className="border-t border-border-subtle/70 hover:bg-surface-elevated/50">
                       <td className="py-2 pl-2 sm:pl-3">
-                        <Link href={`/stocks/${qu.symbol}`} className="font-semibold text-accent-primary hover:underline">
+                        <Link
+                          href={`/stocks/${qu.symbol}`}
+                          className="font-semibold text-accent-primary hover:underline"
+                        >
                           {qu.symbol}
                         </Link>
-                        {qu.name && (
+                        {qu.name ? (
                           <div className="truncate text-[10px] text-text-muted" title={qu.name}>
                             {qu.name}
                           </div>
-                        )}
+                        ) : null}
                       </td>
                       <td className="num py-2 text-right font-medium">{fmtNum(qu.price, 2)}</td>
                       <td className="py-2 text-right">
@@ -211,9 +212,7 @@ export default function VnMarketCenterPage() {
                         {qu.referencePrice != null ? fmtNum(qu.referencePrice, 2) : "—"}
                       </td>
                       <td className="num py-2 text-right text-text-secondary">{fmtCompact(qu.volume)}</td>
-                      <td className="num py-2 text-right text-text-secondary">
-                        {fmtCompact(qu.quoteVolume)}
-                      </td>
+                      <td className="num py-2 text-right text-text-secondary">{fmtCompact(qu.quoteVolume)}</td>
                       <td className="py-2 pr-2 text-right sm:pr-3">
                         <AddToWatchlist assetType="stock" symbol={qu.symbol} />
                       </td>
