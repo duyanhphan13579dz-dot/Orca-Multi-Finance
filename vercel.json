@@ -43,6 +43,14 @@
     {
       "path": "/api/v1/cron/reports",
       "schedule": "50 8 * * 1-5"
+    },
+    {
+      "path": "/api/v1/cron/alerts",
+      "schedule": "*/15 2-8 * * 1-5"
+    },
+    {
+      "path": "/api/v1/cron/alerts",
+      "schedule": "5 9 * * 1-5"
     }
   ]
 }
