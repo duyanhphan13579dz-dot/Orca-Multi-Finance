@@ -1,8 +1,7 @@
 import "server-only";
 import { llmChat, llmConfigured } from "../ai/gateway";
 import { buildMeta } from "../freshness";
-import { getVnQuotes } from "./stocks";
-import { getCryptoDetail } from "./crypto";
+import { hubVnQuotes, hubCryptoDetail, hubPrefetch, runInDataHub } from "../data-engine/hub";
 import type { Meta } from "../types";
 
 export type JournalTradeInput = {
@@ -22,7 +21,7 @@ export type JournalTradeInput = {
   closedAt?: number | null;
 };
 
-export type OpenMark = {
+type OpenMark = {
   symbol: string;
   assetType: string;
   side: string;
@@ -43,15 +42,13 @@ export type JournalAnalysisResult = {
     winRate: number | null;
     profitFactor: number | null;
     expectancy: number | null;
-    avgWin: number | null;
-    avgLoss: number | null;
     avgR: number | null;
     totalPnl: number | null;
     unrealizedPnl: number | null;
-    maxWin: number | null;
-    maxLoss: number | null;
     maxConsecLosses: number;
-    byAsset: { asset: string; n: number; pnl: number; winRate: number | null }[];
+    avgWin: number | null;
+    avgLoss: number | null;
+    byAsset: { assetType: string; closed: number; pnl: number; winRate: number | null }[];
     byStrategy: { strategy: string; n: number; pnl: number }[];
   };
   openMarks: OpenMark[];
@@ -120,7 +117,7 @@ function computeStats(trades: JournalTradeInput[]): JournalAnalysisResult["stats
   for (const t of closed) {
     const p = pnlOf(t);
     if (p == null) continue;
-    const k = (t.strategy || "Không ghi").slice(0, 40);
+    const k = t.strategy || "(không ghi)";
     const cur = byStratMap.get(k) ?? { n: 0, pnl: 0 };
     cur.n++;
     cur.pnl += p;
@@ -132,19 +129,17 @@ function computeStats(trades: JournalTradeInput[]): JournalAnalysisResult["stats
     closed: closed.length,
     open,
     winRate,
-    profitFactor: profitFactor != null && Number.isFinite(profitFactor) ? profitFactor : null,
+    profitFactor,
     expectancy,
-    avgWin,
-    avgLoss,
     avgR,
     totalPnl,
     unrealizedPnl: null,
-    maxWin: wins.length ? Math.max(...wins) : null,
-    maxLoss: losses.length ? Math.min(...losses) : null,
     maxConsecLosses,
-    byAsset: [...byAssetMap.entries()].map(([asset, v]) => ({
-      asset,
-      n: v.n,
+    avgWin,
+    avgLoss,
+    byAsset: [...byAssetMap.entries()].map(([assetType, v]) => ({
+      assetType,
+      closed: v.closed,
       pnl: v.pnl,
       winRate: v.closed ? v.wins / v.closed : null,
     })),
@@ -168,25 +163,31 @@ async function markOpenTrades(trades: JournalTradeInput[]): Promise<OpenMark[]> 
   ].slice(0, 30);
 
   const quoteMap = new Map<string, number>();
+  // Marks qua Data Engine Hub (singleflight + fallback nguồn thị trường)
   if (stockSyms.length) {
     try {
-      const q = await getVnQuotes(stockSyms);
+      const q = await hubVnQuotes(stockSyms);
       for (const row of q?.quotes ?? []) {
-        if (row.price != null && Number.isFinite(row.price)) quoteMap.set(row.symbol.toUpperCase(), row.price);
+        const sym = String(row.symbol ?? "").toUpperCase();
+        const px = row.price != null ? Number(row.price) : NaN;
+        if (sym && Number.isFinite(px)) quoteMap.set(sym, px);
       }
     } catch {
       /* */
     }
   }
 
-  // crypto marks (tối đa 5 mã để không timeout)
   const cryptoOpen = open.filter((t) => t.assetType === "crypto").slice(0, 5);
   for (const t of cryptoOpen) {
     try {
-      const sym = t.symbol.toUpperCase().endsWith("USDT") ? t.symbol.toUpperCase() : `${t.symbol.toUpperCase()}USDT`;
-      const d = await getCryptoDetail(sym);
-      const px = d?.detail?.ticker?.price;
-      if (px != null && Number.isFinite(px)) quoteMap.set(t.symbol.toUpperCase(), px);
+      const d = (await hubCryptoDetail(t.symbol)) as {
+        lastPrice?: string | number;
+        price?: number;
+        symbol?: string;
+      } | null;
+      const raw = d?.lastPrice ?? d?.price;
+      const px = raw != null ? Number(raw) : NaN;
+      if (Number.isFinite(px) && px > 0) quoteMap.set(t.symbol.toUpperCase(), px);
     } catch {
       /* */
     }
@@ -200,8 +201,6 @@ async function markOpenTrades(trades: JournalTradeInput[]): Promise<OpenMark[]> 
     let distToTpPct: number | null = null;
     if (mark != null && t.entry > 0) {
       if (t.stopLoss != null) {
-        distToSlPct = ((t.stopLoss - mark) / mark) * 100 * dir * -1;
-        // khoảng cách % tới SL theo hướng có lợi của giá hiện tại → SL
         distToSlPct = ((mark - t.stopLoss) / t.entry) * 100 * dir;
       }
       if (t.takeProfit != null) {
@@ -248,23 +247,15 @@ function deterministicNarrative(
     for (const o of openMarks) {
       const markStr = o.mark != null ? o.mark.toFixed(2) : "chưa có giá";
       const uStr = o.unrealizedPnl != null ? o.unrealizedPnl.toFixed(2) : "—";
-      const sl =
-        o.distToSlPct != null ? ` · tới SL ~${o.distToSlPct.toFixed(1)}% entry` : "";
-      const tp =
-        o.distToTpPct != null ? ` · tới TP ~${o.distToTpPct.toFixed(1)}% entry` : "";
       parts.push(
-        `- **${o.symbol}** (${o.side}) entry ${o.entry} → mark ${markStr} · uPnL **${uStr}**${sl}${tp}` +
-          (o.strategy || o.notes ? ` · ${[o.strategy, o.notes].filter(Boolean).join(" — ")}` : ""),
+        `- **${o.symbol}** (${o.side}) entry ${o.entry} · mark ${markStr} · uPnL ${uStr}` +
+          (o.distToSlPct != null ? ` · tới SL ${o.distToSlPct.toFixed(1)}%` : "") +
+          (o.distToTpPct != null ? ` · tới TP ${o.distToTpPct.toFixed(1)}%` : ""),
       );
-    }
-    if (stats.unrealizedPnl != null) {
-      parts.push(`Tổng lãi/lỗ chưa thực hiện: **${stats.unrealizedPnl.toFixed(2)}**.`);
     }
   }
 
-  parts.push(
-    "### Gợi ý kỷ luật",
-  );
+  parts.push("### Gợi ý kỷ luật");
   parts.push(
     "- Giữ SL/TP đã ghi; tránh dời SL xa hơn khi lệnh ngược.\n- Đánh giá theo R-multiple, không chỉ PnL tuyệt đối.\n- Ghi exit khi đóng lệnh để win rate / profit factor có ý nghĩa thống kê.",
   );
@@ -272,71 +263,174 @@ function deterministicNarrative(
   return parts.join("\n\n");
 }
 
+/** Snapshot ngắn từ hub thị trường — dùng cho phân tích danh mục. */
+async function fetchMarketHubContext(symbols: string[]): Promise<Record<string, unknown>> {
+  const ctx: Record<string, unknown> = { via: "data-engine-hub" };
+  try {
+    await hubPrefetch({ symbols: symbols.slice(0, 20), commodity: false });
+  } catch {
+    /* */
+  }
+  try {
+    const { buildMarketIntel } = await import("./market-intel");
+    const { intel } = await buildMarketIntel();
+    ctx.session = intel.session
+      ? {
+          state: intel.session.state,
+          labelVi: intel.session.labelVi,
+          trading: intel.session.trading,
+        }
+      : null;
+    ctx.condition = intel.condition
+      ? {
+          score: intel.condition.score,
+          rating: intel.condition.rating,
+          confidence: intel.condition.confidence,
+          crossAssetState: intel.condition.crossAssetState,
+          drivers: intel.condition.drivers?.slice(0, 4),
+          risks: intel.condition.risks?.slice(0, 4),
+        }
+      : null;
+    ctx.breadth = intel.breadth
+      ? {
+          advancers: intel.breadth.advancers,
+          decliners: intel.breadth.decliners,
+          regimeVi: intel.breadth.regimeVi,
+        }
+      : null;
+    ctx.flow = intel.flow
+      ? {
+          foreignNet: intel.flow.foreignNet,
+          propNet: intel.flow.propNet,
+          available: intel.flow.available,
+        }
+      : null;
+    ctx.indices = (intel.indices ?? []).slice(0, 6).map((i) => ({
+      code: i.code,
+      value: i.value,
+      changePercent: i.changePercent,
+    }));
+  } catch (e) {
+    ctx.marketError = e instanceof Error ? e.message : "market_intel_unavailable";
+  }
+  return ctx;
+}
+
 export async function analyzeJournalPortfolio(
   trades: JournalTradeInput[],
   portfolioContext?: Record<string, unknown>,
 ): Promise<{ result: JournalAnalysisResult; meta: Meta }> {
-  const slice = trades.slice(0, 200);
-  const stats = computeStats(slice);
-  const openMarks = await markOpenTrades(slice);
-  const uSum = openMarks
-    .map((o) => o.unrealizedPnl)
-    .filter((x): x is number => x != null)
-    .reduce((a, b) => a + b, 0);
-  stats.unrealizedPnl = openMarks.some((o) => o.unrealizedPnl != null) ? uSum : null;
+  return runInDataHub(async () => {
+    const slice = trades.slice(0, 200);
+    const stats = computeStats(slice);
 
-  let narrative = deterministicNarrative(stats, openMarks);
-  let mode: "deterministic" | "llm" = "deterministic";
-  let model: string | null = null;
+    const openSyms = [
+      ...new Set(
+        slice
+          .filter((t) => t.exit == null && (t.assetType === "stock" || /^[A-Z]{3}$/.test(t.symbol)))
+          .map((t) => t.symbol.toUpperCase()),
+      ),
+    ];
 
-  if (llmConfigured() && (stats.closed >= 1 || openMarks.length >= 1)) {
-    try {
-      const sampleClosed = slice
-        .filter((t) => t.exit != null)
-        .slice(0, 30)
-        .map((t) => ({
-          symbol: t.symbol,
-          assetType: t.assetType,
-          side: t.side,
-          entry: t.entry,
-          exit: t.exit,
-          pnl: pnlOf(t),
-          r: rOf(t),
-          strategy: t.strategy || null,
-          emotion: t.emotion || null,
-          notes: t.notes || null,
-        }));
+    // Prefetch quotes + market intel qua hub thị trường chung
+    const marketHub = await fetchMarketHubContext(openSyms);
+    const openMarks = await markOpenTrades(slice);
+    const uSum = openMarks
+      .map((o) => o.unrealizedPnl)
+      .filter((x): x is number => x != null)
+      .reduce((a, b) => a + b, 0);
+    stats.unrealizedPnl = openMarks.some((o) => o.unrealizedPnl != null) ? uSum : null;
 
-      const r = await llmChat("analysis", {
-        system: `Bạn là AI Portfolio Coach của ORCA Smart Portfolio.
-Chỉ dùng STATS + OPEN_MARKS + SAMPLE — không bịa giá hay sự kiện.
-Tiếng Việt, cấu trúc ## / gạch đầu dòng.
-Với lệnh đang mở: nhận xét khoảng entry–SL–TP, uPnL, kỷ luật quản trị rủi ro.
-Với lệnh đã đóng: win rate, R-multiple, hành vi.
-Nếu có PORTFOLIO_CONTEXT, ưu tiên đánh giá concentration, volatility, stop-loss coverage, risk alerts và chất lượng danh mục tổng thể.
-Phân biệt rõ dữ liệu đủ/thiếu mẫu. Kết thúc bằng 3 hành động cụ thể theo thứ tự ưu tiên. Không khuyến nghị all-in hoặc dự đoán chắc chắn.`,
-        user: `STATS:\n${JSON.stringify(stats)}\n\nPORTFOLIO_CONTEXT:\n${JSON.stringify(portfolioContext ?? {})}\n\nOPEN_MARKS (giá realtime hệ thống):\n${JSON.stringify(openMarks)}\n\nSAMPLE_CLOSED:\n${JSON.stringify(sampleClosed)}\n\nViết đánh giá Smart Portfolio và nhật ký lệnh này.`,
-        temperature: 0.3,
-        maxTokens: 1000,
-      });
-      if (r?.text?.trim()) {
-        narrative = r.text.trim();
-        mode = "llm";
-        model = r.model;
-      }
-    } catch {
-      /* giữ deterministic */
+    let narrative = deterministicNarrative(stats, openMarks);
+    if (marketHub.condition || marketHub.session) {
+      const cond = marketHub.condition as {
+        rating?: string;
+        score?: number;
+        confidence?: string;
+        crossAssetState?: string;
+      } | undefined;
+      const sess = marketHub.session as { labelVi?: string } | undefined;
+      const br = marketHub.breadth as {
+        regimeVi?: string;
+        advancers?: number;
+        decliners?: number;
+      } | undefined;
+      const hubLines = [
+        "### Ngữ cảnh thị trường (Data Hub)",
+        sess?.labelVi ? `- Phiên: **${sess.labelVi}**` : null,
+        cond?.rating != null
+          ? `- Điều kiện TT: **${cond.rating}** · score ${cond.score != null ? Math.round(cond.score) : "—"} · ${cond.confidence ?? ""} · ${cond.crossAssetState ?? ""}`
+          : null,
+        br
+          ? `- Breadth: **${br.regimeVi ?? "—"}** · ${br.advancers ?? "—"} tăng / ${br.decliners ?? "—"} giảm`
+          : null,
+      ].filter(Boolean);
+      if (hubLines.length > 1) narrative = narrative + "\n\n" + hubLines.join("\n");
     }
-  }
 
-  const meta = buildMeta({
-    source: mode === "llm" ? "journal+llm+marks" : "journal-stats+marks",
-    sourceTimestampMs: Date.now(),
-    note: `${stats.closed} đóng · ${stats.open} mở · marks ${openMarks.filter((o) => o.mark != null).length}`,
+    let mode: "deterministic" | "llm" = "deterministic";
+    let model: string | null = null;
+
+    if (llmConfigured() && (stats.closed >= 1 || openMarks.length >= 1)) {
+      try {
+        const sampleClosed = slice
+          .filter((t) => t.exit != null)
+          .slice(0, 30)
+          .map((t) => ({
+            symbol: t.symbol,
+            assetType: t.assetType,
+            side: t.side,
+            entry: t.entry,
+            exit: t.exit,
+            pnl: pnlOf(t),
+            r: rOf(t),
+            strategy: t.strategy || null,
+            emotion: t.emotion || null,
+            notes: t.notes || null,
+          }));
+
+        const r = await llmChat("analysis", {
+          system: `Bạn là AI Portfolio Coach của ORCA Smart Portfolio.
+Chỉ dùng STATS + OPEN_MARKS + MARKET_HUB + SAMPLE — không bịa giá hay sự kiện.
+Tiếng Việt, cấu trúc ## / gạch đầu dòng.
+Với lệnh đang mở: nhận xét entry–SL–TP, uPnL, kỷ luật rủi ro, đặt trong ngữ cảnh MARKET_HUB (phiên, breadth, dòng tiền).
+Với lệnh đã đóng: win rate, R-multiple, hành vi.
+Nếu có PORTFOLIO_CONTEXT, ưu tiên concentration, volatility, stop-loss coverage, risk alerts.
+Phân biệt dữ liệu đủ/thiếu. Kết thúc bằng 3 hành động cụ thể. Không khuyến nghị all-in hay dự đoán chắc chắn.`,
+          user:
+            "STATS:\n" +
+            JSON.stringify(stats) +
+            "\n\nPORTFOLIO_CONTEXT:\n" +
+            JSON.stringify(portfolioContext ?? {}) +
+            "\n\nMARKET_HUB (nguồn chung ORCA):\n" +
+            JSON.stringify(marketHub) +
+            "\n\nOPEN_MARKS (hub quotes):\n" +
+            JSON.stringify(openMarks) +
+            "\n\nSAMPLE_CLOSED:\n" +
+            JSON.stringify(sampleClosed) +
+            "\n\nViết đánh giá Smart Portfolio gắn với điều kiện thị trường hiện tại.",
+          temperature: 0.3,
+          maxTokens: 1100,
+        });
+        if (r?.text?.trim()) {
+          narrative = r.text.trim();
+          mode = "llm";
+          model = r.model;
+        }
+      } catch {
+        /* giữ deterministic */
+      }
+    }
+
+    const meta = buildMeta({
+      source: mode === "llm" ? "hub+journal+llm" : "hub+journal-stats",
+      sourceTimestampMs: Date.now(),
+      note: `${stats.closed} đóng · ${stats.open} mở · marks ${openMarks.filter((o) => o.mark != null).length} · hub`,
+    });
+
+    return {
+      result: { stats, openMarks, narrative, mode, model },
+      meta,
+    };
   });
-
-  return {
-    result: { stats, openMarks, narrative, mode, model },
-    meta,
-  };
 }

@@ -9,7 +9,7 @@ import { routeForDomain, syncAllSources } from "./source-sync";
  * Data Engine Hub — shared accessors for modules.
  *
  * Rule: modules MUST prefer hub getters over calling providers directly
- * so valuation / agent / screener / CANSLIM share one fetch per key per request.
+ * so valuation / agent / screener / CANSLIM / portfolio share one fetch per key per request.
  */
 
 export { runInDataHub, hubStats };
@@ -34,7 +34,6 @@ export async function hubLoad<T>(
 
 /**
  * Financial package (BCTC + quality) — singleflight per symbol per request.
- * Wraps existing financial/service.getFinancialPackage.
  */
 export async function hubFinancialPackage(symbol: string) {
   const sym = symbol.trim().toUpperCase();
@@ -70,26 +69,25 @@ export type HubVnQuote = {
 
 export type HubVnQuotesResult = {
   quotes: HubVnQuote[];
-  sourceTs?: number | null;
-  meta?: { freshness?: string; source?: string } | null;
-  sessionDate?: string;
+  sourceTs: number | null;
+  meta: Record<string, unknown> | null;
 };
 
-function normalizeQuotes(r: unknown, source: string): HubVnQuotesResult | null {
-  if (Array.isArray(r)) {
-    return { quotes: r as unknown as HubVnQuote[], sourceTs: null, meta: { source } };
-  }
-  if (r && typeof r === "object") {
-    const o = r as HubVnQuotesResult & { quotes?: HubVnQuote[] };
-    if (Array.isArray(o.quotes)) {
-      return {
-        quotes: o.quotes as unknown as HubVnQuote[],
-        sourceTs: o.sourceTs ?? null,
-        meta: { ...(typeof o.meta === "object" && o.meta ? o.meta : {}), source },
-      };
-    }
-  }
-  return null;
+function normalizeQuotes(raw: unknown, sourceId: string): HubVnQuotesResult | null {
+  if (raw == null) return null;
+  const r = raw as {
+    quotes?: HubVnQuote[];
+    data?: HubVnQuote[];
+    meta?: Record<string, unknown>;
+    sourceTs?: number;
+  };
+  const list = Array.isArray(r.quotes) ? r.quotes : Array.isArray(r.data) ? r.data : Array.isArray(raw) ? (raw as HubVnQuote[]) : null;
+  if (!list || !list.length) return null;
+  return {
+    quotes: list,
+    sourceTs: typeof r.sourceTs === "number" ? r.sourceTs : Date.now(),
+    meta: { ...(r.meta ?? {}), source: sourceId },
+  };
 }
 
 export async function hubVnQuotes(symbols: string[]): Promise<HubVnQuotesResult> {
@@ -207,60 +205,35 @@ export async function hubCommodityMarket(id = "all") {
   }, { sourceIds: ["commodities"] });
 }
 
-/**
- * News bundle — optional symbol filter.
- * Aggregates RSS once per request; filters offline when symbol given.
- */
+/** News feed via shared key. */
 export async function hubNews(opts?: { symbol?: string; limit?: number }) {
-  const sym = opts?.symbol?.trim().toUpperCase() ?? "";
-  const limit = opts?.limit ?? 8;
-  const key = kNews(sym ? `sym:${sym}:L${limit}` : `all:L${limit}`);
-  return coalesce(key, async () => {
-    const { aggregateNews } = await import("../providers/news");
-    const { articles, errors } = await aggregateNews();
-    let list = articles;
-    if (sym) {
-      list = articles.filter(
-        (a) =>
-          (a.relatedSymbols ?? []).some((s) => s.toUpperCase() === sym) ||
-          new RegExp(`\\b${sym}\\b`, "i").test(`${a.title ?? ""} ${a.summary ?? ""}`),
-      );
-    }
-    return {
-      articles: list.slice(0, limit),
-      errors,
-      total: articles.length,
-      filtered: Boolean(sym),
-    };
-  }, { sourceIds: ["news-bundle", "cafef"] });
+  const q = opts?.symbol ? `sym:${opts.symbol}` : "general";
+  return coalesce(kNews(q), async () => {
+    return withTimeout(5_000, async () => {
+      const { getNews } = await import("../services/news");
+      return getNews({ symbol: opts?.symbol, limit: opts?.limit ?? 10 });
+    }, "hubNews");
+  }, { sourceIds: ["news"] });
 }
 
-/** Macro / economic series by id (structured). */
+/** Macro / rates snapshot by id. */
 export async function hubMacro(id: string) {
   return coalesce(kMacro(id), async () => {
-    try {
-      const mod = (await import("../services/economy")) as unknown as {
-        getEconomicData?: (id: string) => Promise<unknown>;
-      };
-      if (typeof mod.getEconomicData === "function") {
-        return mod.getEconomicData(id);
-      }
-    } catch {
-      /* optional */
-    }
-    return null;
-  }, { sourceIds: ["economic-data"] });
+    return withTimeout(5_000, async () => {
+      const { getEconomyBundle } = await import("../services/economy").catch(() => ({ getEconomyBundle: null }));
+      if (!getEconomyBundle) throw new Error("economy_unavailable");
+      return getEconomyBundle();
+    }, "hubMacro");
+  }, { sourceIds: ["macro"] });
 }
 
-/**
- * Cross-check helper: compare two numeric fields already in the hub bag.
- */
 export function hubCrossCheckNumbers(
-  pairs: Array<{ label: string; a: number | null | undefined; b: number | null | undefined; tolPct?: number }>,
-): { ok: boolean; details: Array<{ label: string; ok: boolean; a: number | null; b: number | null }> } {
-  const details = pairs.map(({ label, a, b, tolPct = 2 }) => {
-    const na = a == null || !Number.isFinite(a) ? null : a;
-    const nb = b == null || !Number.isFinite(b) ? null : b;
+  pairs: { label: string; a: number | null | undefined; b: number | null | undefined }[],
+  tolPct = 2,
+) {
+  const details = pairs.map(({ label, a, b }) => {
+    const na = a != null && Number.isFinite(a) ? Number(a) : null;
+    const nb = b != null && Number.isFinite(b) ? Number(b) : null;
     if (na == null || nb == null) return { label, ok: true, a: na, b: nb };
     const base = Math.max(Math.abs(na), Math.abs(nb), 1e-9);
     const ok = (Math.abs(na - nb) / base) * 100 <= tolPct;
@@ -341,3 +314,56 @@ export const HubKeys = {
   news: kNews,
   macro: kMacro,
 };
+
+/**
+ * Smart Portfolio → Data Hub: marks for open positions from shared market sources.
+ * Prefer this over calling stocks/crypto services directly from portfolio modules.
+ */
+export async function hubPortfolioMarks(
+  positions: { assetType?: string; symbol: string }[],
+): Promise<{ marks: Record<string, number>; sources: string[] }> {
+  const marks: Record<string, number> = {};
+  const sources: string[] = [];
+  const stockSyms = [
+    ...new Set(
+      positions
+        .filter((p) => (p.assetType ?? "stock") === "stock")
+        .map((p) => p.symbol.trim().toUpperCase())
+        .filter(Boolean),
+    ),
+  ].slice(0, 40);
+  if (stockSyms.length) {
+    try {
+      const q = await hubVnQuotes(stockSyms);
+      sources.push(String(q.meta?.source ?? "vn-quotes"));
+      for (const row of q.quotes ?? []) {
+        const s = String(row.symbol ?? "").toUpperCase();
+        const px = row.price != null ? Number(row.price) : NaN;
+        if (s && Number.isFinite(px)) marks[s] = px;
+      }
+    } catch {
+      /* */
+    }
+  }
+  const cryptoSyms = [
+    ...new Set(
+      positions
+        .filter((p) => p.assetType === "crypto")
+        .map((p) => p.symbol.trim().toUpperCase())
+        .filter(Boolean),
+    ),
+  ].slice(0, 8);
+  for (const sym of cryptoSyms) {
+    try {
+      const d = (await hubCryptoDetail(sym)) as { lastPrice?: string | number } | null;
+      const px = d?.lastPrice != null ? Number(d.lastPrice) : NaN;
+      if (Number.isFinite(px) && px > 0) {
+        marks[sym] = px;
+        if (!sources.includes("binance")) sources.push("binance");
+      }
+    } catch {
+      /* */
+    }
+  }
+  return { marks, sources };
+}
