@@ -297,8 +297,17 @@ function UserMenu({ collapsed }: { collapsed: boolean }) {
         onClick={() => setOpen((o) => !o)}
         className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left hover:bg-surface-elevated"
       >
-        <span className="grid size-8 place-items-center rounded-md border border-border-subtle bg-surface-elevated text-[11px] font-bold">
-          {me?.user ? initials : "?"}
+        <span className="grid size-8 place-items-center overflow-hidden rounded-md border border-border-subtle bg-surface-elevated text-[11px] font-bold">
+          {settings.profile.avatarUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={settings.profile.avatarUrl} alt="" className="size-full object-cover" />
+          ) : settings.profile.avatarStyle === "orca" && me?.user ? (
+            <OrcaMark size={28} className="rounded-md" />
+          ) : me?.user ? (
+            initials
+          ) : (
+            "?"
+          )}
         </span>
         {!collapsed ? (
           <span className="min-w-0 flex-1 truncate text-[12px] text-text-secondary">
