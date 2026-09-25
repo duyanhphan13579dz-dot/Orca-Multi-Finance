@@ -136,13 +136,13 @@ export default function StockSymbolLayout({
             {q?.ceilingPrice != null && (
               <span className="stock-meta-chip">
                 <span className="stock-meta-chip-label">Trần</span>
-                <span className="num stock-meta-chip-value text-up">{fmtNum(q.ceilingPrice, 2)}</span>
+                <span className="num stock-meta-chip-value text-violet-300">{fmtNum(q.ceilingPrice, 2)}</span>
               </span>
             )}
             {q?.floorPrice != null && (
               <span className="stock-meta-chip">
                 <span className="stock-meta-chip-label">Sàn</span>
-                <span className="num stock-meta-chip-value text-down">{fmtNum(q.floorPrice, 2)}</span>
+                <span className="num stock-meta-chip-value text-sky-300">{fmtNum(q.floorPrice, 2)}</span>
               </span>
             )}
           </div>
