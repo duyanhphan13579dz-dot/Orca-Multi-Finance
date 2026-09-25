@@ -87,21 +87,25 @@ async function showAlertNotification(alert: PriceAlert, price: number) {
 
 export async function dispatchAlertWebhook(alert: PriceAlert, price: number): Promise<boolean> {
   const cfg = loadWebhookConfig();
-  if (!cfg.enabled || !cfg.url) return false;
-  if (cfg.provider !== "telegram" && !isValidWebhookUrl(cfg.url, cfg.provider)) return false;
-  if (cfg.provider === "telegram" && !cfg.secret) return false;
-
   const kind = alert.kind ?? "price";
   const color = kind === "ceiling" ? 0xa78bfa : kind === "floor" ? 0x38bdf8 : 0x22c55e;
+
+  // Có webhook cá nhân hoặc để trống → server dùng DISCORD_WEBHOOK_URL chung
+  const usePersonal =
+    cfg.enabled &&
+    Boolean(cfg.url) &&
+    (cfg.provider === "telegram"
+      ? Boolean(cfg.secret)
+      : isValidWebhookUrl(cfg.url, cfg.provider));
 
   try {
     const res = await fetch("/api/v1/alerts/webhook", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        url: cfg.url,
-        provider: cfg.provider,
-        secret: cfg.secret || undefined,
+        url: usePersonal ? cfg.url : undefined,
+        provider: usePersonal ? cfg.provider : "discord",
+        secret: usePersonal ? cfg.secret || undefined : undefined,
         title: alertTitle(alert),
         body: alertBody(alert, price),
         symbol: alert.symbol,
