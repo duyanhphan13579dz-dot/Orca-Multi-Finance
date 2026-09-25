@@ -6,7 +6,7 @@ export const runtime = "nodejs";
 
 type Body = {
   url?: string;
-  provider?: "discord" | "slack" | "generic";
+  provider?: "discord" | "slack" | "telegram" | "generic";
   title?: string;
   body?: string;
   symbol?: string;
@@ -16,6 +16,7 @@ type Body = {
   reason?: string;
   secret?: string;
   color?: number;
+  chatId?: string;
 };
 
 function isDiscordUrl(url: string): boolean {
@@ -30,6 +31,10 @@ function isDiscordUrl(url: string): boolean {
   }
 }
 
+function looksLikeTelegramToken(s: string): boolean {
+  return /^\d{6,}:[A-Za-z0-9_-]{20,}$/.test(s.trim());
+}
+
 function discordPayload(b: Body) {
   const fields: { name: string; value: string; inline: boolean }[] = [];
   if (b.symbol) fields.push({ name: "Ma", value: "`" + b.symbol + "`", inline: true });
@@ -37,7 +42,6 @@ function discordPayload(b: Body) {
   if (b.targetPrice != null) fields.push({ name: "Muc", value: String(b.targetPrice), inline: true });
   if (b.direction) fields.push({ name: "Dieu kien", value: String(b.direction), inline: true });
   if (b.reason) fields.push({ name: "Ly do", value: b.reason.slice(0, 200), inline: false });
-
   return {
     username: "Orca Alerts",
     embeds: [
@@ -60,6 +64,23 @@ function slackPayload(b: Body) {
   return { text };
 }
 
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function telegramText(b: Body): string {
+  const lines = [
+    "<b>" + escapeHtml(b.title || "Orca — Canh bao gia") + "</b>",
+    b.body ? escapeHtml(b.body) : null,
+    b.symbol ? "<b>Ma:</b> " + escapeHtml(b.symbol) : null,
+    b.price != null ? "<b>Gia:</b> " + b.price : null,
+    b.targetPrice != null ? "<b>Muc:</b> " + b.targetPrice : null,
+    b.direction ? "<b>Dieu kien:</b> " + escapeHtml(String(b.direction)) : null,
+    b.reason ? "<b>Ly do:</b> " + escapeHtml(b.reason.slice(0, 200)) : null,
+  ].filter(Boolean);
+  return lines.join("\n");
+}
+
 function genericPayload(b: Body) {
   return {
     event: "price_alert",
@@ -79,6 +100,45 @@ export async function POST(req: NextRequest) {
     const b = (await req.json()) as Body;
     const url = typeof b.url === "string" ? b.url.trim() : "";
     if (!url) return badRequest("url is required");
+
+    let provider = b.provider ?? "discord";
+    if (isDiscordUrl(url)) provider = "discord";
+    if (looksLikeTelegramToken(url) || provider === "telegram") provider = "telegram";
+
+    if (provider === "telegram") {
+      if (!looksLikeTelegramToken(url)) {
+        return badRequest("telegram bot token invalid (format: 123456:AAH...)");
+      }
+      const chatId = (b.chatId || b.secret || "").trim();
+      if (!/^-?\d{5,}$/.test(chatId)) {
+        return badRequest("telegram chat_id required (secret field)");
+      }
+      const apiUrl = "https://api.telegram.org/bot" + url + "/sendMessage";
+      const upstream = await fetch(apiUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "User-Agent": "Orca-Multi-Finance/1.0",
+        },
+        body: JSON.stringify({
+          chat_id: chatId,
+          text: telegramText(b),
+          parse_mode: "HTML",
+          disable_web_page_preview: true,
+        }),
+        signal: AbortSignal.timeout(10_000),
+      });
+      const text = await upstream.text().catch(() => "");
+      if (!upstream.ok) {
+        return fail(
+          "WEBHOOK_UPSTREAM",
+          "Telegram " + upstream.status + ": " + text.slice(0, 200),
+          502,
+        );
+      }
+      return ok({ delivered: true, status: upstream.status, provider: "telegram" });
+    }
+
     let parsed: URL;
     try {
       parsed = new URL(url);
@@ -88,9 +148,6 @@ export async function POST(req: NextRequest) {
     if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
       return badRequest("url must be http(s)");
     }
-
-    let provider = b.provider ?? "discord";
-    if (isDiscordUrl(url)) provider = "discord";
 
     const payload =
       provider === "slack"
