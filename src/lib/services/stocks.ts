@@ -1,1 +1,546 @@
-PLACEHOLDER
+import "server-only";
+import { cached } from "../cache";
+import { buildMeta } from "../freshness";
+import { getFinancialsForSymbol, vnProviderLayout } from "../financial";
+import type { FinancialPackageMeta, GrowthSnapshot, NormalizedPeriod } from "../financial/types";
+import type { FinancialHealthResult } from "../engines/fundamental";
+import * as vndirect from "../providers/vndirect";
+import {
+  getSsiIndices,
+  getSsiQuotes,
+  ssiFcConfigured,
+} from "../providers/ssi-fcdata";
+import { ensureSsiWsStarted, ssiWs } from "../realtime/ssi-ws";
+import { bootSsiMarketDataPipeline } from "../realtime/ssi-market-boot";
+import { ensureVndirectWsStarted, vndirectWs } from "../realtime/vndirect-ws";
+import { analyzeSeries, detectPatterns } from "../technical";
+import type { CandlePattern, IndexQuote, Meta, OhlcvBar, Quote, TechnicalSnapshot } from "../types";
+import {
+  getVndCompanyProfile,
+  getVndEquitySnapshot,
+  type VndCompanyProfile,
+  type VndEquitySnapshot,
+} from "../providers/vndirect-company";
+import { getVndSymbolForeignFlow } from "../providers/vndirect-foreign-symbol";
+import { getVnOrderBook, type VnOrderBook } from "./stock-orderbook";
+import { getMultiQuotes } from "./multi-quote";
+import {
+  getPublicIndices,
+  getPublicQuotes,
+  getPublicOhlcv,
+  LIQUID_BOARD,
+} from "../providers/public-vn-feed";
+
+const INDEX_PRIORITY = ["VNINDEX", "VN30", "HNX", "UPCOM", "HNX30", "VN100"];
+
+function sortIndices(items: IndexQuote[]): IndexQuote[] {
+  return [...items].sort((a, b) => {
+    const ia = INDEX_PRIORITY.indexOf(a.code);
+    const ib = INDEX_PRIORITY.indexOf(b.code);
+    return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
+  });
+}
+
+function bootSsiLive() {
+  if (!ssiFcConfigured()) return;
+  if (process.env.SSI_WS_DISABLED === "true") return;
+  try {
+    bootSsiMarketDataPipeline();
+  } catch {
+    try {
+      ensureSsiWsStarted();
+    } catch {
+      /* non-fatal */
+    }
+  }
+}
+
+function bootVndLive() {
+  if (process.env.VNDIRECT_WS_DISABLED === "true") return;
+  try {
+    ensureVndirectWsStarted();
+    vndirectWs.ensureCoreIndices();
+  } catch {
+    /* non-fatal on serverless */
+  }
+}
+
+export function vnMarketConfigured(): boolean {
+  return true;
+}
+
+export function vnstockConfigured(): boolean {
+  return vnMarketConfigured();
+}
+
+export function vnPrimaryProvider(): "ssi-fcdata" | "vndirect" {
+  return "vndirect";
+}
+
+export async function getVnIndices(): Promise<{ items: IndexQuote[]; meta: Meta } | null> {
+  bootVndLive();
+  type IdxPack = {
+    items: IndexQuote[];
+    source: string;
+    sourceTs: number | null;
+    note?: string;
+    partial?: boolean;
+  };
+  const tasks: Promise<IdxPack | null>[] = [
+    (async () => {
+      try {
+        const r = await vndirect.getVndIndices();
+        if (r.items?.length) return { items: r.items, source: "vndirect", sourceTs: r.sourceTs ?? Date.now() };
+      } catch (e) {
+        console.warn("[getVnIndices] vndirect", e);
+      }
+      return null;
+    })(),
+    (async () => {
+      if (!ssiFcConfigured()) return null;
+      try {
+        const ssi = await getSsiIndices();
+        if (ssi.items?.length) return { items: ssi.items, source: "ssi-fcdata", sourceTs: ssi.sourceTs ?? Date.now() };
+      } catch (e) {
+        console.warn("[getVnIndices] ssi", e);
+      }
+      return null;
+    })(),
+    (async () => {
+      try {
+        const pub = await getPublicIndices(["VNINDEX", "VN30", "HNX", "UPCOM"]);
+        if (pub.items?.length) {
+          return {
+            items: pub.items,
+            source: "yahoo-public",
+            sourceTs: pub.sourceTs ?? Date.now(),
+            note: "Fallback public — chỉ số có thể trễ",
+            partial: true,
+          };
+        }
+      } catch (e) {
+        console.warn("[getVnIndices] public", e);
+      }
+      return null;
+    })(),
+  ];
+
+  const results = await Promise.all(tasks);
+  for (const src of ["vndirect", "ssi-fcdata", "yahoo-public"] as const) {
+    const hit = results.find((r) => r && r.source === src);
+    if (hit) {
+      return {
+        items: sortIndices(hit.items),
+        meta: buildMeta({
+          source: hit.source,
+          sourceTimestampMs: hit.sourceTs ?? Date.now(),
+          note: hit.note,
+          partial: hit.partial,
+        }),
+      };
+    }
+  }
+  return null;
+}
+
+export async function getVnQuotes(symbols: string[]): Promise<{ quotes: Quote[]; meta: Meta } | null> {
+  const uniq = [...new Set(symbols.map((s) => s.toUpperCase()).filter(Boolean))];
+  if (!uniq.length) return { quotes: [], meta: buildMeta({ source: "vndirect" }) };
+  bootVndLive();
+  for (const s of uniq) {
+    if (process.env.VNDIRECT_WS_DISABLED !== "true") vndirectWs.watchSymbol(s);
+    if (ssiFcConfigured()) ssiWs.watchSymbol(s);
+  }
+  try {
+    const multi = await getMultiQuotes(uniq);
+    if (multi.quotes.length) {
+      const latNote = Object.entries(multi.latencies)
+        .map(([k, v]) => `${k}:${v}ms`)
+        .join(" ");
+      return {
+        quotes: multi.quotes,
+        meta: buildMeta({
+          source: multi.sources[0] ?? "multi",
+          sourceTimestampMs: multi.sourceTs ?? Date.now(),
+          note: [
+            multi.sources.length > 1 ? `priority:${multi.sources.join(">")}` : undefined,
+            multi.conflicts ? `conflicts:${multi.conflicts}` : undefined,
+            latNote || undefined,
+          ]
+            .filter(Boolean)
+            .join(" | ") || undefined,
+        }),
+      };
+    }
+  } catch (e) {
+    console.warn("[getVnQuotes multi]", e);
+  }
+  try {
+    const r = await vndirect.getVndQuotes(uniq);
+    if (r.quotes?.length) {
+      return {
+        quotes: r.quotes,
+        meta: buildMeta({ source: "vndirect", sourceTimestampMs: r.sourceTs ?? Date.now() }),
+      };
+    }
+  } catch (e) {
+    console.warn("[getVnQuotes] vndirect", e);
+  }
+  if (ssiFcConfigured()) {
+    try {
+      const ssi = await getSsiQuotes(uniq);
+      if (ssi.quotes?.length) {
+        return {
+          quotes: ssi.quotes,
+          meta: buildMeta({ source: "ssi-fcdata", sourceTimestampMs: ssi.sourceTs ?? undefined }),
+        };
+      }
+    } catch (e) {
+      console.warn("[getVnQuotes] ssi", e);
+    }
+  }
+  try {
+    const pub = await getPublicQuotes(uniq);
+    if (pub.quotes.length) {
+      return {
+        quotes: pub.quotes,
+        meta: buildMeta({
+          source: `public-vn(${(pub as { sources?: string[] }).sources?.length ? (pub as { sources?: string[] }).sources!.join("+") : "vps+ssi-iboard"})`,
+          sourceTimestampMs: pub.sourceTs ?? Date.now(),
+          note: "Fallback public race VPS ∥ SSI iBoard (no key)",
+          partial: pub.quotes.length < uniq.length,
+        }),
+      };
+    }
+  } catch (e) {
+    console.warn("[getVnQuotes] public-vn", e);
+  }
+  return null;
+}
+
+export async function getVnOhlcv(
+  symbol: string,
+  limit = 250,
+): Promise<{ bars: OhlcvBar[]; meta: Meta } | null> {
+  const sym = symbol.toUpperCase();
+  bootVndLive();
+  bootSsiLive();
+  const isIndex = vndirect.isVnIndexSymbol(sym);
+  if (ssiFcConfigured() && !isIndex) ssiWs.watchSymbol(sym);
+  try {
+    const res = await cached(`vn:ohlcv:vnd:${sym}:${limit}`, {
+      ttlMs: 6_000,
+      staleMs: 60_000,
+      producer: async () => {
+        try {
+          const { fetchVndDchartHistory } = await import("../providers/vndirect-dchart");
+          const bars = await fetchVndDchartHistory(sym, "D", limit);
+          if (bars?.length) return bars;
+        } catch {
+          /* fall through */
+        }
+        if (isIndex) return vndirect.getVndIndexOhlcv(sym, limit);
+        return vndirect.getVndOhlcv(sym, limit);
+      },
+    });
+    return {
+      bars: res.value,
+      meta: buildMeta({
+        source: "vndirect-dchart",
+        sourceTimestampMs: Date.now(),
+        cached: res.cached,
+        stale: res.stale,
+      }),
+    };
+  } catch (e) {
+    console.warn("[getVnOhlcv] primary", e);
+  }
+  try {
+    const bars = await getPublicOhlcv(sym, limit, isIndex ? "index" : "stock");
+    if (bars.length) {
+      return {
+        bars,
+        meta: buildMeta({
+          source: "entrade-public",
+          sourceTimestampMs: Date.now(),
+          note: "Fallback Entrade public OHLCV",
+        }),
+      };
+    }
+  } catch (e2) {
+    console.warn("[getVnOhlcv] entrade", e2);
+  }
+  return null;
+}
+
+export async function getVnMarketBoard(): Promise<{
+  quotes: Quote[];
+  indices: IndexQuote[];
+  universeSize: number;
+  sessionDate: string;
+  meta: Meta;
+} | null> {
+  bootVndLive();
+  bootSsiLive();
+  try {
+    const [mq, idx] = await Promise.all([
+      vndirect.getVndMarketQuotes(),
+      vndirect.getVndIndices().catch(() => ({
+        items: [] as IndexQuote[],
+        sourceTs: null as number | null,
+      })),
+    ]);
+    if (mq.quotes?.length) {
+      return {
+        quotes: mq.quotes,
+        indices: sortIndices(idx.items),
+        universeSize: mq.quotes.length,
+        sessionDate: mq.sessionDate,
+        meta: buildMeta({
+          source: "vndirect",
+          sourceTimestampMs: mq.sourceTs ?? Date.now(),
+        }),
+      };
+    }
+  } catch (e) {
+    console.warn("[getVnMarketBoard] vndirect", e);
+  }
+  try {
+    const multi = await getMultiQuotes(LIQUID_BOARD.slice(0, 100));
+    if (multi.quotes.length >= 20) {
+      const idx = await getVnIndices().catch(() => null);
+      const today = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Ho_Chi_Minh" });
+      return {
+        quotes: multi.quotes,
+        indices: idx?.items ? sortIndices(idx.items) : [],
+        universeSize: multi.quotes.length,
+        sessionDate: today,
+        meta: buildMeta({
+          source: multi.sources.join("+") || "multi-quote",
+          sourceTimestampMs: multi.sourceTs ?? Date.now(),
+          note: `Bảng rổ thanh khoản ${multi.quotes.length} mã · ${multi.sources.join(">")}`,
+          partial: true,
+        }),
+      };
+    }
+  } catch (e) {
+    console.warn("[getVnMarketBoard] multi", e);
+  }
+  try {
+    const [pubQ, pubI] = await Promise.all([
+      getPublicQuotes(LIQUID_BOARD),
+      getPublicIndices(["VNINDEX", "VN30", "HNX", "UPCOM"]).catch(() => ({
+        items: [] as IndexQuote[],
+        sourceTs: null as number | null,
+      })),
+    ]);
+    if (pubQ.quotes.length) {
+      const today = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Ho_Chi_Minh" });
+      return {
+        quotes: pubQ.quotes,
+        indices: sortIndices(pubI.items),
+        universeSize: pubQ.quotes.length,
+        sessionDate: today,
+        meta: buildMeta({
+          source: "vps-public+yahoo",
+          sourceTimestampMs: pubQ.sourceTs ?? Date.now(),
+          note: "Fallback bảng thanh khoản VPS — không phải full HOSE",
+          partial: true,
+        }),
+      };
+    }
+  } catch (e) {
+    console.warn("[getVnMarketBoard] public", e);
+  }
+  return null;
+}
+
+export async function getVnUniverseList(): Promise<{
+  items: { symbol: string; name?: string | null; floor?: string | null }[];
+  meta: Meta;
+} | null> {
+  try {
+    const items = await vndirect.getVndUniverse();
+    return { items, meta: buildMeta({ source: "vndirect" }) };
+  } catch (e) {
+    console.warn("[getVnUniverseList]", e);
+    return null;
+  }
+}
+
+export interface VnStockDetail {
+  symbol: string;
+  name: string | null;
+  quote: Quote | null;
+  bars: OhlcvBar[];
+  technical: TechnicalSnapshot | null;
+  patterns: CandlePattern[];
+  equity: VndEquitySnapshot | null;
+  sharesOutstanding: number | null;
+  profile: Pick<
+    VndCompanyProfile,
+    "vnName" | "enName" | "floor" | "logo" | "employees" | "website"
+  > | null;
+  orderBook: VnOrderBook | null;
+  foreignFlow: {
+    latest: {
+      tradingDate: string;
+      buyVal: number;
+      sellVal: number;
+      netVal: number;
+      buyVol: number;
+      sellVol: number;
+      netVol: number;
+      totalRoom: number | null;
+      currentRoom: number | null;
+      floor: string | null;
+    } | null;
+    history: {
+      tradingDate: string;
+      buyVal: number;
+      sellVal: number;
+      netVal: number;
+      buyVol: number;
+      sellVol: number;
+      netVol: number;
+      totalRoom: number | null;
+      currentRoom: number | null;
+      floor: string | null;
+    }[];
+  } | null;
+  financials: {
+    income: Record<string, unknown>[] | null;
+    balance: Record<string, unknown>[] | null;
+    cashflow: Record<string, unknown>[] | null;
+    ratios: Record<string, unknown>[] | null;
+  };
+  financialHealth: FinancialHealthResult | null;
+  financialMeta: FinancialPackageMeta | null;
+  financialGrowth: GrowthSnapshot | null;
+  financialTtm: NormalizedPeriod | null;
+  notes: string[];
+}
+
+export async function getVnStockDetail(
+  symbol: string,
+): Promise<{ detail: VnStockDetail; meta: Meta } | null> {
+  const sym = symbol.toUpperCase();
+  bootVndLive();
+  bootSsiLive();
+  ssiWs.watchSymbol(sym);
+  if (process.env.VNDIRECT_WS_DISABLED !== "true") vndirectWs.watchSymbol(sym);
+  const failed: string[] = [];
+  const notes: string[] = [];
+
+  const [quoteRes, ohlcvRes, profileRes, equityRes, bookRes, foreignRes, finRes] =
+    await Promise.all([
+      getVnQuotes([sym]).catch(() => null),
+      getVnOhlcv(sym, 250).catch(() => null),
+      getVndCompanyProfile(sym).catch(() => null),
+      getVndEquitySnapshot(sym).catch(() => null),
+      getVnOrderBook(sym).catch(() => null),
+      getVndSymbolForeignFlow(sym, 20).catch(() => null),
+      getFinancialsForSymbol(sym).catch(() => null),
+    ]);
+
+  let quote: Quote | null = quoteRes?.quotes?.[0] ?? null;
+  const quoteSource = quoteRes?.meta?.source ?? "";
+  if (!quote) failed.push("quote");
+
+  const bars = ohlcvRes?.bars ?? [];
+  const ohlcvSource = ohlcvRes?.meta?.source ?? "";
+  if (!bars.length) failed.push("ohlcv");
+
+  const profile = profileRes
+    ? {
+        vnName: profileRes.vnName,
+        enName: profileRes.enName,
+        floor: profileRes.floor,
+        logo: profileRes.logo,
+        employees: profileRes.employees,
+        website: profileRes.website,
+      }
+    : null;
+  const name = profile?.vnName ?? profile?.enName ?? quote?.name ?? null;
+  if (quote && name && !quote.name) {
+    quote = { ...quote, name };
+  }
+
+  const equity = equityRes;
+  const sharesOutstanding = equity?.sharesOutstanding ?? null;
+  if (!sharesOutstanding) notes.push("Chưa có số CP lưu hành từ ratios");
+
+  const orderBook = bookRes?.book ?? null;
+  if (!orderBook) notes.push("Sổ lệnh: cần SSI depth / phiên giao dịch");
+
+  const foreignFlow = foreignRes
+    ? { latest: foreignRes.latest, history: foreignRes.history }
+    : null;
+  if (!foreignFlow?.latest) failed.push("foreign");
+
+  let technical: TechnicalSnapshot | null = null;
+  let patterns: CandlePattern[] = [];
+  if (bars.length >= 20) {
+    try {
+      technical = analyzeSeries(bars);
+      patterns = detectPatterns(bars);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  const fin = finRes;
+  if (!fin) failed.push("financials");
+
+  if (failed.length) notes.push(`Thiếu: ${[...new Set(failed)].join(", ")}`);
+
+  const detail: VnStockDetail = {
+    symbol: sym,
+    name,
+    quote,
+    bars,
+    technical,
+    patterns,
+    equity,
+    sharesOutstanding,
+    profile,
+    orderBook,
+    foreignFlow,
+    financials: fin?.financials ?? {
+      income: null,
+      balance: null,
+      cashflow: null,
+      ratios: null,
+    },
+    financialHealth: fin?.health ?? null,
+    financialMeta: fin?.packageMeta ?? null,
+    financialGrowth: fin?.growth ?? null,
+    financialTtm: fin?.ttm ?? null,
+    notes,
+  };
+
+  return {
+    detail,
+    meta: buildMeta({
+      source:
+        [
+          quoteSource,
+          ohlcvSource,
+          profile ? "vndirect-profile" : null,
+          equity ? equity.source : null,
+          foreignFlow?.latest ? "vndirect-foreigns" : null,
+          orderBook ? "ssi-orderbook" : null,
+          fin?.packageMeta?.primarySource,
+        ]
+          .filter(Boolean)
+          .join("+") || "vndirect",
+      sourceTimestampMs: Date.now(),
+      degraded: failed.length > 0,
+      partial: failed.length > 0,
+      note: notes[0],
+    }),
+  };
+}
+
+export { getVnOrderBook, type VnOrderBook } from "./stock-orderbook";
+export { vnProviderLayout };
