@@ -17,6 +17,12 @@ type StocksData = {
   count?: number;
 };
 
+/** VN tick tolerance — treat price as hitting band when within ~0.05 unit */
+function hitsBand(price: number | null | undefined, band: number | null | undefined): boolean {
+  if (price == null || band == null || Number.isNaN(price) || Number.isNaN(band)) return false;
+  return Math.abs(price - band) <= 0.051;
+}
+
 export default function VnMarketCenterPage() {
   const { res, data, meta, isLoading } = useApi<StocksData>(`/api/v1/stocks?board=full`, {
     refreshInterval: 45_000,
@@ -35,6 +41,16 @@ export default function VnMarketCenterPage() {
     if (sector) list = list.filter((x) => sectorOf(x.symbol) === sector);
     return list;
   }, [data, q, sector]);
+
+  const bandStats = useMemo(() => {
+    let atCeiling = 0;
+    let atFloor = 0;
+    for (const qu of quotes) {
+      if (hitsBand(qu.price, qu.ceilingPrice)) atCeiling += 1;
+      else if (hitsBand(qu.price, qu.floorPrice)) atFloor += 1;
+    }
+    return { atCeiling, atFloor };
+  }, [quotes]);
 
   if (isLoading && !res) return <Loading rows={12} />;
 
@@ -104,9 +120,19 @@ export default function VnMarketCenterPage() {
         <>
           <Panel
             title={
-              <span className="flex items-center gap-2">
+              <span className="flex flex-wrap items-center gap-2">
                 Bảng giá toàn thị trường
                 <span className="text-[10px] font-normal text-text-muted">{quotes.length} mã</span>
+                {bandStats.atCeiling > 0 ? (
+                  <span className="inline-flex items-center gap-1 rounded-md border border-violet-500/40 bg-violet-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-violet-300">
+                    {bandStats.atCeiling} chạm trần
+                  </span>
+                ) : null}
+                {bandStats.atFloor > 0 ? (
+                  <span className="inline-flex items-center gap-1 rounded-md border border-sky-400/40 bg-sky-400/15 px-1.5 py-0.5 text-[10px] font-semibold text-sky-300">
+                    {bandStats.atFloor} chạm sàn
+                  </span>
+                ) : null}
               </span>
             }
           >
@@ -140,15 +166,34 @@ export default function VnMarketCenterPage() {
               {quotes.length === 0 ? (
                 <p className="py-6 text-center text-[12px] text-text-muted">Không có mã khớp bộ lọc.</p>
               ) : (
-                quotes.map((qu) => (
+                quotes.map((qu) => {
+                  const atCeil = hitsBand(qu.price, qu.ceilingPrice);
+                  const atFloor = !atCeil && hitsBand(qu.price, qu.floorPrice);
+                  return (
                   <Link
                     key={qu.symbol}
                     href={`/stocks/${qu.symbol}`}
-                    className="flex items-center gap-3 rounded-lg border border-border-subtle bg-surface-elevated/60 px-3 py-2.5 active:bg-surface-elevated"
+                    className={`flex items-center gap-3 rounded-lg border px-3 py-2.5 active:bg-surface-elevated ${
+                      atCeil
+                        ? "border-violet-500/50 bg-violet-500/10"
+                        : atFloor
+                          ? "border-sky-400/50 bg-sky-400/10"
+                          : "border-border-subtle bg-surface-elevated/60"
+                    }`}
                   >
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
                         <span className="font-semibold text-accent-primary">{qu.symbol}</span>
+                        {atCeil ? (
+                          <span className="rounded border border-violet-500/40 bg-violet-500/20 px-1 text-[9px] font-bold uppercase text-violet-300">
+                            Trần
+                          </span>
+                        ) : null}
+                        {atFloor ? (
+                          <span className="rounded border border-sky-400/40 bg-sky-400/20 px-1 text-[9px] font-bold uppercase text-sky-300">
+                            Sàn
+                          </span>
+                        ) : null}
                         <AddToWatchlist assetType="stock" symbol={qu.symbol} />
                       </div>
                       {qu.name ? <div className="truncate text-[11px] text-text-muted">{qu.name}</div> : null}
@@ -156,19 +201,26 @@ export default function VnMarketCenterPage() {
                         <span className="num">KL {fmtCompact(qu.volume)}</span>
                         <span className="num">GT {fmtCompact(qu.quoteVolume)}</span>
                         {qu.ceilingPrice != null ? (
-                          <span className="num text-up/80">Trần {fmtNum(qu.ceilingPrice, 2)}</span>
+                          <span className="num text-violet-300">Trần {fmtNum(qu.ceilingPrice, 2)}</span>
                         ) : null}
                         {qu.floorPrice != null ? (
-                          <span className="num text-down/80">Sàn {fmtNum(qu.floorPrice, 2)}</span>
+                          <span className="num text-sky-300">Sàn {fmtNum(qu.floorPrice, 2)}</span>
                         ) : null}
                       </div>
                     </div>
                     <div className="shrink-0 text-right">
-                      <div className="num text-[15px] font-semibold">{fmtNum(qu.price, 2)}</div>
+                      <div
+                        className={`num text-[15px] font-semibold ${
+                          atCeil ? "text-violet-300" : atFloor ? "text-sky-300" : ""
+                        }`}
+                      >
+                        {fmtNum(qu.price, 2)}
+                      </div>
                       <Chg value={qu.changePercent} arrow={false} className="text-[12px]" />
                     </div>
                   </Link>
-                ))
+                  );
+                })
               )}
             </div>
 
@@ -191,40 +243,72 @@ export default function VnMarketCenterPage() {
                     <th className="text-right">Giá</th>
                     <th className="text-right">%</th>
                     <th className="text-right">TC</th>
-                    <th className="text-right text-up/90">Trần</th>
-                    <th className="text-right text-down/90">Sàn</th>
+                    <th className="text-right text-violet-300">Trần</th>
+                    <th className="text-right text-sky-300">Sàn</th>
                     <th className="text-right">KL</th>
                     <th className="text-right">GT</th>
                     <th className="pr-2 text-right sm:pr-3">Theo dõi</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {quotes.map((qu) => (
-                    <tr key={qu.symbol} className="border-t border-border-subtle/70 hover:bg-surface-elevated/50">
+                  {quotes.map((qu) => {
+                    const atCeil = hitsBand(qu.price, qu.ceilingPrice);
+                    const atFloor = !atCeil && hitsBand(qu.price, qu.floorPrice);
+                    return (
+                    <tr
+                      key={qu.symbol}
+                      className={`border-t border-border-subtle/70 hover:bg-surface-elevated/50 ${
+                        atCeil ? "bg-violet-500/10" : atFloor ? "bg-sky-400/10" : ""
+                      }`}
+                    >
                       <td className="py-2 pl-2 sm:pl-3">
-                        <Link
-                          href={`/stocks/${qu.symbol}`}
-                          className="font-semibold text-accent-primary hover:underline"
-                        >
-                          {qu.symbol}
-                        </Link>
+                        <div className="flex items-center gap-1.5">
+                          <Link
+                            href={`/stocks/${qu.symbol}`}
+                            className="font-semibold text-accent-primary hover:underline"
+                          >
+                            {qu.symbol}
+                          </Link>
+                          {atCeil ? (
+                            <span
+                              className="shrink-0 rounded border border-violet-500/40 bg-violet-500/20 px-1 text-[9px] font-bold uppercase text-violet-300"
+                              title="Giá chạm trần"
+                            >
+                              Trần
+                            </span>
+                          ) : null}
+                          {atFloor ? (
+                            <span
+                              className="shrink-0 rounded border border-sky-400/40 bg-sky-400/20 px-1 text-[9px] font-bold uppercase text-sky-300"
+                              title="Giá chạm sàn"
+                            >
+                              Sàn
+                            </span>
+                          ) : null}
+                        </div>
                         {qu.name ? (
                           <div className="truncate text-[10px] text-text-muted" title={qu.name}>
                             {qu.name}
                           </div>
                         ) : null}
                       </td>
-                      <td className="num py-2 text-right font-medium">{fmtNum(qu.price, 2)}</td>
+                      <td
+                        className={`num py-2 text-right font-medium ${
+                          atCeil ? "text-violet-300" : atFloor ? "text-sky-300" : ""
+                        }`}
+                      >
+                        {fmtNum(qu.price, 2)}
+                      </td>
                       <td className="py-2 text-right">
                         <Chg value={qu.changePercent} arrow={false} />
                       </td>
                       <td className="num py-2 text-right text-text-muted">
                         {qu.referencePrice != null ? fmtNum(qu.referencePrice, 2) : "—"}
                       </td>
-                      <td className="num py-2 text-right text-up/90">
+                      <td className="num py-2 text-right text-violet-300">
                         {qu.ceilingPrice != null ? fmtNum(qu.ceilingPrice, 2) : "—"}
                       </td>
-                      <td className="num py-2 text-right text-down/90">
+                      <td className="num py-2 text-right text-sky-300">
                         {qu.floorPrice != null ? fmtNum(qu.floorPrice, 2) : "—"}
                       </td>
                       <td className="num py-2 text-right text-text-secondary">{fmtCompact(qu.volume)}</td>
@@ -233,7 +317,8 @@ export default function VnMarketCenterPage() {
                         <AddToWatchlist assetType="stock" symbol={qu.symbol} />
                       </td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
