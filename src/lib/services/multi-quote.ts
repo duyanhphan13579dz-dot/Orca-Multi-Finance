@@ -5,22 +5,13 @@ import { getVpsQuotes } from "../providers/vps";
 import { getVietcapQuotes } from "../providers/vietcap";
 import { getSsiIboardQuotes } from "../providers/ssi-iboard";
 import { getSsiQuotes, ssiFcConfigured } from "../providers/ssi-fcdata";
+import { getPublicQuotes } from "../providers/public-vn-feed";
 import { recordMarketSource } from "../realtime/market-source-monitor";
+import { isCircuitOpen } from "../health";
 
 /**
- * Reconciliation giá đa nguồn — KHÔNG trung bình.
- *
- * Ưu tiên giá (cao → thấp):
- *   1. vndirect     — nguồn chính dự án
- *   2. vps          — feed realtime public, latency thấp
- *   3. ssi-iboard   — bảng giá sàn
- *   4. ssi-fcdata   — nếu có key
- *   5. vietcap      — profile (ít realtime hơn)
- *
- * Field phụ (volume, name, ceiling…) chỉ fill khi field đang null.
- * Lệch giá lớn giữa nguồn → log, vẫn giữ giá theo ưu tiên.
- *
- * Speed: tier timeouts 6.5s / 6s / 4.5s; race early when coverage ≥ 80%.
+ * Multi-source VN quotes — parallel fan-out + priority merge (không trung bình giá).
+ * Ưu tiên: vndirect > vps > ssi-iboard > ssi-fcdata > vietcap > public-vn
  */
 
 export type MultiQuoteResult = {
@@ -37,25 +28,17 @@ const PRICE_PRIORITY: Record<string, number> = {
   "ssi-iboard": 80,
   "ssi-fcdata": 70,
   vietcap: 40,
+  "public-vn": 30,
 };
 
 const rank = (src: string) => PRICE_PRIORITY[src] ?? 0;
-
 const CONFLICT_PCT = 0.015;
 const CONFLICT_ABS = 200;
 
 type TaggedQuote = Quote & { _src: string; _latencyMs: number };
-
-type SourceBatch = {
-  src: string;
-  quotes: Quote[];
-  latencyMs: number;
-  ok: boolean;
-};
-
+type SourceBatch = { src: string; quotes: Quote[]; latencyMs: number; ok: boolean };
 type QuotePack = { quotes: Quote[]; sourceTs: number | null };
 
-/** Normalize providers that return Quote[] into the pack shape. */
 async function asPack(fn: () => Promise<Quote[]>): Promise<QuotePack> {
   const quotes = await fn();
   return { quotes: quotes ?? [], sourceTs: quotes?.length ? Date.now() : null };
@@ -82,193 +65,209 @@ async function runSource(
   fn: () => Promise<QuotePack>,
   timeoutMs: number,
 ): Promise<SourceBatch> {
+  if (isCircuitOpen(src) || isCircuitOpen(`sync:${src}`)) {
+    return { src, quotes: [], latencyMs: 0, ok: false };
+  }
   const t0 = performance.now();
   try {
     const r = await withDeadline(fn(), timeoutMs);
-    const ok = (r.quotes?.length ?? 0) > 0;
     const latencyMs = Math.round(performance.now() - t0);
-    recordMarketSource(src as Parameters<typeof recordMarketSource>[0], ok, latencyMs);
-    return { src, quotes: r.quotes ?? [], latencyMs, ok };
+    const quotes = (r.quotes ?? []).filter((q) => q?.symbol);
+    const ok = quotes.length > 0;
+    try {
+      recordMarketSource(src, ok, latencyMs);
+    } catch {
+      /* */
+    }
+    return { src, quotes, latencyMs, ok };
   } catch {
     const latencyMs = Math.round(performance.now() - t0);
-    recordMarketSource(src as Parameters<typeof recordMarketSource>[0], false, latencyMs);
+    try {
+      recordMarketSource(src, false, latencyMs);
+    } catch {
+      /* */
+    }
     return { src, quotes: [], latencyMs, ok: false };
   }
 }
 
-function pickPrice(
-  existing: TaggedQuote | undefined,
-  incoming: Quote,
-  src: string,
-  latencyMs: number,
-): TaggedQuote {
-  const tagged: TaggedQuote = { ...incoming, _src: src, _latencyMs: latencyMs };
-  if (!existing) return tagged;
+function pricesConflict(a: number, b: number): boolean {
+  if (!Number.isFinite(a) || !Number.isFinite(b) || a <= 0 || b <= 0) return false;
+  const diff = Math.abs(a - b);
+  return diff >= CONFLICT_ABS || diff / Math.max(a, b) >= CONFLICT_PCT;
+}
 
-  const er = rank(existing._src);
-  const ir = rank(src);
+function pickPrice(prev: TaggedQuote | undefined, next: Quote, src: string, latencyMs: number): TaggedQuote {
+  const tagged: TaggedQuote = { ...next, _src: src, _latencyMs: latencyMs };
+  if (!prev) return tagged;
 
-  let price = existing.price;
-  let priceSrc = existing._src;
-  if (ir > er && incoming.price != null && incoming.price > 0) {
-    price = incoming.price;
-    priceSrc = src;
-  } else if (er >= ir && (existing.price == null || existing.price <= 0) && incoming.price != null) {
-    price = incoming.price;
-    priceSrc = src;
+  const preferNext = rank(src) > rank(prev._src);
+  const preferPrev = rank(src) < rank(prev._src);
+
+  let price = prev.price;
+  let winnerSrc = prev._src;
+  if (next.price != null && Number.isFinite(next.price) && next.price > 0) {
+    if (prev.price == null || !Number.isFinite(prev.price) || prev.price <= 0) {
+      price = next.price;
+      winnerSrc = src;
+    } else if (preferNext) {
+      price = next.price;
+      winnerSrc = src;
+    } else if (!preferPrev && latencyMs < prev._latencyMs) {
+      price = next.price;
+      winnerSrc = src;
+    }
   }
 
-  const preferIncomingForChg = priceSrc === src;
-  const change = preferIncomingForChg
-    ? (incoming.change ?? existing.change)
-    : (existing.change ?? incoming.change);
-  const changePercent = preferIncomingForChg
-    ? (incoming.changePercent ?? existing.changePercent)
-    : (existing.changePercent ?? incoming.changePercent);
-
-  const fill = <T>(a: T | null | undefined, b: T | null | undefined): T | null =>
-    a != null && a !== ("" as unknown) ? (a as T) : b != null ? (b as T) : null;
+  const fill = <K extends keyof Quote>(key: K): Quote[K] => {
+    const pv = prev[key];
+    const nv = next[key];
+    if (pv != null && pv !== "" && !(typeof pv === "number" && !Number.isFinite(pv as number))) return pv;
+    return nv as Quote[K];
+  };
 
   return {
-    ...existing,
-    ...incoming,
-    symbol: existing.symbol,
-    price,
-    change,
-    changePercent,
-    open: fill(existing.open, incoming.open),
-    high: fill(existing.high, incoming.high),
-    low: fill(existing.low, incoming.low),
-    volume: fill(existing.volume, incoming.volume),
-    quoteVolume: fill(existing.quoteVolume, incoming.quoteVolume),
-    referencePrice: fill(existing.referencePrice, incoming.referencePrice),
-    ceilingPrice: fill(existing.ceilingPrice, incoming.ceilingPrice),
-    floorPrice: fill(existing.floorPrice, incoming.floorPrice),
-    name: fill(existing.name, incoming.name),
-    assetClass: existing.assetClass ?? incoming.assetClass ?? "stock",
-    updatedAt: existing.updatedAt ?? incoming.updatedAt,
-    _src: priceSrc,
-    _latencyMs: priceSrc === src ? latencyMs : existing._latencyMs,
-  };
+    ...prev,
+    name: fill("name"),
+    change: fill("change"),
+    changePercent: fill("changePercent"),
+    volume: fill("volume"),
+    quoteVolume: fill("quoteVolume"),
+    high: fill("high"),
+    low: fill("low"),
+    open: fill("open"),
+    referencePrice: fill("referencePrice"),
+    ceilingPrice: fill("ceilingPrice"),
+    floorPrice: fill("floorPrice"),
+    updatedAt: fill("updatedAt"),
+    symbol: prev.symbol || next.symbol,
+    price: price ?? next.price ?? prev.price,
+    _src: winnerSrc,
+    _latencyMs: winnerSrc === src ? latencyMs : prev._latencyMs,
+  } as TaggedQuote;
 }
 
 function countConflicts(batches: SourceBatch[]): number {
-  const bySym = new Map<string, { src: string; price: number }[]>();
+  const bySym = new Map<string, number[]>();
   for (const b of batches) {
-    if (!b.ok) continue;
     for (const q of b.quotes) {
-      if (q.price == null || q.price <= 0) continue;
+      if (q.price == null || !Number.isFinite(q.price) || q.price <= 0) continue;
       const arr = bySym.get(q.symbol) ?? [];
-      arr.push({ src: b.src, price: q.price });
+      arr.push(q.price);
       bySym.set(q.symbol, arr);
     }
   }
   let n = 0;
-  for (const [, arr] of bySym) {
-    if (arr.length < 2) continue;
-    arr.sort((a, b) => rank(b.src) - rank(a.src));
-    const a = arr[0]!;
-    const b = arr[1]!;
-    const abs = Math.abs(a.price - b.price);
-    const pct = abs / Math.max(a.price, 1);
-    if (abs > CONFLICT_ABS && pct > CONFLICT_PCT) {
-      n += 1;
-      if (process.env.NODE_ENV !== "production" || process.env.ORCA_LOG_QUOTE_CONFLICT === "1") {
-        console.warn(
-          `[quote-conflict] ${a.src}=${a.price} vs ${b.src}=${b.price} (Δ${abs.toFixed(0)} / ${(pct * 100).toFixed(2)}%) → keep ${a.src}`,
-        );
-      }
-    }
+  for (const prices of bySym.values()) {
+    if (prices.length < 2) continue;
+    const base = prices[0];
+    if (prices.some((p) => pricesConflict(base, p))) n++;
   }
   return n;
 }
 
+function coverageOf(bySym: Map<string, TaggedQuote>, wanted: string[]): number {
+  if (!wanted.length) return 1;
+  let hit = 0;
+  for (const s of wanted) {
+    const q = bySym.get(s);
+    if (q?.price != null && Number.isFinite(q.price) && q.price > 0) hit++;
+  }
+  return hit / wanted.length;
+}
+
+/** Parallel multi-source quote fetch with progressive merge. */
 export async function getMultiQuotes(symbols: string[]): Promise<MultiQuoteResult> {
-  const uniq = [...new Set(symbols.map((s) => s.toUpperCase()).filter(Boolean))].slice(0, 100);
+  const uniq = [...new Set(symbols.map((s) => s.trim().toUpperCase()).filter(Boolean))].slice(0, 80);
   if (!uniq.length) {
     return { quotes: [], sources: [], sourceTs: null, latencies: {}, conflicts: 0 };
   }
 
-  /**
-   * Latency strategy (phase speed):
-   * - Tier A: vndirect + vps — timeout 6.5s, parallel
-   * - Tier B: ssi-iboard — timeout 6s
-   * - Tier C: ssi-fc / vietcap — timeout 4.5s if symbols still missing
-   * Early-exit tier C wait when coverage ≥ 80%.
-   */
-
-  const tierA = Promise.all([
-    runSource("vndirect", () => vndirect.getVndQuotes(uniq), 6_500),
-    runSource("vps", () => asPack(() => getVpsQuotes(uniq)), 6_500),
-  ]);
-
-  const tierB = runSource("ssi-iboard", () => asPack(() => getSsiIboardQuotes(uniq)), 6_000);
-
-  const tierCTasks: Promise<SourceBatch>[] = [
-    runSource("vietcap", () => getVietcapQuotes(uniq), 4_500),
+  const tasks: { src: string; p: Promise<SourceBatch> }[] = [
+    { src: "vndirect", p: runSource("vndirect", () => vndirect.getVndQuotes(uniq), 5_500) },
+    { src: "vps", p: runSource("vps", () => asPack(() => getVpsQuotes(uniq)), 5_000) },
+    { src: "ssi-iboard", p: runSource("ssi-iboard", () => asPack(() => getSsiIboardQuotes(uniq)), 5_000) },
+    { src: "vietcap", p: runSource("vietcap", () => getVietcapQuotes(uniq), 4_500) },
+    {
+      src: "public-vn",
+      p: runSource("public-vn", async () => {
+        const r = await getPublicQuotes(uniq);
+        return { quotes: r.quotes ?? [], sourceTs: r.sourceTs ?? Date.now() };
+      }, 5_000),
+    },
   ];
+
   if (ssiFcConfigured()) {
-    // ssi-fcdata may return Quote[] or pack — normalize either way
-    tierCTasks.push(
-      runSource("ssi-fcdata", async () => {
-        const r = await getSsiQuotes(uniq);
-        if (Array.isArray(r)) return { quotes: r, sourceTs: r.length ? Date.now() : null };
-        return r as QuotePack;
-      }, 4_500),
-    );
+    tasks.push({
+      src: "ssi-fcdata",
+      p: runSource(
+        "ssi-fcdata",
+        async () => {
+          const r = await getSsiQuotes(uniq);
+          if (Array.isArray(r)) return { quotes: r, sourceTs: r.length ? Date.now() : null };
+          return r as QuotePack;
+        },
+        5_000,
+      ),
+    });
   }
 
-  const tierCPromise = Promise.all(tierCTasks);
-  const [aBatches, bBatch] = await Promise.all([tierA, tierB]);
+  const bySym = new Map<string, TaggedQuote>();
+  const latencies: Record<string, number> = {};
+  const usedSources: string[] = [];
+  const batches: SourceBatch[] = [];
 
-  const primary = [...aBatches, bBatch];
-  const covered = new Set<string>();
-  for (const b of primary) {
-    for (const q of b.quotes) {
-      if (q.price != null && q.price > 0) covered.add(q.symbol);
+  await new Promise<void>((resolve) => {
+    let pending = tasks.length;
+    if (!pending) {
+      resolve();
+      return;
     }
-  }
-  const missing = uniq.filter((s) => !covered.has(s));
-  const coverage = covered.size / Math.max(uniq.length, 1);
+    const hardStop = setTimeout(() => resolve(), 7_500);
+    let settled = false;
 
-  let cBatches: SourceBatch[] = [];
-  if (missing.length > 0 && coverage < 0.8) {
-    cBatches = await tierCPromise;
-  } else {
-    // Don't block UI for low-value sources when already well covered
-    cBatches = await Promise.race([
-      tierCPromise,
-      new Promise<SourceBatch[]>((r) => setTimeout(() => r([]), 120)),
+    for (const { src, p } of tasks) {
+      void p.then((batch) => {
+        batches.push(batch);
+        latencies[src] = batch.latencyMs;
+        if (batch.ok || batch.quotes.length) {
+          usedSources.push(src);
+          for (const q of batch.quotes) {
+            const sym = String(q.symbol).toUpperCase();
+            const prev = bySym.get(sym);
+            bySym.set(sym, pickPrice(prev, { ...q, symbol: sym }, batch.src, batch.latencyMs));
+          }
+        }
+        pending -= 1;
+        if (!settled && coverageOf(bySym, uniq) >= 0.999) {
+          settled = true;
+          clearTimeout(hardStop);
+          resolve();
+        }
+        if (pending <= 0) {
+          settled = true;
+          clearTimeout(hardStop);
+          resolve();
+        }
+      });
+    }
+  });
+
+  if (coverageOf(bySym, uniq) < 0.85) {
+    await Promise.race([
+      Promise.all(tasks.map((t) => t.p.catch(() => null))),
+      new Promise((r) => setTimeout(r, 1_200)),
     ]);
   }
 
-  const batches = [...primary, ...cBatches].sort((a, b) => rank(b.src) - rank(a.src));
-
-  const bySym = new Map<string, TaggedQuote>();
-  const usedSources: string[] = [];
-  const latencies: Record<string, number> = {};
-
-  for (const batch of batches) {
-    latencies[batch.src] = batch.latencyMs;
-    if (!batch.ok && !batch.quotes.length) continue;
-    usedSources.push(batch.src);
-    for (const q of batch.quotes) {
-      const prev = bySym.get(q.symbol);
-      bySym.set(q.symbol, pickPrice(prev, q, batch.src, batch.latencyMs));
-    }
-  }
-
   const conflicts = countConflicts(batches);
-
-  const quotes: Quote[] = [...bySym.values()].map(({ _src, _latencyMs, ...rest }) => ({
-    ...rest,
-  }));
-
-  quotes.sort((a, b) => a.symbol.localeCompare(b.symbol));
+  const quotes: Quote[] = [...bySym.values()]
+    .map(({ _src, _latencyMs, ...rest }) => rest)
+    .sort((a, b) => a.symbol.localeCompare(b.symbol));
 
   return {
     quotes,
-    sources: [...new Set(usedSources)],
+    sources: [...new Set(usedSources)].sort((a, b) => rank(b) - rank(a)),
     sourceTs: quotes.length ? Date.now() : null,
     latencies,
     conflicts,
