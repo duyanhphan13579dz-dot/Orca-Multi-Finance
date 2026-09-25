@@ -56,7 +56,9 @@ export default function VnMarketCenterPage() {
           </Link>
           {data?.sessionDate && <Badge tone="neutral">Phiên {data.sessionDate}</Badge>}
           {data?.count != null && <Badge tone="neutral">{data.count} mã</Badge>}
-          {session && <Badge tone={session.trading ? "up" : "warn">{session.labelVi}</Badge>}
+          {session ? (
+            <Badge tone={session.trading ? "up" : "warn">{session.labelVi}</Badge>
+          ) : null}
           <span className="ml-auto flex items-center gap-2">
             <FreshnessDot status={meta?.freshness} ageMs={meta?.ageMs} />
             <span className="hidden sm:inline">
