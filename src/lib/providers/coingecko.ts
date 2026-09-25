@@ -3,9 +3,8 @@ import { httpJson } from "../http";
 import { ProviderError } from "./binance";
 
 /**
- * CoinGecko free public API — no key for basic endpoints.
- * Used as crypto market fallback when Binance is unreachable / geo-blocked.
- * https://api.coingecko.com/api/v3/simple/price
+ * CoinGecko markets API — Pro key + internal proxy when configured.
+ * Fallback when Binance is unreachable / geo-blocked.
  */
 
 export const COINGECKO = "coingecko";
@@ -69,19 +68,37 @@ type SimplePricePayload = Record<
   { usd?: number; usd_24h_change?: number; usd_24h_vol?: number }
 >;
 
+function cgBase(): string {
+  const base =
+    process.env.COINGECKO_BASE_URL?.trim() ||
+    "https://api.coingecko.com/api/v3";
+  return base.replace(/\/$/, "");
+}
+
+function cgHeaders(): Record<string, string> {
+  const h: Record<string, string> = { Accept: "application/json" };
+  const key = process.env.COINGECKO_PRO_API_KEY?.trim();
+  if (key) {
+    h["x-cg-pro-api-key"] = key;
+  }
+  return h;
+}
+
 export async function getCoinGeckoSimplePrices(): Promise<{
   rows: CoinGeckoSimpleRow[];
   sourceTs: number;
+  via: string;
 }> {
   const ids = TOP_IDS.join(",");
+  const base = cgBase();
   const url =
-    `https://api.coingecko.com/api/v3/simple/price` +
+    `${base}/simple/price` +
     `?ids=${encodeURIComponent(ids)}&vs_currencies=usd&include_24hr_change=true&include_24hr_vol=true`;
   const res = await httpJson<SimplePricePayload>(url, {
     provider: COINGECKO,
     timeoutMs: 8_000,
     retries: 1,
-    headers: { Accept: "application/json" },
+    headers: cgHeaders(),
   });
   if (!res.ok || !res.data) {
     throw new ProviderError(`coingecko: ${res.error ?? "unreachable"}`, COINGECKO);
@@ -103,5 +120,9 @@ export async function getCoinGeckoSimplePrices(): Promise<{
     });
   }
   if (!rows.length) throw new ProviderError("coingecko: empty payload", COINGECKO);
-  return { rows, sourceTs: Date.now() };
+  return {
+    rows,
+    sourceTs: Date.now(),
+    via: base.includes("coingecko.com") ? "public" : "proxy",
+  };
 }
