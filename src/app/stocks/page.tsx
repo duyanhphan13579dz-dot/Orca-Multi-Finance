@@ -7,7 +7,8 @@ import { VN_SECTOR_MAP, DEFAULT_VN_WATCHLIST, sectorOf } from "@/lib/vn/master";
 import type { IndexQuote, Quote } from "@/lib/types";
 import { Badge, Chg, fmtCompact, fmtNum, FreshnessDot, Loading, MetaLine, Panel, Unavailable } from "@/components/ui";
 import { AddToWatchlist } from "@/components/watchlist-button";
-import { CandlestickChart, KeyRound, Search } from "lucide-react";
+import { CandlestickChart, KeyRound, LayoutGrid, Search, Table2 } from "lucide-react";
+import { BangDienBoard } from "@/components/stocks/bang-dien-board";
 
 type StocksData = {
   indices: IndexQuote[] | null;
@@ -17,7 +18,6 @@ type StocksData = {
   count?: number;
 };
 
-/** VN tick tolerance — treat price as hitting band when within ~0.05 unit */
 function hitsBand(price: number | null | undefined, band: number | null | undefined): boolean {
   if (price == null || band == null || Number.isNaN(price) || Number.isNaN(band)) return false;
   return Math.abs(price - band) <= 0.051;
@@ -29,6 +29,7 @@ export default function VnMarketCenterPage() {
   });
   const [q, setQ] = useState("");
   const [sector, setSector] = useState("");
+  const [viewMode, setViewMode] = useState<"dien" | "table">("dien");
 
   const quotes = useMemo(() => {
     let list = data?.quotes ?? [];
@@ -60,7 +61,7 @@ export default function VnMarketCenterPage() {
         <div className="stock-hero flex flex-wrap items-center gap-2">
           <h1 className="flex items-center gap-2 text-base font-semibold sm:text-lg">
             <CandlestickChart className="size-5 shrink-0 text-accent-primary" />
-            Trung tâm thị trường VN
+            Bảng điện VN
           </h1>
           <Badge tone="accent">HOSE · HNX · UPCoM</Badge>
           <Link
@@ -75,6 +76,32 @@ export default function VnMarketCenterPage() {
           {data?.count != null ? (
             <Badge tone="neutral">{`${data.count} mã`}</Badge>
           ) : null}
+          <div className="flex items-center rounded-md border border-border-subtle p-0.5">
+            <button
+              type="button"
+              onClick={() => setViewMode("dien")}
+              className={`inline-flex items-center gap-1 rounded px-2 py-1 text-[11px] ${
+                viewMode === "dien"
+                  ? "bg-accent-primary/15 font-medium text-accent-primary"
+                  : "text-text-muted hover:text-text-primary"
+              }`}
+            >
+              <LayoutGrid className="size-3.5" />
+              Bảng điện
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode("table")}
+              className={`inline-flex items-center gap-1 rounded px-2 py-1 text-[11px] ${
+                viewMode === "table"
+                  ? "bg-accent-primary/15 font-medium text-accent-primary"
+                  : "text-text-muted hover:text-text-primary"
+              }`}
+            >
+              <Table2 className="size-3.5" />
+              Bảng đầy đủ
+            </button>
+          </div>
           <span className="ml-auto flex items-center gap-2">
             <FreshnessDot status={meta?.freshness} ageMs={meta?.ageMs} />
             <span className="hidden sm:inline">
@@ -82,7 +109,7 @@ export default function VnMarketCenterPage() {
             </span>
           </span>
         </div>
-        {data?.indices?.length ? (
+        {data?.indices?.length && viewMode === "table" ? (
           <div className="grid grid-cols-2 gap-2 px-3 pb-3 sm:px-4 sm:pb-4 md:grid-cols-4 xl:gap-3">
             {data.indices.slice(0, 4).map((i, big) => (
               <div
@@ -118,6 +145,18 @@ export default function VnMarketCenterPage() {
         />
       ) : (
         <>
+          {viewMode === "dien" ? (
+            <Panel title="Bảng điện thông minh" pad={false}>
+              <div className="p-2 sm:p-3">
+                <BangDienBoard
+                  quotes={data?.quotes ?? []}
+                  indices={data?.indices ?? []}
+                />
+              </div>
+            </Panel>
+          ) : null}
+
+          {viewMode === "table" ? (
           <Panel
             title={
               <span className="flex flex-wrap items-center gap-2">
@@ -270,18 +309,12 @@ export default function VnMarketCenterPage() {
                             {qu.symbol}
                           </Link>
                           {atCeil ? (
-                            <span
-                              className="shrink-0 rounded border border-violet-500/40 bg-violet-500/20 px-1 text-[9px] font-bold uppercase text-violet-300"
-                              title="Giá chạm trần"
-                            >
+                            <span className="shrink-0 rounded border border-violet-500/40 bg-violet-500/20 px-1 text-[9px] font-bold uppercase text-violet-300" title="Giá chạm trần">
                               Trần
                             </span>
                           ) : null}
                           {atFloor ? (
-                            <span
-                              className="shrink-0 rounded border border-sky-400/40 bg-sky-400/20 px-1 text-[9px] font-bold uppercase text-sky-300"
-                              title="Giá chạm sàn"
-                            >
+                            <span className="shrink-0 rounded border border-sky-400/40 bg-sky-400/20 px-1 text-[9px] font-bold uppercase text-sky-300" title="Giá chạm sàn">
                               Sàn
                             </span>
                           ) : null}
@@ -292,11 +325,7 @@ export default function VnMarketCenterPage() {
                           </div>
                         ) : null}
                       </td>
-                      <td
-                        className={`num py-2 text-right font-medium ${
-                          atCeil ? "text-violet-300" : atFloor ? "text-sky-300" : ""
-                        }`}
-                      >
+                      <td className={`num py-2 text-right font-medium ${atCeil ? "text-violet-300" : atFloor ? "text-sky-300" : ""}`}>
                         {fmtNum(qu.price, 2)}
                       </td>
                       <td className="py-2 text-right">
@@ -323,6 +352,7 @@ export default function VnMarketCenterPage() {
               </table>
             </div>
           </Panel>
+          ) : null}
 
           <Panel title="Ngành chứng khoán Việt Nam" pad={false}>
             <div className="grid grid-cols-2 gap-1.5 p-3 sm:grid-cols-3 md:grid-cols-4">
