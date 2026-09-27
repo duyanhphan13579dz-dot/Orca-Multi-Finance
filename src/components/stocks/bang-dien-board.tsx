@@ -56,15 +56,15 @@ function hitsBand(price: number | null | undefined, band: number | null | undefi
 }
 
 function rowTone(qu: Quote): string {
-  if (hitsBand(qu.price, qu.ceilingPrice)) return "bg-violet-500/20 text-violet-200";
-  if (hitsBand(qu.price, qu.floorPrice)) return "bg-sky-400/20 text-sky-200";
+  if (hitsBand(qu.price, qu.ceilingPrice)) return "bg-violet-500/30 text-violet-100";
+  if (hitsBand(qu.price, qu.floorPrice)) return "bg-sky-400/30 text-sky-100";
   const p = qu.changePercent;
-  if (p == null || !Number.isFinite(p)) return "bg-surface-elevated/40 text-text-secondary";
-  if (p > 0.15) return "bg-emerald-500/20 text-emerald-200";
-  if (p > 0) return "bg-emerald-500/10 text-emerald-300/90";
-  if (p < -0.15) return "bg-rose-500/20 text-rose-200";
-  if (p < 0) return "bg-rose-500/10 text-rose-300/90";
-  return "bg-amber-500/10 text-amber-100/90";
+  if (p == null || !Number.isFinite(p)) return "bg-surface-base/60 text-text-secondary";
+  if (p > 0.15) return "bg-emerald-500/25 text-emerald-100";
+  if (p > 0) return "bg-emerald-500/12 text-emerald-200";
+  if (p < -0.15) return "bg-rose-500/25 text-rose-100";
+  if (p < 0) return "bg-rose-500/12 text-rose-200";
+  return "bg-amber-500/12 text-amber-100";
 }
 
 function pctLabel(p: number | null | undefined): string {
@@ -164,7 +164,7 @@ function buildColumns(quotes: Quote[]): SectorCol[] {
   ];
 
   for (const name of sectorOrder) {
-    if (cols.length >= 10) break;
+    if (cols.length >= 16) break;
     const rows = quotes
       .filter((q) => sectorOf(q.symbol) === name)
       .sort((a, b) => (b.changePercent ?? -999) - (a.changePercent ?? -999));
@@ -310,16 +310,16 @@ function ImbalanceBar({
           : "text-amber-300";
 
   return (
-    <div className={compact ? "px-0 pt-1" : ""}>
-      <div className={`mb-0.5 flex justify-between ${compact ? "text-[8.5px]" : "text-[9px]"}`}>
-        <span className={`truncate ${tone}`}>{label}</span>
-        <span className="num text-text-muted">
+    <div className={compact ? "px-0 pt-1.5" : ""}>
+      <div className={`mb-1 flex items-center justify-between gap-1 ${compact ? "text-[11px]" : "text-[12px]"}`}>
+        <span className={`truncate font-medium ${tone}`}>{label}</span>
+        <span className={`num shrink-0 font-semibold tabular-nums ${tone}`}>
           {imbalance != null ? `${imbalance > 0 ? "+" : ""}${(imbalance * 100).toFixed(0)}%` : ""}
         </span>
       </div>
-      <div className="flex h-1 overflow-hidden rounded-full bg-surface-base">
-        <div className="bg-up/75 transition-all" style={{ width: `${buyPct}%` }} />
-        <div className="bg-down/75 transition-all" style={{ width: `${100 - buyPct}%` }} />
+      <div className={`flex overflow-hidden rounded-full bg-surface-base/80 ${compact ? "h-1.5" : "h-2"}`}>
+        <div className="bg-up/80 transition-all" style={{ width: `${buyPct}%` }} />
+        <div className="bg-down/80 transition-all" style={{ width: `${100 - buyPct}%` }} />
       </div>
     </div>
   );
@@ -392,36 +392,59 @@ function IndexStrip({ indices, quotes }: { indices: IndexQuote[]; quotes: Quote[
 
 function SectorColumn({ col }: { col: SectorCol }) {
   const avgUp = (col.avgPct ?? 0) >= 0;
+  const headerTone =
+    col.avgPct == null
+      ? "border-border-subtle bg-surface-elevated"
+      : avgUp
+        ? "border-emerald-500/30 bg-gradient-to-b from-emerald-500/15 to-surface-elevated"
+        : "border-rose-500/30 bg-gradient-to-b from-rose-500/15 to-surface-elevated";
+
   return (
-    <div className="flex min-w-[148px] max-w-[200px] flex-1 flex-col overflow-hidden rounded-lg border border-border-subtle bg-surface-base/80">
-      <div className="border-b border-border-subtle bg-surface-elevated/60 px-2 py-1.5">
-        <div className="flex items-center justify-between gap-1">
-          <span className="truncate text-[11px] font-semibold text-text-primary" title={col.name}>
+    <div
+      className="flex w-[220px] shrink-0 flex-col overflow-hidden rounded-xl border border-border-subtle bg-surface-elevated shadow-md shadow-black/25 ring-1 ring-white/[0.04]"
+    >
+      {/* Header block */}
+      <div className={`border-b px-3 py-2.5 ${headerTone}`}>
+        <div className="flex items-start justify-between gap-2">
+          <span
+            className="line-clamp-2 text-[13px] font-bold leading-snug tracking-tight text-text-primary"
+            title={col.name}
+          >
             {col.name}
           </span>
-          <span className={`num shrink-0 text-[11px] font-medium ${avgUp ? "text-up" : "text-down"}`}>
+          <span
+            className={`num shrink-0 rounded-md px-1.5 py-0.5 text-[13px] font-bold tabular-nums ${
+              avgUp ? "bg-up/15 text-up" : "bg-down/15 text-down"
+            }`}
+          >
             {pctLabel(col.avgPct)}
           </span>
         </div>
         <ImbalanceBar imbalance={col.imbalance} buyVol={col.buyVol} sellVol={col.sellVol} compact />
       </div>
-      <div className="grid grid-cols-[minmax(0,1fr)_auto_auto_auto] gap-x-1 border-b border-border-subtle/80 px-1.5 py-0.5 text-[9px] uppercase tracking-wider text-text-muted">
+
+      {/* Column labels */}
+      <div className="grid grid-cols-[minmax(0,1.1fr)_auto_auto_auto] gap-x-2 border-b border-border-subtle/70 bg-surface-base/50 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-text-muted">
         <span>Mã</span>
         <span className="text-right">Giá</span>
-        <span className="text-right">+/-</span>
-        <span className="text-right">KL</span>
+        <span className="min-w-[3.6rem] text-right">+/-</span>
+        <span className="min-w-[2.8rem] text-right">KL</span>
       </div>
-      <div className="max-h-[min(58vh,480px)] overflow-y-auto overscroll-contain">
+
+      {/* Rows */}
+      <div className="max-h-[min(62vh,520px)] overflow-y-auto overscroll-contain scrollbar-thin">
         {col.rows.map((q) => (
           <Link
             key={q.symbol}
             href={`/stocks/${q.symbol}`}
-            className={`grid grid-cols-[minmax(0,1fr)_auto_auto_auto] items-center gap-x-1 px-1.5 py-[3px] text-[11px] transition hover:brightness-110 ${rowTone(q)}`}
+            className={`grid grid-cols-[minmax(0,1.1fr)_auto_auto_auto] items-center gap-x-2 border-b border-border-subtle/30 px-3 py-[6px] text-[12.5px] transition hover:brightness-125 ${rowTone(q)}`}
           >
-            <span className="truncate font-semibold tracking-tight">{q.symbol}</span>
-            <span className="num text-right tabular-nums">{fmtNum(q.price, 2)}</span>
-            <span className="num min-w-[3.2rem] text-right tabular-nums">{pctLabel(q.changePercent)}</span>
-            <span className="num min-w-[2.4rem] text-right text-[10px] opacity-80">
+            <span className="truncate font-bold tracking-tight">{q.symbol}</span>
+            <span className="num text-right tabular-nums font-medium">{fmtNum(q.price, 2)}</span>
+            <span className="num min-w-[3.6rem] text-right tabular-nums font-semibold">
+              {pctLabel(q.changePercent)}
+            </span>
+            <span className="num min-w-[2.8rem] text-right text-[11px] opacity-85">
               {q.volume != null ? fmtCompact(q.volume) : "—"}
             </span>
           </Link>
@@ -537,18 +560,31 @@ export function BangDienBoard({
       <SectorImbalanceSummary cols={columns} />
 
       <div className="flex items-center justify-between gap-2 px-0.5">
-        <p className="text-[10.5px] text-text-muted">
-          Bảng điện theo ngành · imbalance = KL mã tăng − KL mã giảm · click mã để mở chi tiết
+        <p className="text-[11px] text-text-muted">
+          Bảng điện theo ngành · kéo ngang để xem thêm · imbalance = KL tăng vs giảm · click mã mở chi tiết
         </p>
-        <span className="hidden text-[10px] text-text-muted sm:inline">
-          {quotes.length} mã · {columns.length} cột
+        <span className="hidden shrink-0 text-[11px] text-text-muted sm:inline">
+          {quotes.length} mã · {columns.length} ngành
         </span>
       </div>
 
-      <div className="flex gap-1.5 overflow-x-auto pb-1">
-        {columns.map((col) => (
-          <SectorColumn key={col.name} col={col} />
-        ))}
+      {/* Horizontal scroll — wider cards, snap, visible scroll area */}
+      <div className="-mx-1 rounded-xl border border-border-subtle/60 bg-surface-base/40 p-2 shadow-inner">
+        <div
+          className="flex gap-3 overflow-x-auto overscroll-x-contain pb-2 pt-0.5 scroll-smooth snap-x snap-mandatory [scrollbar-width:thin] [scrollbar-color:rgba(148,163,184,0.45)_transparent]"
+          style={{ WebkitOverflowScrolling: "touch" }}
+        >
+          {columns.map((col) => (
+            <div key={col.name} className="snap-start">
+              <SectorColumn col={col} />
+            </div>
+          ))}
+          {/* trailing spacer so last column is fully reachable */}
+          <div className="w-2 shrink-0" aria-hidden />
+        </div>
+        <p className="mt-1 text-center text-[10px] text-text-muted/80 sm:hidden">
+          ← Vuốt ngang để xem ngành khác →
+        </p>
       </div>
     </div>
   );
