@@ -1,21 +1,15 @@
 import "server-only";
 import { buildMeta } from "../freshness";
 import { sma } from "../technical";
-import { getVnOhlcv, getVnQuotes } from "./stocks";
+import { getVnQuotes } from "./stocks";
 import { LIQUID_BOARD } from "../providers/public-vn-feed";
+import { fetchOhlcvResilient, mapPool } from "./screener-ohlcv";
 import { getSecurity, sectorOf } from "../vn/master";
 import type { Meta, OhlcvBar } from "../types";
 
 /**
  * Mark Minervini — Trend Template screener (SEPA universe filter).
- *
- * Sources (secondary, widely corroborated):
- *   Trade Like a Stock Market Wizard — 8-point Stage-2 checklist.
- * All 8 criteria are binary pass/fail; no partial credit for "buy" flag.
- *
- * Criterion 8 (IBD RS Rating) is proprietary — we proxy with percentile rank
- * of ~12-month (or 6-month if shorter history) total return vs the scanned
- * universe, mapped 0–100. Threshold ≥ 70 matches Minervini's floor.
+ * Resilient OHLCV (retry) + never returns null — empty table + partial meta.
  */
 
 export interface MinerviniCriteria {
@@ -84,19 +78,6 @@ export const CRITERION_LABELS_VI: Record<keyof MinerviniCriteria, string> = {
   rsAtLeast70: "RS rank ≥ 70 (proxy)",
 };
 
-async function mapPool<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
-  const out: R[] = new Array(items.length);
-  let i = 0;
-  async function worker() {
-    while (i < items.length) {
-      const idx = i++;
-      out[idx] = await fn(items[idx]!);
-    }
-  }
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, () => worker()));
-  return out;
-}
-
 function lastSma(closes: number[], period: number): number | null {
   if (closes.length < period) return null;
   const series = sma(closes, period);
@@ -143,9 +124,9 @@ interface RawPack {
 }
 
 function analyzeBars(symbol: string, bars: OhlcvBar[]): RawPack | null {
-  if (bars.length < 60) return null;
+  if (bars.length < 50) return null;
   const closes = bars.map((b) => b.close).filter((c) => Number.isFinite(c) && c > 0);
-  if (closes.length < 60) return null;
+  if (closes.length < 50) return null;
   const close = closes[closes.length - 1]!;
   const lookHigh = bars.slice(-252);
   const highs = lookHigh.map((b) => b.high);
@@ -253,15 +234,14 @@ export async function screenMinervini(args?: {
 }): Promise<{ rows: MinerviniScreenRow[]; scanned: number; skipped: number; meta: Meta } | null> {
   const uniq = [
     ...new Set((args?.symbols?.length ? args.symbols : LIQUID_BOARD).map((s) => s.toUpperCase()).filter(Boolean)),
-  ].slice(0, 80);
+  ].slice(0, 100);
 
   const quotesPack = await getVnQuotes(uniq).catch(() => null);
   const quoteMap = new Map((quotesPack?.quotes ?? []).map((q) => [q.symbol, q]));
 
   let skipped = 0;
-  const packs = await mapPool(uniq, 5, async (symbol) => {
-    const ohlcv = await getVnOhlcv(symbol, 280).catch(() => null);
-    const bars = ohlcv?.bars ?? [];
+  const packs = await mapPool(uniq, 8, async (symbol) => {
+    const { bars } = await fetchOhlcvResilient(symbol, 280);
     const pack = analyzeBars(symbol, bars);
     if (!pack) {
       skipped += 1;
@@ -271,7 +251,7 @@ export async function screenMinervini(args?: {
   });
 
   const valid = packs.filter((p): p is RawPack => p != null);
-  if (!valid.length) return null;
+  // Never hard-fail — empty table + partial note instead of "không khả dụng"
 
   const retKey = (p: RawPack) => p.ret252 ?? p.ret126;
   const ranked = valid
