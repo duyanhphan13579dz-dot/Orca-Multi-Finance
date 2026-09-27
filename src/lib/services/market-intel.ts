@@ -119,16 +119,21 @@ async function produceMarketIntel(): Promise<{ intel: MarketIntel; meta: Meta }>
     withTimeout((async () => { const { getVnIndices } = await import("./stocks"); return getVnIndices(); })(), 8_000),
     withTimeout(getVnQuotes(VN30_BOARD), 9_000),
   ]);
-  const [snapRes, crossRes, foreignRes, etfRes, propRes, idxStats, marketBoardRes, newsPack] = await Promise.all([
+  const [snapRes, crossRes, foreignPrimary, etfRes, propRes, idxStats, marketBoardRes, newsPack, foreignFb] = await Promise.all([
     withTimeout(buildMarketSnapshot(), 12_000),
-    withTimeout(getCrossAsset(), 5_000),
+    withTimeout(getCrossAsset(), 6_000),
     withTimeout(vndirect.getVndForeignFlow(), 8_000),
     withTimeout(vndirect.getVndEtfFlow(), 5_000),
     withTimeout((async () => { const date = await vndirect.getVndLatestSessionDate(); return getCafefPropFlow(date); })(), 5_000),
     withTimeout(vndirect.getVndIndexSessionStats("VNINDEX"), 10_000),
     withTimeout(getVnMarketBoard(), 12_000),
     withTimeout(getNews({ limit: 30 }), 12_000),
+    withTimeout((async () => {
+      const { getSsiForeignFlowFallback } = await import("./foreign-flow-fallback");
+      return getSsiForeignFlowFallback();
+    })(), 9_000),
   ]);
+  const foreignRes = foreignPrimary ?? foreignFb;
   const indices = indicesPack?.items?.length ? indicesPack.items : snapRes?.snapshot?.indices?.length ? snapRes.snapshot.indices : null;
   const indicesAvailable = Boolean(indices?.length);
   const session = getVnSession();
@@ -170,7 +175,7 @@ async function produceMarketIntel(): Promise<{ intel: MarketIntel; meta: Meta }>
     foreignNet: foreign?.netVal ?? null,
     propNet: prop?.netVal ?? null,
     etfNet: etf?.netVal ?? null,
-    source: [foreign && "vndirect foreigns", prop && "cafef prop", etf && "vndirect etf"].filter(Boolean).join(" + ") || (indicesAvailable ? "vndirect-indices" : "partial"),
+    source: [foreignPrimary && "vndirect foreigns", !foreignPrimary && foreignFb && "ssi-fcdata foreign (partial)", prop && "cafef prop", etf && "vndirect etf"].filter(Boolean).join(" + ") || (indicesAvailable ? "vndirect-indices" : "partial"),
     available: Boolean(foreign || prop || etf || indicesAvailable),
     note: parts.join(". ") + (sessionDate ? "." : ""),
   };
