@@ -1,5 +1,8 @@
 import { ok, unavailable, badRequest } from "@/lib/envelope";
-import { screenCandlestickPatterns } from "@/lib/services/candlestick-screener";
+import {
+  getRecentPatternAlerts,
+  screenCandlestickPatterns,
+} from "@/lib/services/candlestick-screener";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -9,9 +12,21 @@ export const maxDuration = 60;
  * GET /api/v1/screener/candlestick
  *   ?category=bullish_reversal|bearish_reversal|continuation|all
  *   &minScore=55&limit=40&volumeOnly=1&symbols=VCB,FPT
+ *   &recent=1  → reversal alerts fired by cron (in-memory)
  */
 export async function GET(req: Request) {
   const url = new URL(req.url);
+
+  if (url.searchParams.get("recent") === "1") {
+    const limit = Math.min(Number(url.searchParams.get("limit") ?? 20) || 20, 50);
+    const events = getRecentPatternAlerts(limit);
+    return ok({
+      events,
+      count: events.length,
+      note: "Reversal pattern alerts fired by cron (deduped per day)",
+    });
+  }
+
   const category = (url.searchParams.get("category") ?? "all").toLowerCase();
   const allowed = new Set([
     "all",
@@ -51,6 +66,7 @@ export async function GET(req: Request) {
         scanned: r.scanned,
         skipped: r.skipped,
         ruleset: "candlestick-ruleset.json v1.0",
+        alertPolicy: "reversal-only (high|very_high + volume gate)",
       },
       r.meta,
     );
