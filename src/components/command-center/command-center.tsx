@@ -5,7 +5,14 @@ import { useMemo } from "react";
 import type { MarketIntel } from "@/lib/services/market-intel";
 import type { Meta, IndexQuote, Quote } from "@/lib/types";
 import { sectorOf, VN_SECTOR_MAP } from "@/lib/vn/master";
-import { Badge, Chg, fmtCompact, fmtNum, FreshnessDot, MetaLine } from "@/components/ui";
+import { Badge, fmtCompact, fmtNum, FreshnessDot, MetaLine } from "@/components/ui";
+import {
+  GlobalMarketRegime,
+  GlobalImpactMap,
+  TransmissionPanel,
+  type GlobalUsRow,
+  type GlobalCryptoRow,
+} from "@/components/command-center/phase2-global";
 
 const RATING_VI: Record<string, string> = {
   BULLISH: "Tích cực",
@@ -503,10 +510,14 @@ export function CommandCenter({
   intel,
   meta,
   quotes,
+  globalUs = [],
+  globalCrypto = [],
 }: {
   intel: MarketIntel;
   meta: Meta | null;
   quotes: Quote[];
+  globalUs?: GlobalUsRow[];
+  globalCrypto?: GlobalCryptoRow[];
 }) {
   return (
     <div className="cc-root space-y-2.5">
@@ -528,13 +539,20 @@ export function CommandCenter({
 
       <TickerStrip indices={intel.indices} crossAsset={intel.crossAsset} />
 
-      <MarketPulse intel={intel} />
+      <div className="grid gap-2.5 lg:grid-cols-2">
+        <MarketPulse intel={intel} />
+        <GlobalImpactMap intel={intel} />
+      </div>
 
       <div className="grid gap-2.5 sm:grid-cols-3">
         <BreadthPanel intel={intel} />
         <MoneyFlowPanel intel={intel} />
         <LiquidityPanel intel={intel} />
       </div>
+
+      <GlobalMarketRegime intel={intel} us={globalUs} crypto={globalCrypto} />
+
+      <TransmissionPanel intel={intel} />
 
       <div className="grid gap-2.5 lg:grid-cols-[1.15fr_0.85fr]">
         <SectorRotation quotes={quotes} />
@@ -544,7 +562,7 @@ export function CommandCenter({
       <AiBrief intel={intel} />
 
       <p className="text-center text-[10px] text-text-muted">
-        Pha 1 · Pulse · Breadth · Flow · Sector · Movers · Brief — pha 2: Global regime & transmission
+        Pha 1+2 · Pulse · Impact · Breadth · Flow · Global regime · Transmission · Sector · Movers · Brief
       </p>
     </div>
   );
