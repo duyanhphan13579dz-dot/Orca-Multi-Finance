@@ -1,4 +1,4 @@
-import { ok, unavailable, badRequest } from "@/lib/envelope";
+import { ok, badRequest } from "@/lib/envelope";
 import { screenMinervini } from "@/lib/services/minervini-screener";
 
 export const dynamic = "force-dynamic";
@@ -45,16 +45,20 @@ export async function GET(req: Request) {
     limit: Number.isFinite(limit) ? Math.min(80, Math.max(1, limit)) : 40,
   });
 
-  if (!r) {
-    return unavailable("minervini-screener", "Chưa đủ nến OHLCV để quét Trend Template — nguồn lịch sử tạm lỗi.");
-  }
-
+  // Service never returns null — empty table + partial meta instead of "không khả dụng"
+  const payload = r ?? {
+    rows: [],
+    scanned: 0,
+    skipped: 0,
+    meta: { source: "minervini-screener", sourceTimestampMs: Date.now(), hasData: false, partial: true,
+      note: "OHLCV tạm lỗi — thử lại sau" },
+  };
   return ok(
     {
-      rows: r.rows,
-      scanned: r.scanned,
-      skipped: r.skipped,
+      rows: payload.rows,
+      scanned: payload.scanned,
+      skipped: payload.skipped,
     },
-    r.meta,
+    payload.meta,
   );
 }
