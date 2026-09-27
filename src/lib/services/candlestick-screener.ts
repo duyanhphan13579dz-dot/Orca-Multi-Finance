@@ -60,10 +60,19 @@ export function getRecentPatternAlerts(limit = 30): PatternAlertEvent[] {
 
 async function ohlcvBatch(symbols: string[]) {
   const out = new Map<string, Awaited<ReturnType<typeof getVnOhlcv>>>();
-  const chunk = 8;
+  const chunk = 10;
   for (let i = 0; i < symbols.length; i += chunk) {
     const batch = symbols.slice(i, i + chunk);
-    const settled = await Promise.allSettled(batch.map((s) => getVnOhlcv(s, 80)));
+    const settled = await Promise.allSettled(
+      batch.map(async (s) => {
+        let pack = await getVnOhlcv(s, 80).catch(() => null);
+        if (!pack?.bars?.length) {
+          await new Promise((r) => setTimeout(r, 60));
+          pack = await getVnOhlcv(s, 80).catch(() => null);
+        }
+        return pack;
+      }),
+    );
     settled.forEach((r, j) => {
       if (r.status === "fulfilled" && r.value?.bars?.length) out.set(batch[j], r.value);
     });
@@ -75,6 +84,9 @@ function isReversal(p: DetectedCandlePattern): boolean {
   return p.category === "bullish_reversal" || p.category === "bearish_reversal";
 }
 
+/**
+ * Alert gate — chỉ đảo chiều, độ tin cậy cao, ưu tiên volume.
+ */
 function isAlertWorthy(top: DetectedCandlePattern): boolean {
   if (!isReversal(top)) return false;
   if (!(top.reliability === "high" || top.reliability === "very_high")) return false;
@@ -84,7 +96,7 @@ function isAlertWorthy(top: DetectedCandlePattern): boolean {
 
 export async function screenCandlestickPatterns(
   opts: CandlestickScreenOpts = {},
-): Promise<CandlestickScreenResult | null> {
+): Promise<CandlestickScreenResult> {
   const universe = (opts.symbols?.length ? opts.symbols : LIQUID_BOARD)
     .map((s) => s.toUpperCase())
     .filter(Boolean)
@@ -151,6 +163,7 @@ export async function screenCandlestickPatterns(
       source: "candlestick-engine+ohlcv",
       sourceTimestampMs: Date.now(),
       note: `Ruleset v1 · minScore≥${minScore} · ${cat} · alert=reversal-only`,
+      hasData: rows.length > 0,
       partial: skipped > 0,
     }),
   };
