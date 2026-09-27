@@ -12,12 +12,14 @@ import {
   TransmissionPanel,
   type GlobalUsRow,
   type GlobalCryptoRow,
+  type GlobalAsiaRow,
 } from "@/components/command-center/phase2-global";
 import {
   CommandTabs,
   LiquiditySparkPanel,
   NewsFlowPanel,
   useCommandTab,
+  type LiquiditySparkSeries,
 } from "@/components/command-center/phase3-extras";
 
 const RATING_VI: Record<string, string> = {
@@ -71,7 +73,6 @@ function TickerStrip({
   crossAsset: MarketIntel["crossAsset"];
 }) {
   const items: { label: string; value: string; chg: number | null; sub?: string; href?: string }[] = [];
-
   for (const i of (indices ?? []).slice(0, 4)) {
     items.push({
       label: i.code,
@@ -81,7 +82,6 @@ function TickerStrip({
       href: `/market/index/${encodeURIComponent(i.code)}`,
     });
   }
-
   for (const c of crossAsset.slice(0, 6)) {
     items.push({
       label: c.key,
@@ -90,9 +90,7 @@ function TickerStrip({
       sub: c.unit,
     });
   }
-
   if (!items.length) return null;
-
   return (
     <div className="cc-ticker">
       {items.map((t) => {
@@ -132,9 +130,7 @@ function MarketPulse({ intel }: { intel: MarketIntel }) {
       : score <= 43
         ? "Thị trường nghiêng tiêu cực"
         : "Thị trường trung tính / phân hóa");
-
   const metrics = c.components.filter((x) => x.available && x.score != null).slice(0, 6);
-
   return (
     <article className="cc-panel">
       <div className="cc-panel-head">
@@ -195,7 +191,6 @@ function BreadthPanel({ intel }: { intel: MarketIntel }) {
   const flW = Math.max(0, 100 - upW - dnW);
   const ad = b.adRatio ?? (b.decliners > 0 ? b.advancers / b.decliners : null);
   const net = b.netAdvances ?? b.advancers - b.decliners;
-
   return (
     <article className="cc-panel">
       <div className="cc-panel-head">
@@ -254,7 +249,6 @@ function MoneyFlowPanel({ intel }: { intel: MarketIntel }) {
   const f = intel.flow;
   const net = f.foreignNet;
   const liq = intel.liquidity;
-
   return (
     <article className="cc-panel">
       <div className="cc-panel-head">
@@ -343,7 +337,6 @@ function SectorRotation({ quotes }: { quotes: Quote[] }) {
     );
   }
   const maxAbs = Math.max(0.3, ...rows.map((r) => Math.abs(r.avgPct)));
-
   return (
     <article className="cc-panel">
       <div className="cc-panel-head">
@@ -388,7 +381,6 @@ function TopMovers({ quotes }: { quotes: Quote[] }) {
     const losers = [...valid].sort((a, b) => (a.changePercent ?? 0) - (b.changePercent ?? 0)).slice(0, 5);
     return { gainers, losers };
   }, [quotes]);
-
   return (
     <article className="cc-panel">
       <div className="cc-panel-head">
@@ -443,7 +435,6 @@ function AiBrief({ intel }: { intel: MarketIntel }) {
     c.drivers[0] && c.risks[0]
       ? `${c.drivers[0]} Đồng thời cần lưu ý: ${c.risks[0]}`
       : c.drivers[0] || c.risks[0] || intel.sessionHint || "Đang tổng hợp brief thị trường…";
-
   return (
     <article className="cc-panel">
       <div className="cc-panel-head">
@@ -488,12 +479,16 @@ export function CommandCenter({
   quotes,
   globalUs = [],
   globalCrypto = [],
+  globalAsia = [],
+  liquiditySpark = null,
 }: {
   intel: MarketIntel;
   meta: Meta | null;
   quotes: Quote[];
   globalUs?: GlobalUsRow[];
   globalCrypto?: GlobalCryptoRow[];
+  globalAsia?: GlobalAsiaRow[];
+  liquiditySpark?: LiquiditySparkSeries;
 }) {
   const [tab, setTab] = useCommandTab();
   const isAll = tab === "all";
@@ -539,13 +534,13 @@ export function CommandCenter({
         <div className="grid gap-2.5 sm:grid-cols-3">
           <BreadthPanel intel={intel} />
           {(showFlow || isAll) && <MoneyFlowPanel intel={intel} />}
-          <LiquiditySparkPanel intel={intel} />
+          <LiquiditySparkPanel intel={intel} spark={liquiditySpark} />
         </div>
       )}
 
       {showGlobal && (
         <>
-          <GlobalMarketRegime intel={intel} us={globalUs} crypto={globalCrypto} />
+          <GlobalMarketRegime intel={intel} us={globalUs} crypto={globalCrypto} asia={globalAsia} />
           <TransmissionPanel intel={intel} />
         </>
       )}
@@ -565,7 +560,7 @@ export function CommandCenter({
       )}
 
       <p className="text-center text-[10px] text-text-muted">
-        Pha 1–3 · Tabs · Spark · News · Pulse · Impact · Regime · Transmission · Sector · Movers · Brief
+        Pha 1–3 · Asia · Volume spark · Tabs · Pulse · Impact · Regime · Transmission · Sector · Movers · Brief
       </p>
     </div>
   );
