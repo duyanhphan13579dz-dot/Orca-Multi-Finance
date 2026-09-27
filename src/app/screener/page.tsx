@@ -1,11 +1,7 @@
 "use client";
 
-import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
-import { useApi } from "@/lib/hooks";
-import { VN_SECTOR_MAP, sectorOf } from "@/lib/vn/master";
-import type { CryptoMarketRow, Quote, IndexQuote } from "@/lib/types";
+import { Suspense, useState } from "react";
 import { WyckoffScreener } from "@/components/wyckoff-screener";
 import { CanslimScreener } from "@/components/canslim-screener";
 import { MinerviniScreener } from "@/components/minervini-screener";
@@ -13,10 +9,10 @@ import { ElliottScreener } from "@/components/elliott-screener";
 import { ValuationScreener } from "@/components/valuation-screener";
 import { FundamentalScreener } from "@/components/fundamental-screener";
 import { CandlestickScreener } from "@/components/candlestick-screener";
-import { Chg, fmtCompact, fmtNum, FreshnessDot, Loading, MetaLine, Panel, priceDigits, Unavailable } from "@/components/ui";
-import { FlatsIcon, Play } from "@/components/screener-icons";
+import { Loading, Panel } from "@/components/ui";
+import { FlatsIcon } from "@/components/screener-icons";
+import { VnScreener, CryptoScreener } from "./screener-panels";
 
-type StocksData = { indices: IndexQuote[] | null; quotes: Quote[] | null };
 type Universe =
   | "stocks"
   | "crypto"
@@ -27,9 +23,6 @@ type Universe =
   | "valuation"
   | "fundamental"
   | "candlestick";
-
-const VN_BOARD =
-  "VCB,BID,CTG,TCB,MBB,VPB,ACB,STB,HDB,VIB,LPB,SHB,FPT,HPG,VNM,VIC,VHM,VRE,NVL,PDR,GAS,PLX,MSN,MWG,SSI,VND,HCM,VCI,SHS,BSR,POW,REE,KDH,DXG,DCM,DPM,DGC,VHC,SAB,PNJ,GMD";
 
 const UNIVERSE_TABS: { id: Universe; label: string }[] = [
   { id: "stocks", label: "Cổ phiếu VN ⭐" },
@@ -106,5 +99,13 @@ function ScreenerInner() {
         <VnScreener defaultSector={params.get("sector")} />
       )}
     </div>
+  );
+}
+
+export default function ScreenerPage() {
+  return (
+    <Suspense fallback={<Loading rows={8} />}>
+      <ScreenerInner />
+    </Suspense>
   );
 }
