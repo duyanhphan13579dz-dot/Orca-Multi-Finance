@@ -13,6 +13,12 @@ type StocksBoard = {
   count?: number;
 };
 
+type GlobalMarket = {
+  us: { symbol: string; price: number; changePercent: number | null }[];
+  crypto: { symbol: string; baseAsset: string; price: number; changePercent: number | null }[];
+  sources?: string[];
+};
+
 export function Dashboard() {
   const {
     data: intel,
@@ -29,6 +35,11 @@ export function Dashboard() {
   const { data: board } = useApi<StocksBoard>("/api/v1/stocks?board=full", {
     refreshInterval: 60_000,
     timeoutMs: 20_000,
+  });
+
+  const { data: globalMkt } = useApi<GlobalMarket>("/api/v1/market/global", {
+    refreshInterval: 60_000,
+    timeoutMs: 15_000,
   });
 
   if (isLoading && !intel) {
@@ -72,6 +83,8 @@ export function Dashboard() {
       intel={intel}
       meta={meta}
       quotes={board?.quotes ?? []}
+      globalUs={globalMkt?.us ?? []}
+      globalCrypto={globalMkt?.crypto ?? []}
     />
   );
 }
