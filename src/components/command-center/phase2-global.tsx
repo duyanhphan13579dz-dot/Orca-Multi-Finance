@@ -151,7 +151,7 @@ export function GlobalMarketRegime({
       </div>
       <div className="grid gap-2 p-2.5 sm:grid-cols-2 xl:grid-cols-5">
         {regions.map((r) => (
-          <div key={r.title} className="rounded-md border border-border-subtle/80 bg-surface-base/40 p-2.5">
+          <div key={r.title} className="cc-nested p-2.5">
             <div className="mb-1.5 flex items-center justify-between border-b border-border-subtle/50 pb-1">
               <b className="text-[11px] font-bold tracking-wide text-text-primary">{r.title}</b>
               <span className={`text-[10px] font-semibold ${regimeTone(r.tag)}`}>{r.tag}</span>
@@ -258,7 +258,7 @@ export function GlobalImpactMap({ intel }: { intel: MarketIntel }) {
         <span className="cc-tag border-cyan-500/40 bg-cyan-500/10 text-cyan-300">LIVE MAP</span>
       </div>
       <div className="grid items-center gap-3 px-3 py-3 md:grid-cols-[7rem_1fr_7rem]">
-        <div className="flex flex-col items-center justify-center rounded-md border border-border-subtle bg-surface-base/50 px-2 py-3 text-center">
+        <div className="cc-nested flex flex-col items-center justify-center px-2 py-3 text-center">
           <span className="text-lg font-bold text-accent-primary">◎</span>
           <b className="mt-1 text-[10px] tracking-wide">QUỐC TẾ</b>
           <small className="text-[10px] text-text-muted">{intel.condition.crossAssetState}</small>
@@ -275,7 +275,7 @@ export function GlobalImpactMap({ intel }: { intel: MarketIntel }) {
             </div>
           ))}
         </div>
-        <div className="flex flex-col items-center justify-center rounded-md border border-border-subtle bg-surface-base/50 px-2 py-3 text-center">
+        <div className="cc-nested flex flex-col items-center justify-center px-2 py-3 text-center">
           <span className="text-sm font-bold text-up">VN</span>
           <b className="mt-1 text-[10px] tracking-wide">VIỆT NAM</b>
           <small className={`text-[10px] ${tonePct(vnChg)}`}>
@@ -285,7 +285,7 @@ export function GlobalImpactMap({ intel }: { intel: MarketIntel }) {
       </div>
       <div className="grid grid-cols-2 gap-1.5 px-3 pb-3 sm:grid-cols-4">
         {cards.map((c) => (
-          <div key={c.label} className="rounded-md border border-border-subtle/70 bg-surface-base/40 px-2 py-1.5">
+          <div key={c.label} className="cc-nested px-2 py-1.5">
             <span className="block text-[9px] uppercase tracking-wide text-text-muted">{c.label}</span>
             <div className="mt-0.5 flex items-center justify-between gap-1">
               <strong className="text-[11px] text-text-primary">{c.value}</strong>
@@ -380,7 +380,7 @@ export function TransmissionPanel({ intel }: { intel: MarketIntel }) {
       </div>
       <div className="grid gap-2 p-2.5 sm:grid-cols-2 xl:grid-cols-4">
         {channels.map((ch) => (
-          <div key={ch.title} className="rounded-md border border-border-subtle/80 bg-surface-base/40 p-2.5">
+          <div key={ch.title} className="cc-nested p-2.5">
             <div className="flex items-center justify-between gap-2">
               <b className="text-[12px] text-text-primary">{ch.title}</b>
               <span className={`text-[10px] font-bold ${verdictCls(ch.verdict)}`}>{ch.verdict}</span>
