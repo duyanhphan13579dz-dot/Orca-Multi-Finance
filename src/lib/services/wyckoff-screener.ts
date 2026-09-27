@@ -1,8 +1,9 @@
 import "server-only";
 import { buildMeta } from "../freshness";
 import { analyzeWyckoff, type WyckoffPhase, type WyckoffSnapshot } from "../engines/wyckoff-elliott";
-import { getVnOhlcv, getVnQuotes } from "./stocks";
+import { getVnQuotes } from "./stocks";
 import { LIQUID_BOARD } from "../providers/public-vn-feed";
+import { fetchOhlcvResilient, mapPool } from "./screener-ohlcv";
 import { getSecurity, sectorOf } from "../vn/master";
 import type { Meta } from "../types";
 
@@ -65,19 +66,6 @@ function pickSetup(w: WyckoffSnapshot): WyckoffSetup {
   return "watch";
 }
 
-async function mapPool<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
-  const out: R[] = new Array(items.length);
-  let i = 0;
-  async function worker() {
-    while (i < items.length) {
-      const idx = i++;
-      out[idx] = await fn(items[idx]!);
-    }
-  }
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, () => worker()));
-  return out;
-}
-
 export async function screenWyckoff(args?: {
   symbols?: string[];
   phase?: WyckoffPhase | "all";
@@ -85,19 +73,18 @@ export async function screenWyckoff(args?: {
   minConfidence?: number;
   sector?: string;
   limit?: number;
-}): Promise<{ rows: WyckoffScreenRow[]; scanned: number; skipped: number; meta: Meta } | null> {
+}): Promise<{ rows: WyckoffScreenRow[]; scanned: number; skipped: number; meta: Meta }> {
   const uniq = [
     ...new Set((args?.symbols?.length ? args.symbols : LIQUID_BOARD).map((s) => s.toUpperCase()).filter(Boolean)),
-  ].slice(0, 60);
+  ].slice(0, 90);
 
   const quotesPack = await getVnQuotes(uniq).catch(() => null);
   const quoteMap = new Map((quotesPack?.quotes ?? []).map((q) => [q.symbol, q]));
 
   let skipped = 0;
-  const analyzed = await mapPool(uniq, 6, async (symbol) => {
-    const ohlcv = await getVnOhlcv(symbol, 90).catch(() => null);
-    const bars = ohlcv?.bars ?? [];
-    if (bars.length < 40) {
+  const analyzed = await mapPool(uniq, 8, async (symbol) => {
+    const { bars } = await fetchOhlcvResilient(symbol, 100);
+    if (bars.length < 30) {
       skipped += 1;
       return null;
     }
@@ -143,20 +130,19 @@ export async function screenWyckoff(args?: {
   }
 
   rows.sort((a, b) => b.confidence - a.confidence || (b.volume ?? 0) - (a.volume ?? 0));
-  const limit = Math.min(args?.limit ?? 40, 60);
+  const limit = Math.min(args?.limit ?? 40, 80);
   rows = rows.slice(0, limit);
-
-  if (!rows.length && skipped === uniq.length) return null;
 
   return {
     rows,
     scanned: uniq.length,
     skipped,
     meta: buildMeta({
-      source: quotesPack?.meta.source ?? "vndirect+ohlcv",
+      source: quotesPack?.meta?.source ?? "vndirect+ohlcv",
       sourceTimestampMs: Date.now(),
+      hasData: rows.length > 0,
       partial: skipped > 0,
-      note: `Quét ${uniq.length} mã thanh khoản · đủ nến ${uniq.length - skipped} · Wyckoff heuristic (không phải tín hiệu giao dịch)`,
+      note: `Quét ${uniq.length} mã · đủ nến ${uniq.length - skipped} · Wyckoff heuristic (không phải tín hiệu GD)`,
     }),
   };
 }
