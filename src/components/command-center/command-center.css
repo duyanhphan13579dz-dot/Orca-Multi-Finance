@@ -1,4 +1,4 @@
-/* Command Center — Phase 1 layout helpers */
+/* Command Center — Phase 1–3 layout helpers */
 
 .cc-ticker {
   display: grid;
@@ -246,4 +246,45 @@
   .cc-ticker {
     grid-template-columns: repeat(2, 1fr);
   }
+}
+
+/* Phase 3 */
+.cc-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.15rem;
+  border-bottom: 1px solid color-mix(in oklab, var(--border-subtle, #334155) 100%, transparent);
+  margin-bottom: 0.15rem;
+}
+.cc-tabs button {
+  border: 0;
+  background: transparent;
+  color: color-mix(in oklab, var(--text-muted, #94a3b8) 100%, transparent);
+  padding: 0.45rem 0.7rem;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+}
+.cc-tabs button.active {
+  color: color-mix(in oklab, var(--text-primary, #f1f5f9) 100%, transparent);
+  background: color-mix(in oklab, var(--surface-elevated, #1e293b) 60%, transparent);
+  border-bottom-color: color-mix(in oklab, var(--accent-primary, #42a5ff) 100%, transparent);
+}
+.cc-spark {
+  height: 64px;
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+  padding: 6px 12px 0;
+  border-bottom: 1px solid color-mix(in oklab, var(--border-subtle, #334155) 50%, transparent);
+  margin: 4px 0 0;
+}
+.cc-spark span {
+  flex: 1;
+  border-radius: 2px 2px 0 0;
+  background: linear-gradient(180deg, #29b5ff, #185a87);
+  opacity: 0.8;
+  min-width: 0;
 }
