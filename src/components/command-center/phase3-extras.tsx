@@ -10,7 +10,7 @@ function pct(p: number | null | undefined, digits = 2): string {
   return `${p > 0 ? "+" : ""}${p.toFixed(digits)}%`;
 }
 
-/** Deterministic spark heights from liquidity numbers (no extra API). */
+/** Fallback synthetic heights when series unavailable. */
 function sparkHeights(value: number | null, baseline: number | null): number[] {
   const seed = Math.abs(Math.round((value ?? 1e13) / 1e9)) || 42;
   const ratio =
@@ -26,52 +26,89 @@ function sparkHeights(value: number | null, baseline: number | null): number[] {
   return out;
 }
 
-export function LiquiditySparkPanel({ intel }: { intel: MarketIntel }) {
+export type LiquiditySparkSeries = {
+  volumes: number[];
+  times?: (string | null)[];
+  source?: string;
+  symbol?: string;
+} | null;
+
+function heightsFromVolumes(volumes: number[]): number[] {
+  const max = Math.max(...volumes, 1);
+  return volumes.map((v) => Math.min(98, Math.max(8, (v / max) * 100)));
+}
+
+export function LiquiditySparkPanel({
+  intel,
+  spark,
+}: {
+  intel: MarketIntel;
+  spark?: LiquiditySparkSeries;
+}) {
   const l = intel.liquidity;
+  const realVols = spark?.volumes?.filter((v) => Number.isFinite(v) && v > 0) ?? [];
+  const useReal = realVols.length >= 4;
+
+  const avgReal = useReal ? realVols.reduce((a, b) => a + b, 0) / realVols.length : null;
+  const lastReal = useReal ? realVols[realVols.length - 1] : null;
+  const vsSeries =
+    avgReal != null && lastReal != null && avgReal > 0 ? (lastReal / avgReal - 1) * 100 : null;
+
   const vsBaseline =
     l.valueTraded != null && l.baseline != null && l.baseline > 0
       ? (l.valueTraded / l.baseline - 1) * 100
-      : null;
-  const heights = useMemo(
-    () => sparkHeights(l.valueTraded, l.baseline),
-    [l.valueTraded, l.baseline],
-  );
+      : vsSeries;
+
+  const heights = useMemo(() => {
+    if (useReal) return heightsFromVolumes(realVols.slice(-12));
+    return sparkHeights(l.valueTraded, l.baseline);
+  }, [useReal, realVols, l.valueTraded, l.baseline]);
+
+  const t0 = spark?.times?.[0];
+  const tMid = spark?.times?.[Math.floor((spark?.times?.length ?? 1) / 2)];
+  const t1 = spark?.times?.[(spark?.times?.length ?? 1) - 1];
 
   return (
     <article className="cc-panel">
       <div className="cc-panel-head">
         <h2>LIQUIDITY</h2>
-        {l.available ? (
-          <span className="cc-tag text-up border-up/40 bg-up/10">LIVE</span>
+        {l.available || useReal ? (
+          <span className="cc-tag text-up border-up/40 bg-up/10">{useReal ? "SERIES" : "LIVE"}</span>
         ) : (
           <span className="text-[10px] text-text-muted">—</span>
         )}
       </div>
       <div className="flex items-end justify-between gap-2 px-3 pt-3">
         <b className="num text-[22px] font-semibold text-text-primary">
-          {l.valueTraded != null ? fmtCompact(l.valueTraded) : "—"}
+          {l.valueTraded != null
+            ? fmtCompact(l.valueTraded)
+            : lastReal != null
+              ? fmtCompact(lastReal)
+              : "—"}
         </b>
         {vsBaseline != null ? (
           <span className={`text-[11px] ${vsBaseline >= 0 ? "text-up" : "text-down"}`}>
-            {pct(vsBaseline, 1)} vs Avg
+            {pct(vsBaseline, 1)} {useReal ? "vs TB series" : "vs Avg"}
           </span>
         ) : null}
       </div>
-      <div className="cc-spark" aria-hidden>
+      <div className="cc-spark" aria-hidden title={useReal ? spark?.source : "synthetic"}>
         {heights.map((h, i) => (
           <span key={i} style={{ height: `${h}%` }} />
         ))}
       </div>
       <div className="flex justify-between px-3 pb-1 text-[9px] text-text-muted">
-        <span>Mở cửa</span>
-        <span>Giữa phiên</span>
-        <span>Hiện tại</span>
+        <span>{t0 ? t0.slice(5) : "Cũ hơn"}</span>
+        <span>{tMid ? tMid.slice(5) : "—"}</span>
+        <span>{t1 ? t1.slice(5) : useReal ? "Gần nhất" : "Hiện tại"}</span>
       </div>
       <p className="px-3 pb-2 text-[10px] text-text-muted line-clamp-2">
-        {l.note ||
-          (l.available
-            ? "GTGD phiên · spark minh họa xu hướng tương đối (không phải OHLC phút)"
-            : "Chưa có dữ liệu thanh khoản")}
+        {useReal
+          ? `Volume ${spark?.symbol ?? "VNINDEX"} · ${spark?.source ?? "ohlcv"} · ${realVols.length} phiên (thanh = KL thực)`
+          : l.note ||
+            (l.available
+              ? "GTGD phiên · chưa có chuỗi volume — spark ước lượng tạm"
+              : "Chưa có dữ liệu thanh khoản")}
       </p>
     </article>
   );
@@ -177,7 +214,6 @@ export function CommandTabs({
   );
 }
 
-/** Show section if tab is all or matches group */
 export function showSection(tab: CcTab, group: "vn" | "global" | "flow" | "news" | "core"): boolean {
   if (tab === "all") return true;
   if (group === "core") return tab === "vn" || tab === "all";
@@ -195,7 +231,6 @@ export function Section({
   return <>{children}</>;
 }
 
-/** Tab state wrapper used by CommandCenter */
 export function useCommandTab() {
   return useState<CcTab>("all");
 }
