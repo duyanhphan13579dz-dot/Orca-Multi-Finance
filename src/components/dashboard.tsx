@@ -16,6 +16,13 @@ type StocksBoard = {
 type GlobalMarket = {
   us: { symbol: string; price: number; changePercent: number | null }[];
   crypto: { symbol: string; baseAsset: string; price: number; changePercent: number | null }[];
+  asia?: { symbol: string; label: string; price: number; changePercent: number | null }[];
+  liquiditySpark?: {
+    volumes: number[];
+    times?: (string | null)[];
+    source?: string;
+    symbol?: string;
+  } | null;
   sources?: string[];
 };
 
@@ -85,6 +92,8 @@ export function Dashboard() {
       quotes={board?.quotes ?? []}
       globalUs={globalMkt?.us ?? []}
       globalCrypto={globalMkt?.crypto ?? []}
+      globalAsia={globalMkt?.asia ?? []}
+      liquiditySpark={globalMkt?.liquiditySpark ?? null}
     />
   );
 }
