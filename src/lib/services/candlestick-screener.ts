@@ -35,6 +35,29 @@ export type CandlestickScreenOpts = {
 
 const DEFAULT_MIN = 55;
 
+export type PatternAlertEvent = {
+  id: string;
+  symbol: string;
+  name: string | null;
+  sector: string | null;
+  price: number | null;
+  changePercent: number | null;
+  pattern: DetectedCandlePattern;
+  firedAt: number;
+};
+
+function patternAlertStore() {
+  const g = globalThis as typeof globalThis & {
+    __orcaPatternEvents?: PatternAlertEvent[];
+  };
+  if (!g.__orcaPatternEvents) g.__orcaPatternEvents = [];
+  return g.__orcaPatternEvents;
+}
+
+export function getRecentPatternAlerts(limit = 30): PatternAlertEvent[] {
+  return patternAlertStore().slice(0, limit);
+}
+
 async function ohlcvBatch(symbols: string[]) {
   const out = new Map<string, Awaited<ReturnType<typeof getVnOhlcv>>>();
   const chunk = 8;
@@ -46,6 +69,17 @@ async function ohlcvBatch(symbols: string[]) {
     });
   }
   return out;
+}
+
+function isReversal(p: DetectedCandlePattern): boolean {
+  return p.category === "bullish_reversal" || p.category === "bearish_reversal";
+}
+
+function isAlertWorthy(top: DetectedCandlePattern): boolean {
+  if (!isReversal(top)) return false;
+  if (!(top.reliability === "high" || top.reliability === "very_high")) return false;
+  if (top.reliability === "very_high") return top.score >= 68;
+  return top.score >= 72 && top.volumeConfirmed;
 }
 
 export async function screenCandlestickPatterns(
@@ -75,17 +109,20 @@ export async function screenCandlestickPatterns(
       continue;
     }
     let patterns = detectCandlePatterns(pack.bars);
-    if (cat !== "all") {
-      patterns = patterns.filter((p) => p.category === cat);
-    }
-    if (opts.volumeOnly) {
-      patterns = patterns.filter((p) => p.volumeConfirmed);
-    }
+    if (cat !== "all") patterns = patterns.filter((p) => p.category === cat);
+    if (opts.volumeOnly) patterns = patterns.filter((p) => p.volumeConfirmed);
     patterns = patterns.filter((p) => p.score >= minScore);
     patterns = patterns.filter((p) => p.category !== "neutral" || p.score >= 70);
     if (!patterns.length) continue;
 
-    const top = patterns[0];
+    patterns.sort((a, b) => {
+      const ra = isReversal(a) ? 1 : 0;
+      const rb = isReversal(b) ? 1 : 0;
+      if (rb !== ra) return rb - ra;
+      return b.score - a.score;
+    });
+
+    const top = patterns[0]!;
     const q = quoteBy.get(sym);
     const sec = getSecurity(sym);
     rows.push({
@@ -97,16 +134,14 @@ export async function screenCandlestickPatterns(
       volume: q?.volume ?? pack.bars[pack.bars.length - 1]?.volume ?? null,
       patterns,
       topPattern: top,
-      alertWorthy:
-        top.score >= 70 &&
-        (top.category === "bullish_reversal" ||
-          top.category === "bearish_reversal" ||
-          top.category === "continuation") &&
-        (top.reliability === "high" || top.reliability === "very_high"),
+      alertWorthy: isAlertWorthy(top),
     });
   }
 
-  rows.sort((a, b) => b.topPattern.score - a.topPattern.score);
+  rows.sort((a, b) => {
+    if (a.alertWorthy !== b.alertWorthy) return a.alertWorthy ? -1 : 1;
+    return b.topPattern.score - a.topPattern.score;
+  });
 
   return {
     rows: rows.slice(0, limit),
@@ -115,7 +150,7 @@ export async function screenCandlestickPatterns(
     meta: buildMeta({
       source: "candlestick-engine+ohlcv",
       sourceTimestampMs: Date.now(),
-      note: `Ruleset v1 · minScore≥${minScore} · ${cat}`,
+      note: `Ruleset v1 · minScore≥${minScore} · ${cat} · alert=reversal-only`,
       partial: skipped > 0,
     }),
   };
@@ -127,17 +162,24 @@ export async function runCandlestickPatternAlerts(): Promise<{
   alerted: number;
   symbols: string[];
 }> {
-  const r = await screenCandlestickPatterns({
-    minScore: 70,
-    limit: 25,
-    category: "all",
-  });
-  if (!r) return { scanned: 0, hits: 0, alerted: 0, symbols: [] };
+  const [bull, bear] = await Promise.all([
+    screenCandlestickPatterns({ minScore: 65, limit: 20, category: "bullish_reversal" }),
+    screenCandlestickPatterns({ minScore: 65, limit: 20, category: "bearish_reversal" }),
+  ]);
 
-  const hits = r.rows.filter((x) => x.alertWorthy);
-  if (!hits.length) {
-    return { scanned: r.scanned, hits: 0, alerted: 0, symbols: [] };
+  const scanned = Math.max(bull?.scanned ?? 0, bear?.scanned ?? 0);
+  const merged = [...(bull?.rows ?? []), ...(bear?.rows ?? [])]
+    .filter((x) => x.alertWorthy)
+    .sort((a, b) => b.topPattern.score - a.topPattern.score);
+
+  const bySym = new Map<string, (typeof merged)[0]>();
+  for (const row of merged) {
+    const prev = bySym.get(row.symbol);
+    if (!prev || row.topPattern.score > prev.topPattern.score) bySym.set(row.symbol, row);
   }
+  const hits = [...bySym.values()].sort((a, b) => b.topPattern.score - a.topPattern.score);
+
+  if (!hits.length) return { scanned, hits: 0, alerted: 0, symbols: [] };
 
   const g = globalThis as typeof globalThis & {
     __orcaPatternAlertDay?: string;
@@ -149,58 +191,73 @@ export async function runCandlestickPatternAlerts(): Promise<{
     g.__orcaPatternAlerted = new Set();
   }
   const fired = g.__orcaPatternAlerted!;
+  const events = patternAlertStore();
 
   let alerted = 0;
   const symbols: string[] = [];
   try {
     const { postGlobalDiscord } = await import("./discord-notify");
-    for (const row of hits.slice(0, 12)) {
+    for (const row of hits.slice(0, 10)) {
       const key = `${row.symbol}:${row.topPattern.name}`;
       if (fired.has(key)) continue;
       const p = row.topPattern;
-      const dir =
-        p.type === "bullish" ? "TĂNG" : p.type === "bearish" ? "GIẢM" : "TRUNG TÍNH";
-      const color =
-        p.type === "bullish" ? 0x22c55e : p.type === "bearish" ? 0xef4444 : 0x94a3b8;
+      const isBull = p.type === "bullish";
+      const dirLabel = isBull ? "ĐẢO CHIỀU TĂNG" : "ĐẢO CHIỀU GIẢM";
+      const color = isBull ? 0x22c55e : 0xef4444;
+      const priceStr = row.price != null ? row.price.toLocaleString("vi-VN") : "—";
+      const chgStr =
+        row.changePercent != null
+          ? `${row.changePercent > 0 ? "+" : ""}${row.changePercent.toFixed(2)}%`
+          : "—";
+
+      const title = `Cảnh báo nến · ${row.symbol}`;
+      const body =
+        `${dirLabel} — ${p.nameVi} (${p.name})\n` +
+        `Giá ${priceStr} (${chgStr}) · điểm ${p.score}` +
+        (p.volumeConfirmed ? " · volume ✓" : "") +
+        `\n${p.description}\n` +
+        `Xác nhận: ${p.confirmation}`;
+
       const sent = await postGlobalDiscord({
-        title: `Mẫu nến ${dir} · ${row.symbol}`,
-        description:
-          `**${p.nameVi}** (${p.name})\n` +
-          `Độ tin cậy: ${p.reliability} · điểm ${p.score}` +
-          (p.volumeConfirmed ? " · volume ✓" : " · volume yếu") +
-          `\n${p.description}\n` +
-          `_Xác nhận: ${p.confirmation}_`,
+        title,
+        description: body,
         color,
+        username: "Orca Alerts",
         fields: [
-          {
-            name: "Giá",
-            value: row.price != null ? row.price.toLocaleString("vi-VN") : "—",
-            inline: true,
-          },
-          {
-            name: "% phiên",
-            value:
-              row.changePercent != null
-                ? `${row.changePercent > 0 ? "+" : ""}${row.changePercent.toFixed(2)}%`
-                : "—",
-            inline: true,
-          },
-          {
-            name: "Ngành",
-            value: row.sector ?? "—",
-            inline: true,
-          },
+          { name: "Mã", value: `\`${row.symbol}\``, inline: true },
+          { name: "Giá", value: priceStr, inline: true },
+          { name: "% phiên", value: chgStr, inline: true },
+          { name: "Mẫu", value: `${p.nameVi} · ${p.reliability}`, inline: true },
+          { name: "Ngành", value: row.sector ?? "—", inline: true },
+          { name: "Trend trước", value: p.trendContext, inline: true },
         ],
       });
-      if (sent.ok) {
+
+      events.unshift({
+        id: key,
+        symbol: row.symbol,
+        name: row.name,
+        sector: row.sector,
+        price: row.price,
+        changePercent: row.changePercent,
+        pattern: p,
+        firedAt: Date.now(),
+      });
+      if (events.length > 50) events.length = 50;
+
+      if (sent.ok || sent.skipped) {
         fired.add(key);
-        alerted++;
-        symbols.push(row.symbol);
+        if (sent.ok) {
+          alerted++;
+          symbols.push(row.symbol);
+        } else if (sent.skipped) {
+          symbols.push(row.symbol);
+        }
       }
     }
   } catch (e) {
     console.warn("[runCandlestickPatternAlerts]", e);
   }
 
-  return { scanned: r.scanned, hits: hits.length, alerted, symbols };
+  return { scanned, hits: hits.length, alerted, symbols };
 }
