@@ -2,55 +2,23 @@
   "crons": [
     {
       "path": "/api/v1/cron/stocks",
-      "schedule": "25 4 * * 1-5"
-    },
-    {
-      "path": "/api/v1/cron/stocks",
-      "schedule": "25 7 * * 1-5"
+      "schedule": "30 4 * * 1-5"
     },
     {
       "path": "/api/v1/cron/commodities",
       "schedule": "0 1 * * *"
     },
     {
-      "path": "/api/v1/cron/commodities",
-      "schedule": "0 10 * * *"
-    },
-    {
       "path": "/api/v1/cron/financials",
       "schedule": "15 9 * * 1-5"
-    },
-    {
-      "path": "/api/v1/cron/financials",
-      "schedule": "30 10 * * 1-5"
     },
     {
       "path": "/api/v1/cron/reports",
       "schedule": "20 1 * * 1-5"
     },
     {
-      "path": "/api/v1/cron/reports",
-      "schedule": "15 3 * * 1-5"
-    },
-    {
-      "path": "/api/v1/cron/reports",
-      "schedule": "35 4 * * 1-5"
-    },
-    {
-      "path": "/api/v1/cron/reports",
-      "schedule": "20 7 * * 1-5"
-    },
-    {
-      "path": "/api/v1/cron/reports",
-      "schedule": "50 8 * * 1-5"
-    },
-    {
       "path": "/api/v1/cron/alerts",
-      "schedule": "*/15 2-8 * * 1-5"
-    },
-    {
-      "path": "/api/v1/cron/alerts",
-      "schedule": "5 9 * * 1-5"
+      "schedule": "0 3 * * 1-5"
     }
   ]
 }
