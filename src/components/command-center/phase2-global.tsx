@@ -16,12 +16,17 @@ function tonePct(p: number | null | undefined): string {
   return "text-text-secondary";
 }
 
-/* ===================== Phase 2: Global layer ===================== */
-
 export type GlobalUsRow = { symbol: string; price: number; changePercent: number | null };
 export type GlobalCryptoRow = {
   symbol: string;
   baseAsset: string;
+  price: number;
+  changePercent: number | null;
+};
+
+export type GlobalAsiaRow = {
+  symbol: string;
+  label: string;
   price: number;
   changePercent: number | null;
 };
@@ -49,10 +54,12 @@ export function GlobalMarketRegime({
   intel,
   us,
   crypto,
+  asia = [],
 }: {
   intel: MarketIntel;
   us: GlobalUsRow[];
   crypto: GlobalCryptoRow[];
+  asia?: GlobalAsiaRow[];
 }) {
   const dxy = pickCross(intel.crossAsset, "DXY");
   const wti = pickCross(intel.crossAsset, "WTI");
@@ -111,6 +118,17 @@ export function GlobalMarketRegime({
       ],
     },
     {
+      title: "CHÂU Á",
+      tag: regimeLabel(asia.map((a) => a.changePercent)),
+      rows: asia.length
+        ? asia.slice(0, 4).map((a) => ({
+            name: a.label,
+            value: fmtNum(a.price, a.price >= 1000 ? 0 : 2),
+            chg: a.changePercent ?? null,
+          }))
+        : [{ name: "Nikkei / HSI / SH", value: "—", chg: null }],
+    },
+    {
       title: "VIỆT NAM",
       tag: regimeLabel((intel.indices ?? []).slice(0, 2).map((i) => i.changePercent)),
       rows: (intel.indices ?? []).slice(0, 3).map((i) => ({
@@ -131,7 +149,7 @@ export function GlobalMarketRegime({
           <span className="text-down">● Risk-off</span>
         </div>
       </div>
-      <div className="grid gap-2 p-2.5 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-2 p-2.5 sm:grid-cols-2 xl:grid-cols-5">
         {regions.map((r) => (
           <div key={r.title} className="rounded-md border border-border-subtle/80 bg-surface-base/40 p-2.5">
             <div className="mb-1.5 flex items-center justify-between border-b border-border-subtle/50 pb-1">
