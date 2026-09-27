@@ -30,7 +30,7 @@ export async function screenElliott(args?: {
   minConfidence?: number;
   sector?: string;
   limit?: number;
-}): Promise<{ rows: ElliottScreenRow[]; scanned: number; skipped: number; meta: Meta } | null> {
+}): Promise<{ rows: ElliottScreenRow[]; scanned: number; skipped: number; meta: Meta }> {
   const uniq = [
     ...new Set(
       (args?.symbols?.length ? args.symbols : LIQUID_BOARD).map((s) => s.toUpperCase()).filter(Boolean),
