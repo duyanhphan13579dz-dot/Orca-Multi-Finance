@@ -16,7 +16,7 @@ function pctLabel(p: number | null | undefined): string {
   return `${s}${p.toFixed(2)}%`;
 }
 
-/** Horizontal bar chart: sector avg % ranked, imbalance as secondary bar. */
+/** Compact sector % bars — secondary to bang-dien board. */
 export const SectorCompareChart = memo(function SectorCompareChart({
   cols,
 }: {
@@ -25,38 +25,37 @@ export const SectorCompareChart = memo(function SectorCompareChart({
   const ranked = useMemo(() => {
     return [...cols]
       .filter((c) => c.avgPct != null && Number.isFinite(c.avgPct))
-      .sort((a, b) => (b.avgPct ?? 0) - (a.avgPct ?? 0));
+      .sort((a, b) => (b.avgPct ?? 0) - (a.avgPct ?? 0))
+      .slice(0, 12);
   }, [cols]);
 
   if (ranked.length < 2) return null;
 
-  const maxAbs = Math.max(0.5, ...ranked.map((c) => Math.abs(c.avgPct ?? 0)));
+  const maxAbs = Math.max(0.35, ...ranked.map((c) => Math.abs(c.avgPct ?? 0)));
 
   return (
-    <div className="rounded-xl border border-border-subtle bg-surface-elevated/50 px-3 py-3 shadow-sm">
-      <div className="mb-2.5 flex flex-wrap items-end justify-between gap-2">
-        <div>
-          <div className="text-[11px] font-semibold uppercase tracking-wider text-text-muted">
+    <div className="rounded-lg border border-border-subtle/80 bg-surface-elevated/30 px-2.5 py-2">
+      <div className="mb-1.5 flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+        <div className="flex items-baseline gap-2">
+          <span className="text-[10px] font-semibold uppercase tracking-wider text-text-muted">
             So sánh ngành
-          </div>
-          <p className="mt-0.5 text-[11px] text-text-muted/90">
-            % trung bình phiên · thanh phụ = order imbalance (proxy KL)
-          </p>
+          </span>
+          <span className="text-[10px] text-text-muted/75">% TB phiên</span>
         </div>
-        <div className="flex items-center gap-3 text-[10px] text-text-muted">
+        <div className="flex items-center gap-2.5 text-[9px] text-text-muted">
           <span className="flex items-center gap-1">
-            <span className="inline-block h-2 w-3 rounded-sm bg-up/80" /> Tăng
+            <span className="inline-block h-1.5 w-2.5 rounded-sm bg-up/80" /> Tăng
           </span>
           <span className="flex items-center gap-1">
-            <span className="inline-block h-2 w-3 rounded-sm bg-down/80" /> Giảm
+            <span className="inline-block h-1.5 w-2.5 rounded-sm bg-down/80" /> Giảm
           </span>
           <span className="flex items-center gap-1">
-            <span className="inline-block h-1.5 w-3 rounded-sm bg-amber-400/70" /> Imbalance
+            <span className="inline-block h-1 w-2.5 rounded-sm bg-amber-400/70" /> Imb
           </span>
         </div>
       </div>
 
-      <div className="space-y-1.5">
+      <div className="grid gap-x-4 gap-y-1 sm:grid-cols-2">
         {ranked.map((c) => {
           const pct = c.avgPct ?? 0;
           const up = pct >= 0;
@@ -68,22 +67,22 @@ export const SectorCompareChart = memo(function SectorCompareChart({
           return (
             <div
               key={c.name}
-              className="group grid grid-cols-[7.5rem_1fr_3.25rem] items-center gap-2 sm:grid-cols-[9rem_1fr_3.5rem]"
+              className="grid grid-cols-[5.5rem_1fr_2.75rem] items-center gap-1.5 sm:grid-cols-[6.25rem_1fr_2.9rem]"
             >
-              <span className="truncate text-[12px] font-medium text-text-primary" title={c.name}>
+              <span className="truncate text-[11px] text-text-secondary" title={c.name}>
                 {c.name}
               </span>
-              <div className="relative h-6 overflow-hidden rounded-md bg-surface-base/80">
+              <div className="relative h-3 overflow-hidden rounded-sm bg-surface-base/70">
                 <div
-                  className={`absolute inset-y-0 left-0 rounded-md transition-[width] duration-300 ${
-                    up ? "bg-up/70" : "bg-down/70"
+                  className={`absolute inset-y-0 left-0 rounded-sm ${
+                    up ? "bg-up/65" : "bg-down/65"
                   }`}
                   style={{ width: `${width}%` }}
                 />
                 {imb != null ? (
                   <div
-                    className={`absolute bottom-0 left-0 h-1 rounded-sm ${
-                      imbUp ? "bg-amber-300/90" : "bg-amber-500/70"
+                    className={`absolute bottom-0 left-0 h-0.5 rounded-sm ${
+                      imbUp ? "bg-amber-300/85" : "bg-amber-500/65"
                     }`}
                     style={{ width: `${imbWidth}%` }}
                     title={`Imbalance ${imb > 0 ? "+" : ""}${(imb * 100).toFixed(0)}%`}
@@ -91,7 +90,7 @@ export const SectorCompareChart = memo(function SectorCompareChart({
                 ) : null}
               </div>
               <span
-                className={`num text-right text-[12px] font-bold tabular-nums ${
+                className={`num text-right text-[11px] font-semibold tabular-nums ${
                   up ? "text-up" : "text-down"
                 }`}
               >
