@@ -143,11 +143,15 @@ export async function screenCanslim(args?: {
   let skipped = 0;
   type Pack = { symbol: string; bars: OhlcvBar[]; ret6: number | null };
 
-  // Pass 1 — OHLCV (pool 6)
-  const packs = await mapPool(uniq, 6, async (symbol): Promise<Pack | null> => {
-    const ohlcv = await getVnOhlcv(symbol, 260).catch(() => null);
+  // Pass 1 — OHLCV with retry (pool 8)
+  const packs = await mapPool(uniq, 8, async (symbol): Promise<Pack | null> => {
+    let ohlcv = await getVnOhlcv(symbol, 260).catch(() => null);
+    if (!ohlcv?.bars?.length) {
+      await new Promise((r) => setTimeout(r, 80));
+      ohlcv = await getVnOhlcv(symbol, 260).catch(() => null);
+    }
     const bars = ohlcv?.bars ?? [];
-    if (bars.length < 40) {
+    if (bars.length < 30) {
       skipped += 1;
       return null;
     }
@@ -175,13 +179,11 @@ export async function screenCanslim(args?: {
     withEquity: 0,
   };
 
-  // Pass 2a — bulk BCTC (shared cache with Fundamental screener)
   const finMap = await getFinancialPackagesBulk(
     valid.map((p) => p.symbol),
     { concurrency: 5 },
   );
 
-  // Pass 2b — foreign + equity + ratios (pool 4), BCTC already warm
   const analyzed = await mapPool(valid, 4, async (p) => {
     const [foreign, equity, ratios] = await Promise.all([
       getVndSymbolForeignFlow(p.symbol, 8).catch(() => null),
@@ -252,11 +254,10 @@ export async function screenCanslim(args?: {
   if (args?.sector) rows = rows.filter((r) => r.sector === args.sector);
 
   rows.sort((a, b) => b.score - a.score || b.passCount - a.passCount || (b.volume ?? 0) - (a.volume ?? 0));
-  const limit = Math.min(args?.limit ?? 40, 48);
+  const limit = Math.min(args?.limit ?? 40, 72);
   rows = rows.slice(0, limit);
 
-  if (!rows.length && skipped === uniq.length) return null;
-
+  // Never hard-fail — empty table + partial meta instead of "không khả dụng"
   const covNote = `BCTC bulk ${coverage.withGrowth}/${valid.length} growth · health ${coverage.withHealth} · ROE/ratios ${coverage.withRatios} · NN ${coverage.withForeign} · CP ${coverage.withEquity} · nến ${coverage.withBars}`;
 
   return {
@@ -267,9 +268,13 @@ export async function screenCanslim(args?: {
     marketDetail: market.detail,
     coverage,
     meta: buildMeta({
-      source: [quotesPack?.meta?.source, "bctc-bulk", "vnd-ratios", "ohlcv", market.source].filter(Boolean).join("+") || "canslim-pipeline",
+      source:
+        [quotesPack?.meta?.source, "bctc-bulk", "vnd-ratios", "ohlcv", market.source]
+          .filter(Boolean)
+          .join("+") || "canslim-pipeline",
       sourceTimestampMs: Date.now(),
-      partial: skipped > 0 || coverage.withGrowth < valid.length * 0.5,
+      hasData: rows.length > 0,
+      partial: skipped > 0 || (valid.length > 0 && coverage.withGrowth < valid.length * 0.5),
       note: `CANSLIM · quét ${uniq.length} · ${covNote} · ${market.detail} · không phải tín hiệu GD`,
     }),
   };
