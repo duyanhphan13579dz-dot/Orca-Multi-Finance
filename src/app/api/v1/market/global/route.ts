@@ -5,7 +5,7 @@ export const runtime = "nodejs";
 
 /**
  * GET /api/v1/market/global
- * US (Polygon) + crypto (CoinGecko) + Asia (Yahoo) + VN liquidity volume spark (ohlcv).
+ * US (Polygon ∥ Yahoo ETF) + crypto (CoinGecko) + Asia (Yahoo) + VN liquidity volume spark.
  */
 
 const ASIA_YAHOO: { yahoo: string; key: string; label: string }[] = [
@@ -42,9 +42,27 @@ export async function GET() {
           const { getPolygonIndexSnapshots } = await import("@/lib/providers/polygon");
           const poly = await getPolygonIndexSnapshots(["SPY", "QQQ", "DIA", "IWM"]);
           us = poly.rows;
-          sources.push("polygon");
+          if (us.length) sources.push("polygon");
         } catch (e) {
           errors.push(e instanceof Error ? e.message : "polygon failed");
+        }
+        if (!us.length) {
+          try {
+            const { getYahooQuotes } = await import("@/lib/providers/yahoo");
+            const map = await getYahooQuotes(["SPY", "QQQ", "DIA", "IWM"]);
+            const rows: { symbol: string; price: number; changePercent: number | null }[] = [];
+            for (const sym of ["SPY", "QQQ", "DIA", "IWM"]) {
+              const q = map.get(sym);
+              if (!q || !Number.isFinite(q.price)) continue;
+              rows.push({ symbol: sym, price: q.price, changePercent: q.changePercent });
+            }
+            if (rows.length) {
+              us = rows;
+              sources.push("yahoo-us-etf");
+            }
+          } catch (e) {
+            errors.push(e instanceof Error ? e.message : "yahoo us failed");
+          }
         }
       })(),
     );
