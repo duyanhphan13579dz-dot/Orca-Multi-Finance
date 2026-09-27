@@ -12,7 +12,7 @@ export const maxDuration = 60;
  * GET /api/v1/screener/candlestick
  *   ?category=bullish_reversal|bearish_reversal|continuation|all
  *   &minScore=55&limit=40&volumeOnly=1&symbols=VCB,FPT
- *   &recent=1  → reversal alerts fired by cron (in-memory)
+ *   &recent=1  → chỉ trả các cảnh báo đảo chiều đã fire (in-memory, sau cron)
  */
 export async function GET(req: Request) {
   const url = new URL(req.url);
@@ -54,21 +54,22 @@ export async function GET(req: Request) {
       volumeOnly,
       symbols,
     });
-    if (!r) {
-      return unavailable(
-        "candlestick-screener",
-        "Chưa đủ OHLCV để quét mẫu nến — thử lại sau.",
-      );
-    }
+    const payload = r ?? {
+      rows: [],
+      scanned: 0,
+      skipped: 0,
+      meta: { source: "candlestick-screener", sourceTimestampMs: Date.now(), hasData: false, partial: true,
+        note: "OHLCV tạm lỗi — thử lại sau" },
+    };
     return ok(
       {
-        rows: r.rows,
-        scanned: r.scanned,
-        skipped: r.skipped,
+        rows: payload.rows,
+        scanned: payload.scanned,
+        skipped: payload.skipped,
         ruleset: "candlestick-ruleset.json v1.0",
         alertPolicy: "reversal-only (high|very_high + volume gate)",
       },
-      r.meta,
+      payload.meta,
     );
   } catch (e) {
     return unavailable(

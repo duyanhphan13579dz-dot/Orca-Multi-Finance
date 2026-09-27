@@ -1,4 +1,4 @@
-import { ok, unavailable } from "@/lib/envelope";
+import { ok } from "@/lib/envelope";
 import { screenWyckoff } from "@/lib/services/wyckoff-screener";
 import type { WyckoffPhase } from "@/lib/engines/wyckoff-elliott";
 import type { WyckoffSetup } from "@/lib/services/wyckoff-screener";
@@ -54,16 +54,25 @@ export async function GET(req: Request) {
     sector,
     limit,
   });
-  if (!r) {
-    return unavailable("wyckoff-screener", "Chưa đủ nến OHLCV để quét Wyckoff — nguồn lịch sử tạm lỗi.");
-  }
+  const payload = r ?? {
+    rows: [],
+    scanned: 0,
+    skipped: 0,
+    meta: {
+      source: "wyckoff-screener",
+      sourceTimestampMs: Date.now(),
+      hasData: false,
+      partial: true,
+      note: "OHLCV tạm lỗi — thử lại sau",
+    },
+  };
   return ok(
     {
       universe: "wyckoff",
-      rows: r.rows,
-      scanned: r.scanned,
-      skipped: r.skipped,
+      rows: payload.rows,
+      scanned: payload.scanned,
+      skipped: payload.skipped,
     },
-    r.meta,
+    payload.meta,
   );
 }

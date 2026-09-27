@@ -1,4 +1,4 @@
-import { ok, unavailable } from "@/lib/envelope";
+import { ok } from "@/lib/envelope";
 import { screenCanslim } from "@/lib/services/canslim-screener";
 import type { CanslimLetter } from "@/lib/engines/canslim";
 
@@ -34,19 +34,26 @@ export async function GET(req: Request) {
     sector,
     limit,
   });
-  if (!r) {
-    return unavailable("canslim-screener", "Chưa đủ nến/BCTC để quét CANSLIM — nguồn tạm lỗi.");
-  }
+  const payload = r ?? {
+    rows: [],
+    scanned: 0,
+    skipped: 0,
+    marketBullish: null,
+    marketDetail: "OHLCV/BCTC tạm lỗi",
+    coverage: { withBars: 0, withGrowth: 0, withHealth: 0, withForeign: 0, withRatios: 0, withEquity: 0 },
+    meta: { source: "canslim-screener", sourceTimestampMs: Date.now(), hasData: false, partial: true,
+      note: "OHLCV/BCTC tạm lỗi — thử lại sau" },
+  };
   return ok(
     {
       universe: "canslim",
-      rows: r.rows,
-      scanned: r.scanned,
-      skipped: r.skipped,
-      marketBullish: r.marketBullish,
-      marketDetail: r.marketDetail,
-      coverage: r.coverage,
+      rows: payload.rows,
+      scanned: payload.scanned,
+      skipped: payload.skipped,
+      marketBullish: payload.marketBullish,
+      marketDetail: payload.marketDetail,
+      coverage: payload.coverage,
     },
-    r.meta,
+    payload.meta,
   );
 }
