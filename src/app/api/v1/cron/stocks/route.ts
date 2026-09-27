@@ -47,6 +47,14 @@ export async function GET(req: Request) {
     alertMonitor = { error: e instanceof Error ? e.message : "alert monitor failed" };
   }
 
+  let patternAlerts: unknown = null;
+  try {
+    const { runCandlestickPatternAlerts } = await import("@/lib/services/candlestick-screener");
+    patternAlerts = await runCandlestickPatternAlerts();
+  } catch (e) {
+    patternAlerts = { error: e instanceof Error ? e.message : "pattern alerts failed" };
+  }
+
   return ok({
     ok: true,
     sessionDate: market.sessionDate,
@@ -58,6 +66,7 @@ export async function GET(req: Request) {
     orderBookSnapshots: snapshots,
     orderBookCandidates: orderBooks.length,
     orderBookPipeline: pipeline,
+    patternAlerts,
     alertMonitor,
   });
 }

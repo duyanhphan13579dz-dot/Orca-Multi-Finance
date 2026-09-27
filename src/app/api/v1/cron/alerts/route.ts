@@ -6,8 +6,7 @@ export const runtime = "nodejs";
 export const maxDuration = 30;
 
 /**
- * Vercel Cron — server-side price alert monitor (no browser needed).
- * Requires Google Sheets Alerts tab + DISCORD_WEBHOOK_URL.
+ * Vercel Cron — price alerts + candlestick pattern scan.
  */
 export async function GET(req: Request) {
   const cronSecret = process.env.CRON_SECRET?.trim();
@@ -24,5 +23,12 @@ export async function GET(req: Request) {
 
   const t0 = Date.now();
   const result = await runServerAlertMonitor();
-  return ok({ ...result, durationMs: Date.now() - t0 });
+  let patterns: unknown = null;
+  try {
+    const { runCandlestickPatternAlerts } = await import("@/lib/services/candlestick-screener");
+    patterns = await runCandlestickPatternAlerts();
+  } catch (e) {
+    patterns = { error: e instanceof Error ? e.message : "pattern scan failed" };
+  }
+  return ok({ ...result, patterns, durationMs: Date.now() - t0 });
 }
