@@ -1,12 +1,15 @@
 import type { CandlePattern, OhlcvBar, TechnicalSnapshot } from "./types";
+import { detectCandlePatterns, toLegacyCandlePatterns } from "./engines/candlestick-patterns";
 
 /**
  * Technical analysis engine — deterministic quantitative computations.
- * All indicators are computed from real OHLCV series only.
+ * All indicators are computed from real OHLCV series supplied by callers.
+ * Candlestick patterns use the VN ruleset engine (candlestick-patterns.ts).
  */
 
 export function sma(values: number[], period: number): (number | null)[] {
   const out: (number | null)[] = new Array(values.length).fill(null);
+  if (period <= 0 || values.length < period) return out;
   let sum = 0;
   for (let i = 0; i < values.length; i++) {
     sum += values[i];
@@ -18,9 +21,11 @@ export function sma(values: number[], period: number): (number | null)[] {
 
 export function ema(values: number[], period: number): (number | null)[] {
   const out: (number | null)[] = new Array(values.length).fill(null);
-  if (values.length < period) return out;
+  if (period <= 0 || values.length < period) return out;
   const k = 2 / (period + 1);
-  let prev = values.slice(0, period).reduce((a, b) => a + b, 0) / period;
+  let prev = 0;
+  for (let i = 0; i < period; i++) prev += values[i];
+  prev /= period;
   out[period - 1] = prev;
   for (let i = period; i < values.length; i++) {
     prev = values[i] * k + prev * (1 - k);
@@ -29,77 +34,74 @@ export function ema(values: number[], period: number): (number | null)[] {
   return out;
 }
 
-/** Wilder's RSI */
-export function rsi(values: number[], period = 14): (number | null)[] {
-  const out: (number | null)[] = new Array(values.length).fill(null);
-  if (values.length < period + 1) return out;
+export function rsi(closes: number[], period = 14): (number | null)[] {
+  const out: (number | null)[] = new Array(closes.length).fill(null);
+  if (closes.length <= period) return out;
   let gain = 0;
   let loss = 0;
   for (let i = 1; i <= period; i++) {
-    const d = values[i] - values[i - 1];
+    const d = closes[i] - closes[i - 1];
     if (d >= 0) gain += d;
     else loss -= d;
   }
   let avgGain = gain / period;
   let avgLoss = loss / period;
   out[period] = avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss);
-  for (let i = period + 1; i < values.length; i++) {
-    const d = values[i] - values[i - 1];
-    avgGain = (avgGain * (period - 1) + Math.max(d, 0)) / period;
-    avgLoss = (avgLoss * (period - 1) + Math.max(-d, 0)) / period;
+  for (let i = period + 1; i < closes.length; i++) {
+    const d = closes[i] - closes[i - 1];
+    const g = d > 0 ? d : 0;
+    const l = d < 0 ? -d : 0;
+    avgGain = (avgGain * (period - 1) + g) / period;
+    avgLoss = (avgLoss * (period - 1) + l) / period;
     out[i] = avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss);
   }
   return out;
 }
 
-export function macd(values: number[], fast = 12, slow = 26, signalPeriod = 9) {
-  const emaFast = ema(values, fast);
-  const emaSlow = ema(values, slow);
-  const macdLine = values.map((_, i) =>
-    emaFast[i] != null && emaSlow[i] != null ? (emaFast[i] as number) - (emaSlow[i] as number) : null,
+export function macd(
+  closes: number[],
+  fast = 12,
+  slow = 26,
+  signal = 9,
+): { macd: (number | null)[]; signal: (number | null)[]; histogram: (number | null)[] } {
+  const ef = ema(closes, fast);
+  const es = ema(closes, slow);
+  const line: (number | null)[] = closes.map((_, i) =>
+    ef[i] != null && es[i] != null ? (ef[i] as number) - (es[i] as number) : null,
   );
-  const valid = macdLine.filter((v): v is number => v != null);
-  const signalValid = ema(valid, signalPeriod);
-  const signalLine: (number | null)[] = new Array(values.length).fill(null);
-  let j = 0;
-  for (let i = 0; i < values.length; i++) {
-    if (macdLine[i] != null) {
-      signalLine[i] = signalValid[j] ?? null;
-      j++;
-    }
-  }
-  const last = macdLine[values.length - 1];
-  const sig = signalLine[values.length - 1];
-  return {
-    line: macdLine,
-    signal: signalLine,
-    last: last != null && sig != null ? { macd: last, signal: sig, histogram: last - sig } : null,
-  };
+  const lineVals = line.map((v) => v ?? 0);
+  const sig = ema(lineVals, signal);
+  const hist = line.map((v, i) => (v != null && sig[i] != null ? v - (sig[i] as number) : null));
+  return { macd: line, signal: sig, histogram: hist };
 }
 
-export function bollinger(values: number[], period = 20, mult = 2) {
-  if (values.length < period) return null;
-  const slice = values.slice(-period);
+export function bollinger(
+  closes: number[],
+  period = 20,
+  mult = 2,
+): { mid: number; upper: number; lower: number } | null {
+  if (closes.length < period) return null;
+  const slice = closes.slice(-period);
   const mid = slice.reduce((a, b) => a + b, 0) / period;
   const variance = slice.reduce((a, b) => a + (b - mid) ** 2, 0) / period;
   const sd = Math.sqrt(variance);
-  return { upper: mid + mult * sd, mid, lower: mid - mult * sd };
+  return { mid, upper: mid + mult * sd, lower: mid - mult * sd };
 }
 
 export function atr(bars: OhlcvBar[], period = 14): number | null {
   if (bars.length < period + 1) return null;
   const trs: number[] = [];
   for (let i = 1; i < bars.length; i++) {
-    const h = bars[i].high;
-    const l = bars[i].low;
-    const pc = bars[i - 1].close;
-    trs.push(Math.max(h - l, Math.abs(h - pc), Math.abs(l - pc)));
+    const b = bars[i];
+    const prev = bars[i - 1];
+    trs.push(Math.max(b.high - b.low, Math.abs(b.high - prev.close), Math.abs(b.low - prev.close)));
   }
-  const slice = trs.slice(-period);
-  return slice.reduce((a, b) => a + b, 0) / slice.length;
+  if (trs.length < period) return null;
+  let avg = trs.slice(0, period).reduce((a, b) => a + b, 0) / period;
+  for (let i = period; i < trs.length; i++) avg = (avg * (period - 1) + trs[i]) / period;
+  return avg;
 }
 
-/** annualized volatility from log returns (assuming daily bars) */
 export function annualizedVolatility(closes: number[], lookback = 30): number | null {
   if (closes.length < lookback + 1) return null;
   const rets: number[] = [];
@@ -132,8 +134,10 @@ function pctChange(closes: number[], days: number): number | null {
   return (closes[closes.length - 1] / prev - 1) * 100;
 }
 
-/** Swing-based support/resistance from recent local extrema + round levels */
-export function supportResistance(bars: OhlcvBar[], lookback = 120): { support: number[]; resistance: number[] } {
+export function supportResistance(
+  bars: OhlcvBar[],
+  lookback = 120,
+): { support: number[]; resistance: number[] } {
   const slice = bars.slice(-lookback);
   if (slice.length < 10) return { support: [], resistance: [] };
   const last = slice[slice.length - 1].close;
@@ -141,12 +145,26 @@ export function supportResistance(bars: OhlcvBar[], lookback = 120): { support: 
   const lows: number[] = [];
   for (let i = 2; i < slice.length - 2; i++) {
     const b = slice[i];
-    if (b.high >= slice[i - 1].high && b.high >= slice[i - 2].high && b.high >= slice[i + 1].high && b.high >= slice[i + 2].high) highs.push(b.high);
-    if (b.low <= slice[i - 1].low && b.low <= slice[i - 2].low && b.low <= slice[i + 1].low && b.low <= slice[i + 2].low) lows.push(b.low);
+    if (
+      b.high >= slice[i - 1].high &&
+      b.high >= slice[i - 2].high &&
+      b.high >= slice[i + 1].high &&
+      b.high >= slice[i + 2].high
+    )
+      highs.push(b.high);
+    if (
+      b.low <= slice[i - 1].low &&
+      b.low <= slice[i - 2].low &&
+      b.low <= slice[i + 1].low &&
+      b.low <= slice[i + 2].low
+    )
+      lows.push(b.low);
   }
   const cluster = (levels: number[], below: boolean): number[] => {
     const tolFor = (p: number) => p * 0.005;
-    const sorted = levels.filter((l) => (below ? l < last * 0.995 : l > last * 1.005)).sort((a, b) => (below ? b - a : a - b));
+    const sorted = levels
+      .filter((l) => (below ? l < last * 0.995 : l > last * 1.005))
+      .sort((a, b) => (below ? b - a : a - b));
     const out: number[] = [];
     for (const l of sorted) {
       if (out.some((o) => Math.abs(o - l) <= tolFor(l))) continue;
@@ -161,83 +179,7 @@ export function supportResistance(bars: OhlcvBar[], lookback = 120): { support: 
 /* -------------------------------- patterns --------------------------------- */
 
 export function detectPatterns(bars: OhlcvBar[]): CandlePattern[] {
-  const out: CandlePattern[] = [];
-  if (bars.length < 5) return out;
-  const b = bars.slice(-5);
-  const cur = b[b.length - 1];
-  const prev = b[b.length - 2];
-  const prev2 = b[b.length - 3];
-  const prev3 = b[b.length - 4];
-  const body = (x: OhlcvBar) => Math.abs(x.close - x.open);
-  const range = (x: OhlcvBar) => Math.max(x.high - x.low, 1e-12);
-  const avgBody = (body(cur) + body(prev) + body(prev2) + body(prev3)) / 4;
-  const upperWick = cur.high - Math.max(cur.close, cur.open);
-  const lowerWick = Math.min(cur.close, cur.open) - cur.low;
-  const avgRange20 = bars.slice(-20).reduce((a, x) => a + range(x), 0) / Math.min(20, bars.length);
-
-  if (body(cur) <= range(cur) * 0.1 && range(cur) >= avgRange20 * 0.7) {
-    out.push({
-      name: "Doji", nameVi: "Nến Doji", type: "neutral", reliability: "medium",
-      description: "Thị trường lưỡng lự tại phiên gần nhất; lực mua và bán tạm thờ cân bằng — thường báo hiệu nhịp hiện tại đang chững lại.",
-    });
-  }
-  if (lowerWick > body(cur) * 2 && upperWick < body(cur) && body(cur) > 0) {
-    out.push({
-      name: "Hammer", nameVi: "Nến Búa", type: "bullish", reliability: "medium",
-      description: "Bóng dưới dài cho thấy lực bán bị hấp thụ và giá được kéo ngược lên cuối phiên — tín hiệu đảo chiều tăng nếu xuất hiện sau nhịp giảm.",
-    });
-  }
-  if (upperWick > body(cur) * 2 && lowerWick < body(cur) && body(cur) > 0) {
-    out.push({
-      name: "Shooting Star", nameVi: "Sao băng", type: "bearish", reliability: "medium",
-      description: "Giá bị đẩy lên trong phiên nhưng áp lực chốt lờ kéo về sát đáy — cảnh báo lực cầu suy yếu tại vùng cao.",
-    });
-  }
-  if (prev.close < prev.open && cur.close > cur.open && body(cur) > avgBody && body(cur) > body(prev) * 1.1 && cur.close >= prev.open && cur.open <= prev.close) {
-    out.push({
-      name: "Bullish Engulfing", nameVi: "Nhấn chìm tăng", type: "bullish", reliability: "high",
-      description: "Nến tăng hiện tại bao trùm thân nến giảm trước đó — phe mua giành lại quyền kiểm soát trong ngắn hạn.",
-    });
-  }
-  if (prev.close > prev.open && cur.close < cur.open && body(cur) > avgBody && body(cur) > body(prev) * 1.1 && cur.close <= prev.open && cur.open >= prev.close) {
-    out.push({
-      name: "Bearish Engulfing", nameVi: "Nhấn chìm giảm", type: "bearish", reliability: "high",
-      description: "Nến giảm hiện tại bao trùm thân nến tăng trước đó — áp lực bán áp đảo, rủi ro điều chỉnh tăng lên.",
-    });
-  }
-  const firstBig = body(prev2) > avgBody * 1.2 && prev2.close < prev2.open;
-  const midSmall = body(prev) < avgBody * 0.5;
-  const lastBig = cur.close > cur.open && body(cur) > avgBody * 1.2 && cur.close > (prev2.open + prev2.close) / 2;
-  if (firstBig && midSmall && lastBig) {
-    out.push({
-      name: "Morning Star", nameVi: "Sao mai", type: "bullish", reliability: "high",
-      description: "Cấu trúc giảm mạnh — nến nhỏ lưỡng lự — tăng mạnh lấy lại thân nến đầu: mô hình đảo chiều đáy kinh điển.",
-    });
-  }
-  const e1 = prev2.close > prev2.open && body(prev2) > avgBody * 1.2;
-  const e2 = midSmall;
-  const e3 = cur.close < cur.open && body(cur) > avgBody * 1.2 && cur.close < (prev2.open + prev2.close) / 2;
-  if (e1 && e2 && e3) {
-    out.push({
-      name: "Evening Star", nameVi: "Sao hôm", type: "bearish", reliability: "high",
-      description: "Sau nhịp tăng mạnh, nến doji nhỏ xuất hiện rồi bị nến giảm mạnh bứt phá — dấu hiệu hình thành đỉnh ngắn hạn.",
-    });
-  }
-  const threeUp = [prev3, prev2, prev].every((x) => x.close > x.open) && prev3.close < prev2.close && prev2.close < prev.close;
-  if (threeUp) {
-    out.push({
-      name: "Three White Soldiers", nameVi: "Ba chàng lính trắng", type: "bullish", reliability: "high",
-      description: "Ba phiên tăng liên tiếp với thân nến đều đặn — đà tăng được củng cố bởi dòng tiền ổn định.",
-    });
-  }
-  const threeDown = [prev3, prev2, prev].every((x) => x.close < x.open) && prev3.close > prev2.close && prev2.close > prev.close;
-  if (threeDown) {
-    out.push({
-      name: "Three Black Crows", nameVi: "Ba con quạ đen", type: "bearish", reliability: "high",
-      description: "Ba phiên giảm liên tiếp cho thấy áp lực phân phối kéo dài — cần thận trọng với vị thế mua đuổi.",
-    });
-  }
-  return out.slice(0, 4);
+  return toLegacyCandlePatterns(detectCandlePatterns(bars));
 }
 
 /* ------------------------------ full snapshot ------------------------------ */
@@ -246,9 +188,17 @@ export function analyzeSeries(bars: OhlcvBar[]): TechnicalSnapshot | null {
   if (bars.length < 30) return null;
   const closes = bars.map((b) => b.close);
   const last = closes[closes.length - 1];
-  const rsiArr = rsi(closes, 14);
-  const rsi14 = rsiArr[closes.length - 1] ?? null;
-  const macdRes = macd(closes).last;
+  const rsiSeries = rsi(closes, 14);
+  const rsi14 = rsiSeries[closes.length - 1] ?? null;
+  const macdFull = macd(closes);
+  const macdRes =
+    macdFull.macd[closes.length - 1] != null && macdFull.signal[closes.length - 1] != null
+      ? {
+          macd: macdFull.macd[closes.length - 1] as number,
+          signal: macdFull.signal[closes.length - 1] as number,
+          histogram: (macdFull.histogram[closes.length - 1] as number) ?? 0,
+        }
+      : null;
   const smaArr = (p: number) => sma(closes, p)[closes.length - 1] ?? null;
   const emaArr = (p: number) => ema(closes, p)[closes.length - 1] ?? null;
   const sma20 = smaArr(20);
@@ -266,7 +216,6 @@ export function analyzeSeries(bars: OhlcvBar[]): TechnicalSnapshot | null {
   const low52w = lows.length ? Math.min(...lows) : null;
   const sr = supportResistance(bars);
 
-  /* trend score -3..+3 */
   let score = 0;
   if (sma20 != null) score += last > sma20 ? 1 : -1;
   if (sma50 != null) score += last > sma50 ? 1 : -1;
@@ -276,7 +225,15 @@ export function analyzeSeries(bars: OhlcvBar[]): TechnicalSnapshot | null {
   if (rsi14 != null) score += rsi14 > 55 ? 0.5 : rsi14 < 45 ? -0.5 : 0;
   score = Math.max(-3, Math.min(3, score));
   const label =
-    score >= 2 ? "strong-up" : score >= 0.5 ? "up" : score <= -2 ? "strong-down" : score <= -0.5 ? "down" : "sideways";
+    score >= 2
+      ? "strong-up"
+      : score >= 0.5
+        ? "up"
+        : score <= -2
+          ? "strong-down"
+          : score <= -0.5
+            ? "down"
+            : "sideways";
 
   const signals: string[] = [];
   if (rsi14 != null) {
@@ -284,8 +241,14 @@ export function analyzeSeries(bars: OhlcvBar[]): TechnicalSnapshot | null {
     else if (rsi14 <= 30) signals.push("RSI quá bán (<30) — khả năng hồi kỹ thuật");
     else signals.push(`RSI ${rsi14.toFixed(0)} — vùng cân bằng`);
   }
-  if (macdRes) signals.push(macdRes.histogram > 0 ? "MACD hỗ trợ xu hướng tăng" : "MACD nghiêng về áp lực bán");
-  if (sma50 != null) signals.push(last > sma50 ? "Giá duy trì trên SMA50 — xu hướng trung hạn còn nguyên" : "Giá nằm dưới SMA50 — xu hướng trung hạn suy yếu");
+  if (macdRes)
+    signals.push(macdRes.histogram > 0 ? "MACD hỗ trợ xu hướng tăng" : "MACD nghiêng về áp lực bán");
+  if (sma50 != null)
+    signals.push(
+      last > sma50
+        ? "Giá duy trì trên SMA50 — xu hướng trung hạn còn nguyên"
+        : "Giá nằm dưới SMA50 — xu hướng trung hạn suy yếu",
+    );
   if (bb) {
     const pos = (last - bb.lower) / (bb.upper - bb.lower);
     if (pos > 0.95) signals.push("Chạm biên trên Bollinger — độ nóng cao");
