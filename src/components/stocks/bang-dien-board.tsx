@@ -1,6 +1,6 @@
 "use client";
 
-import Link from "next/link";
+import "./bang-dien.css";
 import { memo, useMemo } from "react";
 import { SectorCompareChart } from "@/components/stocks/sector-compare-chart";
 import { SectorScrollRail, SectorColumnShell } from "@/components/stocks/sector-scroll-rail";
@@ -58,15 +58,15 @@ function hitsBand(price: number | null | undefined, band: number | null | undefi
 }
 
 function rowTone(qu: Quote): string {
-  if (hitsBand(qu.price, qu.ceilingPrice)) return "bg-violet-500/30 text-violet-100";
-  if (hitsBand(qu.price, qu.floorPrice)) return "bg-sky-400/30 text-sky-100";
+  if (hitsBand(qu.price, qu.ceilingPrice)) return "bd-ceil";
+  if (hitsBand(qu.price, qu.floorPrice)) return "bd-floor";
   const p = qu.changePercent;
-  if (p == null || !Number.isFinite(p)) return "bg-surface-base/60 text-text-secondary";
-  if (p > 0.15) return "bg-emerald-500/25 text-emerald-100";
-  if (p > 0) return "bg-emerald-500/12 text-emerald-200";
-  if (p < -0.15) return "bg-rose-500/25 text-rose-100";
-  if (p < 0) return "bg-rose-500/12 text-rose-200";
-  return "bg-amber-500/12 text-amber-100";
+  if (p == null || !Number.isFinite(p)) return "bd-flat";
+  if (p > 0.15) return "bd-up-strong";
+  if (p > 0) return "bd-up";
+  if (p < -0.15) return "bd-down-strong";
+  if (p < 0) return "bd-down";
+  return "bd-flat";
 }
 
 function pctLabel(p: number | null | undefined): string {
@@ -153,18 +153,18 @@ function buildColumns(quotes: Quote[]): SectorCol[] {
       sellVol: imb.sellVol,
     });
   };
-  if (vn30Rows.length) pushCol("VN30", vn30Rows, 28);
+  if (vn30Rows.length) pushCol("VN30", vn30Rows, 18);
   const sectorOrder = [
     ...PRIORITY_SECTORS,
     ...VN_SECTOR_MAP.map((s) => s.name).filter((n) => !PRIORITY_SECTORS.includes(n)),
   ];
   for (const name of sectorOrder) {
-    if (cols.length >= 16) break;
+    if (cols.length >= 12) break;
     const rows = quotes
       .filter((q) => sectorOf(q.symbol) === name)
       .sort((a, b) => (b.changePercent ?? -999) - (a.changePercent ?? -999));
     if (rows.length < 3) continue;
-    pushCol(name, rows, 24);
+    pushCol(name, rows, 16);
   }
   return cols;
 }
@@ -290,65 +290,57 @@ function IndexStrip({ indices, quotes }: { indices: IndexQuote[]; quotes: Quote[
   );
 }
 
-const SectorColumn = memo(function SectorColumn({ col }: { col: SectorCol }) {
-  const avgUp = (col.avgPct ?? 0) >= 0;
-  const headerTone =
-    col.avgPct == null
-      ? "border-border-subtle bg-surface-elevated"
-      : avgUp
-        ? "border-emerald-500/30 bg-gradient-to-b from-emerald-500/15 to-surface-elevated"
-        : "border-rose-500/30 bg-gradient-to-b from-rose-500/15 to-surface-elevated";
-  return (
-    <div className="flex w-[220px] shrink-0 flex-col overflow-hidden rounded-xl border border-border-subtle bg-surface-elevated shadow-md shadow-black/25 ring-1 ring-white/[0.04] [content-visibility:auto]">
-      <div className={`border-b px-3 py-2.5 ${headerTone}`}>
-        <div className="flex items-start justify-between gap-2">
-          <span className="line-clamp-2 text-[13px] font-bold leading-snug tracking-tight text-text-primary" title={col.name}>{col.name}</span>
-          <span className={`num shrink-0 rounded-md px-1.5 py-0.5 text-[13px] font-bold tabular-nums ${avgUp ? "bg-up/15 text-up" : "bg-down/15 text-down"}`}>{pctLabel(col.avgPct)}</span>
-        </div>
-        <ImbalanceBar imbalance={col.imbalance} buyVol={col.buyVol} sellVol={col.sellVol} compact />
-      </div>
-      <div className="grid grid-cols-[minmax(0,1.1fr)_auto_auto_auto] gap-x-2 border-b border-border-subtle/70 bg-surface-base/50 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-text-muted">
-        <span>Mã</span><span className="text-right">Giá</span><span className="min-w-[3.6rem] text-right">+/-</span><span className="min-w-[2.8rem] text-right">KL</span>
-      </div>
-      <div className="max-h-[min(62vh,520px)] overflow-y-auto overscroll-contain [scrollbar-width:thin]">
-        {col.rows.map((q) => (
-          <Link key={q.symbol} href={`/stocks/${q.symbol}`} prefetch={false} className={`grid grid-cols-[minmax(0,1.1fr)_auto_auto_auto] items-center gap-x-2 border-b border-border-subtle/30 px-3 py-[6px] text-[12.5px] transition hover:brightness-125 ${rowTone(q)}`}>
-            <span className="truncate font-bold tracking-tight">{q.symbol}</span>
-            <span className="num text-right font-medium tabular-nums">{fmtNum(q.price, 2)}</span>
-            <span className="num min-w-[3.6rem] text-right font-semibold tabular-nums">{pctLabel(q.changePercent)}</span>
-            <span className="num min-w-[2.8rem] text-right text-[11px] opacity-85">{q.volume != null ? fmtCompact(q.volume) : "—"}</span>
-          </Link>
-        ))}
-      </div>
-    </div>
-  );
-});
-
-function SectorImbalanceSummary({ cols }: { cols: SectorCol[] }) {
-  const ranked = useMemo(() => {
-    return [...cols].filter((c) => c.imbalance != null).sort((a, b) => Math.abs(b.imbalance ?? 0) - Math.abs(a.imbalance ?? 0)).slice(0, 6);
-  }, [cols]);
-  if (!ranked.length) return null;
-  return (
-    <div className="rounded-lg border border-border-subtle bg-surface-elevated/30 px-2.5 py-2">
-      <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-text-muted">
-        Order imbalance theo ngành
-        <span className="ml-1 font-normal normal-case text-text-muted/80">(proxy KL tăng vs KL giảm)</span>
-      </div>
-      <div className="grid gap-1.5 sm:grid-cols-2 lg:grid-cols-3">
-        {ranked.map((c) => (
-          <div key={c.name} className="rounded-md border border-border-subtle/70 bg-surface-base/50 px-2 py-1.5">
-            <div className="mb-1 flex items-center justify-between gap-1 text-[11px]">
-              <span className="truncate font-medium text-text-primary">{c.name}</span>
-              <span className="num text-text-muted">{pctLabel(c.avgPct)}</span>
-            </div>
-            <ImbalanceBar imbalance={c.imbalance} buyVol={c.buyVol} sellVol={c.sellVol} />
+const SectorColumn = memo(
+  function SectorColumn({ col }: { col: SectorCol }) {
+    const avgUp = (col.avgPct ?? 0) >= 0;
+    const headerCls = avgUp ? "bd-col-head bd-col-head-up" : "bd-col-head bd-col-head-down";
+    return (
+      <div className="bd-col">
+        <div className={headerCls}>
+          <div className="flex items-start justify-between gap-2">
+            <span className="line-clamp-2 text-[13px] font-bold leading-snug text-text-primary" title={col.name}>
+              {col.name}
+            </span>
+            <span className={`num shrink-0 rounded px-1.5 py-0.5 text-[12px] font-bold tabular-nums ${avgUp ? "bg-up/15 text-up" : "bg-down/15 text-down"}`}>
+              {pctLabel(col.avgPct)}
+            </span>
           </div>
-        ))}
+          <ImbalanceBar imbalance={col.imbalance} buyVol={col.buyVol} sellVol={col.sellVol} compact />
+        </div>
+        <div className="bd-col-labels">
+          <span>Mã</span>
+          <span className="text-right">Giá</span>
+          <span className="min-w-[3.4rem] text-right">+/-</span>
+          <span className="min-w-[2.6rem] text-right">KL</span>
+        </div>
+        <div className="bd-col-rows">
+          {col.rows.map((q) => (
+            <a key={q.symbol} href={`/stocks/${q.symbol}`} className={`bd-row ${rowTone(q)}`}>
+              <span className="truncate font-bold tracking-tight">{q.symbol}</span>
+              <span className="num text-right font-medium tabular-nums">{fmtNum(q.price, 2)}</span>
+              <span className="num min-w-[3.4rem] text-right font-semibold tabular-nums">{pctLabel(q.changePercent)}</span>
+              <span className="num min-w-[2.6rem] text-right text-[11px] opacity-80">{q.volume != null ? fmtCompact(q.volume) : "—"}</span>
+            </a>
+          ))}
+        </div>
       </div>
-    </div>
-  );
-}
+    );
+  },
+  (prev, next) => {
+    const a = prev.col;
+    const b = next.col;
+    if (a.name !== b.name || a.avgPct !== b.avgPct || a.imbalance !== b.imbalance) return false;
+    if (a.rows.length !== b.rows.length) return false;
+    for (let i = 0; i < a.rows.length; i++) {
+      const ra = a.rows[i];
+      const rb = b.rows[i];
+      if (ra.symbol !== rb.symbol || ra.price !== rb.price || ra.changePercent !== rb.changePercent || ra.volume !== rb.volume) {
+        return false;
+      }
+    }
+    return true;
+  },
+);
 
 export function BangDienBoard({ quotes, indices }: { quotes: Quote[]; indices: IndexQuote[] }) {
   const { data: intel } = useApi<IntelLite>("/api/v1/market/intel", { refreshInterval: 60_000 });
@@ -386,11 +378,10 @@ export function BangDienBoard({ quotes, indices }: { quotes: Quote[]; indices: I
   }
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-2.5">
       <IndexStrip indices={indices} quotes={quotes} />
       <SentimentGauge intel={fallbackIntel} />
       <SectorCompareChart cols={columns} />
-      <SectorImbalanceSummary cols={columns} />
       <div className="flex items-center justify-between gap-2 px-0.5">
         <p className="text-[11px] text-text-muted">Bảng điện theo ngành · cuộn ngang · click mã mở chi tiết</p>
         <span className="hidden shrink-0 text-[11px] text-text-muted sm:inline">{quotes.length} mã · {columns.length} ngành</span>
