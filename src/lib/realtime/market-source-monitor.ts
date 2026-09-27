@@ -1,6 +1,14 @@
 import "server-only";
 
-export type MarketSourceId = "vndirect" | "vps" | "ssi-iboard" | "ssi-fcdata" | "vietcap";
+export type MarketSourceId =
+  | "vndirect"
+  | "vps"
+  | "ssi-iboard"
+  | "ssi-fcdata"
+  | "vietcap"
+  | "public-vn"
+  | "yahoo-public"
+  | "entrade";
 
 type Sample = { ok: boolean; latencyMs: number; at: number };
 
@@ -34,7 +42,10 @@ export function getMarketSourceStats(source: MarketSourceId) {
   };
 }
 
-export function getMarketSourceStatus(source: MarketSourceId, configured = true): "healthy" | "degraded" | "down" | "not_configured" {
+export function getMarketSourceStatus(
+  source: MarketSourceId,
+  configured = true,
+): "healthy" | "degraded" | "down" | "not_configured" {
   if (!configured) return "not_configured";
   const stats = getMarketSourceStats(source);
   if (stats.attempts === 0) return "healthy";
@@ -45,7 +56,18 @@ export function getMarketSourceStatus(source: MarketSourceId, configured = true)
 
 export function getMarketSourceMonitor() {
   return Object.fromEntries(
-    (["vndirect", "vps", "ssi-iboard", "ssi-fcdata", "vietcap"] as MarketSourceId[]).map((source) => [
+    (
+      [
+        "vndirect",
+        "vps",
+        "ssi-iboard",
+        "ssi-fcdata",
+        "vietcap",
+        "public-vn",
+        "yahoo-public",
+        "entrade",
+      ] as MarketSourceId[]
+    ).map((source) => [
       source,
       { ...getMarketSourceStats(source), status: getMarketSourceStatus(source) },
     ]),
