@@ -13,6 +13,12 @@ import {
   type GlobalUsRow,
   type GlobalCryptoRow,
 } from "@/components/command-center/phase2-global";
+import {
+  CommandTabs,
+  LiquiditySparkPanel,
+  NewsFlowPanel,
+  useCommandTab,
+} from "@/components/command-center/phase3-extras";
 
 const RATING_VI: Record<string, string> = {
   BULLISH: "Tích cực",
@@ -286,36 +292,6 @@ function MoneyFlowPanel({ intel }: { intel: MarketIntel }) {
   );
 }
 
-function LiquidityPanel({ intel }: { intel: MarketIntel }) {
-  const l = intel.liquidity;
-  const vsBaseline =
-    l.valueTraded != null && l.baseline != null && l.baseline > 0
-      ? (l.valueTraded / l.baseline - 1) * 100
-      : null;
-
-  return (
-    <article className="cc-panel">
-      <div className="cc-panel-head">
-        <h2>LIQUIDITY</h2>
-        {l.available ? <span className="cc-tag text-up border-up/40 bg-up/10">LIVE</span> : null}
-      </div>
-      <div className="flex items-end justify-between gap-2 px-3 pt-3">
-        <b className="num text-[22px] font-semibold text-text-primary">
-          {l.valueTraded != null ? fmtCompact(l.valueTraded) : "—"}
-        </b>
-        {vsBaseline != null ? (
-          <span className={`text-[11px] ${vsBaseline >= 0 ? "text-up" : "text-down"}`}>
-            {pct(vsBaseline, 1)} vs Avg
-          </span>
-        ) : null}
-      </div>
-      <p className="px-3 pb-3 pt-1 text-[10px] text-text-muted line-clamp-2">
-        {l.note || (l.available ? "Giá trị giao dịch phiên hiện tại" : "Chưa có dữ liệu thanh khoản")}
-      </p>
-    </article>
-  );
-}
-
 type SectorRow = {
   name: string;
   avgPct: number;
@@ -519,6 +495,13 @@ export function CommandCenter({
   globalUs?: GlobalUsRow[];
   globalCrypto?: GlobalCryptoRow[];
 }) {
+  const [tab, setTab] = useCommandTab();
+  const isAll = tab === "all";
+  const showVn = isAll || tab === "vn";
+  const showGlobal = isAll || tab === "global";
+  const showFlow = isAll || tab === "flow";
+  const showNews = isAll || tab === "news";
+
   return (
     <div className="cc-root space-y-2.5">
       <header className="flex flex-wrap items-start justify-between gap-2">
@@ -537,32 +520,52 @@ export function CommandCenter({
         {meta ? <MetaLine meta={meta} /> : null}
       </header>
 
-      <TickerStrip indices={intel.indices} crossAsset={intel.crossAsset} />
+      <CommandTabs active={tab} onChange={setTab} />
 
-      <div className="grid gap-2.5 lg:grid-cols-2">
-        <MarketPulse intel={intel} />
-        <GlobalImpactMap intel={intel} />
-      </div>
+      {(showVn || showGlobal) && (
+        <TickerStrip indices={intel.indices} crossAsset={intel.crossAsset} />
+      )}
 
-      <div className="grid gap-2.5 sm:grid-cols-3">
-        <BreadthPanel intel={intel} />
-        <MoneyFlowPanel intel={intel} />
-        <LiquidityPanel intel={intel} />
-      </div>
+      {showVn && (
+        <div className={`grid gap-2.5 ${showGlobal ? "lg:grid-cols-2" : ""}`}>
+          <MarketPulse intel={intel} />
+          {showGlobal ? <GlobalImpactMap intel={intel} /> : null}
+        </div>
+      )}
 
-      <GlobalMarketRegime intel={intel} us={globalUs} crypto={globalCrypto} />
+      {showGlobal && !showVn && <GlobalImpactMap intel={intel} />}
 
-      <TransmissionPanel intel={intel} />
+      {(showVn || showFlow) && (
+        <div className="grid gap-2.5 sm:grid-cols-3">
+          <BreadthPanel intel={intel} />
+          {(showFlow || isAll) && <MoneyFlowPanel intel={intel} />}
+          <LiquiditySparkPanel intel={intel} />
+        </div>
+      )}
 
-      <div className="grid gap-2.5 lg:grid-cols-[1.15fr_0.85fr]">
-        <SectorRotation quotes={quotes} />
-        <TopMovers quotes={quotes} />
-      </div>
+      {showGlobal && (
+        <>
+          <GlobalMarketRegime intel={intel} us={globalUs} crypto={globalCrypto} />
+          <TransmissionPanel intel={intel} />
+        </>
+      )}
 
-      <AiBrief intel={intel} />
+      {showVn && (
+        <div className="grid gap-2.5 lg:grid-cols-[1.15fr_0.85fr]">
+          <SectorRotation quotes={quotes} />
+          <TopMovers quotes={quotes} />
+        </div>
+      )}
+
+      {showNews && (
+        <div className="grid gap-2.5 lg:grid-cols-2">
+          <NewsFlowPanel articles={intel.news ?? []} />
+          <AiBrief intel={intel} />
+        </div>
+      )}
 
       <p className="text-center text-[10px] text-text-muted">
-        Pha 1+2 · Pulse · Impact · Breadth · Flow · Global regime · Transmission · Sector · Movers · Brief
+        Pha 1–3 · Tabs · Spark · News · Pulse · Impact · Regime · Transmission · Sector · Movers · Brief
       </p>
     </div>
   );
