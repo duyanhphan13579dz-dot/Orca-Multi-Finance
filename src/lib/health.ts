@@ -5,6 +5,8 @@ import type { ProviderStatus } from "./types";
  * Provider health registry + circuit breaker (in-process, persisted best-effort).
  * Every outbound provider call flows through recordSuccess/recordFailure so the
  * /system ops dashboard and the freshness gate always know pipeline state.
+ *
+ * Tuned soft: trip only after sustained failures; reopen quickly so charts/quotes recover.
  */
 
 interface ProviderState {
@@ -23,8 +25,10 @@ interface ProviderState {
   events: { at: string; event: string; message: string | null; latencyMs: number | null }[];
 }
 
-const CIRCUIT_FAILURE_THRESHOLD = 6;
-const CIRCUIT_OPEN_MS = 25_000;
+/** Trip only after sustained failures — avoid cascading "unavailable" on blips. */
+const CIRCUIT_FAILURE_THRESHOLD = 8;
+/** Short open window so half-open probe resumes traffic quickly. */
+const CIRCUIT_OPEN_MS = 12_000;
 const MAX_EVENTS = 20;
 
 const registry = new Map<string, ProviderState>();
@@ -117,6 +121,7 @@ export function isCircuitOpen(provider: string): boolean {
   if (Date.now() >= s.circuitOpenUntil) {
     s.circuitOpenUntil = null;
     s.halfOpen = true;
+    pushEvent(s, "half_open", "probe window after circuit timeout", null);
     return false;
   }
   return true;
@@ -132,6 +137,7 @@ export function recordSuccess(provider: string, latencyMs: number, domain = "gen
   if (s.latencies.length > 50) s.latencies.shift();
   s.lastError = null;
   s.halfOpen = false;
+  s.circuitOpenUntil = null;
   pushEvent(s, "success", null, latencyMs);
   void persist(s);
 }
