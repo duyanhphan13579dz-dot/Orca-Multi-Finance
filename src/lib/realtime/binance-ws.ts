@@ -3,18 +3,18 @@ import { recordFailure, recordSuccess } from "../health";
 import { eventBus } from "../events";
 
 /**
- * CENTRALIZED BINANCE WEBSOCKET INGESTION ENGINE (perf-tuned)
+ * CENTRALIZED BINANCE WEBSOCKET INGESTION ENGINE (low-latency)
  *
  * One shared connection for the whole platform (never per-user):
  *   wss://stream.binance.com  !ticker@arr      → spot realtime store
  *   wss://fstream.binance.com !markPrice@arr   → futures marks/funding store
  *   wss://stream.binance.com  /ws              → dynamic kline SUBSCRIBE
  *
- * Hot-path optimisations:
- *   - tick emit only when channel has listeners (avoids 2k+ no-op emits/msg)
- *   - kline uses incremental SUBSCRIBE/UNSUBSCRIBE (no full reconnect churn)
- *   - stats use ring counters instead of unbounded timestamp arrays
- *   - stale ticker/mark pruning on watchdog
+ * Latency optimisations:
+ *   - first reconnect hops ~200–800ms (was 2s+)
+ *   - silent detection 25s spot/fut, 45s kline
+ *   - tick emit only when channel has listeners
+ *   - kline incremental SUBSCRIBE/UNSUBSCRIBE
  */
 
 export interface WsTicker {
@@ -55,21 +55,7 @@ export interface RealtimeStats {
 }
 
 export const KLINE_INTERVALS = new Set([
-  "1m",
-  "3m",
-  "5m",
-  "15m",
-  "30m",
-  "1h",
-  "2h",
-  "4h",
-  "6h",
-  "8h",
-  "12h",
-  "1d",
-  "3d",
-  "1w",
-  "1M",
+  "1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "8h", "12h", "1d", "3d", "1w", "1M",
 ]);
 
 export interface KlineCandle {
@@ -115,11 +101,8 @@ function noteMsg(st: PrivStats, now = Date.now()) {
   const sec = Math.floor(now / 1000);
   if (sec !== st.secBase) {
     const drift = sec - st.secBase;
-    if (drift >= 60) {
-      st.secBuckets.fill(0);
-    } else {
-      for (let i = 1; i <= drift; i++) st.secBuckets[(st.secBase + i) % 60] = 0;
-    }
+    if (drift >= 60) st.secBuckets.fill(0);
+    else for (let i = 1; i <= drift; i++) st.secBuckets[(st.secBase + i) % 60] = 0;
     st.secBase = sec;
   }
   st.secBuckets[sec % 60]++;
@@ -129,7 +112,7 @@ function msgsPerMin(st: PrivStats, now = Date.now()): number {
   const sec = Math.floor(now / 1000);
   if (sec - st.secBase >= 60) return 0;
   let sum = 0;
-  for (let i = 0; i < 60; i++) sum += st.secBuckets[i];
+  for (let i = 0; i < 60; i++) sum += st.secBuckets[i]!;
   return sum;
 }
 
@@ -190,7 +173,7 @@ class BinanceRealtimeEngine {
 
   private scheduleKlineSync() {
     if (this.klineSubTimer) clearTimeout(this.klineSubTimer);
-    this.klineSubTimer = setTimeout(() => this.syncKlineSubscriptions(), 200);
+    this.klineSubTimer = setTimeout(() => this.syncKlineSubscriptions(), 120);
     this.klineSubTimer.unref?.();
   }
 
@@ -206,7 +189,7 @@ class BinanceRealtimeEngine {
     keys.sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
     return keys.slice(0, MAX_KLINE_STREAMS).map((k) => {
       const [sym, tf] = k.split("@");
-      return `${sym.toLowerCase()}@kline_${tf}`;
+      return `${sym!.toLowerCase()}@kline_${tf}`;
     });
   }
 
@@ -214,11 +197,7 @@ class BinanceRealtimeEngine {
     const desired = new Set(this.desiredStreams());
     if (!desired.size) {
       this.klineDesired.clear();
-      try {
-        this.klineWs?.close();
-      } catch {
-        /* noop */
-      }
+      try { this.klineWs?.close(); } catch { /* */ }
       this.klineWs = null;
       this.kline.state = "closed";
       return;
@@ -265,11 +244,7 @@ class BinanceRealtimeEngine {
   }
 
   private openKlineSocket(WSImpl: new (url: string) => WsLike, desired: Set<string>) {
-    try {
-      this.klineWs?.close();
-    } catch {
-      /* noop */
-    }
+    try { this.klineWs?.close(); } catch { /* */ }
     this.klineWs = null;
     this.klineDesired = new Set();
     try {
@@ -287,9 +262,7 @@ class BinanceRealtimeEngine {
           try {
             ws.send(JSON.stringify({ method: "SUBSCRIBE", params, id: this.klineMsgId++ }));
             this.klineDesired = new Set(params);
-          } catch {
-            /* next sync */
-          }
+          } catch { /* */ }
         }
       };
       ws.onmessage = (e) => this.onKlineMessage(e);
@@ -302,7 +275,10 @@ class BinanceRealtimeEngine {
         recordFailure(KLINE_PROVIDER, this.kline.lastError ?? `close ${e.code ?? ""}`);
         if (this.klineRefs.size) {
           this.kline.reconnectAttempts += 1;
-          const delay = Math.min(1500 * 2 ** Math.min(this.kline.reconnectAttempts, 5), 30_000) + Math.random() * 800;
+          const kn = this.kline.reconnectAttempts;
+          const delay =
+            (kn <= 2 ? 200 * kn : Math.min(1200 * 2 ** Math.min(kn - 1, 5), 25_000)) +
+            Math.random() * 200;
           this.kline.state = "retrying";
           if (this.klineTimer) clearTimeout(this.klineTimer);
           this.klineTimer = setTimeout(() => {
@@ -335,18 +311,12 @@ class BinanceRealtimeEngine {
       const close = Number(k.c);
       if (!Number.isFinite(time) || open <= 0 || high < low || close <= 0) return;
       const candle: KlineCandle = {
-        time,
-        open,
-        high,
-        low,
-        close,
+        time, open, high, low, close,
         volume: Number(k.v) || 0,
         closed: Boolean(k.x),
       };
       eventBus.emit(`kline:${sym}:${tf}`, { symbol: sym, timeframe: tf, candle });
-    } catch {
-      /* malformed */
-    }
+    } catch { /* */ }
   }
 
   start() {
@@ -361,7 +331,7 @@ class BinanceRealtimeEngine {
     }
     this.connect("spot", SPOT_URL);
     this.connect("futures", FUT_URL);
-    this.watchdog = setInterval(() => this.checkLiveness(), 15_000);
+    this.watchdog = setInterval(() => this.checkLiveness(), 8_000);
     this.watchdog.unref?.();
   }
 
@@ -393,9 +363,7 @@ class BinanceRealtimeEngine {
           const parsed = JSON.parse(String(e.data)) as { stream?: string; data?: unknown };
           if (kind === "spot") this.ingestTickers(parsed.data);
           else this.ingestMarks(parsed.data);
-        } catch {
-          /* drop */
-        }
+        } catch { /* */ }
       };
       ws.onerror = (e) => {
         st.lastError = wsErrorMessage(e);
@@ -417,8 +385,14 @@ class BinanceRealtimeEngine {
   private scheduleReconnect(kind: "spot" | "futures", url: string) {
     const st = this.stats(kind);
     st.reconnectAttempts += 1;
-    const base = st.reconnectAttempts <= 4 ? Math.min(2000 * 2 ** st.reconnectAttempts, 20_000) : 60_000;
-    const delay = base + Math.random() * 1500;
+    const n = st.reconnectAttempts;
+    const base =
+      n <= 3
+        ? Math.min(200 * 2 ** Math.max(n - 1, 0), 4_000)
+        : n <= 6
+          ? Math.min(1500 * 2 ** (n - 3), 20_000)
+          : 45_000;
+    const delay = base + Math.random() * (n <= 2 ? 120 : 800);
     st.state = "retrying";
     const timer = setTimeout(() => this.connect(kind, url), delay);
     timer.unref?.();
@@ -430,8 +404,8 @@ class BinanceRealtimeEngine {
     const now = Date.now();
     for (const kind of ["spot", "futures"] as const) {
       const st = this.stats(kind);
-      if (st.state === "open" && st.lastMessageAt && now - st.lastMessageAt > 45_000) {
-        st.lastError = "stream silent > 45s — reconnect";
+      if (st.state === "open" && st.lastMessageAt && now - st.lastMessageAt > 25_000) {
+        st.lastError = "stream silent > 25s — reconnect";
         try {
           (kind === "spot" ? this.spotWs : this.futWs)?.close();
         } catch {
@@ -439,8 +413,13 @@ class BinanceRealtimeEngine {
         }
       }
     }
-    if (this.kline.state === "open" && this.kline.lastMessageAt && now - this.kline.lastMessageAt > 90_000 && this.klineRefs.size) {
-      this.kline.lastError = "kline silent > 90s — reconnect";
+    if (
+      this.kline.state === "open" &&
+      this.kline.lastMessageAt &&
+      now - this.kline.lastMessageAt > 45_000 &&
+      this.klineRefs.size
+    ) {
+      this.kline.lastError = "kline silent > 45s — reconnect";
       try {
         this.klineWs?.close();
       } catch {
