@@ -10,9 +10,10 @@ import { recordMarketSource } from "../realtime/market-source-monitor";
 import { isCircuitOpen } from "../health";
 
 /**
- * Multi-source VN quotes — parallel fan-out + priority merge (không trung bình giá).
- * Ưu tiên: vndirect > vps > ssi-iboard > ssi-fcdata > vietcap > public-vn
- * Deadlines loosened so slow sources still contribute instead of hard-failing.
+ * Multi-source VN quotes — primary-first then selective fan-out.
+ * 1) VNDirect alone (fast path) when coverage ≥ 85%
+ * 2) Only then open VPS / SSI / Vietcap / public to fill gaps
+ * Priority merge: never average prices.
  */
 
 export type MultiQuoteResult = {
@@ -35,6 +36,8 @@ const PRICE_PRIORITY: Record<string, number> = {
 const rank = (src: string) => PRICE_PRIORITY[src] ?? 0;
 const CONFLICT_PCT = 0.015;
 const CONFLICT_ABS = 200;
+/** Skip fan-out when primary already covers this fraction of requested symbols. */
+const PRIMARY_COVERAGE_OK = 0.85;
 
 type TaggedQuote = Quote & { _src: string; _latencyMs: number };
 type SourceBatch = { src: string; quotes: Quote[]; latencyMs: number; ok: boolean };
@@ -177,29 +180,79 @@ function coverageOf(bySym: Map<string, TaggedQuote>, wanted: string[]): number {
   return hit / wanted.length;
 }
 
-/** Parallel multi-source quote fetch with progressive merge. */
+function applyBatch(bySym: Map<string, TaggedQuote>, batch: SourceBatch) {
+  for (const q of batch.quotes) {
+    const sym = String(q.symbol).toUpperCase();
+    const prev = bySym.get(sym);
+    bySym.set(sym, pickPrice(prev, { ...q, symbol: sym }, batch.src, batch.latencyMs));
+  }
+}
+
+function finish(
+  bySym: Map<string, TaggedQuote>,
+  usedSources: string[],
+  latencies: Record<string, number>,
+  batches: SourceBatch[],
+): MultiQuoteResult {
+  const conflicts = countConflicts(batches);
+  const quotes: Quote[] = [...bySym.values()]
+    .map(({ _src, _latencyMs, ...rest }) => rest)
+    .sort((a, b) => a.symbol.localeCompare(b.symbol));
+
+  return {
+    quotes,
+    sources: [...new Set(usedSources)].sort((a, b) => rank(b) - rank(a)),
+    sourceTs: quotes.length ? Date.now() : null,
+    latencies,
+    conflicts,
+  };
+}
+
+/** Parallel multi-source quote fetch with primary-first progressive merge. */
 export async function getMultiQuotes(symbols: string[]): Promise<MultiQuoteResult> {
   const uniq = [...new Set(symbols.map((s) => s.trim().toUpperCase()).filter(Boolean))].slice(0, 80);
   if (!uniq.length) {
     return { quotes: [], sources: [], sourceTs: null, latencies: {}, conflicts: 0 };
   }
 
-  const tasks: { src: string; p: Promise<SourceBatch> }[] = [
-    { src: "vndirect", p: runSource("vndirect", () => vndirect.getVndQuotes(uniq), 9_000) },
-    { src: "vps", p: runSource("vps", () => asPack(() => getVpsQuotes(uniq)), 8_000) },
-    { src: "ssi-iboard", p: runSource("ssi-iboard", () => asPack(() => getSsiIboardQuotes(uniq)), 8_000) },
-    { src: "vietcap", p: runSource("vietcap", () => getVietcapQuotes(uniq), 7_500) },
+  const bySym = new Map<string, TaggedQuote>();
+  const latencies: Record<string, number> = {};
+  const usedSources: string[] = [];
+  const batches: SourceBatch[] = [];
+
+  // —— Fast path: VNDirect alone ——
+  const primary = await runSource("vndirect", () => vndirect.getVndQuotes(uniq), 4_500);
+  latencies.vndirect = primary.latencyMs;
+  batches.push(primary);
+  if (primary.ok || primary.quotes.length) {
+    usedSources.push("vndirect");
+    applyBatch(bySym, primary);
+  }
+
+  if (coverageOf(bySym, uniq) >= PRIMARY_COVERAGE_OK) {
+    return finish(bySym, usedSources, latencies, batches);
+  }
+
+  // —— Fan-out only to fill gaps ——
+  const fallbackTasks: { src: string; p: Promise<SourceBatch> }[] = [
+    { src: "vps", p: runSource("vps", () => asPack(() => getVpsQuotes(uniq)), 5_500) },
+    { src: "ssi-iboard", p: runSource("ssi-iboard", () => asPack(() => getSsiIboardQuotes(uniq)), 5_500) },
+    { src: "vietcap", p: runSource("vietcap", () => getVietcapQuotes(uniq), 5_000) },
     {
       src: "public-vn",
-      p: runSource("public-vn", async () => {
-        const r = await getPublicQuotes(uniq);
-        return { quotes: r.quotes ?? [], sourceTs: r.sourceTs ?? Date.now() };
-      }, 8_000),
+      p: runSource(
+        "public-vn",
+        async () => {
+          const r = await getPublicQuotes(uniq);
+          return { quotes: r.quotes ?? [], sourceTs: r.sourceTs ?? Date.now() };
+        },
+        5_500,
+      ),
     },
   ];
 
   if (ssiFcConfigured()) {
-    tasks.push({
+    fallbackTasks.push({
       src: "ssi-fcdata",
       p: runSource(
         "ssi-fcdata",
@@ -208,39 +261,30 @@ export async function getMultiQuotes(symbols: string[]): Promise<MultiQuoteResul
           if (Array.isArray(r)) return { quotes: r, sourceTs: r.length ? Date.now() : null };
           return r as QuotePack;
         },
-        8_000,
+        5_500,
       ),
     });
   }
 
-  const bySym = new Map<string, TaggedQuote>();
-  const latencies: Record<string, number> = {};
-  const usedSources: string[] = [];
-  const batches: SourceBatch[] = [];
-
   await new Promise<void>((resolve) => {
-    let pending = tasks.length;
+    let pending = fallbackTasks.length;
     if (!pending) {
       resolve();
       return;
     }
-    const hardStop = setTimeout(() => resolve(), 11_000);
+    const hardStop = setTimeout(() => resolve(), 7_000);
     let settled = false;
 
-    for (const { src, p } of tasks) {
+    for (const { src, p } of fallbackTasks) {
       void p.then((batch) => {
         batches.push(batch);
         latencies[src] = batch.latencyMs;
         if (batch.ok || batch.quotes.length) {
           usedSources.push(src);
-          for (const q of batch.quotes) {
-            const sym = String(q.symbol).toUpperCase();
-            const prev = bySym.get(sym);
-            bySym.set(sym, pickPrice(prev, { ...q, symbol: sym }, batch.src, batch.latencyMs));
-          }
+          applyBatch(bySym, batch);
         }
         pending -= 1;
-        if (!settled && coverageOf(bySym, uniq) >= 0.999) {
+        if (!settled && coverageOf(bySym, uniq) >= 0.98) {
           settled = true;
           clearTimeout(hardStop);
           resolve();
@@ -254,23 +298,5 @@ export async function getMultiQuotes(symbols: string[]): Promise<MultiQuoteResul
     }
   });
 
-  if (coverageOf(bySym, uniq) < 0.85) {
-    await Promise.race([
-      Promise.all(tasks.map((t) => t.p.catch(() => null))),
-      new Promise((r) => setTimeout(r, 2_500)),
-    ]);
-  }
-
-  const conflicts = countConflicts(batches);
-  const quotes: Quote[] = [...bySym.values()]
-    .map(({ _src, _latencyMs, ...rest }) => rest)
-    .sort((a, b) => a.symbol.localeCompare(b.symbol));
-
-  return {
-    quotes,
-    sources: [...new Set(usedSources)].sort((a, b) => rank(b) - rank(a)),
-    sourceTs: quotes.length ? Date.now() : null,
-    latencies,
-    conflicts,
-  };
+  return finish(bySym, usedSources, latencies, batches);
 }
