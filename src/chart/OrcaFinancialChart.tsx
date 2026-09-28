@@ -1,11 +1,8 @@
 "use client";
 
 /**
- * ORCA FINANCIAL CHART — history + toggleable indicators (EMA/BB/VWAP/RSI/MACD/S-R).
- * Types from chart-const only — never import server-only services.
- * lightweight-charts is dynamic-imported so the main bundle stays light until mount.
- *
- * Chart-kind switch (Nến/Đường/Vùng/Bar) is visibility-only — no setData/rebuild.
+ * ORCA FINANCIAL CHART — history + toggleable indicators.
+ * VN live scale: bidirectional board-lot ↔ full-VND guard (prevents last-candle spike).
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { IChartApi } from "lightweight-charts";
@@ -35,12 +32,7 @@ const CHART_KINDS: { id: ChartKind; label: string }[] = [
 
 type IndKey = "ema" | "bollinger" | "vwap" | "rsi" | "macd" | "srLevels";
 
-const OVERLAY_INDS: {
-  key: IndKey | "volume";
-  label: string;
-  short: string;
-  color: string;
-}[] = [
+const OVERLAY_INDS: { key: IndKey | "volume"; label: string; short: string; color: string }[] = [
   { key: "ema", label: "EMA 20/50", short: "EMA", color: T.accent },
   { key: "bollinger", label: "Bollinger", short: "BB", color: "#6ea8fe" },
   { key: "vwap", label: "VWAP", short: "VWAP", color: T.info },
@@ -48,12 +40,7 @@ const OVERLAY_INDS: {
   { key: "volume", label: "Volume", short: "Vol", color: "#94a3b8" },
 ];
 
-const OSC_INDS: {
-  key: IndKey;
-  label: string;
-  short: string;
-  color: string;
-}[] = [
+const OSC_INDS: { key: IndKey; label: string; short: string; color: string }[] = [
   { key: "rsi", label: "RSI (14)", short: "RSI", color: T.purple },
   { key: "macd", label: "MACD", short: "MACD", color: T.accent2 },
 ];
@@ -162,10 +149,7 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
             fontSize: 11,
             fontFamily: "ui-monospace, Menlo, Consolas, monospace",
           },
-          grid: {
-            vertLines: { color: T.grid },
-            horzLines: { color: T.grid },
-          },
+          grid: { vertLines: { color: T.grid }, horzLines: { color: T.grid } },
           crosshair: { mode: CrosshairMode.Normal },
           rightPriceScale: { borderVisible: false, scaleMargins: { top: 0.08, bottom: 0.18 } },
           timeScale: { borderVisible: false, timeVisible: true, secondsVisible: false },
@@ -183,7 +167,7 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
         chart.applyOptions({ width: hostRef.current.clientWidth });
         if (!cancelled) setEngineReady(true);
       } catch {
-        /* keep page alive */
+        /* */
       }
     })();
 
@@ -193,7 +177,7 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
       try {
         chart?.remove();
       } catch {
-        /* noop */
+        /* */
       }
       chartRef.current = null;
       mgrRef.current = null;
@@ -255,7 +239,7 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
       if (extraLevels?.length) mgr.rebuildExtraLevels(extraLevels);
       chart.timeScale().fitContent();
     } catch {
-      /* keep page alive if series fails */
+      /* */
     }
   }, [data, prefs.volume, prefs.indicators, extraLevels, engineReady]);
 
@@ -281,21 +265,27 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
             let candle = c;
             const hist = dataRef.current?.candles;
             const lastHist = hist?.length ? hist[hist.length - 1] : null;
-            if (
-              assetType === "stock" &&
-              lastHist &&
-              lastHist.close > 0 &&
-              c.close > 0 &&
-              c.close / lastHist.close > 50
-            ) {
-              const factor = c.close / lastHist.close > 500 ? 1_000 : c.close / lastHist.close;
-              candle = {
-                ...c,
-                open: c.open / factor,
-                high: c.high / factor,
-                low: c.low / factor,
-                close: c.close / factor,
-              };
+            if (assetType === "stock" && lastHist && lastHist.close > 0 && c.close > 0) {
+              const ratio = c.close / lastHist.close;
+              if (ratio > 50) {
+                const factor = ratio > 500 ? 1_000 : ratio;
+                candle = {
+                  ...c,
+                  open: c.open / factor,
+                  high: c.high / factor,
+                  low: c.low / factor,
+                  close: c.close / factor,
+                };
+              } else if (ratio < 1 / 50) {
+                const factor = ratio < 1 / 500 ? 1_000 : Math.round(1 / ratio);
+                candle = {
+                  ...c,
+                  open: c.open * factor,
+                  high: c.high * factor,
+                  low: c.low * factor,
+                  close: c.close * factor,
+                };
+              }
             }
             mgr.updateLive(candle);
             if (candle.close != null && Number.isFinite(candle.close)) {
@@ -303,7 +293,7 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
             }
             if (closed) void mutate();
           } catch {
-            /* keep page alive */
+            /* */
           }
         },
         onResyncNeeded: () => {
@@ -324,12 +314,7 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
     kindRef.current = kind;
     setActiveKind(kind);
     mgrRef.current?.setKind(kind);
-    update({
-      chart: {
-        ...settings.chart,
-        chartType: kind,
-      },
-    });
+    update({ chart: { ...settings.chart, chartType: kind } });
   };
 
   const toggleInd = (key: IndKey | "volume") => {
@@ -350,12 +335,7 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
     if (key === "srLevels") {
       mgr?.rebuildSrLines(dataRef.current?.indicators ?? null, !!nextInd.srLevels);
     }
-    update({
-      chart: {
-        ...settings.chart,
-        indicators: nextInd,
-      },
-    });
+    update({ chart: { ...settings.chart, indicators: nextInd } });
   };
 
   const isIndOn = (key: IndKey | "volume") => {
