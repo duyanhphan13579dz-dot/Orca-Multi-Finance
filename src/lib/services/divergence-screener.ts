@@ -66,14 +66,17 @@ function strengthOk(s: DivergenceStrength, min: DivergenceStrength): boolean {
 }
 
 function isAlertWorthy(d: DivergenceSignal): boolean {
-  if (d.strength === "A" && d.confidence >= 0.55) return true;
+  const multi = d.structure === "double" || d.structure === "triple";
+  const confFloor = multi ? 0.5 : 0.55;
+  if (d.strength === "A" && d.confidence >= confFloor) return true;
   if (
     d.strength === "B" &&
     (d.kind === "regular_bullish" || d.kind === "regular_bearish") &&
-    d.confidence >= 0.55
+    d.confidence >= confFloor
   ) {
     return true;
   }
+  if (d.strength === "B" && multi && d.confidence >= 0.6) return true;
   return false;
 }
 
