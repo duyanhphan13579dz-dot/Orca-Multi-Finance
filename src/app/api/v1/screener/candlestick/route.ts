@@ -2,17 +2,21 @@ import { ok, unavailable, badRequest } from "@/lib/envelope";
 import {
   getRecentPatternAlerts,
   screenCandlestickPatterns,
+  screenCryptoCandlePatterns,
+  screenForexCandlePatterns,
+  screenMultiAssetCandlePatterns,
 } from "@/lib/services/candlestick-screener";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
-export const maxDuration = 60;
+export const maxDuration = 90;
 
 /**
  * GET /api/v1/screener/candlestick
  *   ?category=bullish_reversal|bearish_reversal|continuation|all
  *   &minScore=55&limit=40&volumeOnly=1&symbols=VCB,FPT
- *   &recent=1  → chỉ trả các cảnh báo đảo chiều đã fire (in-memory, sau cron)
+ *   &asset=stock|crypto|forex|multi  (default stock; multi = VN+crypto+XAU/majors)
+ *   &recent=1  → reversal alerts already fired
  */
 export async function GET(req: Request) {
   const url = new URL(req.url);
@@ -38,7 +42,11 @@ export async function GET(req: Request) {
   if (!allowed.has(category)) {
     return badRequest("category không hợp lệ");
   }
-  const minScore = Number(url.searchParams.get("minScore") ?? 55);
+  const asset = (url.searchParams.get("asset") ?? "stock").toLowerCase();
+  if (!["stock", "crypto", "forex", "multi"].includes(asset)) {
+    return badRequest("asset phải là stock|crypto|forex|multi");
+  }
+  const minScore = Number(url.searchParams.get("minScore") ?? (asset === "stock" ? 55 : 48));
   const limit = Number(url.searchParams.get("limit") ?? 40);
   const volumeOnly = url.searchParams.get("volumeOnly") === "1";
   const symbolsRaw = url.searchParams.get("symbols") ?? "";
@@ -47,27 +55,44 @@ export async function GET(req: Request) {
     : undefined;
 
   try {
-    const r = await screenCandlestickPatterns({
+    const opts = {
       category,
       minScore: Number.isFinite(minScore) ? minScore : 55,
       limit: Number.isFinite(limit) ? limit : 40,
       volumeOnly,
       symbols,
-    });
+      assetClass: (asset === "multi" ? "stock" : asset) as "stock" | "forex" | "crypto",
+    };
+    const r =
+      asset === "multi"
+        ? await screenMultiAssetCandlePatterns(opts)
+        : asset === "crypto"
+          ? await screenCryptoCandlePatterns(opts)
+          : asset === "forex"
+            ? await screenForexCandlePatterns(opts)
+            : await screenCandlestickPatterns(opts);
+
     const payload = r ?? {
       rows: [],
       scanned: 0,
       skipped: 0,
-      meta: { source: "candlestick-screener", sourceTimestampMs: Date.now(), hasData: false, partial: true,
-        note: "OHLCV tạm lỗi — thử lại sau" },
+      meta: {
+        source: "candlestick-screener",
+        sourceTimestampMs: Date.now(),
+        hasData: false,
+        partial: true,
+        note: "OHLCV tạm lỗi — thử lại sau",
+      },
     };
     return ok(
       {
         rows: payload.rows,
         scanned: payload.scanned,
         skipped: payload.skipped,
-        ruleset: "candlestick-ruleset.json v1.0",
-        alertPolicy: "reversal-only (high|very_high + volume gate)",
+        asset,
+        legs: "legs" in payload ? (payload as { legs?: unknown }).legs : undefined,
+        ruleset: "candlestick-engine multi-bar + soft FX/crypto",
+        alertPolicy: "reversal-only (high|very_high + volume gate when available)",
       },
       payload.meta,
     );
