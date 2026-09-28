@@ -109,6 +109,8 @@ export interface TechnicalSnapshot {
   resistance: number[];
   trend: { score: number; label: "strong-up" | "up" | "sideways" | "down" | "strong-down" };
   signals: string[];
+  /** Regular + hidden divergences (RSI / MACD hist). Empty when insufficient bars. */
+  divergences?: DivergenceSignal[];
 }
 
 export interface CandlePattern {
@@ -117,6 +119,53 @@ export interface CandlePattern {
   type: "bullish" | "bearish" | "neutral";
   reliability: "high" | "medium" | "low";
   description: string;
+}
+
+/* ------------------------------ Divergence -------------------------------- */
+
+/** Four canonical divergence kinds (regular = reversal, hidden = continuation). */
+export type DivergenceKind =
+  | "regular_bullish"
+  | "regular_bearish"
+  | "hidden_bullish"
+  | "hidden_bearish";
+
+export type DivergenceOscillator = "rsi" | "macd_hist" | "macd_line" | "stoch";
+
+/** Class A = extreme oscillator zone / strong magnitude; C = weakest. */
+export type DivergenceStrength = "A" | "B" | "C";
+
+export interface DivergencePivot {
+  /** Bar index in the input OHLCV series. */
+  index: number;
+  /** Epoch ms of the bar. */
+  time: number;
+  /** Price at the pivot (high for peaks, low for troughs). */
+  price: number;
+  /** Oscillator value at the pivot (or price when this is a price pivot). */
+  value: number;
+}
+
+/**
+ * Deterministic divergence signal produced by the quant engine.
+ * Phase 0 contract — used by technical snapshot, screener, alerts, LLM data contract.
+ */
+export interface DivergenceSignal {
+  kind: DivergenceKind;
+  oscillator: DivergenceOscillator;
+  /** Caller-supplied timeframe label (e.g. "1h", "1d"); null if unknown. */
+  timeframe: string | null;
+  strength: DivergenceStrength;
+  /** 0..1 from strength + spacing quality. */
+  confidence: number;
+  barsBetween: number;
+  /** Older pivot first, newer second. */
+  pricePivots: [DivergencePivot, DivergencePivot];
+  oscPivots: [DivergencePivot, DivergencePivot];
+  /** Phase 1: always true (only confirmed pivots with full right window). */
+  confirmed: boolean;
+  confirmedAt: string;
+  forming: boolean;
 }
 
 /* --------------------------------- Crypto --------------------------------- */
