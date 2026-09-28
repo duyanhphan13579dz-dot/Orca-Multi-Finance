@@ -14,7 +14,8 @@ import type {
 } from "../types";
 import { LIQUID_BOARD } from "../providers/public-vn-feed";
 import { getSecurity, sectorOf } from "../vn/master";
-import { getVnOhlcv, getVnQuotes } from "./stocks";
+import { getVnQuotes } from "./stocks";
+import { batchVnOhlcv, SCREENER_UNIVERSE_CAP } from "./ohlcv-batch";
 
 export type DivergenceScreenRow = {
   symbol: string;
@@ -100,40 +101,18 @@ function rankSignals(a: DivergenceSignal, b: DivergenceSignal): number {
   return b.confidence - a.confidence;
 }
 
-async function ohlcvVnBatch(symbols: string[]) {
-  const out = new Map<string, Awaited<ReturnType<typeof getVnOhlcv>>>();
-  const chunk = 10;
-  for (let i = 0; i < symbols.length; i += chunk) {
-    const batch = symbols.slice(i, i + chunk);
-    const settled = await Promise.allSettled(
-      batch.map(async (s) => {
-        let pack = await getVnOhlcv(s, 120).catch(() => null);
-        if (!pack?.bars?.length) {
-          await new Promise((r) => setTimeout(r, 60));
-          pack = await getVnOhlcv(s, 120).catch(() => null);
-        }
-        return pack;
-      }),
-    );
-    settled.forEach((r, j) => {
-      if (r.status === "fulfilled" && r.value?.bars?.length) out.set(batch[j]!, r.value);
-    });
-  }
-  return out;
-}
-
 export async function screenVnDivergences(
   opts: DivergenceScreenOpts = {},
 ): Promise<DivergenceScreenResult> {
   const universe = (opts.symbols?.length ? opts.symbols : LIQUID_BOARD)
     .map((s) => s.toUpperCase())
     .filter(Boolean)
-    .slice(0, 120);
+    .slice(0, SCREENER_UNIVERSE_CAP);
   const limit = Math.min(opts.limit ?? 40, 80);
   const tf = opts.timeframe ?? "1d";
 
   const [ohlcvMap, quotesPack] = await Promise.all([
-    ohlcvVnBatch(universe),
+    batchVnOhlcv(universe, { bars: 120, concurrency: 10 }),
     getVnQuotes(universe).catch(() => null),
   ]);
   const quoteBy = new Map((quotesPack?.quotes ?? []).map((q) => [q.symbol.toUpperCase(), q]));
@@ -186,7 +165,7 @@ export async function screenVnDivergences(
     meta: buildMeta({
       source: "divergence-engine+vn-ohlcv",
       sourceTimestampMs: Date.now(),
-      note: `VN · tf=${tf} · minStrength=${opts.minStrength ?? "C"} · ${opts.kind ?? "any"}`,
+      note: `VN · tf=${tf} · minStrength=${opts.minStrength ?? "C"} · ${opts.kind ?? "any"} · universe≤${SCREENER_UNIVERSE_CAP}`,
       hasData: rows.length > 0,
       partial: skipped > 0,
     }),
@@ -205,41 +184,47 @@ export async function screenCryptoDivergences(
   const rows: DivergenceScreenRow[] = [];
   let skipped = 0;
 
-  for (const sym of universe) {
+  // Parallel with concurrency 6 (Binance rate-friendly)
+  const { mapPool } = await import("./ohlcv-batch");
+  const packs = await mapPool(universe, 6, async (sym) => {
     try {
       const bars = await getKlinesDeep(sym, interval, 120);
-      if (!bars?.length || bars.length < 40) {
-        skipped++;
-        continue;
-      }
-      let divs = detectDivergences(bars, {
-        lookback: 100,
-        maxSignals: 8,
-        timeframe: interval,
-        oscillators: oscillatorsFor(opts),
-      });
-      divs = filterSignals(divs, opts);
-      if (!divs.length) continue;
-      divs.sort(rankSignals);
-      const top = divs[0]!;
-      const last = bars[bars.length - 1]!;
-      const prev = bars.length >= 2 ? bars[bars.length - 2]! : null;
-      rows.push({
-        symbol: sym,
-        name: sym.replace("USDT", "/USDT"),
-        sector: "Crypto",
-        asset: "crypto",
-        price: last.close,
-        changePercent: prev?.close ? ((last.close - prev.close) / prev.close) * 100 : null,
-        volume: last.volume ?? null,
-        divergences: divs,
-        top,
-        alertWorthy: isAlertWorthy(top),
-        summary: divergenceSummaryLine(top),
-      });
+      return { sym, bars };
     } catch {
-      skipped++;
+      return { sym, bars: null as Awaited<ReturnType<typeof getKlinesDeep>> | null };
     }
+  });
+
+  for (const { sym, bars } of packs) {
+    if (!bars?.length || bars.length < 40) {
+      skipped++;
+      continue;
+    }
+    let divs = detectDivergences(bars, {
+      lookback: 100,
+      maxSignals: 8,
+      timeframe: interval,
+      oscillators: oscillatorsFor(opts),
+    });
+    divs = filterSignals(divs, opts);
+    if (!divs.length) continue;
+    divs.sort(rankSignals);
+    const top = divs[0]!;
+    const last = bars[bars.length - 1]!;
+    const prev = bars.length >= 2 ? bars[bars.length - 2]! : null;
+    rows.push({
+      symbol: sym,
+      name: sym.replace("USDT", "/USDT"),
+      sector: "Crypto",
+      asset: "crypto",
+      price: last.close,
+      changePercent: prev?.close ? ((last.close - prev.close) / prev.close) * 100 : null,
+      volume: last.volume ?? null,
+      divergences: divs,
+      top,
+      alertWorthy: isAlertWorthy(top),
+      summary: divergenceSummaryLine(top),
+    });
   }
 
   rows.sort((a, b) => {
