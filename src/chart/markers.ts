@@ -1,7 +1,7 @@
 /**
  * MARKERS MANAGER — validated signal markers (Lightweight Charts v5 marker
  * plugin). Every marker originates from deterministic engines (volume spike,
- * RSI extreme crossings on candle close, scalp signal) — never from the LLM.
+ * RSI extreme crossings on candle close, scalp signal, divergence) — never from the LLM.
  */
 import { createSeriesMarkers, type ISeriesApi, type SeriesMarker, type Time, type UTCTimestamp } from "lightweight-charts";
 import type { SignalMarker, SignalType } from "./theme";
@@ -22,6 +22,8 @@ const STYLE: Record<SignalType, { color: string; shape: Shape; position: Pos }> 
   "news-event": { color: T.info, shape: "square", position: "aboveBar" },
   "risk-warning": { color: T.down, shape: "square", position: "aboveBar" },
   "ai-analysis": { color: T.accent, shape: "circle", position: "belowBar" },
+  "divergence-bull": { color: T.up, shape: "circle", position: "belowBar" },
+  "divergence-bear": { color: T.down, shape: "circle", position: "aboveBar" },
 };
 
 export function attachMarkers(series: ISeriesApi<"Candlestick">, markers: SignalMarker[]) {
@@ -38,7 +40,10 @@ export function attachMarkers(series: ISeriesApi<"Candlestick">, markers: Signal
         color: st.color,
         id: `${m.type}-${m.time}`,
         text: m.title,
-        size: m.type === "volume-spike" || m.type === "rsi-extreme" ? 0.6 : 1.2,
+        size:
+          m.type === "volume-spike" || m.type === "rsi-extreme" || m.type.startsWith("divergence")
+            ? 0.7
+            : 1.2,
       };
     });
   return createSeriesMarkers(series, data);
