@@ -1,1 +1,261 @@
-SEE_FILE_/tmp/c_panel.tsx
+"use client";
+
+import type { CandlePattern, TechnicalSnapshot } from "@/lib/types";
+import { Badge, fmtNum, Panel, priceDigits } from "@/components/ui";
+import { Crosshair, Gauge, LineChart, Shield, TrendingDown, TrendingUp, Waves } from "lucide-react";
+
+const TREND_LABEL: Record<string, { vi: string; tone: "up" | "down" | "neutral" }> = {
+  "strong-up": { vi: "Tăng mạnh", tone: "up" },
+  up: { vi: "Tăng", tone: "up" },
+  sideways: { vi: "Đi ngang", tone: "neutral" },
+  down: { vi: "Giảm", tone: "down" },
+  "strong-down": { vi: "Giảm mạnh", tone: "down" },
+};
+
+export function TechnicalPanel({ tech, patterns }: { tech: TechnicalSnapshot | null; patterns: CandlePattern[] }) {
+  if (!tech) {
+    return (
+      <Panel title="Phân tích kỹ thuật">
+        <p className="text-[12px] text-ink-3">Chưa đủ dữ liệu chuỗi giá để tính toán chỉ báo.</p>
+      </Panel>
+    );
+  }
+  const t = TREND_LABEL[tech.trend.label] ?? { vi: tech.trend.label, tone: "neutral" as const };
+  const digits = priceDigits(tech.last);
+  return (
+    <div className="space-y-3">
+      <Panel
+        title={
+          <span className="flex items-center gap-2">
+            <Gauge className="size-4 text-accent" /> Phân tích kỹ thuật
+          </span>
+        }
+        right={
+          <Badge tone={t.tone}>
+            {t.tone === "up" ? <TrendingUp className="size-3" /> : t.tone === "down" ? <TrendingDown className="size-3" /> : null}
+            {t.vi} ({tech.trend.score >= 0 ? "+" : ""}
+            {tech.trend.score.toFixed(1)})
+          </Badge>
+        }
+      >
+        <SectionLabel>Momentum</SectionLabel>
+        <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
+          <Metric
+            label="RSI(14)"
+            value={fmtNum(tech.rsi14, 1)}
+            hint={tech.rsi14 != null ? (tech.rsi14 >= 70 ? "quá mua" : tech.rsi14 <= 30 ? "quá bán" : "trung tính") : undefined}
+            accent={tech.rsi14 != null ? (tech.rsi14 >= 70 ? "down" : tech.rsi14 <= 30 ? "up" : null) : null}
+          />
+          <Metric
+            label="MACD hist"
+            value={tech.macd ? tech.macd.histogram.toPrecision(3) : "—"}
+            hint={tech.macd ? (tech.macd.histogram > 0 ? "đà tăng" : "đà giảm") : undefined}
+            accent={tech.macd ? (tech.macd.histogram > 0 ? "up" : "down") : null}
+          />
+          <Metric label="ATR(14)" value={fmtNum(tech.atr14, digits)} hint="biên dao động" />
+          <Metric
+            label="Volatility 30d"
+            value={tech.volatility30d != null ? `${(tech.volatility30d * 100).toFixed(1)}%` : "—"}
+            hint="annualized"
+          />
+        </div>
+
+        <SectionLabel className="mt-3">Đường trung bình</SectionLabel>
+        <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
+          <Metric label="SMA20" value={fmtNum(tech.sma.sma20, digits)} above={cmp(tech.last, tech.sma.sma20)} />
+          <Metric label="SMA50" value={fmtNum(tech.sma.sma50, digits)} above={cmp(tech.last, tech.sma.sma50)} />
+          <Metric label="SMA200" value={fmtNum(tech.sma.sma200, digits)} above={cmp(tech.last, tech.sma.sma200)} />
+          <Metric label="Max drawdown (1Y)" value={tech.maxDrawdown != null ? `${(tech.maxDrawdown * 100).toFixed(1)}%` : "—"} />
+        </div>
+
+        <SectionLabel className="mt-3">Hiệu suất</SectionLabel>
+        <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
+          <Metric label="7 ngày" value={pct(tech.returns.d7)} signed />
+          <Metric label="30 ngày" value={pct(tech.returns.d30)} signed />
+          <Metric label="YTD" value={pct(tech.returns.ytd)} signed />
+          <Metric label="1 năm" value={pct(tech.returns.y1)} signed />
+        </div>
+
+        <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-2">
+          <div className="panel-inset p-2.5">
+            <div className="mb-1.5 flex items-center gap-1.5 text-[11px] font-medium text-ink-2">
+              <Shield className="size-3.5 text-up" /> Hỗ trợ
+            </div>
+            <div className="num flex flex-wrap gap-1.5 text-[12px]">
+              {tech.support.length ? (
+                tech.support.map((s) => (
+                  <span key={s} className="rounded bg-up/10 px-1.5 py-0.5 text-up">
+                    {fmtNum(s, digits)}
+                  </span>
+                ))
+              ) : (
+                <span className="text-ink-3">—</span>
+              )}
+            </div>
+          </div>
+          <div className="panel-inset p-2.5">
+            <div className="mb-1.5 flex items-center gap-1.5 text-[11px] font-medium text-ink-2">
+              <Crosshair className="size-3.5 text-down" /> Kháng cự
+            </div>
+            <div className="num flex flex-wrap gap-1.5 text-[12px]">
+              {tech.resistance.length ? (
+                tech.resistance.map((s) => (
+                  <span key={s} className="rounded bg-down/10 px-1.5 py-0.5 text-down">
+                    {fmtNum(s, digits)}
+                  </span>
+                ))
+              ) : (
+                <span className="text-ink-3">—</span>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {tech.signals?.length > 0 && (
+          <ul className="mt-3 space-y-1 border-t border-line/60 pt-2.5">
+            {tech.signals.map((s, i) => (
+              <li key={i} className="flex items-start gap-2 text-[12px] text-ink-2">
+                <LineChart className="mt-0.5 size-3.5 shrink-0 text-accent/70" />
+                {s}
+              </li>
+            ))}
+          </ul>
+        )}
+      </Panel>
+
+      <Panel
+        title={
+          <span className="flex items-center gap-2">
+            <Waves className="size-4 text-accent" /> Mô hình nến nhận diện
+          </span>
+        }
+      >
+        {!patterns.length ? (
+          <p className="text-[12px] text-ink-3">
+            Không có mô hình nến đáng chú ý trong 5 kỳ gần nhất — thị trường đang vận động theo cấu trúc thông thường.
+          </p>
+        ) : (
+          <div className="space-y-2">
+            {patterns.map((p) => (
+              <div key={p.name} className="panel-inset p-2.5">
+                <div className="mb-1 flex flex-wrap items-center gap-2">
+                  <span className="text-[12px] font-semibold">{p.nameVi}</span>
+                  <span className="text-[10px] text-ink-3">({p.name})</span>
+                  <Badge tone={p.type === "bullish" ? "up" : p.type === "bearish" ? "down" : "neutral"}>
+                    {p.type === "bullish" ? "thiên tăng" : p.type === "bearish" ? "thiên giảm" : "trung tính"}
+                  </Badge>
+                  <Badge tone="warn">
+                    độ tin cậy {p.reliability === "high" ? "cao" : p.reliability === "medium" ? "trung bình" : "thấp"}
+                  </Badge>
+                </div>
+                <p className="text-[12px] leading-relaxed text-ink-2">{p.description}</p>
+              </div>
+            ))}
+          </div>
+        )}
+      </Panel>
+
+      {tech.divergences && tech.divergences.length > 0 && (
+        <Panel
+          title={
+            <span className="flex items-center gap-2">
+              <LineChart className="size-4 text-accent" /> Phân kỳ (divergence)
+            </span>
+          }
+        >
+          <div className="space-y-2">
+            {tech.divergences.map((d, i) => {
+              const isBull = d.kind.includes("bullish");
+              const osc =
+                d.oscillator === "rsi" ? "RSI" : d.oscillator === "macd_hist" ? "MACD hist" : d.oscillator;
+              const kindLabel =
+                d.kind === "regular_bullish"
+                  ? "Regular ↑ đảo chiều lên"
+                  : d.kind === "regular_bearish"
+                    ? "Regular ↓ đảo chiều xuống"
+                    : d.kind === "hidden_bullish"
+                      ? "Hidden ↑ tiếp diễn"
+                      : d.kind === "hidden_bearish"
+                        ? "Hidden ↓ tiếp diễn"
+                        : d.kind;
+              return (
+                <div key={`${d.kind}-${d.oscillator}-${i}`} className="panel-inset p-2.5">
+                  <div className="mb-1 flex flex-wrap items-center gap-2">
+                    <Badge tone={isBull ? "up" : "down"}>{kindLabel}</Badge>
+                    <Badge tone="neutral">{osc}</Badge>
+                    <Badge tone="warn">class {d.strength}</Badge>
+                    <span className="text-[10px] text-ink-3">
+                      conf {(d.confidence * 100).toFixed(0)}% · {d.barsBetween} nến
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-ink-2">
+                    Pivot giá {fmtNum(d.pricePivots[0].price, digits)} → {fmtNum(d.pricePivots[1].price, digits)} · osc{" "}
+                    {d.oscPivots[0].value.toFixed(2)} → {d.oscPivots[1].value.toFixed(2)}
+                  </p>
+                </div>
+              );
+            })}
+          </div>
+        </Panel>
+      )}
+    </div>
+  );
+}
+
+function SectionLabel({ children, className = "" }: { children: React.ReactNode; className?: string }) {
+  return (
+    <div className={`mb-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-ink-3 ${className}`}>{children}</div>
+  );
+}
+
+function Metric({
+  label,
+  value,
+  hint,
+  above,
+  signed,
+  accent,
+}: {
+  label: string;
+  value: string;
+  hint?: string;
+  above?: boolean | null;
+  signed?: boolean;
+  accent?: "up" | "down" | null;
+}) {
+  const signedNum = signed ? parseFloat(value) : NaN;
+  const tone =
+    accent === "up"
+      ? "text-up"
+      : accent === "down"
+        ? "text-down"
+        : signed && Number.isFinite(signedNum)
+          ? signedNum > 0
+            ? "text-up"
+            : signedNum < 0
+              ? "text-down"
+              : "text-ink"
+          : "text-ink";
+  return (
+    <div className="panel-inset p-2.5">
+      <div className="flex items-center justify-between">
+        <span className="text-[10px] uppercase tracking-wider text-ink-3">{label}</span>
+        {above != null && (
+          <span
+            className={`size-1.5 rounded-full ${above ? "bg-up" : "bg-down"}`}
+            title={above ? "Giá trên đường này" : "Giá dưới đường này"}
+          />
+        )}
+      </div>
+      <div className={`num mt-0.5 text-[14px] ${tone}`}>{value}</div>
+      {hint && <div className="text-[10px] text-ink-3">{hint}</div>}
+    </div>
+  );
+}
+
+function cmp(last: number, ma: number | null): boolean | null {
+  return ma == null ? null : last >= ma;
+}
+function pct(v: number | null): string {
+  return v == null ? "—" : `${v >= 0 ? "+" : ""}${v.toFixed(1)}%`;
+}
