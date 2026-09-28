@@ -25,7 +25,7 @@ const STR = new Set(["A", "B", "C"]);
  * GET /api/v1/screener/divergence
  *   ?asset=stock|crypto|multi
  *   &kind=regular_bullish|…|any
- *   &oscillator=rsi|macd_hist|any
+ *   &oscillator=rsi|macd_hist|macd_line|stoch|any
  *   &minStrength=A|B|C
  *   &timeframe=1d|1h|4h
  *   &limit=40&symbols=VCB,FPT
@@ -98,7 +98,7 @@ export async function GET(req: Request) {
           minStrength: opts.minStrength,
           timeframe: opts.timeframe,
         },
-        engine: "divergence Phase 2 — RSI + MACD hist, confirmed pivots only",
+        engine: "divergence Phase 5–8 — RSI/MACD/Stoch · structure · confirmed pivots",
       },
       r.meta,
     );
