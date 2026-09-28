@@ -370,7 +370,7 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
 
   return (
     <div className="relative rounded-xl border border-border-subtle bg-background-secondary">
-      <div className="flex flex-wrap items-center gap-2 border-b border-border-subtle px-3 py-2">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-border-subtle px-3 py-1.5">
         <span className="text-[13px] font-medium text-text-primary">{title ?? symbol}</span>
         {(assetType === "crypto" || assetType === "stock") && liveState && (
           <span
@@ -437,8 +437,19 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
       </div>
 
       <div className="chart-toolbar-row">
+        <div className="chart-control-group min-w-0 flex-1">
+          <span className="chart-control-label">Chỉ báo</span>
+          <div className="chart-ind-row">
+            <span className="text-[9px] font-semibold tracking-wide text-text-muted opacity-80">Overlay</span>
+            {OVERLAY_INDS.map(renderChip)}
+            <span className="mx-0.5 hidden h-3 w-px shrink-0 bg-border-subtle sm:inline-block" aria-hidden />
+            <span className="text-[9px] font-semibold tracking-wide text-text-muted opacity-80">Osc</span>
+            {OSC_INDS.map(renderChip)}
+          </div>
+        </div>
+
         <div className="chart-control-group">
-          <span className="chart-control-label">Dạng biểu đồ</span>
+          <span className="chart-control-label">Dạng</span>
           <div className="seg" role="group" aria-label="Dạng biểu đồ">
             {CHART_KINDS.map((k) => (
               <button
@@ -451,17 +462,6 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
                 {k.label}
               </button>
             ))}
-          </div>
-        </div>
-
-        <div className="chart-control-group min-w-0 flex-1">
-          <span className="chart-control-label">Chỉ báo</span>
-          <div className="chart-ind-row">
-            <span className="text-[9.5px] font-semibold tracking-wide text-text-muted">Overlay</span>
-            {OVERLAY_INDS.map(renderChip)}
-            <span className="mx-0.5 hidden h-3.5 w-px bg-border-subtle sm:inline-block" aria-hidden />
-            <span className="text-[9.5px] font-semibold tracking-wide text-text-muted">Osc</span>
-            {OSC_INDS.map(renderChip)}
           </div>
         </div>
       </div>
