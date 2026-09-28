@@ -76,6 +76,47 @@ export function macd(
   return { macd: line, signal: sig, histogram: hist };
 }
 
+/**
+ * Stochastic oscillator %K (slow). period=14, smooth=3.
+ * Returns series aligned with input length; null until warm-up.
+ */
+export function stochastic(
+  highs: number[],
+  lows: number[],
+  closes: number[],
+  period = 14,
+  smooth = 3,
+): (number | null)[] {
+  const n = closes.length;
+  const raw: (number | null)[] = new Array(n).fill(null);
+  for (let i = period - 1; i < n; i++) {
+    let hi = -Infinity;
+    let lo = Infinity;
+    for (let j = i - period + 1; j <= i; j++) {
+      if (highs[j] > hi) hi = highs[j];
+      if (lows[j] < lo) lo = lows[j];
+    }
+    const range = hi - lo;
+    raw[i] = range > 1e-12 ? ((closes[i] - lo) / range) * 100 : 50;
+  }
+  if (smooth <= 1) return raw;
+  const out: (number | null)[] = new Array(n).fill(null);
+  for (let i = 0; i < n; i++) {
+    if (raw[i] == null) continue;
+    if (i < period - 1 + smooth - 1) continue;
+    let sum = 0;
+    let cnt = 0;
+    for (let j = i - smooth + 1; j <= i; j++) {
+      if (raw[j] != null) {
+        sum += raw[j] as number;
+        cnt++;
+      }
+    }
+    if (cnt === smooth) out[i] = sum / cnt;
+  }
+  return out;
+}
+
 export function bollinger(
   closes: number[],
   period = 20,
