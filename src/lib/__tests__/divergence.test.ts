@@ -1,12 +1,12 @@
 /**
- * Divergence engine unit tests (Phase 0 contract + Phase 1).
+ * Divergence engine unit tests (Phase 0–8).
  * Run: npm run test:divergence
  */
 import test from "node:test";
 import assert from "node:assert/strict";
 
 import type { OhlcvBar } from "../types";
-import { detectDivergences, divergenceSummaryLine } from "../engines/divergence";
+import { detectDivergences, divergenceSummaryLine, buildDivergenceConfluence } from "../engines/divergence";
 import { analyzeSeries } from "../technical";
 
 function bar(t: number, o: number, h: number, l: number, c: number, v = 100): OhlcvBar {
@@ -65,7 +65,8 @@ test("detectDivergences: signals have valid contract shape", () => {
     assert.ok(
       ["regular_bullish", "regular_bearish", "hidden_bullish", "hidden_bearish"].includes(s.kind),
     );
-    assert.ok(["rsi", "macd_hist"].includes(s.oscillator));
+    assert.ok(["rsi", "macd_hist", "macd_line", "stoch"].includes(s.oscillator));
+    assert.ok(!s.structure || ["single", "double", "triple"].includes(s.structure));
     assert.ok(["A", "B", "C"].includes(s.strength));
     assert.ok(s.confidence >= 0 && s.confidence <= 1);
     assert.ok(s.barsBetween >= 5);
@@ -135,5 +136,60 @@ test("analyzeSeries includes divergences array", () => {
   for (const d of t.divergences ?? []) {
     assert.ok(d.confirmed);
     assert.ok(Number.isFinite(d.confidence));
+  }
+});
+
+test("Phase 5: stoch + macd_line optionals run without throw", () => {
+  const bars = seriesUptrend(120);
+  const signals = detectDivergences(bars, {
+    oscillators: ["stoch", "macd_line"],
+    lookback: 100,
+    maxSignals: 8,
+  });
+  assert.ok(Array.isArray(signals));
+  for (const s of signals) {
+    assert.ok(s.oscillator === "stoch" || s.oscillator === "macd_line");
+    assert.ok(!s.structure || ["single", "double", "triple"].includes(s.structure));
+  }
+});
+
+test("Phase 6: buildDivergenceConfluence requires ≥2 TFs", () => {
+  const empty = buildDivergenceConfluence([]);
+  assert.deepEqual(empty, []);
+  const mk = (tf: string, conf: number) => ({
+    kind: "regular_bullish" as const,
+    oscillator: "rsi" as const,
+    timeframe: tf,
+    strength: "A" as const,
+    confidence: conf,
+    barsBetween: 10,
+    pricePivots: [
+      { index: 0, time: 1, price: 1, value: 1 },
+      { index: 10, time: 2, price: 0.9, value: 0.9 },
+    ] as [{ index: number; time: number; price: number; value: number }, { index: number; time: number; price: number; value: number }],
+    oscPivots: [
+      { index: 0, time: 1, price: 1, value: 25 },
+      { index: 10, time: 2, price: 0.9, value: 35 },
+    ] as [{ index: number; time: number; price: number; value: number }, { index: number; time: number; price: number; value: number }],
+    structure: "single" as const,
+    confirmed: true,
+    confirmedAt: new Date().toISOString(),
+    forming: false,
+  });
+  const one = buildDivergenceConfluence([{ timeframe: "1h", signals: [mk("1h", 0.8)] }]);
+  assert.equal(one.length, 0);
+  const two = buildDivergenceConfluence([
+    { timeframe: "1h", signals: [mk("1h", 0.8)] },
+    { timeframe: "4h", signals: [mk("4h", 0.7)] },
+  ]);
+  assert.equal(two.length, 1);
+  assert.deepEqual(two[0].timeframes.sort(), ["1h", "4h"]);
+});
+
+test("Phase 5 contract: default oscillators include stoch+macd_line", () => {
+  const bars = seriesUptrend(150);
+  const signals = detectDivergences(bars, { lookback: 120, maxSignals: 8 });
+  for (const s of signals) {
+    assert.ok(["rsi", "macd_hist", "macd_line", "stoch"].includes(s.oscillator));
   }
 });
