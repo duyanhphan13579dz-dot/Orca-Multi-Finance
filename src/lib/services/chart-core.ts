@@ -158,11 +158,12 @@ export function computeIndicators(candles: ChartCandle[]): ChartIndicators | nul
   const vwap = vwapSeries(candles);
   const rsiArr = points(times, rsi(closes, 14));
   const m = macd(closes);
-  const hist = m.line.map((v, i) =>
+  // macd() returns { macd, signal, histogram } — never .line
+  const hist = m.macd.map((v, i) =>
     v != null && m.signal[i] != null ? (v as number) - (m.signal[i] as number) : null,
   );
   const macdPts = {
-    macd: points(times, m.line),
+    macd: points(times, m.macd),
     signal: points(times, m.signal),
     histogram: points(times, hist),
   };
