@@ -6,7 +6,8 @@
  *   stock   → SSE (server-side VNDirect WebSocket) + soft REST fallback if delayed
  *   forex   → REST live-quote poll (no public browser WS)
  *
- * Guards: OHLC sanitize, monotonic time, no dual-source race on last bar.
+ * Reconnect: full-jitter fast hops, host rotation, single-flight timer,
+ * visibility/online urgent resume, handshake timeout, onerror+onclose de-duped.
  */
 import type { ChartCandle } from "@/lib/chart-const";
 import type { LiveState } from "./theme";
@@ -81,6 +82,8 @@ export class ChartLiveManager {
   private lastPrice: number | null = null;
   private lastEmitSec = 0;
   private wsAttempts = 0;
+  private visHandler: (() => void) | null = null;
+  private onlineHandler: (() => void) | null = null;
 
   start(symbol: string, timeframe: string, handlers: LiveHandlers, assetType = "crypto"): number {
     this.stop();
@@ -89,6 +92,24 @@ export class ChartLiveManager {
 
     if (assetType === "crypto" && BINANCE_KLINE_TF.has(timeframe)) {
       this.startBinanceWs(symbol, timeframe, handlers, tk);
+      if (typeof document !== "undefined") {
+        const onVis = () => {
+          if (tk !== this.token) return;
+          if (document.visibilityState !== "visible") return;
+          if (this.ws && this.ws.readyState === WebSocket.OPEN) return;
+          this.scheduleWsReconnect(symbol, timeframe, handlers, tk, true);
+        };
+        document.addEventListener("visibilitychange", onVis);
+        this.visHandler = onVis;
+      }
+      if (typeof window !== "undefined") {
+        const onOnline = () => {
+          if (tk !== this.token) return;
+          this.scheduleWsReconnect(symbol, timeframe, handlers, tk, true);
+        };
+        window.addEventListener("online", onOnline);
+        this.onlineHandler = onOnline;
+      }
     } else {
       this.startSse(symbol, timeframe, handlers, assetType, tk);
     }
@@ -112,21 +133,97 @@ export class ChartLiveManager {
     return tk;
   }
 
+  private wsBackoffMs(attempt: number): number {
+    const n = Math.max(1, attempt);
+    if (n === 1) return 40 + Math.floor(Math.random() * 80);
+    if (n === 2) return 120 + Math.floor(Math.random() * 180);
+    if (n === 3) return 300 + Math.floor(Math.random() * 400);
+    const ceiling = Math.min(400 * 2 ** Math.min(n - 1, 5), 12_000);
+    return Math.floor(ceiling * (0.4 + Math.random() * 0.6));
+  }
+
+  private clearWsRetry() {
+    if (this.wsRetryTimer) {
+      clearTimeout(this.wsRetryTimer);
+      this.wsRetryTimer = null;
+    }
+  }
+
+  private scheduleWsReconnect(
+    symbol: string,
+    timeframe: string,
+    handlers: LiveHandlers,
+    tk: number,
+    urgent = false,
+  ) {
+    if (tk !== this.token) return;
+    this.clearWsRetry();
+    this.wsAttempts += 1;
+    const delay = urgent ? 30 + Math.floor(Math.random() * 50) : this.wsBackoffMs(this.wsAttempts);
+    handlers.onLiveState({ state: "reconnecting", ageMs: null });
+    this.wsRetryTimer = setTimeout(() => {
+      this.wsRetryTimer = null;
+      if (tk === this.token) this.startBinanceWs(symbol, timeframe, handlers, tk);
+    }, delay);
+  }
+
   private startBinanceWs(symbol: string, timeframe: string, handlers: LiveHandlers, tk: number) {
     const sym = symbol.toUpperCase().replace(/[^A-Z0-9]/g, "");
     if (!sym) return;
+    this.clearWsRetry();
+
+    const hosts = [
+      "wss://stream.binance.com:9443/ws",
+      "wss://data-stream.binance.vision/ws",
+      "wss://stream.binance.com/ws",
+    ];
+    const host = hosts[this.wsAttempts % hosts.length]!;
     const stream = `${sym.toLowerCase()}@kline_${timeframe}`;
-    const url = `wss://stream.binance.com:9443/ws/${stream}`;
+    const url = `${host}/${stream}`;
+
+    if (this.ws) {
+      try {
+        this.ws.onopen = null;
+        this.ws.onmessage = null;
+        this.ws.onerror = null;
+        this.ws.onclose = null;
+        this.ws.close();
+      } catch {
+        /* */
+      }
+      this.ws = null;
+    }
+
+    let closedHandled = false;
+    const onFail = (urgent = false) => {
+      if (closedHandled || tk !== this.token) return;
+      closedHandled = true;
+      this.ws = null;
+      this.scheduleWsReconnect(symbol, timeframe, handlers, tk, urgent);
+    };
 
     try {
       const ws = new WebSocket(url);
       this.ws = ws;
 
+      const handshakeTimer = setTimeout(() => {
+        if (tk !== this.token || this.ws !== ws) return;
+        if (ws.readyState !== WebSocket.OPEN) {
+          try {
+            ws.close();
+          } catch {
+            onFail(true);
+          }
+        }
+      }, 5_000);
+
       ws.onopen = () => {
         if (tk !== this.token) return;
+        clearTimeout(handshakeTimer);
         this.wsAttempts = 0;
         if (this.everConnected) handlers.onResyncNeeded();
         this.everConnected = true;
+        this.lastEventAt = Date.now();
         handlers.onLiveState({ state: "live", ageMs: 0 });
       };
 
@@ -177,14 +274,8 @@ export class ChartLiveManager {
       };
 
       ws.onclose = () => {
-        if (tk !== this.token) return;
-        this.ws = null;
-        handlers.onLiveState({ state: "reconnecting", ageMs: null });
-        this.wsAttempts += 1;
-        const delay = Math.min(15_000, 400 * 2 ** Math.min(this.wsAttempts, 5)) + Math.random() * 200;
-        this.wsRetryTimer = setTimeout(() => {
-          if (tk === this.token) this.startBinanceWs(symbol, timeframe, handlers, tk);
-        }, delay);
+        clearTimeout(handshakeTimer);
+        onFail(false);
       };
     } catch {
       this.startSse(symbol, timeframe, handlers, "crypto", tk);
@@ -243,7 +334,6 @@ export class ChartLiveManager {
     };
   }
 
-  /** Only fires when primary stream is stale — prevents last-bar double-write races. */
   private startSoftPoll(
     symbol: string,
     timeframe: string,
@@ -330,8 +420,15 @@ export class ChartLiveManager {
 
   stop() {
     this.token++;
+    this.clearWsRetry();
     try {
-      this.ws?.close();
+      if (this.ws) {
+        this.ws.onopen = null;
+        this.ws.onmessage = null;
+        this.ws.onerror = null;
+        this.ws.onclose = null;
+        this.ws.close();
+      }
     } catch {
       /* */
     }
@@ -342,8 +439,14 @@ export class ChartLiveManager {
     this.interval = null;
     if (this.pollTimer) clearInterval(this.pollTimer);
     this.pollTimer = null;
-    if (this.wsRetryTimer) clearTimeout(this.wsRetryTimer);
-    this.wsRetryTimer = null;
+    if (this.visHandler && typeof document !== "undefined") {
+      document.removeEventListener("visibilitychange", this.visHandler);
+    }
+    if (this.onlineHandler && typeof window !== "undefined") {
+      window.removeEventListener("online", this.onlineHandler);
+    }
+    this.visHandler = null;
+    this.onlineHandler = null;
     this.everConnected = false;
     this.lastEventAt = 0;
     this.lastPrice = null;
