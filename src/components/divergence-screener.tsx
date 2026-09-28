@@ -13,6 +13,7 @@ type DivSignal = {
   confidence: number;
   barsBetween: number;
   timeframe: string | null;
+  structure?: "single" | "double" | "triple";
 };
 
 type DivRow = {
@@ -46,9 +47,11 @@ const KINDS = [
 ] as const;
 
 const OSCS = [
-  { id: "any", label: "RSI + MACD" },
+  { id: "any", label: "Tất cả oscillator" },
   { id: "rsi", label: "RSI" },
   { id: "macd_hist", label: "MACD hist" },
+  { id: "macd_line", label: "MACD line" },
+  { id: "stoch", label: "Stochastic" },
 ] as const;
 
 const STRENGTHS = [
@@ -168,7 +171,7 @@ export function DivergenceScreener() {
             <select
               value={oscillator}
               onChange={(e) => setOscillator(e.target.value)}
-              className="input !w-32 !py-1.5 text-[12px]"
+              className="input !w-36 !py-1.5 text-[12px]"
             >
               {OSCS.map((o) => (
                 <option key={o.id} value={o.id}>
@@ -264,9 +267,22 @@ export function DivergenceScreener() {
                         </div>
                       </td>
                       <td className="py-2 text-[11px] text-ink-2">
-                        {t.oscillator === "rsi" ? "RSI" : t.oscillator === "macd_hist" ? "MACD" : t.oscillator}
+                        {t.oscillator === "rsi"
+                          ? "RSI"
+                          : t.oscillator === "macd_hist"
+                            ? "MACD hist"
+                            : t.oscillator === "macd_line"
+                              ? "MACD line"
+                              : t.oscillator === "stoch"
+                                ? "Stoch"
+                                : t.oscillator}
                       </td>
-                      <td className="py-2 text-center font-semibold">{t.strength}</td>
+                      <td className="py-2 text-center font-semibold">
+                        {t.strength}
+                        {t.structure && t.structure !== "single" ? (
+                          <span className="ml-1 text-[10px] font-normal text-text-muted">{t.structure}</span>
+                        ) : null}
+                      </td>
                       <td className="num py-2 text-right">{(t.confidence * 100).toFixed(0)}%</td>
                       <td className="num py-2 text-right">{fmtNum(row.price, 2)}</td>
                       <td className="py-2 pr-3.5 text-right">
@@ -282,7 +298,7 @@ export function DivergenceScreener() {
         <div className="border-t border-line px-3.5 py-2">
           <MetaLine meta={meta ?? data?.meta} />
           <p className="mt-1 text-[10px] text-text-muted">
-            Pivot confirmed (đóng nến) · quant-only · không phải tín hiệu mua/bán.
+            Pivot confirmed (đóng nến) · quant-only · RSI/MACD/Stoch · single/double/triple · không phải tín hiệu mua/bán.
           </p>
         </div>
       </Panel>
