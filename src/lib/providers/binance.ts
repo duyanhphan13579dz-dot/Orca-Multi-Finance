@@ -24,8 +24,8 @@ export class ProviderError extends Error {
 }
 
 const SPOT_HOSTS = [
+  "https://data-api.binance.vision", // geo-friendly (avoids restricted api.binance.com)
   env.binanceBaseUrl,
-  "https://data-api.binance.vision",
   "https://api1.binance.com",
   "https://api2.binance.com",
   "https://api.binance.com",

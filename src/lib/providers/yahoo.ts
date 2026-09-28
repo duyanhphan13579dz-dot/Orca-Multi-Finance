@@ -11,7 +11,7 @@ import { ProviderError } from "./binance";
 
 export const YAHOO = "yahoo-fx";
 
-const HOSTS = ["https://query1.finance.yahoo.com", "https://query2.finance.yahoo.com"];
+const HOSTS = ["https://query2.finance.yahoo.com", "https://query1.finance.yahoo.com"];
 let lastGood = 0;
 
 type YahooChartResp = {
@@ -38,7 +38,7 @@ export async function getYahooChart(yahooSymbol: string, interval: string, range
     const idx = (lastGood + i) % HOSTS.length;
     const res = await httpJson<YahooChartResp>(
       `${HOSTS[idx]}/v8/finance/chart/${encodeURIComponent(yahooSymbol)}?interval=${encodeURIComponent(interval)}&range=${encodeURIComponent(range)}&includePrePost=false`,
-      { provider: YAHOO, timeoutMs: 9_000, retries: 1 },
+      { provider: YAHOO, timeoutMs: 12_000, retries: 2, headers: { Accept: "application/json" } },
     );
     if (res.ok && res.data?.chart?.result?.[0]) {
       lastGood = idx;
@@ -161,7 +161,7 @@ export async function getYahooQuotes(symbols: string[]): Promise<Map<string, Yah
  * Yahoo public chart range ceilings (approx):
  * - 1m: ~7d, 2m–90m: ~60d, 60m/1h: ~730d
  * - 1d / 1wk: multi-year, 1mo: max
- * We request the longest stable window the endpoint accepts.
+ * Futures (GC=F etc.) downsample to monthly when range=max — prefer 2y for true daily bars.
  */
 const INTRADAY_LIMITS: Record<string, string> = {
   "1m": "7d",
@@ -172,7 +172,7 @@ const INTRADAY_LIMITS: Record<string, string> = {
   "60m": "730d",
   "90m": "60d",
   "1h": "730d",
-  "1d": "max",
+  "1d": "2y",
   "1wk": "max",
   "1mo": "max",
   "1w": "max",
@@ -182,6 +182,7 @@ export function yahooIntervalFor(tf: string): { interval: string; range: string;
   if (tf === "4h") return { interval: "1h", range: "730d", aggregate4h: true };
   if (tf === "1w") return { interval: "1wk", range: "max" };
   if (tf === "1M") return { interval: "1mo", range: "max" };
+  if (tf === "1d") return { interval: "1d", range: "2y" };
   if (INTRADAY_LIMITS[tf]) return { interval: tf === "1h" ? "1h" : tf, range: INTRADAY_LIMITS[tf] };
   return null;
 }
