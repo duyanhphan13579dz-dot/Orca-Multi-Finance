@@ -109,7 +109,7 @@ export interface TechnicalSnapshot {
   resistance: number[];
   trend: { score: number; label: "strong-up" | "up" | "sideways" | "down" | "strong-down" };
   signals: string[];
-  /** Regular + hidden divergences (RSI / MACD hist). Empty when insufficient bars. */
+  /** Regular + hidden divergences (RSI / MACD hist / MACD line / Stoch). Empty when insufficient bars. */
   divergences?: DivergenceSignal[];
 }
 
@@ -162,7 +162,12 @@ export interface DivergenceSignal {
   /** Older pivot first, newer second. */
   pricePivots: [DivergencePivot, DivergencePivot];
   oscPivots: [DivergencePivot, DivergencePivot];
-  /** Phase 1: always true (only confirmed pivots with full right window). */
+  /**
+   * single = classic 2-pivot; double/triple = successive same-kind pivots
+   * (Phase 5 — multi-pivot structure).
+   */
+  structure?: "single" | "double" | "triple";
+  /** Phase 1+: always true when right fractal window closed. */
   confirmed: boolean;
   confirmedAt: string;
   forming: boolean;
