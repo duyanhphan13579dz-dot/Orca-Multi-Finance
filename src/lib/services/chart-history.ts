@@ -6,7 +6,6 @@ import { getYahooChart, yahooIntervalFor } from "../providers/yahoo";
 import { getVnOhlcv } from "./stocks";
 import { validateBars, detectGaps } from "../quality";
 import {
-  aggregateCandles,
   binanceInterval,
   TF_MS,
   tfsFor,
@@ -59,7 +58,7 @@ function maxHistoryLimit(assetType: ChartAssetType): number {
 
 async function cryptoCandles(symbol: string, tf: string, limit: number): Promise<CandleSeriesResult> {
   const interval = binanceInterval(tf);
-  const raw = await binance.getKlines(symbol, interval, limit);
+  const raw = await binance.getKlinesDeep(symbol, interval, Math.min(limit, 5000));
   const candles: ChartCandle[] = (raw ?? []).map((k) => ({
     time: k.time,
     open: k.open,
@@ -71,16 +70,17 @@ async function cryptoCandles(symbol: string, tf: string, limit: number): Promise
   return { candles, source: "binance" };
 }
 
-async function stockCandles(symbol: string, tf: string, limit: number): Promise<CandleSeriesResult> {
-  const bars = await getVnOhlcv(symbol, tf, limit);
-  let candles: ChartCandle[] = (bars ?? []).map((b) => toCandle(b as OhlcvBar));
+async function stockCandles(symbol: string, limit: number): Promise<CandleSeriesResult> {
+  const res = await getVnOhlcv(symbol, Math.min(limit, 500));
+  const bars = res?.bars ?? [];
+  let candles: ChartCandle[] = bars.map((b) => toCandle(b));
   candles = scaleVnStockToFullVnd(candles);
   const idx = canonicalIndexSymbol(symbol);
   if (idx) {
     const v = validateIndexCandles(symbol, candles);
     candles = v.valid;
   }
-  return { candles, source: "vnstock" };
+  return { candles, source: res?.meta?.source ?? "vnstock" };
 }
 
 async function yahooCandles(symbol: string, tf: string, limit: number): Promise<CandleSeriesResult> {
@@ -101,30 +101,36 @@ export async function getChartHistory(
 
   try {
     const cacheKey = `chart:v3:${args.assetType}:${symbol}:${tf}:${limit}`;
-    const res = await cached(cacheKey, 60_000, async () => {
-      let series: CandleSeriesResult;
-      if (args.assetType === "crypto") {
-        series = await cryptoCandles(symbol, tf, limit);
-      } else if (args.assetType === "stock" || args.assetType === "index") {
-        series = await stockCandles(symbol, tf, limit);
-      } else {
-        series = await yahooCandles(symbol, tf, limit);
-      }
+    const res = await cached(cacheKey, {
+      ttlMs: args.assetType === "crypto" ? 30_000 : 60_000,
+      staleMs: args.assetType === "crypto" ? 120_000 : 300_000,
+      producer: async () => {
+        let series: CandleSeriesResult;
+        if (args.assetType === "crypto") {
+          series = await cryptoCandles(symbol, tf, limit);
+        } else if (args.assetType === "stock" || args.assetType === "index") {
+          series = await stockCandles(symbol, limit);
+        } else {
+          series = await yahooCandles(symbol, tf, limit);
+        }
 
-      let candles = series.candles;
-      if (candles.length > limit) candles = candles.slice(-limit);
+        let candles = series.candles;
+        if (candles.length > limit) candles = candles.slice(-limit);
 
-      const quality = validateBars(candles as OhlcvBar[]);
-      const gaps = detectGaps(candles as OhlcvBar[], TF_MS[tf] ?? 86_400_000);
-      const suspect = quality.suspect ?? 0;
+        const quality = validateBars(candles as OhlcvBar[]);
+        const cleaned = (quality.cleaned ?? candles) as ChartCandle[];
+        const gapFlag = detectGaps(cleaned as OhlcvBar[], TF_MS[tf] ?? 86_400_000);
+        const gaps = gapFlag && typeof gapFlag.value === "number" ? gapFlag.value : gapFlag ? 1 : 0;
+        const suspect = quality.status === "SUSPECT" || quality.status === "INVALID" ? 1 : 0;
 
-      return {
-        candles,
-        source: series.source,
-        note: series.note,
-        gaps: gaps?.length ?? 0,
-        suspect,
-      };
+        return {
+          candles: cleaned,
+          source: series.source,
+          note: series.note,
+          gaps,
+          suspect,
+        };
+      },
     });
 
     const { candles, source, note, gaps, suspect } = res.value;
