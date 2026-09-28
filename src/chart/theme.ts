@@ -57,7 +57,9 @@ export type SignalType =
   | "rsi-extreme"
   | "news-event"
   | "risk-warning"
-  | "ai-analysis";
+  | "ai-analysis"
+  | "divergence-bull"
+  | "divergence-bear";
 
 export interface SignalMarker {
   time: number; // epoch ms
