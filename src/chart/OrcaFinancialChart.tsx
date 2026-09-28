@@ -218,18 +218,25 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
     if (seq !== loadSeqRef.current) return;
 
     try {
-      const safe = data.candles.filter(
-        (c) =>
-          c &&
-          Number.isFinite(c.time) &&
-          c.time > 0 &&
-          Number.isFinite(c.close) &&
-          c.close > 0 &&
-          Number.isFinite(c.open) &&
-          Number.isFinite(c.high) &&
-          Number.isFinite(c.low) &&
-          c.high >= c.low,
-      );
+      const safe = data.candles
+        .filter(
+          (c) =>
+            c &&
+            Number.isFinite(c.time) &&
+            c.time > 0 &&
+            Number.isFinite(c.close) &&
+            c.close > 0 &&
+            Number.isFinite(c.open) &&
+            c.open > 0 &&
+            Number.isFinite(c.high) &&
+            Number.isFinite(c.low),
+        )
+        .map((c) => {
+          const hi = Math.max(c.open, c.high, c.low, c.close);
+          const lo = Math.min(c.open, c.high, c.low, c.close);
+          return lo > 0 && hi >= lo ? { ...c, high: hi, low: lo } : null;
+        })
+        .filter((c): c is NonNullable<typeof c> => c != null);
       if (!safe.length) return;
       mgr.setHistory(safe, kindRef.current);
       mgr.setVolumeVisible(prefs.volume !== false);
@@ -271,9 +278,28 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
           const mgr = mgrRef.current;
           if (!mgr) return;
           try {
-            mgr.updateLive(c);
-            if (c.close != null && Number.isFinite(c.close)) {
-              mgr.updateIncremental(c.close, c.time);
+            let candle = c;
+            const hist = dataRef.current?.candles;
+            const lastHist = hist?.length ? hist[hist.length - 1] : null;
+            if (
+              assetType === "stock" &&
+              lastHist &&
+              lastHist.close > 0 &&
+              c.close > 0 &&
+              c.close / lastHist.close > 50
+            ) {
+              const factor = c.close / lastHist.close > 500 ? 1_000 : c.close / lastHist.close;
+              candle = {
+                ...c,
+                open: c.open / factor,
+                high: c.high / factor,
+                low: c.low / factor,
+                close: c.close / factor,
+              };
+            }
+            mgr.updateLive(candle);
+            if (candle.close != null && Number.isFinite(candle.close)) {
+              mgr.updateIncremental(candle.close, candle.time);
             }
             if (closed) void mutate();
           } catch {
