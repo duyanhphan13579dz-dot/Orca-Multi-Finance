@@ -1,0 +1,431 @@
+import "server-only";
+import { buildMeta } from "../freshness";
+import {
+  detectDivergences,
+  divergenceSummaryLine,
+  DIVERGENCE_KIND_VI,
+} from "../engines/divergence";
+import type {
+  DivergenceKind,
+  DivergenceOscillator,
+  DivergenceSignal,
+  DivergenceStrength,
+  Meta,
+} from "../types";
+import { LIQUID_BOARD } from "../providers/public-vn-feed";
+import { getSecurity, sectorOf } from "../vn/master";
+import { getVnOhlcv, getVnQuotes } from "./stocks";
+
+export type DivergenceScreenRow = {
+  symbol: string;
+  name: string | null;
+  sector: string | null;
+  asset: "stock" | "crypto";
+  price: number | null;
+  changePercent: number | null;
+  volume: number | null;
+  divergences: DivergenceSignal[];
+  top: DivergenceSignal;
+  alertWorthy: boolean;
+  summary: string;
+};
+
+export type DivergenceScreenResult = {
+  rows: DivergenceScreenRow[];
+  scanned: number;
+  skipped: number;
+  meta: Meta;
+};
+
+export type DivergenceScreenOpts = {
+  symbols?: string[];
+  /** Filter by kind; "any" or omit = all */
+  kind?: DivergenceKind | "any";
+  oscillator?: DivergenceOscillator | "any";
+  minStrength?: DivergenceStrength;
+  timeframe?: string;
+  limit?: number;
+  asset?: "stock" | "crypto" | "multi";
+};
+
+const STRENGTH_RANK: Record<DivergenceStrength, number> = { A: 3, B: 2, C: 1 };
+
+const CRYPTO_UNIVERSE = [
+  "BTCUSDT",
+  "ETHUSDT",
+  "BNBUSDT",
+  "SOLUSDT",
+  "XRPUSDT",
+  "ADAUSDT",
+  "DOGEUSDT",
+  "AVAXUSDT",
+  "DOTUSDT",
+  "LINKUSDT",
+  "MATICUSDT",
+  "NEARUSDT",
+  "ATOMUSDT",
+  "LTCUSDT",
+  "APTUSDT",
+];
+
+function strengthOk(s: DivergenceStrength, min: DivergenceStrength): boolean {
+  return STRENGTH_RANK[s] >= STRENGTH_RANK[min];
+}
+
+function isAlertWorthy(d: DivergenceSignal): boolean {
+  if (d.strength === "A" && d.confidence >= 0.55) return true;
+  if (
+    d.strength === "B" &&
+    (d.kind === "regular_bullish" || d.kind === "regular_bearish") &&
+    d.confidence >= 0.55
+  ) {
+    return true;
+  }
+  return false;
+}
+
+function filterSignals(
+  list: DivergenceSignal[],
+  opts: DivergenceScreenOpts,
+): DivergenceSignal[] {
+  const min = opts.minStrength ?? "C";
+  let out = list.filter((d) => strengthOk(d.strength, min));
+  if (opts.kind && opts.kind !== "any") out = out.filter((d) => d.kind === opts.kind);
+  if (opts.oscillator && opts.oscillator !== "any") {
+    out = out.filter((d) => d.oscillator === opts.oscillator);
+  }
+  return out;
+}
+
+function rankSignals(a: DivergenceSignal, b: DivergenceSignal): number {
+  const wa = isAlertWorthy(a) ? 1 : 0;
+  const wb = isAlertWorthy(b) ? 1 : 0;
+  if (wb !== wa) return wb - wa;
+  if (STRENGTH_RANK[b.strength] !== STRENGTH_RANK[a.strength]) {
+    return STRENGTH_RANK[b.strength] - STRENGTH_RANK[a.strength];
+  }
+  return b.confidence - a.confidence;
+}
+
+async function ohlcvVnBatch(symbols: string[]) {
+  const out = new Map<string, Awaited<ReturnType<typeof getVnOhlcv>>>();
+  const chunk = 10;
+  for (let i = 0; i < symbols.length; i += chunk) {
+    const batch = symbols.slice(i, i + chunk);
+    const settled = await Promise.allSettled(
+      batch.map(async (s) => {
+        let pack = await getVnOhlcv(s, 120).catch(() => null);
+        if (!pack?.bars?.length) {
+          await new Promise((r) => setTimeout(r, 60));
+          pack = await getVnOhlcv(s, 120).catch(() => null);
+        }
+        return pack;
+      }),
+    );
+    settled.forEach((r, j) => {
+      if (r.status === "fulfilled" && r.value?.bars?.length) out.set(batch[j]!, r.value);
+    });
+  }
+  return out;
+}
+
+export async function screenVnDivergences(
+  opts: DivergenceScreenOpts = {},
+): Promise<DivergenceScreenResult> {
+  const universe = (opts.symbols?.length ? opts.symbols : LIQUID_BOARD)
+    .map((s) => s.toUpperCase())
+    .filter(Boolean)
+    .slice(0, 120);
+  const limit = Math.min(opts.limit ?? 40, 80);
+  const tf = opts.timeframe ?? "1d";
+
+  const [ohlcvMap, quotesPack] = await Promise.all([
+    ohlcvVnBatch(universe),
+    getVnQuotes(universe).catch(() => null),
+  ]);
+  const quoteBy = new Map((quotesPack?.quotes ?? []).map((q) => [q.symbol.toUpperCase(), q]));
+
+  const rows: DivergenceScreenRow[] = [];
+  let skipped = 0;
+
+  for (const sym of universe) {
+    const pack = ohlcvMap.get(sym);
+    if (!pack?.bars || pack.bars.length < 40) {
+      skipped++;
+      continue;
+    }
+    let divs = detectDivergences(pack.bars, {
+      lookback: 100,
+      maxSignals: 8,
+      timeframe: tf,
+    });
+    divs = filterSignals(divs, opts);
+    if (!divs.length) continue;
+    divs.sort(rankSignals);
+    const top = divs[0]!;
+    const q = quoteBy.get(sym);
+    const sec = getSecurity(sym);
+    rows.push({
+      symbol: sym,
+      name: sec?.name ?? q?.name ?? null,
+      sector: sectorOf(sym) ?? sec?.sector ?? null,
+      asset: "stock",
+      price: q?.price ?? pack.bars[pack.bars.length - 1]?.close ?? null,
+      changePercent: q?.changePercent ?? null,
+      volume: q?.volume ?? pack.bars[pack.bars.length - 1]?.volume ?? null,
+      divergences: divs,
+      top,
+      alertWorthy: isAlertWorthy(top),
+      summary: divergenceSummaryLine(top),
+    });
+  }
+
+  rows.sort((a, b) => {
+    if (a.alertWorthy !== b.alertWorthy) return a.alertWorthy ? -1 : 1;
+    return rankSignals(a.top, b.top);
+  });
+
+  return {
+    rows: rows.slice(0, limit),
+    scanned: universe.length,
+    skipped,
+    meta: buildMeta({
+      source: "divergence-engine+vn-ohlcv",
+      sourceTimestampMs: Date.now(),
+      note: `VN · tf=${tf} · minStrength=${opts.minStrength ?? "C"} · ${opts.kind ?? "any"}`,
+      hasData: rows.length > 0,
+      partial: skipped > 0,
+    }),
+  };
+}
+
+export async function screenCryptoDivergences(
+  opts: DivergenceScreenOpts = {},
+): Promise<DivergenceScreenResult> {
+  const { getKlinesDeep } = await import("../providers/binance");
+  const universe = (opts.symbols?.length ? opts.symbols : CRYPTO_UNIVERSE)
+    .map((s) => s.toUpperCase())
+    .slice(0, 30);
+  const limit = Math.min(opts.limit ?? 20, 40);
+  const interval = opts.timeframe ?? "1h";
+  const rows: DivergenceScreenRow[] = [];
+  let skipped = 0;
+
+  for (const sym of universe) {
+    try {
+      const bars = await getKlinesDeep(sym, interval, 120);
+      if (!bars?.length || bars.length < 40) {
+        skipped++;
+        continue;
+      }
+      let divs = detectDivergences(bars, {
+        lookback: 100,
+        maxSignals: 8,
+        timeframe: interval,
+      });
+      divs = filterSignals(divs, opts);
+      if (!divs.length) continue;
+      divs.sort(rankSignals);
+      const top = divs[0]!;
+      const last = bars[bars.length - 1]!;
+      const prev = bars.length >= 2 ? bars[bars.length - 2]! : null;
+      rows.push({
+        symbol: sym,
+        name: sym.replace("USDT", "/USDT"),
+        sector: "Crypto",
+        asset: "crypto",
+        price: last.close,
+        changePercent: prev?.close ? ((last.close - prev.close) / prev.close) * 100 : null,
+        volume: last.volume ?? null,
+        divergences: divs,
+        top,
+        alertWorthy: isAlertWorthy(top),
+        summary: divergenceSummaryLine(top),
+      });
+    } catch {
+      skipped++;
+    }
+  }
+
+  rows.sort((a, b) => {
+    if (a.alertWorthy !== b.alertWorthy) return a.alertWorthy ? -1 : 1;
+    return rankSignals(a.top, b.top);
+  });
+
+  return {
+    rows: rows.slice(0, limit),
+    scanned: universe.length,
+    skipped,
+    meta: buildMeta({
+      source: "divergence-engine+binance",
+      sourceTimestampMs: Date.now(),
+      note: `crypto · ${interval} · minStrength=${opts.minStrength ?? "C"}`,
+      hasData: rows.length > 0,
+      partial: skipped > 0,
+    }),
+  };
+}
+
+export async function screenMultiAssetDivergences(
+  opts: DivergenceScreenOpts = {},
+): Promise<DivergenceScreenResult & { legs: { stock: number; crypto: number } }> {
+  const limit = Math.min(opts.limit ?? 50, 100);
+  const [stock, crypto] = await Promise.all([
+    screenVnDivergences({ ...opts, limit }).catch(() => null),
+    screenCryptoDivergences({ ...opts, limit: 20 }).catch(() => null),
+  ]);
+  const rows = [...(stock?.rows ?? []), ...(crypto?.rows ?? [])];
+  rows.sort((a, b) => {
+    if (a.alertWorthy !== b.alertWorthy) return a.alertWorthy ? -1 : 1;
+    return rankSignals(a.top, b.top);
+  });
+  const scanned = (stock?.scanned ?? 0) + (crypto?.scanned ?? 0);
+  const skipped = (stock?.skipped ?? 0) + (crypto?.skipped ?? 0);
+  return {
+    rows: rows.slice(0, limit),
+    scanned,
+    skipped,
+    legs: { stock: stock?.rows.length ?? 0, crypto: crypto?.rows.length ?? 0 },
+    meta: buildMeta({
+      source: "divergence-multi-asset",
+      sourceTimestampMs: Date.now(),
+      note: "stock+crypto divergence screen",
+      hasData: rows.length > 0,
+      partial: skipped > 0,
+    }),
+  };
+}
+
+/* ----------------------------- Phase 3: alerts ---------------------------- */
+
+export type DivergenceAlertEvent = {
+  id: string;
+  symbol: string;
+  name: string | null;
+  sector: string | null;
+  asset: "stock" | "crypto";
+  price: number | null;
+  changePercent: number | null;
+  divergence: DivergenceSignal;
+  summary: string;
+  firedAt: number;
+};
+
+function divergenceAlertStore() {
+  const g = globalThis as typeof globalThis & { __orcaDivEvents?: DivergenceAlertEvent[] };
+  if (!g.__orcaDivEvents) g.__orcaDivEvents = [];
+  return g.__orcaDivEvents;
+}
+
+export function getRecentDivergenceAlerts(limit = 30): DivergenceAlertEvent[] {
+  return divergenceAlertStore().slice(0, limit);
+}
+
+function colorForKind(kind: DivergenceKind): number {
+  switch (kind) {
+    case "regular_bullish":
+      return 0x22c55e;
+    case "regular_bearish":
+      return 0xef4444;
+    case "hidden_bullish":
+      return 0x86efac;
+    case "hidden_bearish":
+      return 0xfca5a5;
+    default:
+      return 0x94a3b8;
+  }
+}
+
+/**
+ * Cron-friendly divergence alert scan (VN liquid board).
+ * Deduped per calendar day (Asia/Ho_Chi_Minh) per symbol+kind+oscillator.
+ */
+export async function runDivergenceAlerts(): Promise<{
+  scanned: number;
+  hits: number;
+  alerted: number;
+  symbols: string[];
+}> {
+  const result = await screenVnDivergences({
+    minStrength: "B",
+    limit: 30,
+    timeframe: "1d",
+  });
+  const hits = (result?.rows ?? []).filter((r) => r.alertWorthy);
+  const scanned = result?.scanned ?? 0;
+  if (!hits.length) return { scanned, hits: 0, alerted: 0, symbols: [] };
+
+  const g = globalThis as typeof globalThis & {
+    __orcaDivAlertDay?: string;
+    __orcaDivAlerted?: Set<string>;
+  };
+  const day = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Ho_Chi_Minh" });
+  if (g.__orcaDivAlertDay !== day) {
+    g.__orcaDivAlertDay = day;
+    g.__orcaDivAlerted = new Set();
+  }
+  const fired = g.__orcaDivAlerted!;
+  const events = divergenceAlertStore();
+
+  let alerted = 0;
+  const symbols: string[] = [];
+
+  try {
+    const { postGlobalDiscord } = await import("./discord-notify");
+    for (const row of hits.slice(0, 12)) {
+      const d = row.top;
+      const key = `${row.symbol}:${d.kind}:${d.oscillator}`;
+      if (fired.has(key)) continue;
+
+      const priceStr = row.price != null ? row.price.toLocaleString("vi-VN") : "—";
+      const chgStr =
+        row.changePercent != null
+          ? `${row.changePercent > 0 ? "+" : ""}${row.changePercent.toFixed(2)}%`
+          : "—";
+      const oscLabel =
+        d.oscillator === "rsi" ? "RSI" : d.oscillator === "macd_hist" ? "MACD hist" : d.oscillator;
+
+      const sent = await postGlobalDiscord({
+        title: `Phân kỳ · ${row.symbol}`,
+        description:
+          `${DIVERGENCE_KIND_VI[d.kind]}\n` +
+          `Giá ${priceStr} (${chgStr}) · class ${d.strength} · conf ${(d.confidence * 100).toFixed(0)}%\n` +
+          `${oscLabel} · ${d.barsBetween} nến · ${row.summary}`,
+        color: colorForKind(d.kind),
+        username: "ORCA Divergence",
+        fields: [
+          { name: "Mã", value: "`" + row.symbol + "`", inline: true },
+          { name: "Giá", value: priceStr, inline: true },
+          { name: "% phiên", value: chgStr, inline: true },
+          { name: "Loại", value: d.kind, inline: true },
+          { name: "Oscillator", value: oscLabel, inline: true },
+          { name: "Ngành", value: row.sector ?? "—", inline: true },
+        ],
+      });
+
+      events.unshift({
+        id: key,
+        symbol: row.symbol,
+        name: row.name,
+        sector: row.sector,
+        asset: row.asset,
+        price: row.price,
+        changePercent: row.changePercent,
+        divergence: d,
+        summary: row.summary,
+        firedAt: Date.now(),
+      });
+      if (events.length > 50) events.length = 50;
+
+      if (sent.ok || sent.skipped) {
+        fired.add(key);
+        symbols.push(row.symbol);
+        if (sent.ok) alerted++;
+      }
+    }
+  } catch (e) {
+    console.warn("[runDivergenceAlerts]", e);
+  }
+
+  return { scanned, hits: hits.length, alerted, symbols };
+}
