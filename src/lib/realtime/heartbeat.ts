@@ -1,6 +1,7 @@
 import "server-only";
 import { probeNetworkLatency } from "../network-latency";
 import { getVnSession } from "../vn/sessions";
+import { ensureSessionPollerStarted } from "./session-poller";
 
 /**
  * Process-level heartbeat orchestrator.
@@ -14,9 +15,9 @@ import { getVnSession } from "../vn/sessions";
 
 const g = globalThis as typeof globalThis & { __orcaHeartbeat?: Heartbeat };
 
-const SESSION_MS = 45_000;
+const SESSION_MS = 25_000;
 const OFFHOURS_MS = 120_000;
-const TICK_MS = 15_000;
+const TICK_MS = 8_000;
 
 class Heartbeat {
   private timer: ReturnType<typeof setInterval> | null = null;
@@ -29,6 +30,11 @@ class Heartbeat {
   start() {
     if (this.timer) return;
     if (process.env.ORCA_HEARTBEAT_DISABLED === "true") return;
+    try {
+      ensureSessionPollerStarted();
+    } catch {
+      /* optional */
+    }
     this.timer = setInterval(() => void this.tick(), TICK_MS);
     this.timer.unref?.();
     void this.tick();

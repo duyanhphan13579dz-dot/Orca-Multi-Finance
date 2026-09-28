@@ -1,5 +1,7 @@
 import { ok, unavailable } from "@/lib/envelope";
 import { getVnIndices, getVnMarketBoard, getVnQuotes } from "@/lib/services/stocks";
+import { ensureHeartbeatStarted } from "@/lib/realtime/heartbeat";
+import { ensureSessionPollerStarted } from "@/lib/realtime/session-poller";
 import { getVnSession } from "@/lib/vn/sessions";
 
 export const dynamic = "force-dynamic";
@@ -12,6 +14,12 @@ export const runtime = "nodejs";
  *  - (no params)                 → full market board
  */
 export async function GET(req: Request) {
+  try {
+    ensureHeartbeatStarted();
+    ensureSessionPollerStarted();
+  } catch {
+    /* */
+  }
   const url = new URL(req.url);
   const symbolsParam = (url.searchParams.get("symbols") ?? "").trim();
   const board = (url.searchParams.get("board") ?? "").toLowerCase();
