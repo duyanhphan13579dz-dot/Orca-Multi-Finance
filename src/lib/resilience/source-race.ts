@@ -4,14 +4,13 @@ import { isCircuitOpen } from "../health";
 /**
  * Parallel multi-source race utilities for VN + global market data.
  * - Skip open circuits
- * - Per-source deadline
+ * - Per-source deadline (default 9s)
  * - Early resolve when coverage threshold met
  * - Merge strategies: firstWins | preferPrimary | fillGaps
  */
 
 export type SourceTask<T> = {
   id: string;
-  /** Provider id used for circuit breaker (defaults to id) */
   circuit?: string;
   run: () => Promise<T>;
   timeoutMs?: number;
@@ -43,7 +42,7 @@ function withDeadline<T>(p: Promise<T>, ms: number): Promise<T> {
 
 export async function settleSource<T>(
   task: SourceTask<T>,
-  defaultTimeoutMs = 6_000,
+  defaultTimeoutMs = 9_000,
 ): Promise<SettledSource<T>> {
   const circuit = task.circuit ?? task.id;
   if (isCircuitOpen(circuit) || isCircuitOpen(`sync:${circuit}`)) {
@@ -69,21 +68,16 @@ export async function settleSource<T>(
   }
 }
 
-/**
- * Fan-out all sources in parallel. Resolves early when `isEnough` is true
- * on any result, or when all settle, or hardStopMs elapses.
- */
 export async function raceSources<T>(
   tasks: SourceTask<T>[],
   opts?: {
     defaultTimeoutMs?: number;
     hardStopMs?: number;
-    /** Return early when this returns true for a settled ok value */
     isEnough?: (value: T, id: string) => boolean;
   },
 ): Promise<SettledSource<T>[]> {
-  const defaultTimeoutMs = opts?.defaultTimeoutMs ?? 6_000;
-  const hardStopMs = opts?.hardStopMs ?? Math.max(defaultTimeoutMs + 1_500, 8_000);
+  const defaultTimeoutMs = opts?.defaultTimeoutMs ?? 9_000;
+  const hardStopMs = opts?.hardStopMs ?? Math.max(defaultTimeoutMs + 2_000, 12_000);
   const results: SettledSource<T>[] = [];
   const pending = tasks.map((task) => settleSource(task, defaultTimeoutMs));
 
@@ -114,7 +108,6 @@ export async function raceSources<T>(
   return results;
 }
 
-/** Pick first ok result in priority order of task ids. */
 export function pickByPriority<T>(
   settled: SettledSource<T>[],
   priority: string[],
@@ -126,7 +119,6 @@ export function pickByPriority<T>(
   return settled.find((s) => s.ok && s.value != null) ?? null;
 }
 
-/** Merge IndexQuote[] by code — higher priority wins non-null fields. */
 export function mergeIndexQuotes(
   batches: { source: string; items: import("../types").IndexQuote[] }[],
   priority: string[],
