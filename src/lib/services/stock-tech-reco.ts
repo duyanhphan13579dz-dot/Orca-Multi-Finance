@@ -3,7 +3,7 @@ import { buildMeta } from "../freshness";
 import { llmChat, llmConfigured } from "../ai/gateway";
 import { collectFactNumbers, validateOutput } from "../ai/validate";
 import { getVnStockDetail } from "./stocks";
-import type { CandlePattern, Meta, TechnicalSnapshot } from "../types";
+import type { CandlePattern, Meta, TechnicalSnapshot, DivergenceSignal } from "../types";
 
 export type RecoStance = "watch-long" | "watch-short" | "neutral";
 export type RecoTone = "up" | "down" | "neutral";
@@ -87,6 +87,44 @@ function confidencePctFrom(factorCount: number, absScore: number, patternBoost: 
   const base = 32 + absScore * 0.5 + factorCount * 4 + patternBoost;
   return Math.max(12, Math.min(92, Math.round(base)));
 }
+
+/** Phase 7: map top divergence into a signed quant weight (confidence-scaled). */
+function divergenceFactorWeight(d: DivergenceSignal): number {
+  const multi = d.structure === "double" || d.structure === "triple";
+  let base = 0;
+  switch (d.kind) {
+    case "regular_bullish":
+      base = d.strength === "A" ? 18 : 14;
+      break;
+    case "regular_bearish":
+      base = d.strength === "A" ? -18 : -14;
+      break;
+    case "hidden_bullish":
+      base = d.strength === "A" ? 10 : 8;
+      break;
+    case "hidden_bearish":
+      base = d.strength === "A" ? -10 : -8;
+      break;
+  }
+  if (multi && (d.kind === "regular_bullish" || d.kind === "regular_bearish")) {
+    base = Math.round(base * 1.25);
+  }
+  return Math.round(base * Math.max(0.3, Math.min(1, d.confidence)));
+}
+
+const OSC_SHORT: Record<string, string> = {
+  rsi: "RSI",
+  macd_hist: "MACD hist",
+  macd_line: "MACD line",
+  stoch: "Stoch",
+};
+
+const KIND_VI: Record<string, string> = {
+  regular_bullish: "PK tăng cổ điển",
+  regular_bearish: "PK giảm cổ điển",
+  hidden_bullish: "PK ẩn tăng",
+  hidden_bearish: "PK ẩn giảm",
+};
 
 export function computeStockTechReco(
   tech: TechnicalSnapshot | null,
@@ -270,6 +308,27 @@ export function computeStockTechReco(
         bias: "down",
         weight: -4,
         note: "Giá sát vùng kháng cự gần nhất",
+      });
+    }
+  }
+
+  // Phase 7 — divergence quant factor (top signal only)
+  const divs = tech.divergences ?? [];
+  if (divs.length > 0) {
+    const top = [...divs].sort((a, b) => b.confidence - a.confidence)[0]!;
+    const w = divergenceFactorWeight(top);
+    if (w !== 0) {
+      score += w;
+      const osc = OSC_SHORT[top.oscillator] ?? top.oscillator;
+      const struct =
+        top.structure && top.structure !== "single" ? ` · ${top.structure}` : "";
+      factors.push({
+        key: "divergence",
+        label: "Phân kỳ",
+        value: `${KIND_VI[top.kind] ?? top.kind} · ${osc} class ${top.strength}${struct}`,
+        bias: w > 0 ? "up" : "down",
+        weight: w,
+        note: `conf ${(top.confidence * 100).toFixed(0)}% · ${top.barsBetween} nến · quant-only`,
       });
     }
   }
