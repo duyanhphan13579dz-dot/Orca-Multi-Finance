@@ -83,10 +83,11 @@ async function stockCandles(symbol: string, limit: number): Promise<CandleSeries
   return { candles, source: res?.meta?.source ?? "vnstock" };
 }
 
-async function yahooCandles(symbol: string, tf: string, limit: number): Promise<CandleSeriesResult> {
-  const interval = yahooIntervalFor(tf);
-  const raw = await getYahooChart(symbol, interval, limit);
-  const candles: ChartCandle[] = (raw ?? []).map((b: OhlcvBar) => toCandle(b));
+async function yahooCandles(symbol: string, tf: string, _limit: number): Promise<CandleSeriesResult> {
+  const cfg = yahooIntervalFor(tf);
+  if (!cfg) return { candles: [], source: "yahoo", note: `tf ${tf} unsupported` };
+  const raw = await getYahooChart(symbol, cfg.interval, cfg.range);
+  const candles = raw?.candles ?? [];
   return { candles, source: "yahoo" };
 }
 
