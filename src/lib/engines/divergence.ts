@@ -1,11 +1,9 @@
 /**
  * DIVERGENCE ENGINE — deterministic regular + hidden divergence detection.
  *
- * Phase 0 contract + Phase 1 implementation.
+ * Phase 0–1: RSI + MACD hist, confirmed pivots, Class A/B/C
+ * Phase 5: + MACD line, Stochastic; double/triple structure on successive pivots
  * Quant-only: pivots on closed bars, no LLM. Callers attach freshness/meta.
- *
- * Types: regular_bullish | regular_bearish | hidden_bullish | hidden_bearish
- * Oscillators (Phase 1): RSI(14), MACD histogram
  */
 
 import type { OhlcvBar } from "../types";
@@ -16,22 +14,16 @@ import type {
   DivergenceStrength,
   DivergencePivot,
 } from "../types";
-import { rsi, macd } from "../technical";
+import { rsi, macd, stochastic } from "../technical";
 
 export interface DetectDivergenceOptions {
-  /** Bars left/right of a fractal pivot (confirmed only). Default 5. */
   pivotLeft?: number;
   pivotRight?: number;
-  /** Min / max bars between the two compared pivots. */
   minBarsBetween?: number;
   maxBarsBetween?: number;
-  /** Max lookback bars from series end. Default 120. */
   lookback?: number;
-  /** Optional timeframe label for the signal (caller supplies). */
   timeframe?: string;
-  /** Which oscillators to scan. Default both. */
   oscillators?: DivergenceOscillator[];
-  /** Max signals returned (most recent first). Default 8. */
   maxSignals?: number;
 }
 
@@ -41,14 +33,13 @@ const DEFAULTS = {
   minBarsBetween: 5,
   maxBarsBetween: 60,
   lookback: 120,
-  oscillators: ["rsi", "macd_hist"] as DivergenceOscillator[],
+  oscillators: ["rsi", "macd_hist", "macd_line", "stoch"] as DivergenceOscillator[],
   maxSignals: 8,
 };
 
 interface PivotPoint {
   index: number;
   value: number;
-  /** For price pivots: high for peaks, low for troughs */
   price: number;
   time: number;
 }
@@ -126,12 +117,14 @@ function strengthFor(
   firstOsc: number,
   secondOsc: number,
 ): DivergenceStrength {
-  if (osc === "rsi") {
+  if (osc === "rsi" || osc === "stoch") {
     if (kind === "regular_bullish" || kind === "hidden_bullish") {
+      if (firstOsc <= 20) return "A";
       if (firstOsc <= 30) return "A";
       if (firstOsc <= 40) return "B";
       return "C";
     }
+    if (firstOsc >= 80) return "A";
     if (firstOsc >= 70) return "A";
     if (firstOsc >= 60) return "B";
     return "C";
@@ -150,11 +143,14 @@ function confidenceFor(
   barsBetween: number,
   minBars: number,
   maxBars: number,
+  structure: "single" | "double" | "triple",
 ): number {
   let c = strength === "A" ? 0.82 : strength === "B" ? 0.62 : 0.42;
   const mid = (minBars + maxBars) / 2;
   const dist = Math.abs(barsBetween - mid) / Math.max(maxBars - minBars, 1);
   c -= dist * 0.12;
+  if (structure === "double") c = Math.min(0.95, c + 0.08);
+  if (structure === "triple") c = Math.min(0.95, c + 0.12);
   return Math.max(0.15, Math.min(0.95, Math.round(c * 100) / 100));
 }
 
@@ -171,6 +167,14 @@ function nearestPivot(pivots: PivotPoint[], index: number): PivotPoint | null {
   return bestDist <= 3 ? best : null;
 }
 
+type PairCond = {
+  kind: DivergenceKind;
+  priceOk: (p1: PivotPoint, p2: PivotPoint) => boolean;
+  oscOk: (o1: PivotPoint, o2: PivotPoint) => boolean;
+  priceList: PivotPoint[];
+  oscList: PivotPoint[];
+};
+
 function pairDivergences(
   pricePeaks: PivotPoint[],
   priceTroughs: PivotPoint[],
@@ -182,91 +186,95 @@ function pairDivergences(
   timeframe: string | undefined,
 ): DivergenceSignal[] {
   const signals: DivergenceSignal[] = [];
+  const conditions: PairCond[] = [
+    {
+      kind: "regular_bullish",
+      priceList: priceTroughs,
+      oscList: oscTroughs,
+      priceOk: (a, b) => b.price < a.price,
+      oscOk: (a, b) => b.value > a.value,
+    },
+    {
+      kind: "regular_bearish",
+      priceList: pricePeaks,
+      oscList: oscPeaks,
+      priceOk: (a, b) => b.price > a.price,
+      oscOk: (a, b) => b.value < a.value,
+    },
+    {
+      kind: "hidden_bullish",
+      priceList: priceTroughs,
+      oscList: oscTroughs,
+      priceOk: (a, b) => b.price > a.price,
+      oscOk: (a, b) => b.value < a.value,
+    },
+    {
+      kind: "hidden_bearish",
+      priceList: pricePeaks,
+      oscList: oscPeaks,
+      priceOk: (a, b) => b.price < a.price,
+      oscOk: (a, b) => b.value > a.value,
+    },
+  ];
 
-  const tryPair = (
-    kind: DivergenceKind,
-    priceA: PivotPoint,
-    priceB: PivotPoint,
-    oscA: PivotPoint,
-    oscB: PivotPoint,
-    priceOk: boolean,
-    oscOk: boolean,
-  ) => {
-    if (!priceOk || !oscOk) return;
-    const barsBetween = priceB.index - priceA.index;
-    if (barsBetween < minBars || barsBetween > maxBars) return;
-    if (Math.abs(oscA.index - priceA.index) > 3 || Math.abs(oscB.index - priceB.index) > 3) return;
+  for (const cond of conditions) {
+    const prices = cond.priceList;
+    for (let i = 0; i < prices.length - 1; i++) {
+      for (let j = i + 1; j < prices.length; j++) {
+        const p1 = prices[i];
+        const p2 = prices[j];
+        const barsBetween = p2.index - p1.index;
+        if (barsBetween < minBars || barsBetween > maxBars) continue;
+        const o1 = nearestPivot(cond.oscList, p1.index);
+        const o2 = nearestPivot(cond.oscList, p2.index);
+        if (!o1 || !o2) continue;
+        if (Math.abs(o1.index - p1.index) > 3 || Math.abs(o2.index - p2.index) > 3) continue;
+        if (!cond.priceOk(p1, p2) || !cond.oscOk(o1, o2)) continue;
 
-    const strength = strengthFor(kind, osc, oscA.value, oscB.value);
-    const confidence = confidenceFor(strength, barsBetween, minBars, maxBars);
-    const confirmedAt = new Date(priceB.time).toISOString();
+        let legs = 1;
+        for (let m = i + 1; m < j; m++) {
+          const pm = prices[m];
+          const om = nearestPivot(cond.oscList, pm.index);
+          if (!om) continue;
+          const leg1 =
+            cond.priceOk(p1, pm) &&
+            cond.oscOk(o1, om) &&
+            pm.index - p1.index >= minBars &&
+            pm.index - p1.index <= maxBars;
+          const leg2 =
+            cond.priceOk(pm, p2) &&
+            cond.oscOk(om, o2) &&
+            p2.index - pm.index >= minBars &&
+            p2.index - pm.index <= maxBars;
+          if (leg1 && leg2) legs++;
+        }
+        const structure: "single" | "double" | "triple" =
+          legs >= 3 ? "triple" : legs >= 2 ? "double" : "single";
 
-    signals.push({
-      kind,
-      oscillator: osc,
-      timeframe: timeframe ?? null,
-      strength,
-      confidence,
-      barsBetween,
-      pricePivots: [toPivot(priceA, true), toPivot(priceB, true)],
-      oscPivots: [toPivot(oscA, false), toPivot(oscB, false)],
-      confirmed: true,
-      confirmedAt,
-      forming: false,
-    });
-  };
+        const strength = strengthFor(cond.kind, osc, o1.value, o2.value);
+        const confidence = confidenceFor(strength, barsBetween, minBars, maxBars, structure);
 
-  for (let i = 0; i < priceTroughs.length - 1; i++) {
-    for (let j = i + 1; j < priceTroughs.length; j++) {
-      const p1 = priceTroughs[i];
-      const p2 = priceTroughs[j];
-      const o1 = nearestPivot(oscTroughs, p1.index);
-      const o2 = nearestPivot(oscTroughs, p2.index);
-      if (!o1 || !o2) continue;
-      tryPair("regular_bullish", p1, p2, o1, o2, p2.price < p1.price, o2.value > o1.value);
-    }
-  }
-
-  for (let i = 0; i < pricePeaks.length - 1; i++) {
-    for (let j = i + 1; j < pricePeaks.length; j++) {
-      const p1 = pricePeaks[i];
-      const p2 = pricePeaks[j];
-      const o1 = nearestPivot(oscPeaks, p1.index);
-      const o2 = nearestPivot(oscPeaks, p2.index);
-      if (!o1 || !o2) continue;
-      tryPair("regular_bearish", p1, p2, o1, o2, p2.price > p1.price, o2.value < o1.value);
-    }
-  }
-
-  for (let i = 0; i < priceTroughs.length - 1; i++) {
-    for (let j = i + 1; j < priceTroughs.length; j++) {
-      const p1 = priceTroughs[i];
-      const p2 = priceTroughs[j];
-      const o1 = nearestPivot(oscTroughs, p1.index);
-      const o2 = nearestPivot(oscTroughs, p2.index);
-      if (!o1 || !o2) continue;
-      tryPair("hidden_bullish", p1, p2, o1, o2, p2.price > p1.price, o2.value < o1.value);
-    }
-  }
-
-  for (let i = 0; i < pricePeaks.length - 1; i++) {
-    for (let j = i + 1; j < pricePeaks.length; j++) {
-      const p1 = pricePeaks[i];
-      const p2 = pricePeaks[j];
-      const o1 = nearestPivot(oscPeaks, p1.index);
-      const o2 = nearestPivot(oscPeaks, p2.index);
-      if (!o1 || !o2) continue;
-      tryPair("hidden_bearish", p1, p2, o1, o2, p2.price < p1.price, o2.value > o1.value);
+        signals.push({
+          kind: cond.kind,
+          oscillator: osc,
+          timeframe: timeframe ?? null,
+          strength,
+          confidence,
+          barsBetween,
+          pricePivots: [toPivot(p1, true), toPivot(p2, true)],
+          oscPivots: [toPivot(o1, false), toPivot(o2, false)],
+          structure,
+          confirmed: true,
+          confirmedAt: new Date(p2.time).toISOString(),
+          forming: false,
+        });
+      }
     }
   }
 
   return signals;
 }
 
-/**
- * Detect regular + hidden divergences between price and RSI / MACD histogram.
- * Only confirmed pivots (full left+right window) are used — no forming signals in Phase 1.
- */
 export function detectDivergences(
   bars: OhlcvBar[],
   opts: DetectDivergenceOptions = {},
@@ -299,28 +307,41 @@ export function detectDivergences(
 
   const all: DivergenceSignal[] = [];
 
-  if (oscillators.includes("rsi")) {
-    const rsiSeries = rsi(closes, 14);
-    const oscPeaks = findPeaks(rsiSeries, times, closes, left, right, from, to);
-    const oscTroughs = findTroughs(rsiSeries, times, closes, left, right, from, to);
+  const pushOsc = (osc: DivergenceOscillator, series: (number | null)[]) => {
+    const oscPeaks = findPeaks(series, times, closes, left, right, from, to);
+    const oscTroughs = findTroughs(series, times, closes, left, right, from, to);
     all.push(
-      ...pairDivergences(pricePeaks, priceTroughs, oscPeaks, oscTroughs, "rsi", minBars, maxBars, timeframe),
+      ...pairDivergences(
+        pricePeaks,
+        priceTroughs,
+        oscPeaks,
+        oscTroughs,
+        osc,
+        minBars,
+        maxBars,
+        timeframe,
+      ),
     );
-  }
+  };
 
-  if (oscillators.includes("macd_hist")) {
+  if (oscillators.includes("rsi")) {
+    pushOsc("rsi", rsi(closes, 14));
+  }
+  if (oscillators.includes("macd_hist") || oscillators.includes("macd_line")) {
     const macdFull = macd(closes, 12, 26, 9);
-    const hist = macdFull.histogram;
-    const oscPeaks = findPeaks(hist, times, closes, left, right, from, to);
-    const oscTroughs = findTroughs(hist, times, closes, left, right, from, to);
-    all.push(
-      ...pairDivergences(pricePeaks, priceTroughs, oscPeaks, oscTroughs, "macd_hist", minBars, maxBars, timeframe),
-    );
+    if (oscillators.includes("macd_hist")) pushOsc("macd_hist", macdFull.histogram);
+    if (oscillators.includes("macd_line")) pushOsc("macd_line", macdFull.macd);
+  }
+  if (oscillators.includes("stoch")) {
+    pushOsc("stoch", stochastic(highs, lows, closes, 14, 3));
   }
 
   all.sort((a, b) => {
     const tb = b.pricePivots[1].time - a.pricePivots[1].time;
     if (tb !== 0) return tb;
+    const sa = a.structure === "triple" ? 3 : a.structure === "double" ? 2 : 1;
+    const sb = b.structure === "triple" ? 3 : b.structure === "double" ? 2 : 1;
+    if (sb !== sa) return sb - sa;
     return b.confidence - a.confidence;
   });
 
@@ -337,7 +358,46 @@ export function detectDivergences(
   return deduped;
 }
 
-/** Human-readable Vietnamese labels for UI / signals array. */
+export type DivergenceConfluence = {
+  kind: DivergenceKind;
+  timeframes: string[];
+  signals: DivergenceSignal[];
+  confidence: number;
+  strength: DivergenceStrength;
+};
+
+export function buildDivergenceConfluence(
+  byTf: { timeframe: string; signals: DivergenceSignal[] }[],
+): DivergenceConfluence[] {
+  const map = new Map<string, DivergenceConfluence>();
+  for (const leg of byTf) {
+    for (const s of leg.signals) {
+      const key = s.kind;
+      const existing = map.get(key);
+      if (!existing) {
+        map.set(key, {
+          kind: s.kind,
+          timeframes: [leg.timeframe],
+          signals: [{ ...s, timeframe: leg.timeframe }],
+          confidence: s.confidence,
+          strength: s.strength,
+        });
+      } else {
+        if (!existing.timeframes.includes(leg.timeframe)) {
+          existing.timeframes.push(leg.timeframe);
+        }
+        existing.signals.push({ ...s, timeframe: leg.timeframe });
+        if (s.confidence > existing.confidence) existing.confidence = s.confidence;
+        const rank = { A: 3, B: 2, C: 1 };
+        if (rank[s.strength] > rank[existing.strength]) existing.strength = s.strength;
+      }
+    }
+  }
+  return [...map.values()]
+    .filter((c) => c.timeframes.length >= 2)
+    .sort((a, b) => b.confidence - a.confidence || b.timeframes.length - a.timeframes.length);
+}
+
 export const DIVERGENCE_KIND_VI: Record<DivergenceKind, string> = {
   regular_bullish: "Phân kỳ tăng cổ điển (đảo chiều lên)",
   regular_bearish: "Phân kỳ giảm cổ điển (đảo chiều xuống)",
@@ -345,8 +405,17 @@ export const DIVERGENCE_KIND_VI: Record<DivergenceKind, string> = {
   hidden_bearish: "Phân kỳ ẩn giảm (tiếp diễn downtrend)",
 };
 
+const OSC_LABEL: Record<DivergenceOscillator, string> = {
+  rsi: "RSI",
+  macd_hist: "MACD hist",
+  macd_line: "MACD line",
+  stoch: "Stoch",
+};
+
 export function divergenceSummaryLine(s: DivergenceSignal): string {
-  const osc = s.oscillator === "rsi" ? "RSI" : s.oscillator === "macd_hist" ? "MACD hist" : s.oscillator;
+  const osc = OSC_LABEL[s.oscillator] ?? s.oscillator;
   const tf = s.timeframe ? ` ${s.timeframe}` : "";
-  return `${DIVERGENCE_KIND_VI[s.kind]} · ${osc}${tf} · class ${s.strength} · ${s.barsBetween} nến`;
+  const struct =
+    s.structure === "double" ? " · double" : s.structure === "triple" ? " · triple" : "";
+  return `${DIVERGENCE_KIND_VI[s.kind]} · ${osc}${tf}${struct} · class ${s.strength} · ${s.barsBetween} nến`;
 }
