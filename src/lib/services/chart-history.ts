@@ -80,7 +80,7 @@ async function stockCandles(symbol: string, limit: number): Promise<CandleSeries
     const v = validateIndexCandles(symbol, candles);
     candles = v.valid;
   }
-  return { candles, source: res?.meta?.source ?? "vnstock" };
+  return { candles, source: (res?.meta as { source?: string } | undefined)?.source ?? "vnstock" };
 }
 
 async function yahooCandles(symbol: string, tf: string, _limit: number): Promise<CandleSeriesResult> {
@@ -109,7 +109,7 @@ export async function getChartHistory(
         let series: CandleSeriesResult;
         if (args.assetType === "crypto") {
           series = await cryptoCandles(symbol, tf, limit);
-        } else if (args.assetType === "stock" || args.assetType === "index") {
+        } else if (args.assetType === "stock") {
           series = await stockCandles(symbol, limit);
         } else {
           series = await yahooCandles(symbol, tf, limit);
