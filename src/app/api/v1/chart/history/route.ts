@@ -4,6 +4,7 @@ import { tfsFor, type ChartAssetType } from "@/lib/chart-const";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
+export const maxDuration = 60;
 
 /**
  * UNIFIED CHART DATA API — normalized candles + structured indicators.
@@ -15,7 +16,6 @@ export async function GET(req: Request) {
   const assetType = (url.searchParams.get("assetType") ?? "crypto") as ChartAssetType;
   const timeframe = url.searchParams.get("timeframe") ?? "1h";
   const rawLimit = Number(url.searchParams.get("limit") ?? 200);
-  // Stock: deeper daily history (up to ~8 năm phiên); crypto keeps high intraday caps
   const maxLimit = assetType === "crypto" ? 5000 : assetType === "stock" ? 2500 : 2000;
   const minLimit = assetType === "stock" ? 20 : 50;
 
@@ -33,12 +33,20 @@ export async function GET(req: Request) {
       return unavailable(
         "chart-engine",
         assetType === "stock"
-          ? "Không lấy được chuỗi nến VN từ VNDirect — thử lại hoặc xem /system."
-          : `Không lấy được candles ${symbol}/${timeframe} từ provider — xem /system.`,
+          ? "Không lấy được chuỗi nến VN — thử timeframe khác hoặc xem /system."
+          : assetType === "commodity"
+            ? `Không lấy được candles ${symbol}/${timeframe} (Yahoo/futures) — thử 1D.`
+            : assetType === "crypto"
+              ? `Không lấy được candles ${symbol}/${timeframe} từ Binance — thử lại.`
+              : `Không lấy được candles ${symbol}/${timeframe} từ provider.`,
       );
     }
     return ok(r.data, r.meta);
-  } catch {
-    return unavailable("chart-engine", "Lỗi tạm thời khi tải chart — đang kết nối lại VNDirect.");
+  } catch (e) {
+    console.warn("[chart/history]", symbol, assetType, timeframe, e instanceof Error ? e.message : e);
+    return unavailable(
+      "chart-engine",
+      e instanceof Error ? e.message : "Lỗi tạm thời khi tải chart — đang kết nối lại.",
+    );
   }
 }
