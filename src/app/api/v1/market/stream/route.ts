@@ -217,8 +217,9 @@ export async function GET(req: Request) {
       };
 
       void poll();
-      pollTimer = setInterval(() => void poll(), 2_500);
-      heartbeat = setInterval(() => send("ping", { t: Date.now() }), 15_000);
+      // 1.5s REST fallback when WS quiet — lowest practical lag on serverless
+      pollTimer = setInterval(() => void poll(), 1_500);
+      heartbeat = setInterval(() => send("ping", { t: Date.now() }), 12_000);
 
       req.signal.addEventListener("abort", () => {
         closed = true;
