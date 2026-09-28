@@ -5,7 +5,7 @@ import { isCircuitOpen, recordFailure, recordSuccess } from "./health";
  * Resilient HTTP client for all outbound provider traffic.
  * timeout + retry with exponential backoff + circuit breaker + health recording.
  *
- * Defaults tuned for flaky market APIs: timeout 10s, retries 2.
+ * Resilience defaults: timeout 10s, retries 2 — multi-source callers may override per provider.
  */
 
 const DEFAULT_UA =
@@ -29,7 +29,6 @@ interface HttpOptions {
   headers?: Record<string, string>;
   method?: string;
   body?: BodyInit | null;
-  /** when true, a non-2xx status still resolves ok:false without throwing */
   parse?: "json" | "text";
 }
 
@@ -43,15 +42,11 @@ export async function httpText(url: string, opts: HttpOptions): Promise<HttpResu
   return httpRequest<never>(url, { ...opts, parse: "text" });
 }
 
-function isRetryableStatus(status: number): boolean {
-  return status === 408 || status === 425 || status === 429 || status >= 500;
-}
-
 async function httpRequest<T>(url: string, opts: HttpOptions): Promise<HttpResult<T>> {
   const provider = opts.provider;
   const timeoutMs = opts.timeoutMs ?? 10_000;
   const retries = opts.retries ?? 2;
-  const backoffBase = opts.backoffBaseMs ?? 400;
+  const backoffBase = opts.backoffBaseMs ?? 280;
 
   if (isCircuitOpen(provider)) {
     return {
@@ -88,30 +83,32 @@ async function httpRequest<T>(url: string, opts: HttpOptions): Promise<HttpResul
       });
       clearTimeout(timer);
       lastStatus = res.status;
-
-      if (isRetryableStatus(res.status)) {
-        const retryAfter = Number(res.headers.get("retry-after") || 0);
+      const text = await res.text();
+      if (!res.ok) {
         lastError = `http_${res.status}`;
-        if (attempt < retries) {
-          await sleep(Math.max(backoffBase * 2 ** attempt, retryAfter * 1000) + Math.random() * 150);
+        recordFailure(provider, lastError);
+        if (attempt < retries && res.status >= 500) {
+          await sleep(backoffBase * 2 ** attempt + Math.random() * 120);
           continue;
         }
-        // exhausted retries on 5xx/429 — record once below
-        break;
+        return {
+          ok: false,
+          status: res.status,
+          data: null,
+          text,
+          error: lastError,
+          latencyMs: Math.round(performance.now() - started),
+          attempts,
+        };
       }
-
-      const text = await res.text();
       let data: T | null = null;
-      if (opts.parse === "json") {
+      if (opts.parse === "text") {
+        data = null;
+      } else {
         try {
           data = text ? (JSON.parse(text) as T) : null;
         } catch {
-          lastError = "json_parse_error";
-          // transient garbage body — retry if attempts remain
-          if (attempt < retries) {
-            await sleep(backoffBase * 2 ** attempt + Math.random() * 100);
-            continue;
-          }
+          lastError = "json_parse";
           recordFailure(provider, lastError);
           return {
             ok: false,
@@ -119,36 +116,19 @@ async function httpRequest<T>(url: string, opts: HttpOptions): Promise<HttpResul
             data: null,
             text,
             error: lastError,
-            latencyMs: performance.now() - started,
+            latencyMs: Math.round(performance.now() - started),
             attempts,
           };
         }
       }
-
-      const latencyMs = performance.now() - started;
-      if (res.ok) {
-        recordSuccess(provider, latencyMs);
-        return {
-          ok: true,
-          status: res.status,
-          data: opts.parse === "json" ? data : null,
-          text: opts.parse === "text" ? text : null,
-          error: null,
-          latencyMs,
-          attempts,
-        };
-      }
-
-      // 4xx (non-retryable): fail fast, still record
-      lastError = `http_${res.status}`;
-      recordFailure(provider, lastError);
+      recordSuccess(provider, Math.round(performance.now() - started));
       return {
-        ok: false,
+        ok: true,
         status: res.status,
         data,
         text,
-        error: lastError,
-        latencyMs,
+        error: null,
+        latencyMs: Math.round(performance.now() - started),
         attempts,
       };
     } catch (e) {
@@ -157,18 +137,19 @@ async function httpRequest<T>(url: string, opts: HttpOptions): Promise<HttpResul
         e instanceof Error ? (e.name === "AbortError" ? "timeout" : e.message) : "network_error";
       if (attempt < retries) {
         await sleep(backoffBase * 2 ** attempt + Math.random() * 150);
+        continue;
       }
+      recordFailure(provider, lastError);
     }
   }
 
-  recordFailure(provider, lastError);
   return {
     ok: false,
     status: lastStatus,
     data: null,
     text: null,
     error: lastError,
-    latencyMs: performance.now() - started,
+    latencyMs: Math.round(performance.now() - started),
     attempts,
   };
 }
