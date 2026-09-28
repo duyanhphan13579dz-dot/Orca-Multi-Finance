@@ -9,6 +9,7 @@ import { ElliottScreener } from "@/components/elliott-screener";
 import { ValuationScreener } from "@/components/valuation-screener";
 import { FundamentalScreener } from "@/components/fundamental-screener";
 import { CandlestickScreener } from "@/components/candlestick-screener";
+import { DivergenceScreener } from "@/components/divergence-screener";
 import { Loading, Panel } from "@/components/ui";
 import { FlatsIcon } from "@/components/screener-icons";
 import { VnScreener, CryptoScreener } from "./screener-panels";
@@ -22,10 +23,12 @@ type Universe =
   | "elliott"
   | "valuation"
   | "fundamental"
-  | "candlestick";
+  | "candlestick"
+  | "divergence";
 
 const UNIVERSE_TABS: { id: Universe; label: string }[] = [
   { id: "stocks", label: "Cổ phiếu VN ⭐" },
+  { id: "divergence", label: "Phân kỳ" },
   { id: "candlestick", label: "Mẫu nến" },
   { id: "canslim", label: "CANSLIM" },
   { id: "minervini", label: "Minervini" },
@@ -81,6 +84,8 @@ function ScreenerInner() {
       </Panel>
       {universe === "crypto" ? (
         <CryptoScreener />
+      ) : universe === "divergence" ? (
+        <DivergenceScreener />
       ) : universe === "candlestick" ? (
         <CandlestickScreener defaultSector={params.get("sector")} />
       ) : universe === "wyckoff" ? (
