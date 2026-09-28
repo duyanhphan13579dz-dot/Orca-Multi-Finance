@@ -6,6 +6,9 @@
  *
  * Performance: all base kinds are created once and kept in memory.
  * Switching Nến/Đường/Vùng/Bar only toggles `visible` — no remove/add/setData.
+ *
+ * Last-bar stability: sanitize OHLC, reject time-regression, merge same-bucket,
+ * coalesce live ticks via rAF (smooth, not laggy).
  */
 import {
   AreaSeries, BarSeries, BaselineSeries, CandlestickSeries, HistogramSeries, LineSeries,
@@ -16,7 +19,33 @@ import type { ChartKind } from "./theme";
 import { ORCA_CHART_THEME as T } from "./theme";
 import { attachMarkers } from "./markers";
 
-export const toSec = (ms: number) => Math.floor(ms / 1000) as UTCTimestamp as Time;
+/** Accept ms or sec timestamps without double-dividing. */
+export const toSec = (t: number): Time => {
+  if (!Number.isFinite(t) || t <= 0) return 0 as UTCTimestamp as Time;
+  return Math.floor(t > 1e11 ? t / 1000 : t) as UTCTimestamp as Time;
+};
+
+/** Fix OHLC consistency so lightweight-charts never rejects the bar. */
+export function sanitizeCandle(c: ChartCandle): ChartCandle | null {
+  const open = Number(c.open);
+  const high = Number(c.high);
+  const low = Number(c.low);
+  const close = Number(c.close);
+  const time = Number(c.time);
+  if (!Number.isFinite(time) || time <= 0) return null;
+  if (![open, high, low, close].every((v) => Number.isFinite(v) && v > 0)) return null;
+  const hi = Math.max(open, high, low, close);
+  const lo = Math.min(open, high, low, close);
+  const vol = Number(c.volume);
+  return {
+    time,
+    open,
+    high: hi,
+    low: lo,
+    close,
+    volume: Number.isFinite(vol) && vol >= 0 ? vol : 0,
+  };
+}
 
 type IndicatorKey = "ema20" | "ema50" | "bbU" | "bbM" | "bbL" | "vwap" | "rsi" | "macdM" | "macdS" | "macdH";
 
@@ -37,10 +66,13 @@ export class SeriesManager {
   private emaState = new Map<"ema20" | "ema50", { k: number; last: number; time: number }>();
   private activeKind: ChartKind = "candles";
   private lastCandles: ChartCandle[] = [];
+  private lastBarSec: number | null = null;
+  private lastBarOhlc: { open: number; high: number; low: number; close: number; volume: number } | null = null;
+  private liveRaf: number | null = null;
+  private pendingLive: ChartCandle | null = null;
 
   constructor(private chart: IChartApi) {}
 
-  /** Create every base kind once (all hidden except `kindToShow`). */
   createBase(kindToShow: ChartKind) {
     this.activeKind = kindToShow;
     for (const k of ALL_KINDS) {
@@ -111,15 +143,11 @@ export class SeriesManager {
     this.applyKindVisibility(kindToShow);
   }
 
-  /** Instant switch — visibility only, no remove/add/setData. */
   setKind(kind: ChartKind) {
     if (kind === this.activeKind) return;
     if (!this.baseSeries[kind]) this.createBase(kind);
     this.applyKindVisibility(kind);
     this.activeKind = kind;
-
-    // S/R + extra levels attach to OHLC base; rebind when leaving/entering candle/bar
-    // Caller should call rebuildSrLines/rebuildExtraLevels if needed after switch.
   }
 
   private applyKindVisibility(kind: ChartKind) {
@@ -151,34 +179,63 @@ export class SeriesManager {
       this.setKind(kind);
     }
 
-    this.lastCandles = candles;
-    const ls = candles.map((c) => ({
+    const byTime = new Map<number, ChartCandle>();
+    for (const raw of candles) {
+      const c = sanitizeCandle(raw);
+      if (!c) continue;
+      const sec = toSec(c.time) as number;
+      if (!sec) continue;
+      byTime.set(sec, { ...c, time: c.time > 1e11 ? c.time : c.time * 1000 });
+    }
+    const sorted = [...byTime.entries()].sort((a, b) => a[0] - b[0]);
+    const clean = sorted.map(([, c]) => c);
+    this.lastCandles = clean;
+
+    if (clean.length) {
+      const last = clean[clean.length - 1]!;
+      this.lastBarSec = toSec(last.time) as number;
+      this.lastBarOhlc = {
+        open: last.open,
+        high: last.high,
+        low: last.low,
+        close: last.close,
+        volume: last.volume ?? 0,
+      };
+    } else {
+      this.lastBarSec = null;
+      this.lastBarOhlc = null;
+    }
+
+    const ls = clean.map((c) => ({
       time: toSec(c.time),
       open: c.open,
       high: c.high,
       low: c.low,
       close: c.close,
     }));
-    const vs = candles.map((c) => ({ time: toSec(c.time), value: c.close }));
+    const vs = clean.map((c) => ({ time: toSec(c.time), value: c.close }));
 
-    // Push data to all base series so kind switches stay instant
-    this.baseSeries.candles?.setData(ls);
-    this.baseSeries.bar?.setData(ls);
-    this.baseSeries.area?.setData(vs);
-    this.baseSeries.line?.setData(vs);
-    this.baseSeries.baseline?.setData(vs);
+    try {
+      this.baseSeries.candles?.setData(ls);
+      this.baseSeries.bar?.setData(ls);
+      this.baseSeries.area?.setData(vs);
+      this.baseSeries.line?.setData(vs);
+      this.baseSeries.baseline?.setData(vs);
 
-    const hasVol = candles.some((c) => (c.volume ?? 0) > 0);
-    if (hasVol) {
-      this.ensureVolume().setData(
-        candles.map((c) => ({
-          time: toSec(c.time),
-          value: c.volume ?? 0,
-          color: c.close >= c.open ? "rgba(46,194,126,0.30)" : "rgba(238,95,117,0.30)",
-        })),
-      );
-    } else if (this.volumeSeries) {
-      this.volumeSeries.setData([]);
+      const hasVol = clean.some((c) => (c.volume ?? 0) > 0);
+      if (hasVol) {
+        this.ensureVolume().setData(
+          clean.map((c) => ({
+            time: toSec(c.time),
+            value: c.volume ?? 0,
+            color: c.close >= c.open ? "rgba(46,194,126,0.30)" : "rgba(238,95,117,0.30)",
+          })),
+        );
+      } else if (this.volumeSeries) {
+        this.volumeSeries.setData([]);
+      }
+    } catch {
+      /* keep chart alive on setData edge cases */
     }
   }
 
@@ -186,19 +243,65 @@ export class SeriesManager {
     this.volumeSeries?.applyOptions({ visible: on });
   }
 
+  /** Coalesce live ticks to one paint per frame — smooth, not laggy. */
   updateLive(c: ChartCandle) {
-    const t = toSec(c.time);
-    this.baseSeries.candles?.update({ time: t, open: c.open, high: c.high, low: c.low, close: c.close });
-    this.baseSeries.bar?.update({ time: t, open: c.open, high: c.high, low: c.low, close: c.close });
-    this.baseSeries.area?.update({ time: t, value: c.close });
-    this.baseSeries.line?.update({ time: t, value: c.close });
-    this.baseSeries.baseline?.update({ time: t, value: c.close });
-    if ((c.volume ?? 0) > 0 && this.volumeSeries) {
-      this.volumeSeries.update({
-        time: t,
-        value: c.volume ?? 0,
-        color: c.close >= c.open ? "rgba(46,194,126,0.30)" : "rgba(238,95,117,0.30)",
+    const clean = sanitizeCandle(c);
+    if (!clean) return;
+    this.pendingLive = clean;
+    if (this.liveRaf != null) return;
+    if (typeof requestAnimationFrame === "function") {
+      this.liveRaf = requestAnimationFrame(() => {
+        this.liveRaf = null;
+        const p = this.pendingLive;
+        this.pendingLive = null;
+        if (p) this.applyLiveBar(p);
       });
+    } else {
+      this.pendingLive = null;
+      this.applyLiveBar(clean);
+    }
+  }
+
+  private applyLiveBar(c: ChartCandle) {
+    const t = toSec(c.time) as number;
+    if (!t) return;
+    if (this.lastBarSec != null && t < this.lastBarSec) return;
+
+    let open = c.open;
+    let high = c.high;
+    let low = c.low;
+    let close = c.close;
+    let volume = c.volume ?? 0;
+
+    if (this.lastBarSec != null && t === this.lastBarSec && this.lastBarOhlc) {
+      open = this.lastBarOhlc.open;
+      high = Math.max(this.lastBarOhlc.high, high, close, open);
+      low = Math.min(this.lastBarOhlc.low, low, close, open);
+      volume = Math.max(this.lastBarOhlc.volume, volume);
+    }
+
+    high = Math.max(open, high, low, close);
+    low = Math.min(open, high, low, close);
+
+    this.lastBarSec = t;
+    this.lastBarOhlc = { open, high, low, close, volume };
+
+    const bar = { time: t as ReturnType<typeof toSec>, open, high, low, close };
+    try {
+      this.baseSeries.candles?.update(bar);
+      this.baseSeries.bar?.update(bar);
+      this.baseSeries.area?.update({ time: bar.time, value: close });
+      this.baseSeries.line?.update({ time: bar.time, value: close });
+      this.baseSeries.baseline?.update({ time: bar.time, value: close });
+      if (volume > 0 && this.volumeSeries) {
+        this.volumeSeries.update({
+          time: bar.time,
+          value: volume,
+          color: close >= open ? "rgba(46,194,126,0.30)" : "rgba(238,95,117,0.30)",
+        });
+      }
+    } catch {
+      /* race with setHistory — next tick recovers */
     }
   }
 
@@ -207,7 +310,13 @@ export class SeriesManager {
       const next = close * s.k + s.last * (1 - s.k);
       s.last = next;
       s.time = timeMs;
-      this.indicators.get(key)?.update({ time: toSec(timeMs), value: next });
+      const sec = toSec(timeMs) as number;
+      if (this.lastBarSec != null && sec < this.lastBarSec) continue;
+      try {
+        this.indicators.get(key)?.update({ time: sec as ReturnType<typeof toSec>, value: next });
+      } catch {
+        /* */
+      }
     }
   }
 
@@ -333,28 +442,33 @@ export class SeriesManager {
     for (const l of this.srLines) c.removePriceLine(l.line);
     this.srLines = [];
     if (!ind || !on) return;
-    const mk = (price: number) => {
-      const line = c.createPriceLine({
-        price,
-        color: price >= 0 ? "rgba(46,194,126,0.55)" : "rgba(238,95,117,0.55)",
-        lineWidth: 1,
-        lineStyle: LineStyle.Dashed,
-        axisLabelVisible: true,
-        title: "",
+    for (const s of ind.srLevels.support.slice(0, 3)) {
+      this.srLines.push({
+        line: c.createPriceLine({
+          price: s,
+          color: "rgba(46,194,126,0.55)",
+          lineWidth: 1,
+          lineStyle: LineStyle.Dashed,
+          axisLabelVisible: true,
+          title: "",
+        }),
+        kind: "s",
+        indicatorRef: c,
       });
-      this.srLines.push({ line, kind: "s", indicatorRef: c });
-    };
-    for (const s of ind.srLevels.support.slice(0, 3)) mk(s);
+    }
     for (const r of ind.srLevels.resistance.slice(0, 3)) {
-      const line = c.createPriceLine({
-        price: r,
-        color: "rgba(238,95,117,0.55)",
-        lineWidth: 1,
-        lineStyle: LineStyle.Dashed,
-        axisLabelVisible: true,
-        title: "",
+      this.srLines.push({
+        line: c.createPriceLine({
+          price: r,
+          color: "rgba(238,95,117,0.55)",
+          lineWidth: 1,
+          lineStyle: LineStyle.Dashed,
+          axisLabelVisible: true,
+          title: "",
+        }),
+        kind: "r",
+        indicatorRef: c,
       });
-      this.srLines.push({ line, kind: "r", indicatorRef: c });
     }
   }
 
@@ -419,5 +533,10 @@ export class SeriesManager {
     this.emaState.clear();
     this.srLines = [];
     this.lastCandles = [];
+    this.lastBarSec = null;
+    this.lastBarOhlc = null;
+    this.pendingLive = null;
+    if (this.liveRaf != null && typeof cancelAnimationFrame === "function") cancelAnimationFrame(this.liveRaf);
+    this.liveRaf = null;
   }
 }
