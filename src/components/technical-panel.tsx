@@ -1,1 +1,1 @@
-PLACEHOLDER
+SEE_FILE_/tmp/c_panel.tsx
