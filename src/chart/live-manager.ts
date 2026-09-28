@@ -1,5 +1,6 @@
 /**
  * CHART SUBSCRIPTION MANAGER (client) — EventSource + stock/forex live-quote poll.
+ * Guards last-candle stability: OHLC sanitize + monotonic time.
  */
 import type { ChartCandle } from "@/lib/chart-const";
 import type { LiveState } from "./theme";
@@ -18,6 +19,7 @@ export class ChartLiveManager {
   private interval: ReturnType<typeof setInterval> | null = null;
   private pollTimer: ReturnType<typeof setInterval> | null = null;
   private lastPrice: number | null = null;
+  private lastEmitSec = 0;
 
   start(symbol: string, timeframe: string, handlers: LiveHandlers, assetType = "crypto"): number {
     this.stop();
@@ -33,11 +35,33 @@ export class ChartLiveManager {
       if (tk !== this.token) return;
       try {
         const payload = JSON.parse((e as MessageEvent).data as string) as { candle?: ChartCandle };
-        if (payload.candle) {
-          this.lastEventAt = Date.now();
-          this.lastPrice = payload.candle.close;
-          handlers.onCandle(payload.candle, closed);
-        }
+        const c = payload.candle;
+        if (!c) return;
+        const close = Number(c.close);
+        const time = Number(c.time);
+        if (!Number.isFinite(close) || close <= 0 || !Number.isFinite(time) || time <= 0) return;
+        const open = Number(c.open);
+        const high = Number(c.high);
+        const low = Number(c.low);
+        if (![open, high, low].every((v) => Number.isFinite(v) && v > 0)) return;
+        const sec = Math.floor(time > 1e11 ? time / 1000 : time);
+        if (sec < this.lastEmitSec) return;
+        this.lastEmitSec = sec;
+        this.lastEventAt = Date.now();
+        this.lastPrice = close;
+        const hi = Math.max(open, high, low, close);
+        const lo = Math.min(open, high, low, close);
+        handlers.onCandle(
+          {
+            time,
+            open,
+            high: hi,
+            low: lo,
+            close,
+            volume: Math.max(0, Number(c.volume) || 0),
+          },
+          closed,
+        );
       } catch {
         /* drop */
       }
@@ -125,8 +149,14 @@ export class ChartLiveManager {
                 ? Math.floor((d.ts ?? Date.now()) / tfMs) * tfMs
                 : Date.parse(`${dayKey}T00:00:00Z`);
           const open = d.open && d.open > 0 ? d.open : d.price;
-          const high = Math.max(d.high && d.high > 0 ? d.high : d.price, d.price);
-          const low = Math.min(d.low && d.low > 0 ? d.low : d.price, d.price);
+          let high = Math.max(d.high && d.high > 0 ? d.high : d.price, d.price, open);
+          let low = Math.min(d.low && d.low > 0 ? d.low : d.price, d.price, open);
+          high = Math.max(high, d.price);
+          low = Math.min(low, d.price);
+          if (low > high || low <= 0 || d.price <= 0) return;
+          const sec = Math.floor(bucket > 1e11 ? bucket / 1000 : bucket);
+          if (sec < this.lastEmitSec) return;
+          this.lastEmitSec = sec;
           handlers.onCandle(
             { time: bucket, open, high, low, close: d.price, volume: d.volume ?? 0 },
             false,
@@ -164,5 +194,6 @@ export class ChartLiveManager {
     this.everConnected = false;
     this.lastEventAt = 0;
     this.lastPrice = null;
+    this.lastEmitSec = 0;
   }
 }
