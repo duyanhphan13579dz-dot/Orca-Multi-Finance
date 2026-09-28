@@ -3,15 +3,6 @@ import { env } from "../env";
 import { httpJson } from "../http";
 import type { OhlcvBar } from "../types";
 
-/**
- * Binance provider adapter — primary crypto source.
- *
- * Public market data requires no key. The adapter fails over across multiple
- * Binance API hosts (regional restrictions happen), starting from the last
- * host that succeeded. Futures metrics come from fapi hosts and degrade
- * gracefully where geo-blocked — never fabricated.
- */
-
 export class ProviderError extends Error {
   constructor(
     message: string,
@@ -24,7 +15,7 @@ export class ProviderError extends Error {
 }
 
 const SPOT_HOSTS = [
-  "https://data-api.binance.vision", // geo-friendly (avoids restricted api.binance.com)
+  "https://data-api.binance.vision",
   env.binanceBaseUrl,
   "https://api1.binance.com",
   "https://api2.binance.com",
@@ -68,17 +59,29 @@ export const BINANCE_FUTURES = "binance-futures";
 
 async function getFromHosts<T>(hosts: string[], startIdx: number, path: string, provider: string): Promise<{ data: T; hostIdx: number }> {
   let lastErr = "unreachable";
-  for (let i = 0; i < hosts.length; i++) {
-    const idx = (startIdx + i) % hosts.length;
+  const n = hosts.length;
+  const order = Array.from({ length: n }, (_, i) => (startIdx + i) % n);
+
+  const tryOne = async (idx: number) => {
     const url = `${hosts[idx]}${path}`;
-    const res = await httpJson<T>(url, { provider, timeoutMs: 10_000, retries: 2, backoffBaseMs: 300 });
-    if (res.ok && res.data != null) return { data: res.data, hostIdx: idx };
+    const res = await httpJson<T>(url, { provider, timeoutMs: 10_000, retries: 1, backoffBaseMs: 280 });
+    if (res.ok && res.data != null) return { data: res.data as T, hostIdx: idx };
     lastErr = res.error ?? "unreachable";
+    return null;
+  };
+
+  // Race first 2 hosts in parallel — faster than pure sequential failover
+  const wave = await Promise.all(order.slice(0, Math.min(2, n)).map((i) => tryOne(i)));
+  for (const hit of wave) {
+    if (hit) return hit;
+  }
+  for (const i of order.slice(2)) {
+    const hit = await tryOne(i);
+    if (hit) return hit;
   }
   throw new ProviderError(`${provider}: all hosts failed (${lastErr})`, provider);
 }
 
-/** Full market 24h tickers (single request covers the whole spot market). */
 export async function getAllSpotTickers(): Promise<BinanceTicker24h[]> {
   const { data, hostIdx } = await getFromHosts<BinanceTicker24h[]>(SPOT_HOSTS, lastGoodSpot, `/api/v3/ticker/24hr`, BINANCE_SPOT);
   lastGoodSpot = hostIdx;
@@ -128,16 +131,11 @@ export async function getKlines(
   }));
 }
 
-/**
- * Deep kline history: pages backward via endTime until `limit` bars (max 5000).
- * Binance returns at most 1000 per request.
- */
 export async function getKlinesDeep(symbol: string, interval: string, limit = 1000): Promise<OhlcvBar[]> {
   const target = Math.min(Math.max(limit, 50), 5000);
   const out: OhlcvBar[] = [];
   let endTime: number | undefined;
   let guard = 0;
-  // 5 pages × 1000 = 5000 bars
   while (out.length < target && guard < 6) {
     guard += 1;
     const batch = Math.min(1000, target - out.length);
@@ -152,7 +150,6 @@ export async function getKlinesDeep(symbol: string, interval: string, limit = 10
   return [...map.values()].sort((a, b) => a.time - b.time).slice(-target);
 }
 
-/** Futures mark price + funding rate (may be geo-blocked → throws ProviderError). */
 export async function getFundingRate(symbol: string): Promise<FundingInfo> {
   type Premium = { symbol: string; markPrice: string; indexPrice: string; lastFundingRate: string; nextFundingTime: number };
   const { data, hostIdx } = await getFromHosts<Premium>(
@@ -189,7 +186,6 @@ export interface OrderBookSnapshot {
   asks: { price: number; qty: number }[];
 }
 
-/** Spot order book depth (REST). limit: 5|10|20|50|100 */
 export async function getOrderBook(symbol: string, limit = 20): Promise<OrderBookSnapshot> {
   type Raw = { lastUpdateId: number; bids: [string, string][]; asks: [string, string][] };
   const { data, hostIdx } = await getFromHosts<Raw>(
