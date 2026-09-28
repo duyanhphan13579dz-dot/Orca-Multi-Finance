@@ -1,14 +1,7 @@
 /**
  * SERIES MANAGER — official Lightweight Charts v5 API.
- * Owns base series (5 chart kinds), volume, indicator series across native
- * panes (price 0 / rsi 1 / macd 2), S/R price lines and incremental updates.
- * Types from chart-const only — never import server-only services.
- *
- * Performance: all base kinds are created once and kept in memory.
- * Switching Nến/Đường/Vùng/Bar only toggles `visible` — no remove/add/setData.
- *
  * Last-bar stability: sanitize OHLC, reject time-regression, merge same-bucket,
- * coalesce live ticks via rAF (smooth, not laggy).
+ * coalesce live ticks via rAF, bidirectional scale align (board-lot ↔ full VND).
  */
 import {
   AreaSeries, BarSeries, BaselineSeries, CandlestickSeries, HistogramSeries, LineSeries,
@@ -19,13 +12,11 @@ import type { ChartKind } from "./theme";
 import { ORCA_CHART_THEME as T } from "./theme";
 import { attachMarkers } from "./markers";
 
-/** Accept ms or sec timestamps without double-dividing. */
 export const toSec = (t: number): Time => {
   if (!Number.isFinite(t) || t <= 0) return 0 as UTCTimestamp as Time;
   return Math.floor(t > 1e11 ? t / 1000 : t) as UTCTimestamp as Time;
 };
 
-/** Fix OHLC consistency so lightweight-charts never rejects the bar. */
 export function sanitizeCandle(c: ChartCandle): ChartCandle | null {
   const open = Number(c.open);
   const high = Number(c.high);
@@ -235,7 +226,7 @@ export class SeriesManager {
         this.volumeSeries.setData([]);
       }
     } catch {
-      /* keep chart alive on setData edge cases */
+      /* keep chart alive */
     }
   }
 
@@ -243,7 +234,6 @@ export class SeriesManager {
     this.volumeSeries?.applyOptions({ visible: on });
   }
 
-  /** Coalesce live ticks to one paint per frame — smooth, not laggy. */
   updateLive(c: ChartCandle) {
     const clean = sanitizeCandle(c);
     if (!clean) return;
@@ -273,10 +263,35 @@ export class SeriesManager {
     let close = c.close;
     let volume = c.volume ?? 0;
 
+    // Align scale vs last bar — blocks board-lot/full-VND mix that draws a spike to ~0
+    if (this.lastBarOhlc && this.lastBarOhlc.close > 0) {
+      const ref = this.lastBarOhlc.close;
+      const align = (p: number) => {
+        if (!(p > 0)) return p;
+        const r = p / ref;
+        if (r > 50) return p / (r > 500 ? 1_000 : r);
+        if (r < 1 / 50) return p * (r < 1 / 500 ? 1_000 : Math.round(1 / r) || 1_000);
+        return p;
+      };
+      open = align(open);
+      high = align(high);
+      low = align(low);
+      close = align(close);
+      const rClose = close / ref;
+      if (rClose > 30 || rClose < 1 / 30) return;
+    }
+
     if (this.lastBarSec != null && t === this.lastBarSec && this.lastBarOhlc) {
       open = this.lastBarOhlc.open;
-      high = Math.max(this.lastBarOhlc.high, high, close, open);
-      low = Math.min(this.lastBarOhlc.low, low, close, open);
+      const refMid = (open + close) / 2;
+      const hiCand = Math.max(high, close, open);
+      const loCand = Math.min(low, close, open);
+      high = Math.max(this.lastBarOhlc.high, hiCand);
+      low = Math.min(this.lastBarOhlc.low, loCand);
+      if (refMid > 0) {
+        if (high / refMid > 5) high = Math.max(this.lastBarOhlc.high, open, close);
+        if (low / refMid < 0.2) low = Math.min(this.lastBarOhlc.low, open, close);
+      }
       volume = Math.max(this.lastBarOhlc.volume, volume);
     }
 
@@ -301,7 +316,7 @@ export class SeriesManager {
         });
       }
     } catch {
-      /* race with setHistory — next tick recovers */
+      /* race with setHistory */
     }
   }
 
@@ -386,31 +401,13 @@ export class SeriesManager {
       const s = add("rsi", 1, T.purple);
       push("rsi", s, ind.rsi);
       s.applyOptions({ visible: visible.rsi });
-      s.createPriceLine({
-        price: 70,
-        color: "rgba(238,95,117,0.4)",
-        lineWidth: 1,
-        lineStyle: LineStyle.Dotted,
-        title: "",
-        axisLabelVisible: false,
-      });
-      s.createPriceLine({
-        price: 30,
-        color: "rgba(46,194,126,0.4)",
-        lineWidth: 1,
-        lineStyle: LineStyle.Dotted,
-        title: "",
-        axisLabelVisible: false,
-      });
+      s.createPriceLine({ price: 70, color: "rgba(238,95,117,0.4)", lineWidth: 1, lineStyle: LineStyle.Dotted, title: "", axisLabelVisible: false });
+      s.createPriceLine({ price: 30, color: "rgba(46,194,126,0.4)", lineWidth: 1, lineStyle: LineStyle.Dotted, title: "", axisLabelVisible: false });
     }
     if (ind.macd) {
       push("macdM", add("macdM", 2, T.accent2), ind.macd.macd);
       push("macdS", add("macdS", 2, T.warn), ind.macd.signal);
-      const hist = this.chart.addSeries(
-        HistogramSeries,
-        { lastValueVisible: false, priceLineVisible: false, priceScaleId: "default" },
-        2,
-      );
+      const hist = this.chart.addSeries(HistogramSeries, { lastValueVisible: false, priceLineVisible: false, priceScaleId: "default" }, 2);
       hist.setData(
         ind.macd.histogram
           .filter((p) => p.value != null)
@@ -444,28 +441,14 @@ export class SeriesManager {
     if (!ind || !on) return;
     for (const s of ind.srLevels.support.slice(0, 3)) {
       this.srLines.push({
-        line: c.createPriceLine({
-          price: s,
-          color: "rgba(46,194,126,0.55)",
-          lineWidth: 1,
-          lineStyle: LineStyle.Dashed,
-          axisLabelVisible: true,
-          title: "",
-        }),
+        line: c.createPriceLine({ price: s, color: "rgba(46,194,126,0.55)", lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible: true, title: "" }),
         kind: "s",
         indicatorRef: c,
       });
     }
     for (const r of ind.srLevels.resistance.slice(0, 3)) {
       this.srLines.push({
-        line: c.createPriceLine({
-          price: r,
-          color: "rgba(238,95,117,0.55)",
-          lineWidth: 1,
-          lineStyle: LineStyle.Dashed,
-          axisLabelVisible: true,
-          title: "",
-        }),
+        line: c.createPriceLine({ price: r, color: "rgba(238,95,117,0.55)", lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible: true, title: "" }),
         kind: "r",
         indicatorRef: c,
       });
@@ -475,14 +458,7 @@ export class SeriesManager {
   addDrawingLine(price: number): IPriceLine | null {
     const c = this.base();
     if (!c) return null;
-    return c.createPriceLine({
-      price,
-      color: T.warn,
-      lineWidth: 1,
-      lineStyle: LineStyle.Dashed,
-      axisLabelVisible: true,
-      title: "H",
-    });
+    return c.createPriceLine({ price, color: T.warn, lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible: true, title: "H" });
   }
 
   private extraLevelLines: IPriceLine[] = [];
@@ -494,14 +470,7 @@ export class SeriesManager {
     this.extraLevelLines = [];
     for (const lv of levels) {
       this.extraLevelLines.push(
-        c.createPriceLine({
-          price: lv.price,
-          color: lv.color,
-          lineWidth: 1,
-          lineStyle: LineStyle.Dashed,
-          axisLabelVisible: true,
-          title: lv.label,
-        }),
+        c.createPriceLine({ price: lv.price, color: lv.color, lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible: true, title: lv.label }),
       );
     }
   }
@@ -512,7 +481,7 @@ export class SeriesManager {
     try {
       attachMarkers(c as Parameters<typeof attachMarkers>[0], markers as Parameters<typeof attachMarkers>[1]);
     } catch {
-      /* marker plugin optional */
+      /* */
     }
   }
 
@@ -523,7 +492,7 @@ export class SeriesManager {
         try {
           this.chart.removeSeries(s);
         } catch {
-          /* noop */
+          /* */
         }
       }
     }
