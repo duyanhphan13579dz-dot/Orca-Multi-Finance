@@ -12,6 +12,7 @@ import { isCircuitOpen } from "../health";
 /**
  * Multi-source VN quotes — parallel fan-out + priority merge (không trung bình giá).
  * Ưu tiên: vndirect > vps > ssi-iboard > ssi-fcdata > vietcap > public-vn
+ * Deadlines loosened so slow sources still contribute instead of hard-failing.
  */
 
 export type MultiQuoteResult = {
@@ -184,16 +185,16 @@ export async function getMultiQuotes(symbols: string[]): Promise<MultiQuoteResul
   }
 
   const tasks: { src: string; p: Promise<SourceBatch> }[] = [
-    { src: "vndirect", p: runSource("vndirect", () => vndirect.getVndQuotes(uniq), 5_500) },
-    { src: "vps", p: runSource("vps", () => asPack(() => getVpsQuotes(uniq)), 5_000) },
-    { src: "ssi-iboard", p: runSource("ssi-iboard", () => asPack(() => getSsiIboardQuotes(uniq)), 5_000) },
-    { src: "vietcap", p: runSource("vietcap", () => getVietcapQuotes(uniq), 4_500) },
+    { src: "vndirect", p: runSource("vndirect", () => vndirect.getVndQuotes(uniq), 9_000) },
+    { src: "vps", p: runSource("vps", () => asPack(() => getVpsQuotes(uniq)), 8_000) },
+    { src: "ssi-iboard", p: runSource("ssi-iboard", () => asPack(() => getSsiIboardQuotes(uniq)), 8_000) },
+    { src: "vietcap", p: runSource("vietcap", () => getVietcapQuotes(uniq), 7_500) },
     {
       src: "public-vn",
       p: runSource("public-vn", async () => {
         const r = await getPublicQuotes(uniq);
         return { quotes: r.quotes ?? [], sourceTs: r.sourceTs ?? Date.now() };
-      }, 5_000),
+      }, 8_000),
     },
   ];
 
@@ -207,7 +208,7 @@ export async function getMultiQuotes(symbols: string[]): Promise<MultiQuoteResul
           if (Array.isArray(r)) return { quotes: r, sourceTs: r.length ? Date.now() : null };
           return r as QuotePack;
         },
-        5_000,
+        8_000,
       ),
     });
   }
@@ -223,7 +224,7 @@ export async function getMultiQuotes(symbols: string[]): Promise<MultiQuoteResul
       resolve();
       return;
     }
-    const hardStop = setTimeout(() => resolve(), 7_500);
+    const hardStop = setTimeout(() => resolve(), 11_000);
     let settled = false;
 
     for (const { src, p } of tasks) {
@@ -256,7 +257,7 @@ export async function getMultiQuotes(symbols: string[]): Promise<MultiQuoteResul
   if (coverageOf(bySym, uniq) < 0.85) {
     await Promise.race([
       Promise.all(tasks.map((t) => t.p.catch(() => null))),
-      new Promise((r) => setTimeout(r, 1_200)),
+      new Promise((r) => setTimeout(r, 2_500)),
     ]);
   }
 
