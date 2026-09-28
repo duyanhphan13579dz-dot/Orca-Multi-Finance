@@ -3,7 +3,7 @@
 ## Phase 7 — Quant product wiring
 
 ### Stock tech reco
-`computeStockTechReco` consumes `tech.divergences`:
+`computeStockTechReco` consumes `tech.divergences` (top signal by confidence):
 
 | Kind | Base weight | Class A | double/triple |
 |------|-------------|---------|---------------|
@@ -12,7 +12,7 @@
 | hidden bullish | +8 | +10 | — |
 | hidden bearish | −8 | −10 | — |
 
-Weight scaled by `confidence`. Appears as factor key `divergence`.
+Weight scaled by `confidence` (floor 0.3). Factor key: `divergence`.
 
 ### Alerts (Phase 8 policy shared)
 - Class A ≥ conf floor → alert
@@ -27,6 +27,7 @@ Weight scaled by `confidence`. Appears as factor key `divergence`.
 - API engine string → Phase 5–8
 - Unit tests: stoch/macd_line, confluence ≥2 TF, structure contract
 - Screener filter already accepts all oscillators (Phase 5)
+- **fix 2026-09-28**: `chart-core.computeIndicators` used `m.line` (undefined) → switched to `m.macd` (matches `technical.macd()` return shape)
 
 ## Full roadmap status (audit)
 
@@ -39,7 +40,7 @@ Weight scaled by `confidence`. Appears as factor key `divergence`.
 | 4 | UI tab + technical panel + chart markers | Done |
 | 5 | Stoch, MACD line, structure | Done |
 | 6 | buildDivergenceConfluence | Done |
-| 7 | Tech-reco quant factor | Done |
+| 7 | Tech-reco quant factor | Done (wired 2026-09-28) |
 | 8 | Alert policy, markers, tests, docs | Done |
 
 ### Known constraints (not bugs)
@@ -53,4 +54,5 @@ Weight scaled by `confidence`. Appears as factor key `divergence`.
 GET /api/v1/screener/divergence?oscillator=stoch&minStrength=B
 GET /api/v1/cron/alerts  (includes divergences)
 Open stock page → technical panel Phân kỳ + chart markers
+Stock tech reco factors include key=divergence when signals present
 ```
