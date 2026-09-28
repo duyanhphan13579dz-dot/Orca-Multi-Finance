@@ -17,7 +17,7 @@ interface PairDef {
 
 const PAIRS: PairDef[] = [
   { pair: "EURUSD", base: "EUR", quote: "USD", group: "major", kind: "usd-quote" },
-  { pair: "GBPUSD", base: "GBP", quote: "USD", group: "major", kind: "usd-base" },
+  { pair: "GBPUSD", base: "GBP", quote: "USD", group: "major", kind: "usd-quote" },
   { pair: "USDJPY", base: "USD", quote: "JPY", group: "major", kind: "usd-base" },
   { pair: "USDCHF", base: "USD", quote: "CHF", group: "major", kind: "usd-base" },
   { pair: "AUDUSD", base: "AUD", quote: "USD", group: "major", kind: "usd-quote" },
@@ -376,7 +376,7 @@ export async function getForexDetail(pairRaw: string): Promise<{ detail: ForexDe
           close: 1 / x.rate,
           volume: 0,
         }));
-      seriesTs = inverted.length ? Date.parse(inverted[inverted.length - 1].date) : null;
+        seriesTs = inverted.length ? Date.parse(inverted[inverted.length - 1].date) : null;
       } catch {
         /* fall through */
       }
