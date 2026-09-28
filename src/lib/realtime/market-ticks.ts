@@ -27,7 +27,8 @@ type VndirectTick = {
   ts?: number;
 };
 
-const PRIMARY_FRESH_MS = 30_000;
+/** Prefer primary (VNDirect) for 12s before accepting SSI fallback — lower lag path */
+const PRIMARY_FRESH_MS = 12_000;
 
 const INDEX_SET = new Set([
   "VNINDEX",
