@@ -23,8 +23,8 @@ interface ProviderState {
   events: { at: string; event: string; message: string | null; latencyMs: number | null }[];
 }
 
-const CIRCUIT_FAILURE_THRESHOLD = 4;
-const CIRCUIT_OPEN_MS = 60_000;
+const CIRCUIT_FAILURE_THRESHOLD = 6;
+const CIRCUIT_OPEN_MS = 25_000;
 const MAX_EVENTS = 20;
 
 const registry = new Map<string, ProviderState>();
