@@ -31,6 +31,7 @@ export type CandlestickScreenOpts = {
   minScore?: number;
   limit?: number;
   volumeOnly?: boolean;
+  assetClass?: "stock" | "forex" | "crypto";
 };
 
 const DEFAULT_MIN = 55;
@@ -47,9 +48,7 @@ export type PatternAlertEvent = {
 };
 
 function patternAlertStore() {
-  const g = globalThis as typeof globalThis & {
-    __orcaPatternEvents?: PatternAlertEvent[];
-  };
+  const g = globalThis as typeof globalThis & { __orcaPatternEvents?: PatternAlertEvent[] };
   if (!g.__orcaPatternEvents) g.__orcaPatternEvents = [];
   return g.__orcaPatternEvents;
 }
@@ -74,7 +73,7 @@ async function ohlcvBatch(symbols: string[]) {
       }),
     );
     settled.forEach((r, j) => {
-      if (r.status === "fulfilled" && r.value?.bars?.length) out.set(batch[j], r.value);
+      if (r.status === "fulfilled" && r.value?.bars?.length) out.set(batch[j]!, r.value);
     });
   }
   return out;
@@ -84,9 +83,6 @@ function isReversal(p: DetectedCandlePattern): boolean {
   return p.category === "bullish_reversal" || p.category === "bearish_reversal";
 }
 
-/**
- * Alert gate — chỉ đảo chiều, độ tin cậy cao, ưu tiên volume.
- */
 function isAlertWorthy(top: DetectedCandlePattern): boolean {
   if (!isReversal(top)) return false;
   if (!(top.reliability === "high" || top.reliability === "very_high")) return false;
@@ -101,7 +97,8 @@ export async function screenCandlestickPatterns(
     .map((s) => s.toUpperCase())
     .filter(Boolean)
     .slice(0, 120);
-  const minScore = opts.minScore ?? DEFAULT_MIN;
+  const assetClass = opts.assetClass ?? "stock";
+  const minScore = opts.minScore ?? (assetClass === "stock" ? DEFAULT_MIN : 48);
   const limit = Math.min(opts.limit ?? 40, 80);
   const cat = (opts.category ?? "all").toLowerCase();
 
@@ -120,7 +117,10 @@ export async function screenCandlestickPatterns(
       skipped++;
       continue;
     }
-    let patterns = detectCandlePatterns(pack.bars);
+    let patterns = detectCandlePatterns(pack.bars, {
+      assetClass,
+      recentBars: assetClass === "stock" ? 3 : 5,
+    });
     if (cat !== "all") patterns = patterns.filter((p) => p.category === cat);
     if (opts.volumeOnly) patterns = patterns.filter((p) => p.volumeConfirmed);
     patterns = patterns.filter((p) => p.score >= minScore);
@@ -162,8 +162,186 @@ export async function screenCandlestickPatterns(
     meta: buildMeta({
       source: "candlestick-engine+ohlcv",
       sourceTimestampMs: Date.now(),
-      note: `Ruleset v1 · minScore≥${minScore} · ${cat} · alert=reversal-only`,
+      note: `Ruleset multi-bar · minScore≥${minScore} · ${cat} · ${assetClass}`,
       hasData: rows.length > 0,
+      partial: skipped > 0,
+    }),
+  };
+}
+
+const CRYPTO_CANDLE_UNIVERSE = [
+  "BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT",
+  "ADAUSDT", "DOGEUSDT", "AVAXUSDT", "DOTUSDT", "LINKUSDT",
+];
+
+const FOREX_CANDLE_UNIVERSE = [
+  "XAUUSD", "EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD", "USDCHF", "NZDUSD",
+];
+
+export async function screenCryptoCandlePatterns(
+  opts: CandlestickScreenOpts = {},
+): Promise<CandlestickScreenResult> {
+  const { getKlinesDeep } = await import("../providers/binance");
+  const universe = (opts.symbols?.length ? opts.symbols : CRYPTO_CANDLE_UNIVERSE)
+    .map((s) => s.toUpperCase())
+    .slice(0, 30);
+  const minScore = opts.minScore ?? 48;
+  const limit = Math.min(opts.limit ?? 20, 40);
+  const cat = (opts.category ?? "all").toLowerCase();
+  const rows: CandlestickScreenRow[] = [];
+  let skipped = 0;
+  for (const sym of universe) {
+    try {
+      const bars = await getKlinesDeep(sym, "1d", 90);
+      if (!bars?.length || bars.length < 10) {
+        skipped++;
+        continue;
+      }
+      let patterns = detectCandlePatterns(bars, { assetClass: "crypto", recentBars: 5 });
+      if (cat !== "all") patterns = patterns.filter((p) => p.category === cat);
+      patterns = patterns.filter((p) => p.score >= minScore && p.category !== "neutral");
+      if (!patterns.length) continue;
+      patterns.sort((a, b) => (isReversal(b) ? 1 : 0) - (isReversal(a) ? 1 : 0) || b.score - a.score);
+      const top = patterns[0]!;
+      const last = bars[bars.length - 1]!;
+      const prev = bars.length >= 2 ? bars[bars.length - 2]! : null;
+      rows.push({
+        symbol: sym,
+        name: sym.replace("USDT", "/USDT"),
+        sector: "Crypto",
+        price: last.close,
+        changePercent: prev?.close ? ((last.close - prev.close) / prev.close) * 100 : null,
+        volume: last.volume ?? null,
+        patterns,
+        topPattern: top,
+        alertWorthy: isAlertWorthy(top),
+      });
+    } catch {
+      skipped++;
+    }
+  }
+  rows.sort((a, b) =>
+    a.alertWorthy === b.alertWorthy ? b.topPattern.score - a.topPattern.score : a.alertWorthy ? -1 : 1,
+  );
+  return {
+    rows: rows.slice(0, limit),
+    scanned: universe.length,
+    skipped,
+    meta: buildMeta({
+      source: "candlestick-crypto+binance",
+      sourceTimestampMs: Date.now(),
+      note: `crypto daily · minScore≥${minScore}`,
+      partial: skipped > 0,
+    }),
+  };
+}
+
+export async function screenForexCandlePatterns(
+  opts: CandlestickScreenOpts = {},
+): Promise<CandlestickScreenResult> {
+  const { getChartHistory } = await import("./chart");
+  const universe = (opts.symbols?.length ? opts.symbols : FOREX_CANDLE_UNIVERSE)
+    .map((s) => s.toUpperCase().replace(/[^A-Z0-9]/g, ""))
+    .slice(0, 20);
+  const minScore = opts.minScore ?? 48;
+  const limit = Math.min(opts.limit ?? 15, 30);
+  const cat = (opts.category ?? "all").toLowerCase();
+  const rows: CandlestickScreenRow[] = [];
+  let skipped = 0;
+  for (const sym of universe) {
+    try {
+      const isMetal = sym === "XAUUSD" || sym === "XAGUSD";
+      const pack = await getChartHistory({
+        symbol: sym,
+        assetType: isMetal ? "commodity" : "forex",
+        timeframe: "1d",
+        limit: 120,
+      });
+      const bars = pack?.data?.candles;
+      if (!bars?.length || bars.length < 10) {
+        skipped++;
+        continue;
+      }
+      const ohlcv = bars.map((c) => ({
+        time: c.time,
+        open: c.open,
+        high: c.high,
+        low: c.low,
+        close: c.close,
+        volume: c.volume ?? 0,
+      }));
+      let patterns = detectCandlePatterns(ohlcv, { assetClass: "forex", recentBars: 5 });
+      if (cat !== "all") patterns = patterns.filter((p) => p.category === cat);
+      patterns = patterns.filter((p) => p.score >= minScore && p.category !== "neutral");
+      if (!patterns.length) continue;
+      patterns.sort((a, b) => (isReversal(b) ? 1 : 0) - (isReversal(a) ? 1 : 0) || b.score - a.score);
+      const top = patterns[0]!;
+      const last = bars[bars.length - 1]!;
+      const prev = bars.length >= 2 ? bars[bars.length - 2]! : null;
+      rows.push({
+        symbol: sym === "XAUUSD" ? "XAU/USD" : sym.length === 6 ? `${sym.slice(0, 3)}/${sym.slice(3)}` : sym,
+        name: sym === "XAUUSD" ? "Vàng / USD" : null,
+        sector: isMetal ? "Metal" : "Forex",
+        price: last.close,
+        changePercent: prev?.close ? ((last.close - prev.close) / prev.close) * 100 : null,
+        volume: last.volume ?? null,
+        patterns,
+        topPattern: top,
+        alertWorthy: isAlertWorthy(top),
+      });
+    } catch {
+      skipped++;
+    }
+  }
+  rows.sort((a, b) =>
+    a.alertWorthy === b.alertWorthy ? b.topPattern.score - a.topPattern.score : a.alertWorthy ? -1 : 1,
+  );
+  return {
+    rows: rows.slice(0, limit),
+    scanned: universe.length,
+    skipped,
+    meta: buildMeta({
+      source: "candlestick-forex+chart",
+      sourceTimestampMs: Date.now(),
+      note: `forex/XAU daily · minScore≥${minScore}`,
+      partial: skipped > 0,
+    }),
+  };
+}
+
+export async function screenMultiAssetCandlePatterns(
+  opts: CandlestickScreenOpts = {},
+): Promise<CandlestickScreenResult & { legs: { stock: number; crypto: number; forex: number } }> {
+  const limit = Math.min(opts.limit ?? 50, 100);
+  const [stock, crypto, forex] = await Promise.all([
+    screenCandlestickPatterns({ ...opts, assetClass: "stock", limit }).catch(() => null),
+    screenCryptoCandlePatterns({ ...opts, limit: 20 }).catch(() => null),
+    screenForexCandlePatterns({ ...opts, limit: 15 }).catch(() => null),
+  ]);
+  const rows = [
+    ...(stock?.rows ?? []).map((r) => ({ ...r, sector: r.sector ?? "VN" })),
+    ...(crypto?.rows ?? []),
+    ...(forex?.rows ?? []),
+  ];
+  rows.sort((a, b) => {
+    if (a.alertWorthy !== b.alertWorthy) return a.alertWorthy ? -1 : 1;
+    return b.topPattern.score - a.topPattern.score;
+  });
+  const scanned = (stock?.scanned ?? 0) + (crypto?.scanned ?? 0) + (forex?.scanned ?? 0);
+  const skipped = (stock?.skipped ?? 0) + (crypto?.skipped ?? 0) + (forex?.skipped ?? 0);
+  return {
+    rows: rows.slice(0, limit),
+    scanned,
+    skipped,
+    legs: {
+      stock: stock?.rows.length ?? 0,
+      crypto: crypto?.rows.length ?? 0,
+      forex: forex?.rows.length ?? 0,
+    },
+    meta: buildMeta({
+      source: "candlestick-multi-asset",
+      sourceTimestampMs: Date.now(),
+      note: "stock+crypto+forex · XAU included",
       partial: skipped > 0,
     }),
   };
@@ -223,17 +401,13 @@ export async function runCandlestickPatternAlerts(): Promise<{
           ? `${row.changePercent > 0 ? "+" : ""}${row.changePercent.toFixed(2)}%`
           : "—";
 
-      const title = `Cảnh báo nến · ${row.symbol}`;
-      const body =
-        `${dirLabel} — ${p.nameVi} (${p.name})\n` +
-        `Giá ${priceStr} (${chgStr}) · điểm ${p.score}` +
-        (p.volumeConfirmed ? " · volume ✓" : "") +
-        `\n${p.description}\n` +
-        `Xác nhận: ${p.confirmation}`;
-
       const sent = await postGlobalDiscord({
-        title,
-        description: body,
+        title: `Cảnh báo nến · ${row.symbol}`,
+        description:
+          `${dirLabel} — ${p.nameVi} (${p.name})\n` +
+          `Giá ${priceStr} (${chgStr}) · điểm ${p.score}` +
+          (p.volumeConfirmed ? " · volume ✓" : "") +
+          `\n${p.description}\nXác nhận: ${p.confirmation}`,
         color,
         username: "Orca Alerts",
         fields: [
