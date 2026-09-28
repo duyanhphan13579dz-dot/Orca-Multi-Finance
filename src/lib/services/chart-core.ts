@@ -74,7 +74,7 @@ export function computeMarkers(candles: ChartCandle[]): ChartSignalMarker[] {
         time: pivot.time,
         type: isBull ? "divergence-bull" : "divergence-bear",
         position: isBull ? "belowBar" : "aboveBar",
-        title: `${d.kind.replace(/_/g, " ")} ${d.oscillator} ${d.strength}`,
+        title: `${d.kind.replace(/_/g, " ")} ${d.oscillator} ${d.strength}${d.structure && d.structure !== "single" ? ` ${d.structure}` : ""}`,
       });
     }
   } catch {
