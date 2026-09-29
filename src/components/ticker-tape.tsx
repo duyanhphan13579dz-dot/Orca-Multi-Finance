@@ -22,7 +22,7 @@ const REGION_DOT: Record<string, string> = {
 /** Realtime ticker — VN · Châu Á · Mỹ · Forex, CSS marquee. */
 export const TickerTape = memo(function TickerTape() {
   const { data, isLoading } = useApi<MarketSnapshot>("/api/v1/market/snapshot", {
-    refreshInterval: 45_000,
+    refreshInterval: 55_000,
   });
   const trackRef = useRef<HTMLDivElement>(null);
   const [paused, setPaused] = useState(false);
