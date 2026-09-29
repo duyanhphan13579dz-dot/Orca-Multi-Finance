@@ -32,18 +32,29 @@ cronjob.org uses your chosen timezone — set **Asia/Ho_Chi_Minh**.
 | stocks | `GET /api/v1/cron/stocks` | Every **5 min** Mon–Fri 09:00–15:00 | Board + SSI order-book snapshot; `maxDuration=30` |
 | alerts | `GET /api/v1/cron/alerts` | Every **10 min** Mon–Fri 09:00–15:30 | Price alerts + candlestick + divergence; `maxDuration=60` |
 | reports | `GET /api/v1/cron/reports` | Every **30 min** Mon–Fri 08:00–17:00 | Session-aware morning/intraday/summary; `maxDuration=60` |
-| financials | `GET /api/v1/cron/financials` | **Once** Mon–Fri **15:30** | Warm BCTC after ATC; `maxDuration=60` |
+| financials | `GET /api/v1/cron/financials` | **Once** Mon–Fri **16:15** (+ optional late **17:30**) | Warm BCTC + OHLCV board + **seed CANSLIM result cache**; `maxDuration=90` — set job timeout **≥ 90s** |
 | commodities | `GET /api/v1/cron/commodities` | **Daily 00:05** | Commodity refresh; `maxDuration=60` |
 
 Outside session, market-live / stocks can be slowed to every 30–120 min or disabled.
+
+### Financials query flags
+
+```text
+?limit=80          # universe size (default 80, max 100)
+?canslim=0         # skip CANSLIM cache seed (default runs seed)
+?ohlcv=0           # skip OHLCV pre-warm for CANSLIM board
+```
+
+After a successful financials run, default CANSLIM UI filters (`minScore=50`, `minPass=3`) and the unfiltered board are stored in memory/Redis for **8 min fresh / 30 min SWR**.
 
 ## Example cronjob.org URL
 
 ```text
 https://YOUR_DOMAIN/api/v1/cron/market-live?secret=YOUR_CRON_SECRET
+https://YOUR_DOMAIN/api/v1/cron/financials?secret=YOUR_CRON_SECRET
 ```
 
-Request method: **GET**. Enable “Save response” for debugging. Timeout ≥ 60s for alerts/reports/financials.
+Request method: **GET**. Enable “Save response” for debugging. Timeout ≥ 60s for alerts/reports; **≥ 90s for financials**.
 
 ## Why not Vercel Cron?
 
