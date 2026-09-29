@@ -85,11 +85,21 @@ export async function getVnIndices(): Promise<{ items: IndexQuote[]; meta: Meta 
   bootVndLive();
   try {
     const r = await vndirect.getVndIndices();
-    if (!r.items?.length) return null;
-    return { items: sortIndices(r.items), meta: buildMeta({ source: "vndirect", sourceTimestampMs: r.sourceTs ?? Date.now() }) };
+    if (r.items?.length) {
+      return { items: sortIndices(r.items), meta: buildMeta({ source: "vndirect", sourceTimestampMs: r.sourceTs ?? Date.now() }) };
+    }
   } catch {
-    return null;
+    /* use public fallback */
   }
+  try {
+    const items = await getPublicIndices();
+    if (items.length) {
+      return { items: sortIndices(items), meta: buildMeta({ source: "public-vn", sourceTimestampMs: Date.now(), note: "Fallback public indices" }) };
+    }
+  } catch {
+    /* unavailable */
+  }
+  return null;
 }
 
 export async function getVnQuotes(symbols: string[]): Promise<{ quotes: Quote[]; meta: Meta } | null> {

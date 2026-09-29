@@ -185,7 +185,7 @@ export function OrderBookPanel({ symbol, compact = false }: { symbol: string; co
           note={
             res && !res.success
               ? res.error.message
-              : "Cần SSI WebSocket (SSI_WS_DISABLED=false). Ngoài phiên sẽ hiện snapshot phiên gần nhất nếu đã có."
+              : "Đang thử SSI iBoard và VPS song song, sau đó dùng snapshot phiên gần nhất nếu đã lưu. SSI WebSocket chỉ là nguồn realtime bổ sung."
           }
         />
       </Panel>

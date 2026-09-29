@@ -1,7 +1,5 @@
 import { ok, unavailable, badRequest } from "@/lib/envelope";
 import { getVnOrderBook } from "@/lib/services/stock-orderbook";
-import { ssiFcConfigured } from "@/lib/providers/ssi-fcdata";
-
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 export const maxDuration = 8;
@@ -17,14 +15,8 @@ export async function GET(_req: Request, ctx: { params: Promise<{ symbol: string
     return badRequest("Mã chứng khoán không hợp lệ");
   }
 
-  if (!ssiFcConfigured()) {
-    return unavailable(
-      "ssi-fcdata",
-      "Chưa cấu hình SSI (SSI_API_KEY + SSI_API_SECRET hoặc SSI_FC_CONSUMER_ID + SSI_FC_CONSUMER_SECRET).",
-    );
-  }
-
-  // Still attempt getVnOrderBook when WS disabled — may serve Redis/memory last-session snapshot
+  // Không chặn REST/cache khi SSI WebSocket chưa cấu hình. getVnOrderBook
+  // tự chạy đa nguồn SSI iBoard + VPS song song rồi mới dùng snapshot cache.
   const r = await getVnOrderBook(symbol);
   if (!r) {
     const wsOff = process.env.SSI_WS_DISABLED === "true";
