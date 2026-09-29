@@ -4,12 +4,15 @@ import type { CanslimLetter } from "@/lib/engines/canslim";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
+/** CANSLIM pulls OHLCV + BCTC + ratios — needs headroom beyond default 15s. */
+export const maxDuration = 90;
 
 const LETTERS = new Set<CanslimLetter>(["C", "A", "N", "S", "L", "I", "M"]);
 
 /**
  * GET /api/v1/screener/canslim
- * Pipeline: quotes + OHLCV + BCTC + VNDirect ratios/equity + foreign flow + VNINDEX M.
+ * Pipeline: quotes + OHLCV batch + BCTC bulk + VNDirect ratios/equity + foreign + VNINDEX M.
+ * Never returns hard UNAVAILABLE — empty/partial table with meta instead.
  */
 export async function GET(req: Request) {
   const url = new URL(req.url);
@@ -26,34 +29,65 @@ export async function GET(req: Request) {
     .map((s) => s.trim().toUpperCase())
     .filter((s): s is CanslimLetter => LETTERS.has(s as CanslimLetter));
 
-  const r = await screenCanslim({
-    symbols: symbols.length ? symbols : undefined,
-    minScore: Number.isFinite(minScore) ? minScore : 50,
-    minPass: Number.isFinite(minPass) ? minPass : 0,
-    requireLetters: requireLetters.length ? requireLetters : undefined,
-    sector,
-    limit,
-  });
-  const payload = r ?? {
+  let payload: Awaited<ReturnType<typeof screenCanslim>>;
+  try {
+    payload = await screenCanslim({
+      symbols: symbols.length ? symbols : undefined,
+      minScore: Number.isFinite(minScore) ? minScore : 50,
+      minPass: Number.isFinite(minPass) ? minPass : 0,
+      requireLetters: requireLetters.length ? requireLetters : undefined,
+      sector,
+      limit,
+    });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "pipeline error";
+    payload = null;
+    return ok(
+      {
+        universe: "canslim",
+        rows: [],
+        scanned: 0,
+        skipped: 0,
+        marketBullish: null,
+        marketDetail: msg.slice(0, 120),
+        coverage: { withBars: 0, withGrowth: 0, withHealth: 0, withForeign: 0, withRatios: 0, withEquity: 0 },
+      },
+      {
+        source: "canslim-screener",
+        sourceTimestampMs: Date.now(),
+        hasData: false,
+        partial: true,
+        note: `CANSLIM lỗi tạm — ${msg.slice(0, 80)} — thử lại hoặc thu hẹp mã`,
+      },
+    );
+  }
+
+  const body = payload ?? {
     rows: [],
     scanned: 0,
     skipped: 0,
     marketBullish: null,
     marketDetail: "OHLCV/BCTC tạm lỗi",
     coverage: { withBars: 0, withGrowth: 0, withHealth: 0, withForeign: 0, withRatios: 0, withEquity: 0 },
-    meta: { source: "canslim-screener", sourceTimestampMs: Date.now(), hasData: false, partial: true,
-      note: "OHLCV/BCTC tạm lỗi — thử lại sau" },
+    meta: {
+      source: "canslim-screener",
+      sourceTimestampMs: Date.now(),
+      hasData: false,
+      partial: true,
+      note: "OHLCV/BCTC tạm lỗi — thử lại sau",
+    },
   };
+
   return ok(
     {
       universe: "canslim",
-      rows: payload.rows,
-      scanned: payload.scanned,
-      skipped: payload.skipped,
-      marketBullish: payload.marketBullish,
-      marketDetail: payload.marketDetail,
-      coverage: payload.coverage,
+      rows: body.rows,
+      scanned: body.scanned,
+      skipped: body.skipped,
+      marketBullish: body.marketBullish,
+      marketDetail: body.marketDetail,
+      coverage: body.coverage,
     },
-    payload.meta,
+    body.meta,
   );
 }
