@@ -40,7 +40,6 @@ const METRIC_VI: Record<string, string> = {
   profitBeforeTax: "Lợi nhuận trước thuế",
   taxExpense: "Chi phí thuế TNDN",
   netIncome: "Lợi nhuận sau thuế",
-  netProfit: "Lợi nhuận sau thuế",
   netIncomeParent: "LNST thuộc về công ty mẹ",
   // Cân đối kế toán
   cash: "Tiền và tương đương tiền",
@@ -75,6 +74,9 @@ const METRIC_VI: Record<string, string> = {
   currentRatio: "Hệ số thanh toán hiện hành",
   ocfToNi: "OCF / Lợi nhuận sau thuế",
 };
+
+// netIncome và netProfit cùng nhãn VI — chỉ hiển thị netIncome (tránh dòng trùng).
+const HIDDEN_DUPLICATE_KEYS = new Set(["netProfit"]);
 
 /** Thứ tự hiển thị ưu tiên theo từng bảng */
 const ORDER: Record<TabKey, string[]> = {
@@ -163,6 +165,23 @@ function periodHeader(r: Record<string, unknown>): string {
   return "—";
 }
 
+/**
+ * Sắp cột kỳ theo thứ tự: quý mới nhất → cũ (giữ nguyên thứ tự từ API),
+ * nhưng năm (ANNUAL) chen giữa quý của cùng năm phải đưa về ĐÚNG vị trí thời gian:
+ * 2025 (năm) luôn nằm SAU 2025-Q4 và TRƯỚC 2024-Q4 — không chen giữa 2025-Q1 và 2024-Q4.
+ */
+function sortColumnsPeriods<T extends { year?: number | null; quarter?: number | null }>(
+  rows: T[],
+): T[] {
+  const rank = (r: T): number => {
+    const y = r.year ?? 0;
+    // Năm (quarter == null) đứng sau Q4 cùng năm → sort key lớn hơn mọi quý của năm đó
+    return r.quarter == null ? y * 10 + 5 : y * 10 + (r.quarter - 1) * 1.2;
+  };
+  // Mới nhất trước (giảm dần)
+  return [...rows].sort((a, b) => rank(b) - rank(a));
+}
+
 export default function StockFinancialsPage({ params }: { params: Promise<{ symbol: string }> }) {
   const [symbol, setSymbol] = useState("");
   const [tab, setTab] = useState<TabKey>("income");
@@ -186,10 +205,12 @@ export default function StockFinancialsPage({ params }: { params: Promise<{ symb
 
   const fm = data.financialMeta;
   const sourceLabel = fm?.primarySource ?? "vndirect-fs";
-  const rows = data.financials[tab] ?? [];
+  const rawRows = data.financials[tab] ?? [];
+  // Sắp cột kỳ theo đúng trục thời gian (năm không chen giữa quý của năm sau)
+  const rows = sortColumnsPeriods(rawRows as { year?: number | null; quarter?: number | null }[]) as typeof rawRows;
 
   const metricKeys = Object.keys(rows[0] ?? {}).filter(
-    (k) => !META_KEYS.has(k) && typeof rows[0]?.[k] === "number",
+    (k) => !META_KEYS.has(k) && !HIDDEN_DUPLICATE_KEYS.has(k) && typeof rows[0]?.[k] === "number",
   );
   const preferred = ORDER[tab].filter((k) => metricKeys.includes(k));
   const rest = metricKeys.filter((k) => !preferred.includes(k));
@@ -239,9 +260,9 @@ export default function StockFinancialsPage({ params }: { params: Promise<{ symb
             <table className="stock-table">
               <thead>
                 <tr className="border-b border-line text-left text-ink-3">
-                  <th className="sticky left-0 bg-bg-2 pr-3 text-left font-medium">Chỉ tiêu</th>
+                  <th className="sticky left-0 z-10 bg-bg-2 pr-3 text-left font-medium">Chỉ tiêu</th>
                   {rows.slice(0, 8).map((r, i) => (
-                    <th key={i} className="num pl-2 text-right font-medium">
+                    <th key={i} className="num min-w-24 pl-2 text-right font-medium tabular-nums">
                       {periodHeader(r as Record<string, unknown>)}
                     </th>
                   ))}
@@ -251,13 +272,13 @@ export default function StockFinancialsPage({ params }: { params: Promise<{ symb
                 {orderedKeys.map((k) => (
                   <tr key={k} className="border-t border-line/40">
                     <td
-                      className="sticky left-0 max-w-64 truncate bg-bg-2 py-1.5 pr-3 text-ink-2"
+                      className="sticky left-0 z-10 max-w-64 truncate bg-bg-2 py-1.5 pr-3 text-ink-2"
                       title={METRIC_VI[k] ?? k}
                     >
                       {METRIC_VI[k] ?? k}
                     </td>
                     {rows.slice(0, 8).map((r, i) => (
-                      <td key={i} className="num py-1.5 pl-2 text-right">
+                      <td key={i} className="num py-1.5 pl-2 text-right tabular-nums">
                         {typeof r[k] === "number" ? formatMetricValue(k, r[k] as number) : "—"}
                       </td>
                     ))}

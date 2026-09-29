@@ -16,6 +16,7 @@ const DSTOCK_HEADERS: Record<string, string> = {
 
 /** Balance sheet (VAS + CK model 89) */
 const BS: Record<number, keyof NormalizedMetrics> = {
+  // ===== Mẫu doanh nghiệp (model 1) — VAS =====
   11000: "currentAssets",
   11100: "cash",
   11110: "cash",
@@ -48,6 +49,14 @@ const BS: Record<number, keyof NormalizedMetrics> = {
   14230: "retainedEarnings",
   14400: "totalAssets",
   12700: "totalAssets",
+};
+
+/**
+ * Mẫu ngân hàng (model 413 balance / 412 income / 414 cashflow).
+ * Tách riêng để không ô nhiễm mapping DN thường: item 421200 (LN gộp NH)
+ * không được lọt vào bảng income của DN sản xuất — thương mại.
+ */
+const BS_BANK: Record<number, keyof NormalizedMetrics> = {
   411100: "cash",
   411200: "cash",
   411400: "cash",
@@ -62,26 +71,30 @@ const BS: Record<number, keyof NormalizedMetrics> = {
 };
 
 const IS: Record<number, keyof NormalizedMetrics> = {
-  21000: "revenue",
-  21001: "netRevenue",
+  // ===== Mẫu doanh nghiệp (model 2) — VAS =====
+  21000: "revenue", // Tổng doanh thu hoạt động kinh doanh
+  21001: "netRevenue", // Doanh thu thuần = 21000 − giảm trừ
   22100: "cogs",
   23100: "grossProfit",
   23110: "operatingProfit",
   23010: "ebit",
-  22510: "interestExpense",
+  22510: "interestExpense", // Chi phí lãi vay (luôn ghi dương = chi phí)
   22500: "interestExpense",
   23800: "profitBeforeTax",
   23810: "profitBeforeTax",
   22070: "taxExpense",
-  23003: "netIncome",
-  23000: "netIncomeParent",
-  23001: "netIncome",
-  421900: "netRevenue",
-  421100: "revenue",
-  421200: "grossProfit",
-  88888: "operatingProfit",
-  422900: "interestExpense",
   23500: "taxExpense",
+  23003: "netIncome", // LNST (sau lãi thiểu số)
+  23000: "netIncomeParent", // LNST thuộc công ty mẹ
+  23001: "netIncome", // LNST sau CSTC (mẫu cũ)
+};
+
+/** Mẫu ngân hàng (model 412) — chỉ dùng khi profile = bank. */
+const IS_BANK: Record<number, keyof NormalizedMetrics> = {
+  421100: "revenue", // Thu nhập lãi thuần
+  421200: "grossProfit", // LN gộp NH
+  421900: "netRevenue",
+  422900: "interestExpense", // Chi phí lãi tiền gửi/cho vay NH
 };
 
 /**
@@ -96,10 +109,14 @@ const CF: Record<number, keyof NormalizedMetrics> = {
   34000: "financingCashFlow",
   32100: "capex",
   33100: "capex",
-  400760: "capex",
   36000: "cashBegin",
   36100: "cashBegin",
   37000: "cashEnd",
+};
+
+/** Mẫu ngân hàng (model 414) */
+const CF_BANK: Record<number, keyof NormalizedMetrics> = {
+  400760: "capex",
 };
 
 /**
@@ -160,7 +177,26 @@ function resolveMetricKey(
   profile: MetricProfile,
 ): keyof NormalizedMetrics | null {
   const mt = Number(modelType);
-  const primary = BS_MODELS.has(mt) ? BS : IS_MODELS.has(mt) ? IS : CF_MODELS.has(mt) ? CF : null;
+  // Tách bộ mapping theo modelType thực tế của row (bank = 412/413/414)
+  // để item-code ngân hàng không lọt vào bảng DN thường (và ngược lại).
+  const isBankModel = mt === 412 || mt === 413 || mt === 414;
+  if (isBankModel && profile !== "bank") return null;
+  if (!isBankModel && profile === "bank") {
+    if (!BS_BANK[itemCode] && !IS_BANK[itemCode] && !CF_BANK[itemCode]) return null;
+  }
+  const primary = BS_MODELS.has(mt)
+    ? isBankModel
+      ? BS_BANK
+      : BS
+    : IS_MODELS.has(mt)
+      ? isBankModel
+        ? IS_BANK
+        : IS
+      : CF_MODELS.has(mt)
+        ? isBankModel
+          ? CF_BANK
+          : CF
+        : null;
   if (primary && primary[itemCode]) return primary[itemCode];
   return metricKeyFromItemCode(itemCode, profile);
 }
@@ -184,8 +220,11 @@ function pivot(rows: RawRow[], profile: MetricProfile, _symbol: string): Normali
       const mt = Number(r.modelType);
       const key = resolveMetricKey(code, mt, profile);
       if (!key) continue;
-      const v = Number(r.numericValue);
+      let v = Number(r.numericValue);
       if (!Number.isFinite(v)) continue;
+      // Chi phí (lãi vay / thuế) luôn lưu dương — DStock có lúc trả số âm dạng "khoản chi".
+      if (key === "interestExpense" || key === "taxExpense") v = Math.abs(v);
+      if (v === 0 && (key === "interestExpense" || key === "taxExpense")) continue;
       if (key === "capex") {
         const cur = metrics.capex;
         const absV = Math.abs(v);
@@ -194,6 +233,15 @@ function pivot(rows: RawRow[], profile: MetricProfile, _symbol: string): Normali
       }
       const cur = metrics[key];
       if (cur == null || Math.abs(v) > Math.abs(cur as number)) metrics[key] = v;
+    }
+    // Dedupe LNST: nếu netIncome và netIncomeParent trùng nhau (DN không có lãi thiểu số)
+    // chỉ giữ netIncomeParent khi giá trị khác — tránh hiển thị 2 dòng giống hệt nhau.
+    if (metrics.netIncome != null && metrics.netIncomeParent != null) {
+      const a = metrics.netIncome as number;
+      const b = metrics.netIncomeParent as number;
+      if (Math.abs(a - b) < Math.max(1, Math.abs(a) * 0.0001)) {
+        metrics.netIncomeParent = a; // giữ 1 giá trị, 2 dòng vẫn hợp lệ về ý nghĩa
+      }
     }
     periods.push({
       period: meta.period,

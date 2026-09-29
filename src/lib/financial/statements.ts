@@ -21,6 +21,15 @@ export function normalizeIncomeMetrics(m: NormalizedMetrics): NormalizedMetrics 
   if (out.grossProfit == null && out.netRevenue != null && out.cogs != null) {
     out.grossProfit = out.netRevenue - out.cogs;
   }
+  // Sanity check LN gộp: LN gộp phải ≤ doanh thu thuần. Nếu grossProfit (lọt từ mẫu NH
+  // hoặc lệch mapping) lớn hơn DT thuần → tính lại từ DT thuần − GVHB.
+  if (
+    out.grossProfit != null &&
+    out.netRevenue != null &&
+    Math.abs(out.grossProfit as number) > Math.abs(out.netRevenue as number)
+  ) {
+    out.grossProfit = out.cogs != null ? (out.netRevenue as number) - out.cogs : undefined;
+  }
   if (out.ebit == null && out.operatingProfit != null) out.ebit = out.operatingProfit;
   if (out.operatingProfit == null && out.ebit != null) out.operatingProfit = out.ebit;
   if (out.netIncome == null && out.netIncomeParent != null) out.netIncome = out.netIncomeParent;
