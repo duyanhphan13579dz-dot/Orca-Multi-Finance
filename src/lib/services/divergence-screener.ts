@@ -13,8 +13,8 @@ import type {
   DivergenceStrength,
   Meta,
 } from "../types";
-import { LIQUID_BOARD } from "../providers/public-vn-feed";
 import { getSecurity, sectorOf } from "../vn/master";
+import { defaultTechnicalUniverse } from "../vn/vn100";
 import { getVnQuotes } from "./stocks";
 import { batchVnOhlcv, SCREENER_UNIVERSE_CAP } from "./ohlcv-batch";
 
@@ -48,19 +48,16 @@ export type DivergenceScreenOpts = {
   limit?: number;
   asset?: "stock" | "crypto" | "multi";
   window?: "default" | "short_3_4d";
-  /** Bypass result cache (e.g. cron force refresh). */
   skipCache?: boolean;
 };
 
 const STRENGTH_RANK: Record<DivergenceStrength, number> = { A: 3, B: 2, C: 1 };
 
-/** Result cache: short TTL so UI feels instant; stale serves while revalidate. */
 const SCREEN_TTL_MS = 90_000;
 const SCREEN_STALE_MS = 300_000;
 
 function oscillatorsFor(opts: DivergenceScreenOpts): DivergenceOscillator[] | undefined {
   if (!opts.oscillator || opts.oscillator === "any") {
-    // short window: RSI + MACD hist only — enough for 3–4d and faster
     if ((opts.window ?? "short_3_4d") === "short_3_4d") return ["rsi", "macd_hist"];
     return ["rsi", "macd_hist", "macd_line", "stoch"];
   }
@@ -137,20 +134,15 @@ function cacheKeyVn(opts: DivergenceScreenOpts, universe: string[]): string {
   const o = opts.oscillator ?? "any";
   const s = opts.minStrength ?? "C";
   const lim = Math.min(opts.limit ?? 40, 80);
-  const symPart = opts.symbols?.length ? universe.slice(0, 20).join(",") : "board";
-  return `div:vn:v2:${w}:${tf}:${k}:${o}:${s}:${lim}:${symPart}`;
+  const symPart = opts.symbols?.length ? universe.slice(0, 20).join(",") : "vn100";
+  return `div:vn:v3:${w}:${tf}:${k}:${o}:${s}:${lim}:${symPart}`;
 }
 
-/**
- * VN divergence screen — optimized path:
- * - short_3_4d: ~45 bars, high concurrency, deadline budget
- * - result-level cache (90s / stale 5m) + singleflight via cached()
- * - OHLCV already cached per-symbol in getVnOhlcv
- */
 export async function screenVnDivergences(
   opts: DivergenceScreenOpts = {},
 ): Promise<DivergenceScreenResult> {
-  const universe = (opts.symbols?.length ? opts.symbols : LIQUID_BOARD)
+  // Ưu tiên rổ VN100 — phân kỳ 3–4 phiên gần nhất
+  const universe = (opts.symbols?.length ? opts.symbols : defaultTechnicalUniverse(SCREENER_UNIVERSE_CAP))
     .map((s) => s.toUpperCase())
     .filter(Boolean)
     .slice(0, SCREENER_UNIVERSE_CAP);
@@ -161,13 +153,12 @@ export async function screenVnDivergences(
 
   const run = async (): Promise<DivergenceScreenResult> => {
     const t0 = Date.now();
-    // Fast path: fewer bars, higher concurrency, hard deadline so UI never hangs
     const [ohlcvMap, quotesPack] = await Promise.all([
       batchVnOhlcv(universe, {
         bars: short ? 48 : 120,
         concurrency: short ? 16 : 12,
         perSymbolMs: short ? 2_500 : 4_000,
-        deadlineMs: short ? 18_000 : 28_000,
+        deadlineMs: short ? 24_000 : 35_000,
       }),
       getVnQuotes(universe).catch(() => null),
     ]);
@@ -209,6 +200,9 @@ export async function screenVnDivergences(
 
     rows.sort((a, b) => {
       if (a.alertWorthy !== b.alertWorthy) return a.alertWorthy ? -1 : 1;
+      const ta = a.top.pricePivots[1]?.time ?? 0;
+      const tb = b.top.pricePivots[1]?.time ?? 0;
+      if (tb !== ta) return tb - ta;
       return rankSignals(a.top, b.top);
     });
 
@@ -220,7 +214,7 @@ export async function screenVnDivergences(
       meta: buildMeta({
         source: "divergence-engine+vn-ohlcv",
         sourceTimestampMs: Date.now(),
-        note: `VN · tf=${tf} · window=${window} · ohlcv=${ohlcvHits}/${universe.length} · ${ms}ms · vol-confirm`,
+        note: `VN100 · tf=${tf} · window=${window} · ohlcv=${ohlcvHits}/${universe.length} · ${ms}ms · vol-confirm`,
         hasData: rows.length > 0,
         partial: skipped > 0 || ohlcvHits < universe.length,
         latencyMs: ms,
@@ -237,7 +231,6 @@ export async function screenVnDivergences(
     producer: run,
   });
   const result = pack.value;
-  // Annotate cache hit on meta note
   if (pack.cached && result.meta) {
     result.meta = {
       ...result.meta,
@@ -349,10 +342,6 @@ export async function screenMultiAssetDivergences(
   };
 }
 
-/**
- * Pre-warm default VN short-window divergence screen (for cron / cold start).
- * Uses skipCache so OHLCV + engine run once and refill result cache.
- */
 export async function warmVnDivergenceScreen(): Promise<{
   ok: boolean;
   rows: number;
@@ -424,7 +413,6 @@ export async function runDivergenceAlerts(): Promise<{
   alerted: number;
   symbols: string[];
 }> {
-  // Force fresh scan for alerts (still benefits from per-symbol OHLCV cache)
   const result = await screenVnDivergences({
     minStrength: "B",
     limit: 30,
