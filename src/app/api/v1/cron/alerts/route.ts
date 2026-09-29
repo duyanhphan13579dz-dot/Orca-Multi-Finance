@@ -6,7 +6,7 @@ export const runtime = "nodejs";
 export const maxDuration = 60;
 
 /**
- * Vercel Cron — price alerts + candlestick pattern scan + divergence scan.
+ * External cron (cronjob.org) — price alerts + candlestick pattern scan + divergence scan.
  */
 export async function GET(req: Request) {
   const cronSecret = process.env.CRON_SECRET?.trim();

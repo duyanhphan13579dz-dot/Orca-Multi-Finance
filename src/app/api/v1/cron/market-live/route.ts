@@ -12,7 +12,7 @@ export const runtime = "nodejs";
 export const maxDuration = 25;
 
 /**
- * High-frequency VN market warm — call every 15–60s from cronjob.org during session.
+ * High-frequency VN market warm — call every 1–2 min from cronjob.org during session (docs/CRONJOB_ORG.md).
  * GET /api/v1/cron/market-live?secret=...
  */
 export async function GET(req: Request) {
