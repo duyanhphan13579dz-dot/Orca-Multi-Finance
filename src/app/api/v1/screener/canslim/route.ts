@@ -4,15 +4,21 @@ import type { CanslimLetter } from "@/lib/engines/canslim";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
-/** CANSLIM pulls OHLCV + BCTC + ratios — needs headroom beyond default 15s. */
+/** Full phase may pull BCTC; tech phase is OHLCV-only and much faster. */
 export const maxDuration = 90;
 
 const LETTERS = new Set<CanslimLetter>(["C", "A", "N", "S", "L", "I", "M"]);
 
 /**
  * GET /api/v1/screener/canslim
- * Pipeline: quotes + OHLCV batch + BCTC bulk + VNDirect ratios/equity + foreign + VNINDEX M.
- * Never returns hard UNAVAILABLE — empty/partial table with meta instead.
+ *
+ * Progressive pipeline (P2):
+ *   Phase A (tech): quotes + OHLCV → N/S/L/M + sector-relative RS
+ *   Phase B (full): + BCTC/ROE/NN → C/A/I when budget remains
+ *
+ * Query:
+ *   ?phase=tech|full|auto   (default auto→full; tech returns faster partial)
+ *   ?symbols=FPT,HPG&minScore=50&minPass=3&letters=C,A&sector=...
  */
 export async function GET(req: Request) {
   const url = new URL(req.url);
@@ -28,6 +34,9 @@ export async function GET(req: Request) {
     .split(",")
     .map((s) => s.trim().toUpperCase())
     .filter((s): s is CanslimLetter => LETTERS.has(s as CanslimLetter));
+  const phaseRaw = (url.searchParams.get("phase") ?? "auto").toLowerCase();
+  const phase =
+    phaseRaw === "tech" || phaseRaw === "full" ? (phaseRaw as "tech" | "full") : ("auto" as const);
 
   let payload: Awaited<ReturnType<typeof screenCanslim>>;
   try {
@@ -38,13 +47,14 @@ export async function GET(req: Request) {
       requireLetters: requireLetters.length ? requireLetters : undefined,
       sector,
       limit,
+      phase,
     });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "pipeline error";
-    payload = null;
     return ok(
       {
         universe: "canslim",
+        phase: "tech",
         rows: [],
         scanned: 0,
         skipped: 0,
@@ -66,9 +76,10 @@ export async function GET(req: Request) {
     rows: [],
     scanned: 0,
     skipped: 0,
-    marketBullish: null,
+    marketBullish: null as boolean | null,
     marketDetail: "OHLCV/BCTC tạm lỗi",
     coverage: { withBars: 0, withGrowth: 0, withHealth: 0, withForeign: 0, withRatios: 0, withEquity: 0 },
+    phase: "tech" as const,
     meta: {
       source: "canslim-screener",
       sourceTimestampMs: Date.now(),
@@ -81,6 +92,7 @@ export async function GET(req: Request) {
   return ok(
     {
       universe: "canslim",
+      phase: body.phase,
       rows: body.rows,
       scanned: body.scanned,
       skipped: body.skipped,
