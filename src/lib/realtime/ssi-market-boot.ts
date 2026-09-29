@@ -1,6 +1,7 @@
 import "server-only";
 import { ensureSsiWsStarted, ssiWs } from "./ssi-ws";
 import { ssiFcConfigured } from "../providers/ssi-fcdata";
+import { isRealtimeWsDisabled } from "./ws-policy";
 
 /** VN30 + liquid names — preload when All stream data is granted on SSI Developer */
 const LIQUID = [
@@ -21,7 +22,7 @@ export function bootSsiMarketDataPipeline(): {
   indices?: boolean;
 } {
   if (!ssiFcConfigured()) return { ok: false, reason: "ssi_not_configured" };
-  if (process.env.SSI_WS_DISABLED === "true") return { ok: false, reason: "ssi_ws_disabled" };
+  if (isRealtimeWsDisabled("SSI_WS_DISABLED")) return { ok: false, reason: "ssi_ws_disabled" };
 
   ensureSsiWsStarted();
   ssiWs.ensureCoreIndices();
