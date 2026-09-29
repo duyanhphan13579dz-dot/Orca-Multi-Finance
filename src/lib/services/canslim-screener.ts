@@ -1,5 +1,6 @@
 import "server-only";
 import { buildMeta } from "../freshness";
+import { cached } from "../cache";
 import { analyzeCanslim, retPct, type CanslimLetter, type CanslimSnapshot } from "../engines/canslim";
 import { getFinancialPackagesBulk, mapPool } from "../financial/snapshots";
 import { getVnIndices, getVnOhlcv } from "./stocks";
@@ -39,14 +40,28 @@ export interface CanslimCoverageStats {
   withEquity: number;
 }
 
-/** Default universe when caller does not pass symbols (keep lean for serverless). */
-const CANSLIM_DEFAULT_CAP = 28;
+export type CanslimScreenResult = {
+  rows: CanslimScreenRow[];
+  scanned: number;
+  skipped: number;
+  marketBullish: boolean | null;
+  marketDetail: string;
+  coverage: CanslimCoverageStats;
+  meta: Meta;
+};
+
+/** Default universe when caller does not pass symbols (lean for serverless). */
+export const CANSLIM_DEFAULT_CAP = 28;
 /** Hard max even when symbols= provided. */
 const CANSLIM_HARD_CAP = 40;
-/** Bars: need ~126 for 6M RS + room for high; 140 is enough (was 260). */
+/** Bars: ~126 for 6M RS; 140 is enough (was 260). */
 const CANSLIM_BARS = 140;
-/** Soft wall-clock budget (ms) before skipping secondary (I/ratios/equity). */
+/** Soft wall-clock before skipping secondary (I/ratios/equity). */
 const SECONDARY_BUDGET_MS = 45_000;
+
+/** Full-result cache: fresh 8 min, serve stale up to 30 min + bg refresh. */
+const CANSLIM_RESULT_TTL_MS = 8 * 60_000;
+const CANSLIM_RESULT_STALE_MS = 30 * 60_000;
 
 function sma(closes: number[], n: number): number | null {
   if (closes.length < n) return null;
@@ -59,6 +74,28 @@ function withTimeout<T>(p: Promise<T>, ms: number): Promise<T | null> {
     p,
     new Promise<null>((resolve) => setTimeout(() => resolve(null), ms)),
   ]);
+}
+
+/** Stable cache key from filter args (order-independent symbols). */
+export function canslimCacheKey(args?: {
+  symbols?: string[];
+  minScore?: number;
+  minPass?: number;
+  requireLetters?: CanslimLetter[];
+  sector?: string;
+  limit?: number;
+}): string {
+  const syms = args?.symbols?.length
+    ? [...new Set(args.symbols.map((s) => s.toUpperCase()).filter(Boolean))].sort().join(",")
+    : `board:${CANSLIM_DEFAULT_CAP}`;
+  const letters = args?.requireLetters?.length
+    ? [...args.requireLetters].map((L) => L.toUpperCase()).sort().join("")
+    : "-";
+  const sector = (args?.sector ?? "-").toUpperCase();
+  const minScore = args?.minScore ?? 50;
+  const minPass = args?.minPass ?? 0;
+  const limit = Math.min(args?.limit ?? 40, 72);
+  return `canslim:v2:${syms}:s${minScore}:p${minPass}:L${letters}:sec${sector}:n${limit}`;
 }
 
 /** M: VNINDEX — session Δ% + MA50 + 3M momentum. */
@@ -137,22 +174,15 @@ async function resolveMarketDirection(): Promise<{
   }
 }
 
-export async function screenCanslim(args?: {
+/** Core pipeline — no result cache (called by screenCanslim + cron warm). */
+async function screenCanslimCore(args?: {
   symbols?: string[];
   minScore?: number;
   minPass?: number;
   requireLetters?: CanslimLetter[];
   sector?: string;
   limit?: number;
-}): Promise<{
-  rows: CanslimScreenRow[];
-  scanned: number;
-  skipped: number;
-  marketBullish: boolean | null;
-  marketDetail: string;
-  coverage: CanslimCoverageStats;
-  meta: Meta;
-} | null> {
+}): Promise<CanslimScreenResult> {
   const t0 = Date.now();
   const userSymbols = Boolean(args?.symbols?.length);
   const cap = userSymbols ? CANSLIM_HARD_CAP : CANSLIM_DEFAULT_CAP;
@@ -168,7 +198,6 @@ export async function screenCanslim(args?: {
   ]);
   const quoteMap = new Map((quotesPack?.quotes ?? []).map((q) => [q.symbol, q]));
 
-  // Pass 1 — batch OHLCV (concurrency 10, 140 bars, no per-symbol retry sleep)
   const ohlcvMap = await batchVnOhlcv(uniq, { bars: CANSLIM_BARS, concurrency: 10 });
   type Pack = { symbol: string; bars: OhlcvBar[]; ret6: number | null };
   const valid: Pack[] = [];
@@ -204,7 +233,7 @@ export async function screenCanslim(args?: {
     withEquity: 0,
   };
 
-  // Pass 2 — BCTC bulk (shared cache hub)
+  // Prefer warm BCTC from cron (hub + Redis) — concurrency 6, no persist on read path
   const finMap = await getFinancialPackagesBulk(
     valid.map((p) => p.symbol),
     { concurrency: 6, persist: false },
@@ -216,7 +245,6 @@ export async function screenCanslim(args?: {
     ? Math.max(2_500, Math.min(6_000, SECONDARY_BUDGET_MS - elapsedAfterFin))
     : 0;
 
-  // Pass 3 — score each symbol; secondary (I/ratios/equity) only if budget remains
   const analyzed = await mapPool(valid, allowSecondary ? 5 : 8, async (p) => {
     let foreign: Awaited<ReturnType<typeof getVndSymbolForeignFlow>> | null = null;
     let equity: Awaited<ReturnType<typeof getVndEquitySnapshot>> | null = null;
@@ -327,5 +355,74 @@ export async function screenCanslim(args?: {
         !allowSecondary,
       note: `CANSLIM · quét ${uniq.length} · ${covNote} · ${market.detail} · không phải tín hiệu GD`,
     }),
+  };
+}
+
+/**
+ * Public entry — cached 8 min fresh / 30 min stale-while-revalidate (Redis + memory).
+ * Skip cache with skipCache:true (cron warm forces produce).
+ */
+export async function screenCanslim(args?: {
+  symbols?: string[];
+  minScore?: number;
+  minPass?: number;
+  requireLetters?: CanslimLetter[];
+  sector?: string;
+  limit?: number;
+  skipCache?: boolean;
+}): Promise<CanslimScreenResult | null> {
+  const key = canslimCacheKey(args);
+  try {
+    const hit = await cached<CanslimScreenResult>(key, {
+      ttlMs: CANSLIM_RESULT_TTL_MS,
+      staleMs: CANSLIM_RESULT_STALE_MS,
+      skipCache: args?.skipCache === true,
+      softSwr: true,
+      producer: async () => screenCanslimCore(args),
+    });
+    const result = hit.value;
+    // Annotate cache state on meta.note for observability
+    if (hit.cached && result.meta) {
+      const tag = hit.stale ? "cache-stale" : "cache-hit";
+      result.meta = {
+        ...result.meta,
+        note: `${result.meta.note ?? ""} · ${tag}`,
+        partial: result.meta.partial || hit.stale,
+      };
+    }
+    return result;
+  } catch {
+    // Last resort: try uncached once
+    try {
+      return await screenCanslimCore(args);
+    } catch {
+      return null;
+    }
+  }
+}
+
+/**
+ * Cron/helper: force-produce default board screen into cache (no filter).
+ * Returns warmed row count.
+ */
+export async function warmCanslimDefault(): Promise<{ rows: number; scanned: number; ms: number }> {
+  const t0 = Date.now();
+  const r = await screenCanslim({
+    minScore: 0,
+    minPass: 0,
+    limit: 40,
+    skipCache: true,
+  });
+  // Also seed the common UI defaults (score≥50, pass≥3)
+  await screenCanslim({
+    minScore: 50,
+    minPass: 3,
+    limit: 40,
+    skipCache: true,
+  }).catch(() => null);
+  return {
+    rows: r?.rows.length ?? 0,
+    scanned: r?.scanned ?? 0,
+    ms: Date.now() - t0,
   };
 }
