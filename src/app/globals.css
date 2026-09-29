@@ -461,7 +461,6 @@ html[data-reduced-motion="true"] .ticker-track { animation: none; }
     flex-direction: column;
     align-items: stretch;
     gap: 0.4rem;
-    padding: 0.4rem 0.65rem;
   }
   .chart-control-group {
     width: 100%;
@@ -477,8 +476,8 @@ html[data-reduced-motion="true"] .ticker-track { animation: none; }
 }
 
 /* Form controls — dark-theme selects / inputs
-   Native <option> lists often ignore parent styles; set explicit colors so
-   dropdowns match panel surfaces and stay readable (high contrast). */
+   Đồng bộ mọi bộ lọc (nến, phân kỳ, CANSLIM, Wyckoff, Minervini, Elliott,
+   fundamental, valuation, journal, stocks, settings…). */
 .input,
 input.input,
 select.input,
@@ -495,16 +494,26 @@ textarea.input {
   font-size: 0.8125rem;
   line-height: 1.35;
   outline: none;
+  color-scheme: dark;
   transition: border-color 140ms ease, box-shadow 140ms ease, background-color 140ms ease;
   box-shadow: inset 0 1px 0 color-mix(in srgb, var(--color-text-primary) 4%, transparent);
 }
+/* Mọi select (kể cả class Tailwind riêng) — chỉ ép màu / scheme, không đụng width */
+select {
+  color-scheme: dark;
+  background-color: var(--color-surface-elevated);
+  color: var(--color-text-primary);
+  border-color: var(--color-border-default);
+}
 .input:hover,
-select.input:hover {
+select.input:hover,
+select:hover {
   border-color: color-mix(in srgb, var(--color-accent-primary) 35%, var(--color-border-default));
   background-color: color-mix(in srgb, var(--color-surface-elevated) 88%, var(--color-panel-3));
 }
 .input:focus,
 select.input:focus,
+select:focus,
 textarea.input:focus {
   border-color: color-mix(in srgb, var(--color-accent-primary) 65%, var(--color-border-default));
   box-shadow:
@@ -512,7 +521,8 @@ textarea.input:focus {
     inset 0 1px 0 color-mix(in srgb, var(--color-text-primary) 4%, transparent);
 }
 .input:disabled,
-select.input:disabled {
+select.input:disabled,
+select:disabled {
   opacity: 0.55;
   cursor: not-allowed;
 }
@@ -530,15 +540,15 @@ select.input {
   padding-right: 1.75rem;
   cursor: pointer;
 }
-/* Dropdown list items — match elevated surface; selected row uses accent tint */
-select.input option,
-select option {
+/* Option list — nền elevated, chữ sáng; mục chọn tint accent */
+select option,
+option {
   background-color: var(--color-surface-elevated);
   color: var(--color-text-primary);
   padding: 0.4rem 0.55rem;
 }
-select.input option:checked,
-select option:checked {
+select option:checked,
+option:checked {
   background: linear-gradient(
     0deg,
     color-mix(in srgb, var(--color-accent-primary) 28%, var(--color-surface-elevated)),
@@ -547,8 +557,8 @@ select option:checked {
   color: var(--color-text-primary);
   font-weight: 600;
 }
-select.input option:hover,
-select option:hover {
+select option:hover,
+option:hover {
   background-color: color-mix(in srgb, var(--color-accent-primary) 16%, var(--color-surface-elevated));
 }
 html[data-theme="light"] .input,
@@ -557,9 +567,15 @@ html[data-theme="light"] textarea.input {
   background-color: var(--color-surface-primary);
   border-color: var(--color-border-default);
   color: var(--color-text-primary);
+  color-scheme: light;
 }
-html[data-theme="light"] select.input option,
-html[data-theme="light"] select option {
+html[data-theme="light"] select {
+  color-scheme: light;
+  background-color: var(--color-surface-primary);
+  color: var(--color-text-primary);
+}
+html[data-theme="light"] select option,
+html[data-theme="light"] option {
   background-color: var(--color-surface-primary);
   color: var(--color-text-primary);
 }
