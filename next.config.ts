@@ -9,6 +9,9 @@ const nextConfig: NextConfig = {
   },
   experimental: {
     optimizePackageImports: ["lucide-react", "lightweight-charts"],
+    // Giới hạn worker khi "Collecting page data" — môi trường build bị giới hạn ~2GB RAM
+    // (64 CPU × workers mỗi cái một process Node sẽ OOM kill ở bước collect page data).
+    cpus: 2,
   },
   poweredByHeader: false,
   compress: true,
