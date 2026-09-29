@@ -145,6 +145,21 @@ interface RawRow {
   createdDate?: string;
   modifiedDate?: string;
   itemName?: string;
+  unit?: string;
+  unitName?: string;
+  sourceUrl?: string;
+}
+
+const STATEMENT_SOURCE_URLS = {
+  income: (symbol: string) => `https://dstock.vndirect.com.vn/bao-cao-ket-qua-kinh-doanh/${symbol}`,
+  cashflow: (symbol: string) => `https://dstock.vndirect.com.vn/bao-cao-luu-chuyen-tien-te/${symbol}`,
+  balance: (symbol: string) => `https://dstock.vndirect.com.vn/bang-can-doi-ke-toan/${symbol}`,
+} as const;
+
+function sourceUrlForModel(modelType: number, symbol: string): string {
+  if (IS_MODELS.has(modelType)) return STATEMENT_SOURCE_URLS.income(symbol);
+  if (CF_MODELS.has(modelType)) return STATEMENT_SOURCE_URLS.cashflow(symbol);
+  return STATEMENT_SOURCE_URLS.balance(symbol);
 }
 
 function periodFromFiscal(
@@ -243,6 +258,9 @@ function pivot(rows: RawRow[], profile: MetricProfile, _symbol: string): Normali
         metrics.netIncomeParent = a; // giữ 1 giá trị, 2 dòng vẫn hợp lệ về ý nghĩa
       }
     }
+    const sourceUrls = [...new Set(group.map((r) => r.sourceUrl).filter((url): url is string => Boolean(url)))];
+    const sourceUrl = sourceUrls[0] ?? sourceUrlForModel(Number(head.modelType), _symbol);
+    const sourceUnits = [...new Set(group.map((r) => r.unitName ?? r.unit).filter((unit): unit is string => Boolean(unit)))];
     periods.push({
       period: meta.period,
       periodType: meta.periodType,
@@ -253,6 +271,9 @@ function pivot(rows: RawRow[], profile: MetricProfile, _symbol: string): Normali
       auditStatus: "unknown",
       currency: "VND",
       source: "vndirect-fs",
+      sourceUrl,
+      sourceUrls: sourceUrls.length ? sourceUrls : [sourceUrl],
+      unit: sourceUnits[0] ?? "VND",
       confidence: 0.85,
       metrics: normalizePeriodMetrics(metrics),
     });
@@ -291,7 +312,12 @@ async function fetchStatementPage(
     headers: DSTOCK_HEADERS,
   });
   if (!res.ok || !res.data?.data?.length) return [];
-  return res.data.data;
+  return res.data.data.map((row) => ({
+    ...row,
+    // Preserve the provider's unit when present; never scale numericValue implicitly.
+    unit: row.unit ?? "VND",
+    sourceUrl: sourceUrlForModel(Number(row.modelType), symbol),
+  }));
 }
 
 export async function fetchVndirectFinancials(

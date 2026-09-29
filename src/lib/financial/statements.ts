@@ -120,6 +120,9 @@ export function periodsToStatementTables(
       quarter: p.quarter,
       fiscalDate: p.fiscalDate,
       source: p.source,
+      sourceUrl: p.sourceUrl ?? null,
+      sourceUrls: p.sourceUrls ?? [],
+      unit: p.unit,
       periodType: p.periodType,
       metricProfile: profile,
     };

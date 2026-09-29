@@ -96,6 +96,9 @@ export function buildTtmPeriod(periods: NormalizedPeriod[]): NormalizedPeriod | 
     auditStatus: head.auditStatus,
     currency: "VND",
     source: head.source,
+    sourceUrl: head.sourceUrl,
+    sourceUrls: head.sourceUrls,
+    unit: head.unit,
     confidence: Math.min(...window.map((w) => w.confidence)),
     metrics: normalized,
   };

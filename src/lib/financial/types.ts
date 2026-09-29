@@ -75,7 +75,11 @@ export interface NormalizedPeriod {
   auditStatus: AuditStatus;
   currency: "VND";
   source: string;
+  /** Canonical DStock page(s) used to fetch this statement period. */
   sourceUrl?: string;
+  sourceUrls?: string[];
+  /** Unit reported by the provider; values are not silently rescaled. */
+  unit: string;
   filingDate?: string | null;
   confidence: number;
   metrics: NormalizedMetrics;
