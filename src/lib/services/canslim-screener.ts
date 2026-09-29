@@ -29,7 +29,6 @@ export interface CanslimScreenRow {
   dataCoverage: CanslimSnapshot["dataCoverage"];
   flags: string[];
   notes: string[];
-  /** Pipeline phase that produced this row */
   phase?: "tech" | "full";
 }
 
@@ -50,21 +49,26 @@ export type CanslimScreenResult = {
   marketDetail: string;
   coverage: CanslimCoverageStats;
   meta: Meta;
-  /** tech = N/S/L/M only; full = + C/A/I */
   phase: "tech" | "full";
 };
 
 export const CANSLIM_DEFAULT_CAP = 28;
 const CANSLIM_HARD_CAP = 40;
-const CANSLIM_BARS = 140;
+/** Fewer bars = faster realtime OHLCV (still enough for 6M RS ~126). */
+const CANSLIM_BARS = 130;
 
-/** Phase A must finish under this; leftover budget goes to Phase B (fundamentals). */
-const PHASE_A_TARGET_MS = 18_000;
-/** Absolute soft deadline for entire core (API maxDuration=90). */
-const CORE_BUDGET_MS = 70_000;
+/**
+ * Realtime budget for default/auto path — finish well under serverless limits.
+ * Phase A (quote+OHLCV) is guaranteed; Phase B (BCTC) is best-effort inside leftover time.
+ */
+const REALTIME_BUDGET_MS = 22_000;
+/** Hard ceiling when phase=full explicitly requested. */
+const FULL_BUDGET_MS = 65_000;
+/** Max time spent on BCTC bulk in realtime mode (hub cache hits are fast). */
+const BCTC_BUDGET_MS = 10_000;
 
-const CANSLIM_RESULT_TTL_MS = 8 * 60_000;
-const CANSLIM_RESULT_STALE_MS = 30 * 60_000;
+const CANSLIM_RESULT_TTL_MS = 5 * 60_000;
+const CANSLIM_RESULT_STALE_MS = 25 * 60_000;
 
 function sma(closes: number[], n: number): number | null {
   if (closes.length < n) return null;
@@ -79,7 +83,6 @@ function withTimeout<T>(p: Promise<T>, ms: number): Promise<T | null> {
   ]);
 }
 
-/** Percentile rank 0–100 of value in sorted ascending sample. */
 function percentileRank(sortedAsc: number[], value: number): number {
   if (!sortedAsc.length) return 50;
   let below = 0;
@@ -106,8 +109,8 @@ export function canslimCacheKey(args?: {
   const minScore = args?.minScore ?? 50;
   const minPass = args?.minPass ?? 0;
   const limit = Math.min(args?.limit ?? 40, 72);
-  const phase = args?.phase === "tech" ? "tech" : "full";
-  return `canslim:v3:${phase}:${syms}:s${minScore}:p${minPass}:L${letters}:sec${sector}:n${limit}`;
+  const phase = args?.phase === "tech" ? "tech" : args?.phase === "full" ? "full" : "rt";
+  return `canslim:v4:${phase}:${syms}:s${minScore}:p${minPass}:L${letters}:sec${sector}:n${limit}`;
 }
 
 async function resolveMarketDirection(): Promise<{
@@ -118,7 +121,7 @@ async function resolveMarketDirection(): Promise<{
   try {
     const [idxPack, ohlcv] = await Promise.all([
       getVnIndices().catch(() => null),
-      getVnOhlcv("VNINDEX", 120).catch(() => null),
+      getVnOhlcv("VNINDEX", 90).catch(() => null),
     ]);
     const vn =
       idxPack?.items?.find((x) => x.code === "VNINDEX") ??
@@ -178,7 +181,7 @@ async function resolveMarketDirection(): Promise<{
     return {
       bullish,
       detail: `VNINDEX: ${parts.join(" · ") || "n/a"}`,
-      source: bars.length ? "vndirect-index-ohlcv+quote" : "vndirect-index-quote",
+      source: bars.length ? "index-ohlcv+quote" : "index-quote",
     };
   } catch {
     return { bullish: null, detail: "Lỗi nguồn chỉ số", source: "error" };
@@ -192,10 +195,6 @@ type Pack = {
   sector: string;
 };
 
-/**
- * RS rank: max(universe percentile, sector-peer percentile when ≥4 peers).
- * Closer to O'Neil leadership vs industry group.
- */
 function buildRsRankers(valid: Pack[]): {
   rsOf: (p: Pack) => number | null;
   note: string;
@@ -216,16 +215,12 @@ function buildRsRankers(valid: Pack[]): {
   for (const [k, arr] of bySector) bySector.set(k, arr.sort((a, b) => a - b));
 
   return {
-    note: `RS=universe+sector(≥4 peers)`,
+    note: "RS=universe+sector",
     rsOf: (p: Pack) => {
       if (p.ret6 == null) return null;
       const uni = percentileRank(uniRets, p.ret6);
       const peers = bySector.get(p.sector || "Khác") ?? [];
-      if (peers.length >= 4) {
-        const sec = percentileRank(peers, p.ret6);
-        // Prefer the stronger leadership signal
-        return Math.max(uni, sec);
-      }
+      if (peers.length >= 4) return Math.max(uni, percentileRank(peers, p.ret6));
       return uni;
     },
   };
@@ -234,7 +229,17 @@ function buildRsRankers(valid: Pack[]): {
 function rowFromSnap(
   p: Pack,
   snap: CanslimSnapshot,
-  quoteMap: Map<string, { symbol?: string; name?: string | null; price?: number | null; changePercent?: number | null; quoteVolume?: number | null; volume?: number | null }>,
+  quoteMap: Map<
+    string,
+    {
+      symbol?: string;
+      name?: string | null;
+      price?: number | null;
+      changePercent?: number | null;
+      quoteVolume?: number | null;
+      volume?: number | null;
+    }
+  >,
   phase: "tech" | "full",
 ): CanslimScreenRow {
   const q = quoteMap.get(p.symbol);
@@ -284,6 +289,12 @@ function applyFilters(
   return out.slice(0, Math.min(args?.limit ?? 40, 72));
 }
 
+/**
+ * Realtime-first core:
+ * 1) Always finish Phase A (quotes + OHLCV → N/S/L/M) — this is what made old CANSLIM "always usable".
+ * 2) Phase B best-effort: BCTC via hub (cache-first) under short timeout; never blocks availability.
+ * 3) If user filters wipe the table, fall back to top-by-score so UI never shows hard UNAVAILABLE.
+ */
 async function screenCanslimCore(args?: {
   symbols?: string[];
   minScore?: number;
@@ -291,11 +302,11 @@ async function screenCanslimCore(args?: {
   requireLetters?: CanslimLetter[];
   sector?: string;
   limit?: number;
-  /** tech = stop after Phase A; full/auto = continue to BCTC if budget */
   phase?: "tech" | "full" | "auto";
 }): Promise<CanslimScreenResult> {
   const t0 = Date.now();
-  const wantPhase = args?.phase === "tech" ? "tech" : "full";
+  const mode = args?.phase ?? "auto";
+  const budgetMs = mode === "full" ? FULL_BUDGET_MS : REALTIME_BUDGET_MS;
   const userSymbols = Boolean(args?.symbols?.length);
   const cap = userSymbols ? CANSLIM_HARD_CAP : CANSLIM_DEFAULT_CAP;
   const uniq = [
@@ -304,14 +315,18 @@ async function screenCanslimCore(args?: {
     ),
   ].slice(0, cap);
 
-  // ── Phase A: quotes + market + OHLCV → N / S / L / M ─────────────────────
+  // ── Phase A (guaranteed realtime path) ───────────────────────────────────
   const [quotesPack, market] = await Promise.all([
     hubVnQuotes(uniq).catch(() => null),
     resolveMarketDirection(),
   ]);
   const quoteMap = new Map((quotesPack?.quotes ?? []).map((q) => [q.symbol as string, q]));
 
-  const ohlcvMap = await batchVnOhlcv(uniq, { bars: CANSLIM_BARS, concurrency: 10 });
+  const ohlcvMap = await batchVnOhlcv(uniq, {
+    bars: CANSLIM_BARS,
+    concurrency: mode === "full" ? 10 : 12,
+  });
+
   const valid: Pack[] = [];
   let skipped = 0;
   for (const sym of uniq) {
@@ -340,7 +355,6 @@ async function screenCanslimCore(args?: {
     withEquity: 0,
   };
 
-  // Tech rows (no BCTC yet)
   let rows: CanslimScreenRow[] = valid.map((p) => {
     const snap = analyzeCanslim({
       bars: p.bars,
@@ -354,39 +368,45 @@ async function screenCanslimCore(args?: {
     return rowFromSnap(p, snap, quoteMap, "tech");
   });
 
-  const elapsedA = Date.now() - t0;
   let finalPhase: "tech" | "full" = "tech";
+  const elapsedA = Date.now() - t0;
 
-  // ── Phase B: BCTC + secondary (C / A / I) if budget and not tech-only ─────
-  const budgetLeft = CORE_BUDGET_MS - elapsedA;
-  const canDoB =
-    wantPhase === "full" && budgetLeft > 8_000 && valid.length > 0 && elapsedA < PHASE_A_TARGET_MS + 25_000;
+  // ── Phase B: best-effort BCTC (cache hits via hub) — never required for availability ──
+  const wantB = mode !== "tech" && valid.length > 0;
+  const left = budgetMs - elapsedA;
+  if (wantB && left > 4_000) {
+    const bctcMs = Math.min(BCTC_BUDGET_MS, left - 2_000);
+    const finMap =
+      (await withTimeout(
+        getFinancialPackagesBulk(
+          valid.map((p) => p.symbol),
+          { concurrency: 8, persist: false },
+        ),
+        bctcMs,
+      )) ?? new Map<string, PackageBundle>();
 
-  if (canDoB) {
-    const finMap = await getFinancialPackagesBulk(
-      valid.map((p) => p.symbol),
-      { concurrency: 6, persist: false },
-    );
+    const elapsedB = Date.now() - t0;
+    const secondaryMs =
+      mode === "full" && elapsedB < budgetMs - 3_000
+        ? Math.min(3_500, budgetMs - elapsedB - 1_500)
+        : 0;
 
-    const elapsedAfterFin = Date.now() - t0;
-    const allowSecondary = elapsedAfterFin < CORE_BUDGET_MS - 5_000;
-    const secondaryTimeoutMs = allowSecondary
-      ? Math.max(2_000, Math.min(5_000, CORE_BUDGET_MS - elapsedAfterFin - 3_000))
-      : 0;
+    const enriched = await mapPool(valid, secondaryMs > 0 ? 6 : 10, async (p) => {
+      const fin = finMap.get(p.symbol) ?? null;
 
-    const enriched = await mapPool(valid, allowSecondary ? 5 : 8, async (p) => {
       let foreign: Awaited<ReturnType<typeof getVndSymbolForeignFlow>> | null = null;
       let equity: Awaited<ReturnType<typeof getVndEquitySnapshot>> | null = null;
       let ratios: Awaited<ReturnType<typeof getVndValuationRatios>> | null = null;
 
-      if (allowSecondary && secondaryTimeoutMs > 0) {
+      // Secondary only when BCTC already present or full mode with time
+      if (secondaryMs > 0 && (fin || mode === "full")) {
         const sec = await withTimeout(
           Promise.all([
             getVndSymbolForeignFlow(p.symbol, 5).catch(() => null),
             getVndEquitySnapshot(p.symbol).catch(() => null),
             getVndValuationRatios(p.symbol).catch(() => null),
           ]),
-          secondaryTimeoutMs,
+          secondaryMs,
         );
         if (sec) {
           foreign = sec[0];
@@ -395,7 +415,6 @@ async function screenCanslimCore(args?: {
         }
       }
 
-      const fin: PackageBundle | null = finMap.get(p.symbol) ?? null;
       const net1 = foreign?.latest?.netVal ?? null;
       const hist = foreign?.history ?? [];
       const net5 =
@@ -421,23 +440,34 @@ async function screenCanslimCore(args?: {
         ratiosEps: ratios?.eps ?? null,
         sharesOutstanding: equity?.sharesOutstanding ?? null,
       });
-      return rowFromSnap(p, snap, quoteMap, "full");
+      return rowFromSnap(p, snap, quoteMap, fin ? "full" : "tech");
     });
 
     rows = enriched.filter((r): r is CanslimScreenRow => r != null);
-    finalPhase = "full";
+    if (coverage.withGrowth > 0 || coverage.withHealth > 0) finalPhase = "full";
   }
 
-  rows = applyFilters(rows, args);
+  const allScored = [...rows].sort(
+    (a, b) => b.score - a.score || b.passCount - a.passCount || (b.volume ?? 0) - (a.volume ?? 0),
+  );
+
+  let filtered = applyFilters(rows, args);
+  let filterRelaxed = false;
+
+  // Always-usable: if strict filters empty the table but we have scores, show top board
+  if (filtered.length === 0 && allScored.length > 0) {
+    filtered = allScored.slice(0, Math.min(args?.limit ?? 40, 24));
+    filterRelaxed = true;
+  }
 
   const ms = Date.now() - t0;
   const covNote =
     finalPhase === "tech"
-      ? `PhaseA tech · nến ${coverage.withBars} · ${rsNote} · ${ms}ms`
-      : `PhaseB full · BCTC ${coverage.withGrowth}/${valid.length} · health ${coverage.withHealth} · ROE ${coverage.withRatios} · NN ${coverage.withForeign} · nến ${coverage.withBars} · ${rsNote} · ${ms}ms`;
+      ? `realtime tech · nến ${coverage.withBars} · ${rsNote} · ${ms}ms`
+      : `realtime+fund · BCTC ${coverage.withGrowth}/${valid.length} · ROE ${coverage.withRatios} · NN ${coverage.withForeign} · nến ${coverage.withBars} · ${rsNote} · ${ms}ms`;
 
   return {
-    rows,
+    rows: filtered,
     scanned: uniq.length,
     skipped,
     marketBullish: market.bullish,
@@ -446,16 +476,23 @@ async function screenCanslimCore(args?: {
     phase: finalPhase,
     meta: buildMeta({
       source:
-        [quotesPack?.meta?.source, finalPhase === "full" ? "bctc-bulk" : "tech-only", "ohlcv-batch", market.source]
+        [
+          quotesPack?.meta?.source,
+          finalPhase === "full" ? "bctc-cache-budget" : "tech-realtime",
+          "ohlcv-batch",
+          market.source,
+        ]
           .filter(Boolean)
-          .join("+") || "canslim-pipeline",
+          .join("+") || "canslim-realtime",
       sourceTimestampMs: Date.now(),
-      hasData: rows.length > 0 || valid.length > 0,
+      // hasData true whenever we scanned bars — UI must not show UNAVAILABLE
+      hasData: valid.length > 0 || filtered.length > 0,
       partial:
         finalPhase === "tech" ||
+        filterRelaxed ||
         skipped > 0 ||
-        (valid.length > 0 && coverage.withGrowth < valid.length * 0.5),
-      note: `CANSLIM · ${finalPhase} · quét ${uniq.length} · ${covNote} · ${market.detail} · không phải tín hiệu GD`,
+        (valid.length > 0 && coverage.withGrowth < valid.length * 0.4),
+      note: `CANSLIM · ${finalPhase} · quét ${uniq.length} · ${covNote}${filterRelaxed ? " · đã nới filter (hiển thị top điểm)" : ""} · ${market.detail} · không phải tín hiệu GD`,
     }),
   };
 }
@@ -491,24 +528,20 @@ export async function screenCanslim(args?: {
     return result;
   } catch {
     try {
-      return await screenCanslimCore(args);
+      return await screenCanslimCore({ ...args, phase: "tech" });
     } catch {
       return null;
     }
   }
 }
 
-/**
- * Cron seed under ~25s: one full screen for common UI filter only.
- * (Avoid double full-scan which exceeds cronjob.org 30s.)
- */
 export async function warmCanslimDefault(): Promise<{ rows: number; scanned: number; ms: number }> {
   const t0 = Date.now();
   const r = await screenCanslim({
-    minScore: 50,
-    minPass: 3,
+    minScore: 0,
+    minPass: 0,
     limit: 40,
-    phase: "full",
+    phase: "auto",
     skipCache: true,
   });
   return {
