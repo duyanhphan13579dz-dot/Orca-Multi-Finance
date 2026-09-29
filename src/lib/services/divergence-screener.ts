@@ -46,12 +46,16 @@ export type DivergenceScreenOpts = {
   timeframe?: string;
   limit?: number;
   asset?: "stock" | "crypto" | "multi";
+  /** default = short_3_4d (phân kỳ 3–4 phiên gần nhất on D1). Use "default" for classic wide swing. */
+  window?: "default" | "short_3_4d";
 };
 
 const STRENGTH_RANK: Record<DivergenceStrength, number> = { A: 3, B: 2, C: 1 };
 
 function oscillatorsFor(opts: DivergenceScreenOpts): DivergenceOscillator[] | undefined {
   if (!opts.oscillator || opts.oscillator === "any") {
+    // short window: RSI + MACD hist is enough and faster
+    if ((opts.window ?? "short_3_4d") === "short_3_4d") return ["rsi", "macd_hist"];
     return ["rsi", "macd_hist", "macd_line", "stoch"];
   }
   return [opts.oscillator];
@@ -101,6 +105,16 @@ function rankSignals(a: DivergenceSignal, b: DivergenceSignal): number {
   return b.confidence - a.confidence;
 }
 
+function detectOptsFor(opts: DivergenceScreenOpts, timeframe: string) {
+  const window = opts.window ?? "short_3_4d";
+  return {
+    window,
+    timeframe,
+    maxSignals: 8,
+    oscillators: oscillatorsFor(opts),
+  } as const;
+}
+
 export async function screenVnDivergences(
   opts: DivergenceScreenOpts = {},
 ): Promise<DivergenceScreenResult> {
@@ -110,28 +124,25 @@ export async function screenVnDivergences(
     .slice(0, SCREENER_UNIVERSE_CAP);
   const limit = Math.min(opts.limit ?? 40, 80);
   const tf = opts.timeframe ?? "1d";
+  const window = opts.window ?? "short_3_4d";
 
   const [ohlcvMap, quotesPack] = await Promise.all([
-    batchVnOhlcv(universe, { bars: 120, concurrency: 10 }),
+    batchVnOhlcv(universe, { bars: window === "short_3_4d" ? 60 : 120, concurrency: 10 }),
     getVnQuotes(universe).catch(() => null),
   ]);
   const quoteBy = new Map((quotesPack?.quotes ?? []).map((q) => [q.symbol.toUpperCase(), q]));
 
   const rows: DivergenceScreenRow[] = [];
   let skipped = 0;
+  const minBarsNeed = window === "short_3_4d" ? 25 : 40;
 
   for (const sym of universe) {
     const pack = ohlcvMap.get(sym);
-    if (!pack?.bars || pack.bars.length < 40) {
+    if (!pack?.bars || pack.bars.length < minBarsNeed) {
       skipped++;
       continue;
     }
-    let divs = detectDivergences(pack.bars, {
-      lookback: 100,
-      maxSignals: 8,
-      timeframe: tf,
-      oscillators: oscillatorsFor(opts),
-    });
+    let divs = detectDivergences(pack.bars, detectOptsFor(opts, tf));
     divs = filterSignals(divs, opts);
     if (!divs.length) continue;
     divs.sort(rankSignals);
@@ -165,7 +176,7 @@ export async function screenVnDivergences(
     meta: buildMeta({
       source: "divergence-engine+vn-ohlcv",
       sourceTimestampMs: Date.now(),
-      note: `VN · tf=${tf} · minStrength=${opts.minStrength ?? "C"} · ${opts.kind ?? "any"} · universe≤${SCREENER_UNIVERSE_CAP}`,
+      note: `VN · tf=${tf} · window=${window} · minStrength=${opts.minStrength ?? "C"} · ${opts.kind ?? "any"}`,
       hasData: rows.length > 0,
       partial: skipped > 0,
     }),
@@ -181,14 +192,14 @@ export async function screenCryptoDivergences(
     .slice(0, 30);
   const limit = Math.min(opts.limit ?? 20, 40);
   const interval = opts.timeframe ?? "1h";
+  const window = opts.window ?? "short_3_4d";
   const rows: DivergenceScreenRow[] = [];
   let skipped = 0;
 
-  // Parallel with concurrency 6 (Binance rate-friendly)
   const { mapPool } = await import("./ohlcv-batch");
   const packs = await mapPool(universe, 6, async (sym) => {
     try {
-      const bars = await getKlinesDeep(sym, interval, 120);
+      const bars = await getKlinesDeep(sym, interval, window === "short_3_4d" ? 80 : 120);
       return { sym, bars };
     } catch {
       return { sym, bars: null as Awaited<ReturnType<typeof getKlinesDeep>> | null };
@@ -196,16 +207,11 @@ export async function screenCryptoDivergences(
   });
 
   for (const { sym, bars } of packs) {
-    if (!bars?.length || bars.length < 40) {
+    if (!bars?.length || bars.length < 25) {
       skipped++;
       continue;
     }
-    let divs = detectDivergences(bars, {
-      lookback: 100,
-      maxSignals: 8,
-      timeframe: interval,
-      oscillators: oscillatorsFor(opts),
-    });
+    let divs = detectDivergences(bars, detectOptsFor(opts, interval));
     divs = filterSignals(divs, opts);
     if (!divs.length) continue;
     divs.sort(rankSignals);
@@ -239,7 +245,7 @@ export async function screenCryptoDivergences(
     meta: buildMeta({
       source: "divergence-engine+binance",
       sourceTimestampMs: Date.now(),
-      note: `crypto · ${interval} · minStrength=${opts.minStrength ?? "C"}`,
+      note: `crypto · ${interval} · window=${window}`,
       hasData: rows.length > 0,
       partial: skipped > 0,
     }),
@@ -324,6 +330,7 @@ export async function runDivergenceAlerts(): Promise<{
     minStrength: "B",
     limit: 30,
     timeframe: "1d",
+    window: "short_3_4d",
   });
   const hits = (result?.rows ?? []).filter((r) => r.alertWorthy);
   const scanned = result?.scanned ?? 0;
@@ -412,4 +419,4 @@ export async function runDivergenceAlerts(): Promise<{
   return { scanned, hits: hits.length, alerted, symbols };
 }
 
-export { buildDivergenceConfluence } from "../engines/divergence";
+export { buildDivergenceConfluence, SHORT_3_4D } from "../engines/divergence";
