@@ -190,9 +190,20 @@ export function isChartableCommodity(symbol: string): boolean {
 }
 
 const INDEX_MAP: Record<string, string> = {
-  VNINDEX: "VNINDEX", "^VNINDEX": "VNINDEX", VNIND: "VNINDEX",
-  HNX: "HNXINDEX", HNXINDEX: "HNXINDEX", "^HNX": "HNXINDEX",
-  UPCOM: "UPCOMINDEX", UPCOMINDEX: "UPCOMINDEX",
+  VNINDEX: "VNINDEX",
+  "^VNINDEX": "VNINDEX",
+  VNIND: "VNINDEX",
+  VN: "VNINDEX",
+  "VN-INDEX": "VNINDEX",
+  "VN_INDEX": "VNINDEX",
+  HNX: "HNXINDEX",
+  HNXINDEX: "HNXINDEX",
+  "^HNX": "HNXINDEX",
+  "HNX-INDEX": "HNXINDEX",
+  UPCOM: "UPCOMINDEX",
+  UPCOMINDEX: "UPCOMINDEX",
+  "^UPCOM": "UPCOMINDEX",
+  "UPCOM-INDEX": "UPCOMINDEX",
 };
 
 export function canonicalIndexSymbol(symbol: string): string | null {
