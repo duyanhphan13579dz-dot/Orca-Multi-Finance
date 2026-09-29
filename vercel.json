@@ -1,5 +1,31 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "nextjs",
-  "regions": ["sin1"]
+  "regions": ["sin1"],
+  "crons": [
+    {
+      "path": "/api/v1/cron/market-live",
+      "schedule": "*/2 1-8 * * 1-5"
+    },
+    {
+      "path": "/api/v1/cron/stocks",
+      "schedule": "*/5 1-8 * * 1-5"
+    },
+    {
+      "path": "/api/v1/cron/alerts",
+      "schedule": "*/10 1-9 * * 1-5"
+    },
+    {
+      "path": "/api/v1/cron/reports",
+      "schedule": "15,45 1-10 * * 1-5"
+    },
+    {
+      "path": "/api/v1/cron/financials",
+      "schedule": "30 8 * * 1-5"
+    },
+    {
+      "path": "/api/v1/cron/commodities",
+      "schedule": "0 0 * * *"
+    }
+  ]
 }
