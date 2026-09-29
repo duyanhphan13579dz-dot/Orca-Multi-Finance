@@ -1,7 +1,8 @@
 import "server-only";
 import { llmChat, llmConfigured } from "../ai/gateway";
 import { buildMeta } from "../freshness";
-import { hubVnQuotes, hubCryptoDetail, hubPrefetch, runInDataHub } from "../data-engine/hub";
+import { hubPortfolioMarks, hubPrefetch, runInDataHub } from "../data-engine/hub";
+import { normalizeAssetType, formatAssetTypeVi } from "../data-engine/asset-registry";
 import type { Meta } from "../types";
 
 export type JournalTradeInput = {
@@ -101,7 +102,7 @@ function computeStats(trades: JournalTradeInput[]): JournalAnalysisResult["stats
   for (const t of closed) {
     const p = pnlOf(t);
     if (p == null) continue;
-    const k = t.assetType || "other";
+    const k = normalizeAssetType(t.assetType, t.symbol);
     const cur = byAssetMap.get(k) ?? { n: 0, pnl: 0, wins: 0, closed: 0 };
     cur.n++;
     cur.closed++;
@@ -148,42 +149,36 @@ function computeStats(trades: JournalTradeInput[]): JournalAnalysisResult["stats
 async function markOpenTrades(trades: JournalTradeInput[]): Promise<OpenMark[]> {
   const open = trades.filter((t) => t.exit == null);
   if (!open.length) return [];
-  const stockSyms = [
-    ...new Set(
-      open
-        .filter((t) => t.assetType === "stock" || /^[A-Z]{3}$/.test(t.symbol))
-        .map((t) => t.symbol.toUpperCase()),
-    ),
-  ].slice(0, 30);
+
+  const normalized = open.map((t) => ({
+    ...t,
+    assetType: normalizeAssetType(t.assetType, t.symbol),
+    symbol: t.symbol.trim().toUpperCase(),
+  }));
+
   const quoteMap = new Map<string, number>();
-  if (stockSyms.length) {
-    try {
-      const q = await hubVnQuotes(stockSyms);
-      for (const row of q?.quotes ?? []) {
-        const sym = String(row.symbol ?? "").toUpperCase();
-        const px = row.price != null ? Number(row.price) : NaN;
-        if (sym && Number.isFinite(px)) quoteMap.set(sym, px);
-      }
-    } catch {
-      /* */
+  try {
+    const hub = await hubPortfolioMarks(
+      normalized.map((t) => ({ assetType: t.assetType, symbol: t.symbol })),
+    );
+    for (const [k, v] of Object.entries(hub.marks)) {
+      if (Number.isFinite(v)) quoteMap.set(k, v);
     }
+  } catch {
+    /* hub soft-fail */
   }
-  const cryptoOpen = open.filter((t) => t.assetType === "crypto").slice(0, 5);
-  for (const t of cryptoOpen) {
-    try {
-      const d = (await hubCryptoDetail(t.symbol)) as {
-        lastPrice?: string | number;
-        price?: number;
-      } | null;
-      const raw = d?.lastPrice ?? d?.price;
-      const px = raw != null ? Number(raw) : NaN;
-      if (Number.isFinite(px) && px > 0) quoteMap.set(t.symbol.toUpperCase(), px);
-    } catch {
-      /* */
-    }
-  }
-  return open.map((t) => {
-    const mark = quoteMap.get(t.symbol.toUpperCase()) ?? null;
+
+  return normalized.map((t) => {
+    const sym = t.symbol;
+    const symBare = sym.replace(/USDT$/i, "");
+    const composite = `${t.assetType}:${sym}`;
+    const compositeBare = `${t.assetType}:${symBare}`;
+    const mark =
+      quoteMap.get(composite) ??
+      quoteMap.get(compositeBare) ??
+      quoteMap.get(sym) ??
+      quoteMap.get(symBare) ??
+      null;
     const u = pnlOf(t, mark);
     const dir = t.side === "short" ? -1 : 1;
     let distToSlPct: number | null = null;
@@ -228,6 +223,12 @@ function deterministicNarrative(
     lines.push(
       `Trong ${stats.closed} lệnh đã đóng (trên tổng ${stats.total}), tỷ lệ thắng khoảng **${wr}**, PnL thực hiện **${pnl}** (${tone}).`,
     );
+    if (stats.byAsset.length) {
+      const parts = stats.byAsset.map(
+        (a) => `${formatAssetTypeVi(a.assetType)}: ${a.closed} lệnh, PnL ${a.pnl.toFixed(1)}`,
+      );
+      lines.push(`Theo loại tài sản: ${parts.join("; ")}.`);
+    }
     if (stats.profitFactor != null) {
       const pf = stats.profitFactor;
       lines.push(
@@ -261,7 +262,7 @@ function deterministicNarrative(
       if (o.distToSlPct != null) dist += ` còn khoảng **${o.distToSlPct.toFixed(1)}%** tới SL`;
       if (o.distToTpPct != null) dist += (dist ? "," : "") + ` **${o.distToTpPct.toFixed(1)}%** tới TP`;
       lines.push(
-        `- **${o.symbol}** (${o.side}): vào **${o.entry}**, mark ${markStr} → ${u}.` +
+        `- **${o.symbol}** (${formatAssetTypeVi(o.assetType)}, ${o.side}): vào **${o.entry}**, mark ${markStr} → ${u}.` +
           (dist ? dist + "." : "") +
           (o.strategy || o.notes ? ` Ghi chú: ${(o.strategy || o.notes).slice(0, 80)}.` : ""),
       );
@@ -328,7 +329,7 @@ export async function analyzeJournalPortfolio(
     const openSyms = [
       ...new Set(
         slice
-          .filter((t) => t.exit == null && (t.assetType === "stock" || /^[A-Z]{3}$/.test(t.symbol)))
+          .filter((t) => t.exit == null)
           .map((t) => t.symbol.toUpperCase()),
       ),
     ];
@@ -377,7 +378,7 @@ export async function analyzeJournalPortfolio(
           .slice(0, 30)
           .map((t) => ({
             symbol: t.symbol,
-            assetType: t.assetType,
+            assetType: normalizeAssetType(t.assetType, t.symbol),
             side: t.side,
             entry: t.entry,
             exit: t.exit,
