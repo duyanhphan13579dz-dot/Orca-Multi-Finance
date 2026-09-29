@@ -3,7 +3,7 @@ import type { OhlcvBar } from "../types";
 /**
  * Candlestick pattern engine — multi-asset (stock / forex / crypto).
  * - Prior trend + volume filters (soft when volume absent, e.g. FX)
- * - Multi-bar recent scan for broader coverage
+ * - Multi-bar recent scan; optional keep only reversals completing in last 2–3 bars
  */
 
 export type PatternCategory =
@@ -18,8 +18,15 @@ export type CandleAssetClass = "stock" | "forex" | "crypto" | "commodity";
 
 export interface CandleDetectOpts {
   assetClass?: CandleAssetClass;
-  /** How many trailing bars to evaluate (1 = last only). */
+  /** How many trailing bar positions to evaluate (1 = last only). Default stock=3. */
   recentBars?: number;
+  /** Keep only bullish/bearish reversal patterns (drop continuation/neutral). */
+  reversalOnly?: boolean;
+  /**
+   * Pattern must complete within the last N bars of the series (bar age from end).
+   * Default when reversalOnly: 3 (cụm 2–3 nến mới nhất).
+   */
+  maxAgeBars?: number;
 }
 
 export interface DetectedCandlePattern {
@@ -35,6 +42,8 @@ export interface DetectedCandlePattern {
   volumeConfirmed: boolean;
   trendContext: "up" | "down" | "sideways" | "unknown";
   barIndex: number;
+  /** Bars from series end when pattern completed (0 = last closed bar). */
+  ageBars?: number;
 }
 
 type C = {
@@ -113,11 +122,6 @@ function avgBody(cs: C[], n = 10): number {
   return slice.reduce((a, c) => a + c.body, 0) / slice.length;
 }
 
-function nearEqual(a: number, b: number, tolPct = 0.003): boolean {
-  const base = Math.max(Math.abs(a), Math.abs(b), 1e-9);
-  return Math.abs(a - b) / base <= tolPct;
-}
-
 function reliabilityScore(
   base: Reliability,
   volumeOk: boolean,
@@ -146,11 +150,12 @@ function reliabilityScore(
 
 function push(
   out: DetectedCandlePattern[],
-  p: Omit<DetectedCandlePattern, "score" | "reliability" | "volumeConfirmed"> & {
+  p: Omit<DetectedCandlePattern, "score" | "reliability" | "volumeConfirmed" | "ageBars"> & {
     baseReliability: Reliability;
     volumeOk: boolean;
     trendOk: boolean;
     volumeStrong?: boolean;
+    ageBars?: number;
   },
 ) {
   const isReversal =
@@ -172,7 +177,23 @@ function push(
     volumeConfirmed: p.volumeOk,
     trendContext: p.trendContext,
     barIndex: p.barIndex,
+    ageBars: p.ageBars ?? 0,
   });
+}
+
+/** Prefer fresher completion; then score. */
+export function filterRecentReversals(
+  patterns: DetectedCandlePattern[],
+  maxAgeBars = 3,
+): DetectedCandlePattern[] {
+  return patterns
+    .filter(
+      (p) =>
+        (p.category === "bullish_reversal" || p.category === "bearish_reversal") &&
+        (p.ageBars ?? 0) <= maxAgeBars &&
+        p.candles <= 3,
+    )
+    .sort((a, b) => (a.ageBars ?? 0) - (b.ageBars ?? 0) || b.score - a.score);
 }
 
 export function detectCandlePatterns(
@@ -185,18 +206,40 @@ export function detectCandlePatterns(
     opts.assetClass === "crypto" ||
     opts.assetClass === "commodity";
   const recent = Math.max(1, Math.min(opts.recentBars ?? (soft ? 5 : 3), 8));
+  const fullLen = bars.length;
   const all: DetectedCandlePattern[] = [];
   for (let end = 0; end < recent; end++) {
-    const sliceEnd = bars.length - end;
+    const sliceEnd = fullLen - end;
     if (sliceEnd < 6) continue;
-    all.push(...detectCandlePatternsAt(bars.slice(0, sliceEnd), soft));
+    const found = detectCandlePatternsAt(bars.slice(0, sliceEnd), soft);
+    for (const p of found) {
+      all.push({ ...p, ageBars: end });
+    }
   }
   const byName = new Map<string, DetectedCandlePattern>();
   for (const p of all) {
     const prev = byName.get(p.name);
-    if (!prev || p.score > prev.score) byName.set(p.name, p);
+    // Prefer higher score; if tie prefer fresher (smaller age)
+    if (
+      !prev ||
+      p.score > prev.score ||
+      (p.score === prev.score && (p.ageBars ?? 0) < (prev.ageBars ?? 0))
+    ) {
+      byName.set(p.name, p);
+    }
   }
-  return [...byName.values()].sort((a, b) => b.score - a.score).slice(0, 8);
+  let out = [...byName.values()].sort(
+    (a, b) => (a.ageBars ?? 0) - (b.ageBars ?? 0) || b.score - a.score,
+  );
+
+  if (opts.reversalOnly) {
+    const maxAge = opts.maxAgeBars ?? 3;
+    out = filterRecentReversals(out, maxAge);
+  } else if (opts.maxAgeBars != null) {
+    out = out.filter((p) => (p.ageBars ?? 0) <= opts.maxAgeBars!);
+  }
+
+  return out.slice(0, 8);
 }
 
 function detectCandlePatternsAt(bars: OhlcvBar[], soft: boolean): DetectedCandlePattern[] {
