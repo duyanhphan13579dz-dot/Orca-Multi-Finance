@@ -4,6 +4,9 @@
  * Phase 0–1: RSI + MACD hist, confirmed pivots, Class A/B/C
  * Phase 5: + MACD line, Stochastic; double/triple structure on successive pivots
  * Quant-only: pivots on closed bars, no LLM. Callers attach freshness/meta.
+ *
+ * Short window (3–4 phiên D1):
+ *   preset SHORT_3_4D — pivot nhỏ, maxBarsBetween≤4, last pivot gần nến cuối.
  */
 
 import type { OhlcvBar } from "../types";
@@ -25,6 +28,13 @@ export interface DetectDivergenceOptions {
   timeframe?: string;
   oscillators?: DivergenceOscillator[];
   maxSignals?: number;
+  /**
+   * Only keep signals whose *later* price pivot is within N bars of series end.
+   * Use 3–4 for "phân kỳ giai đoạn 3–4 ngày gần nhất" on daily charts.
+   */
+  maxAgeBarsFromEnd?: number;
+  /** Apply SHORT_3_4D pivot geometry (overrides left/right/min/max/lookback if unset). */
+  window?: "default" | "short_3_4d";
 }
 
 const DEFAULTS = {
@@ -36,6 +46,18 @@ const DEFAULTS = {
   oscillators: ["rsi", "macd_hist", "macd_line", "stoch"] as DivergenceOscillator[],
   maxSignals: 8,
 };
+
+/** Geometry tuned for 3–4 daily bars between pivots (swing ngắn). */
+export const SHORT_3_4D = {
+  pivotLeft: 2,
+  pivotRight: 1,
+  minBarsBetween: 2,
+  maxBarsBetween: 4,
+  lookback: 40,
+  maxAgeBarsFromEnd: 3,
+  oscillators: ["rsi", "macd_hist"] as DivergenceOscillator[],
+  maxSignals: 6,
+} as const;
 
 interface PivotPoint {
   index: number;
@@ -68,7 +90,7 @@ function findPeaks(
         break;
       }
     }
-    if (isPeak) out.push({ index: i, value: v, price: prices[i], time: times[i] });
+    if (isPeak) out.push({ index: i, value: v, price: prices[i]!, time: times[i]! });
   }
   return out;
 }
@@ -97,7 +119,7 @@ function findTroughs(
         break;
       }
     }
-    if (isTrough) out.push({ index: i, value: v, price: prices[i], time: times[i] });
+    if (isTrough) out.push({ index: i, value: v, price: prices[i]!, time: times[i]! });
   }
   return out;
 }
@@ -221,8 +243,8 @@ function pairDivergences(
     const prices = cond.priceList;
     for (let i = 0; i < prices.length - 1; i++) {
       for (let j = i + 1; j < prices.length; j++) {
-        const p1 = prices[i];
-        const p2 = prices[j];
+        const p1 = prices[i]!;
+        const p2 = prices[j]!;
         const barsBetween = p2.index - p1.index;
         if (barsBetween < minBars || barsBetween > maxBars) continue;
         const o1 = nearestPivot(cond.oscList, p1.index);
@@ -233,7 +255,7 @@ function pairDivergences(
 
         let legs = 1;
         for (let m = i + 1; m < j; m++) {
-          const pm = prices[m];
+          const pm = prices[m]!;
           const om = nearestPivot(cond.oscList, pm.index);
           if (!om) continue;
           const leg1 =
@@ -279,16 +301,21 @@ export function detectDivergences(
   bars: OhlcvBar[],
   opts: DetectDivergenceOptions = {},
 ): DivergenceSignal[] {
-  const left = opts.pivotLeft ?? DEFAULTS.pivotLeft;
-  const right = opts.pivotRight ?? DEFAULTS.pivotRight;
-  const minBars = opts.minBarsBetween ?? DEFAULTS.minBarsBetween;
-  const maxBars = opts.maxBarsBetween ?? DEFAULTS.maxBarsBetween;
-  const lookback = opts.lookback ?? DEFAULTS.lookback;
-  const oscillators = opts.oscillators ?? DEFAULTS.oscillators;
-  const maxSignals = opts.maxSignals ?? DEFAULTS.maxSignals;
+  const short = opts.window === "short_3_4d";
+  const left = opts.pivotLeft ?? (short ? SHORT_3_4D.pivotLeft : DEFAULTS.pivotLeft);
+  const right = opts.pivotRight ?? (short ? SHORT_3_4D.pivotRight : DEFAULTS.pivotRight);
+  const minBars = opts.minBarsBetween ?? (short ? SHORT_3_4D.minBarsBetween : DEFAULTS.minBarsBetween);
+  const maxBars = opts.maxBarsBetween ?? (short ? SHORT_3_4D.maxBarsBetween : DEFAULTS.maxBarsBetween);
+  const lookback = opts.lookback ?? (short ? SHORT_3_4D.lookback : DEFAULTS.lookback);
+  const oscillators =
+    opts.oscillators ?? (short ? [...SHORT_3_4D.oscillators] : DEFAULTS.oscillators);
+  const maxSignals = opts.maxSignals ?? (short ? SHORT_3_4D.maxSignals : DEFAULTS.maxSignals);
+  const maxAge =
+    opts.maxAgeBarsFromEnd ?? (short ? SHORT_3_4D.maxAgeBarsFromEnd : undefined);
   const timeframe = opts.timeframe;
 
-  if (bars.length < left + right + minBars + 20) return [];
+  const minLen = left + right + minBars + (short ? 12 : 20);
+  if (bars.length < minLen) return [];
 
   const n = bars.length;
   const from = Math.max(0, n - lookback);
@@ -299,11 +326,8 @@ export function detectDivergences(
   const lows = bars.map((b) => b.low);
   const times = bars.map((b) => b.time);
 
-  const priceHighSeries: (number | null)[] = highs.map((h) => h);
-  const priceLowSeries: (number | null)[] = lows.map((l) => l);
-
-  const pricePeaks = findPeaks(priceHighSeries, times, highs, left, right, from, to);
-  const priceTroughs = findTroughs(priceLowSeries, times, lows, left, right, from, to);
+  const pricePeaks = findPeaks(highs, times, highs, left, right, from, to);
+  const priceTroughs = findTroughs(lows, times, lows, left, right, from, to);
 
   const all: DivergenceSignal[] = [];
 
@@ -336,8 +360,15 @@ export function detectDivergences(
     pushOsc("stoch", stochastic(highs, lows, closes, 14, 3));
   }
 
-  all.sort((a, b) => {
-    const tb = b.pricePivots[1].time - a.pricePivots[1].time;
+  // Keep only divergences whose second pivot is in the last N bars (fresh swing)
+  let filtered = all;
+  if (maxAge != null && maxAge >= 0) {
+    const minIdx = n - 1 - maxAge;
+    filtered = all.filter((s) => s.pricePivots[1]!.index >= minIdx);
+  }
+
+  filtered.sort((a, b) => {
+    const tb = b.pricePivots[1]!.time - a.pricePivots[1]!.time;
     if (tb !== 0) return tb;
     const sa = a.structure === "triple" ? 3 : a.structure === "double" ? 2 : 1;
     const sb = b.structure === "triple" ? 3 : b.structure === "double" ? 2 : 1;
@@ -347,8 +378,8 @@ export function detectDivergences(
 
   const seen = new Set<string>();
   const deduped: DivergenceSignal[] = [];
-  for (const s of all) {
-    const key = `${s.kind}|${s.oscillator}|${s.pricePivots[1].index}`;
+  for (const s of filtered) {
+    const key = `${s.kind}|${s.oscillator}|${s.pricePivots[1]!.index}`;
     if (seen.has(key)) continue;
     seen.add(key);
     deduped.push(s);
