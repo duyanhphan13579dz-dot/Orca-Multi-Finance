@@ -78,7 +78,7 @@ const NAV_SECTIONS: {
   {
     title: "DANH MỤC",
     items: [
-      { href: "/portfolio", label: "Smart Portfolio", icon: LayoutDashboard },
+      { href: "/portfolio", label: "Danh mục thông minh", icon: LayoutDashboard },
       { href: "/watchlist", label: "Danh mục theo dõi", icon: Eye },
       { href: "/settings", label: "Cài đặt", icon: Settings },
     ],
@@ -232,7 +232,7 @@ export function ShellInner({ children }: { children: ReactNode }) {
               type="button"
               className="grid size-9 place-items-center rounded-lg text-text-secondary hover:bg-surface-elevated md:hidden"
               onClick={() => setMobileOpen(true)}
-              aria-label="Menu"
+              aria-label="Mở menu"
             >
               <Menu className="size-4.5" />
             </button>
