@@ -555,5 +555,5 @@ export function divergenceSummaryLine(s: DivergenceSignal): string {
     s.structure === "double" ? " · kép" : s.structure === "triple" ? " · ba đỉnh/đáy" : "";
   const vol =
     s.volumeConfirmed === true ? " · vol✓" : s.volumeConfirmed === false ? " · vol✗" : "";
-  return `${DIVERGENCE_KIND_VI[s.kind]} · ${osc}${tf}${struct} · hạng ${s.strength} · ${s.barsBetween} nến${vol}`;
+  return `${DIVERGENCE_KIND_VI[s.kind]} · ${osc}${tf}${struct} · class ${s.strength} · hạng ${s.strength} · ${s.barsBetween} nến${vol}`;
 }

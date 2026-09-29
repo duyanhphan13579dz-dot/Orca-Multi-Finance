@@ -227,7 +227,24 @@ export function detectPatterns(bars: OhlcvBar[]): CandlePattern[] {
 /* ------------------------------ full snapshot ------------------------------ */
 
 export function analyzeSeries(bars: OhlcvBar[]): TechnicalSnapshot | null {
-  if (bars.length < 30) return null;
+  // Normalize provider output first: newest data wins, duplicate timestamps are removed,
+  // and malformed bars cannot poison RSI/MACD or pivot detection.
+  const byTime = new Map<number, OhlcvBar>();
+  for (const bar of bars) {
+    if (
+      Number.isFinite(bar.time) &&
+      Number.isFinite(bar.open) &&
+      Number.isFinite(bar.high) &&
+      Number.isFinite(bar.low) &&
+      Number.isFinite(bar.close) &&
+      bar.high >= bar.low &&
+      bar.close > 0
+    ) byTime.set(bar.time, { ...bar, volume: Number.isFinite(bar.volume) ? Math.max(0, bar.volume) : 0 });
+  }
+  const normalizedBars = [...byTime.values()].sort((a, b) => a.time - b.time);
+  if (normalizedBars.length < 30) return null;
+  const deduplicated = normalizedBars.length !== bars.length;
+  bars = normalizedBars;
   const closes = bars.map((b) => b.close);
   const last = closes[closes.length - 1];
   const rsiSeries = rsi(closes, 14);
@@ -283,8 +300,14 @@ export function analyzeSeries(bars: OhlcvBar[]): TechnicalSnapshot | null {
     else if (rsi14 <= 30) signals.push("RSI quá bán (<30) — khả năng hồi kỹ thuật");
     else signals.push(`RSI ${rsi14.toFixed(0)} — vùng cân bằng`);
   }
-  if (macdRes)
+  if (macdRes) {
     signals.push(macdRes.histogram > 0 ? "MACD hỗ trợ xu hướng tăng" : "MACD nghiêng về áp lực bán");
+    const previousHistogram = macdFull.histogram[closes.length - 2];
+    if (previousHistogram != null && previousHistogram <= 0 && macdRes.histogram > 0)
+      signals.push("MACD vừa cắt lên đường tín hiệu — động lượng tăng mới hình thành");
+    if (previousHistogram != null && previousHistogram >= 0 && macdRes.histogram < 0)
+      signals.push("MACD vừa cắt xuống đường tín hiệu — động lượng giảm mới hình thành");
+  }
   if (sma50 != null)
     signals.push(
       last > sma50
@@ -299,10 +322,31 @@ export function analyzeSeries(bars: OhlcvBar[]): TechnicalSnapshot | null {
   if (high52w != null && last >= high52w * 0.98) signals.push("Tiệm cận đỉnh 52 tuần");
   if (low52w != null && last <= low52w * 1.02) signals.push("Tiệm cận đáy 52 tuần");
 
-  const divergences = detectDivergences(bars, { lookback: 120, maxSignals: 6 });
-  for (const d of divergences.slice(0, 3)) {
+  const candleClusters = detectCandlePatterns(bars, {
+    assetClass: "stock",
+    recentBars: 5,
+    maxAgeBars: 4,
+  })
+    .filter((p) => p.category !== "neutral")
+    .slice(0, 6)
+    .map((p) => ({
+      name: p.nameVi,
+      category: p.category,
+      score: p.score,
+      ageBars: p.ageBars ?? 0,
+      candles: p.candles,
+    }));
+  for (const p of candleClusters.slice(0, 3)) {
+    signals.push(`${p.category.includes("reversal") ? "Cụm đảo chiều" : "Cụm tiếp diễn"}: ${p.name}`);
+  }
+
+  const divergences = detectDivergences(bars, { lookback: 180, maxSignals: 8 });
+  for (const d of divergences.slice(0, 4)) {
     signals.push(divergenceSummaryLine(d));
   }
+
+  const latestBarTime = bars[bars.length - 1]!.time;
+  const ageMs = Math.max(0, Date.now() - latestBarTime);
 
   return {
     last,
@@ -322,5 +366,13 @@ export function analyzeSeries(bars: OhlcvBar[]): TechnicalSnapshot | null {
     trend: { score, label },
     signals,
     divergences,
+    candleClusters,
+    dataQuality: {
+      bars: bars.length,
+      latestBarTime,
+      ageMs,
+      stale: ageMs > 36 * 60 * 60 * 1000,
+      deduplicated,
+    },
   };
 }
