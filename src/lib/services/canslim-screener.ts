@@ -3,6 +3,7 @@ import { buildMeta } from "../freshness";
 import { analyzeCanslim, retPct, type CanslimLetter, type CanslimSnapshot } from "../engines/canslim";
 import { getFinancialPackagesBulk, mapPool } from "../financial/snapshots";
 import { getVnIndices, getVnOhlcv } from "./stocks";
+import { batchVnOhlcv } from "./ohlcv-batch";
 import { hubVnQuotes } from "../data-engine";
 import { LIQUID_BOARD } from "../providers/public-vn-feed";
 import { getVndSymbolForeignFlow } from "../providers/vndirect-foreign-symbol";
@@ -38,13 +39,29 @@ export interface CanslimCoverageStats {
   withEquity: number;
 }
 
+/** Default universe when caller does not pass symbols (keep lean for serverless). */
+const CANSLIM_DEFAULT_CAP = 28;
+/** Hard max even when symbols= provided. */
+const CANSLIM_HARD_CAP = 40;
+/** Bars: need ~126 for 6M RS + room for high; 140 is enough (was 260). */
+const CANSLIM_BARS = 140;
+/** Soft wall-clock budget (ms) before skipping secondary (I/ratios/equity). */
+const SECONDARY_BUDGET_MS = 45_000;
+
 function sma(closes: number[], n: number): number | null {
   if (closes.length < n) return null;
   const slice = closes.slice(-n);
   return slice.reduce((a, b) => a + b, 0) / n;
 }
 
-/** M: VNINDEX OHLCV — giá vs MA50 + đà 3 tháng + Δ% phiên. */
+function withTimeout<T>(p: Promise<T>, ms: number): Promise<T | null> {
+  return Promise.race([
+    p,
+    new Promise<null>((resolve) => setTimeout(() => resolve(null), ms)),
+  ]);
+}
+
+/** M: VNINDEX — session Δ% + MA50 + 3M momentum. */
 async function resolveMarketDirection(): Promise<{
   bullish: boolean | null;
   detail: string;
@@ -55,7 +72,9 @@ async function resolveMarketDirection(): Promise<{
       getVnIndices().catch(() => null),
       getVnOhlcv("VNINDEX", 120).catch(() => null),
     ]);
-    const vn = idxPack?.items?.find((x) => x.code === "VNINDEX") ?? idxPack?.items?.find((x) => x.code === "VN30");
+    const vn =
+      idxPack?.items?.find((x) => x.code === "VNINDEX") ??
+      idxPack?.items?.find((x) => x.code === "VN30");
     const bars = ohlcv?.bars ?? [];
     const closes = bars.map((b) => b.close);
     const ma50 = sma(closes, 50);
@@ -106,7 +125,8 @@ async function resolveMarketDirection(): Promise<{
 
     if (votes === 0) return { bullish: null, detail: "Chưa lấy được VNINDEX", source: "none" };
 
-    const bullish = score > 0 ? true : score < 0 ? false : vn?.changePercent != null ? vn.changePercent > -1 : null;
+    const bullish =
+      score > 0 ? true : score < 0 ? false : vn?.changePercent != null ? vn.changePercent > -1 : null;
     return {
       bullish,
       detail: `VNINDEX: ${parts.join(" · ") || "n/a"}`,
@@ -133,31 +153,36 @@ export async function screenCanslim(args?: {
   coverage: CanslimCoverageStats;
   meta: Meta;
 } | null> {
+  const t0 = Date.now();
+  const userSymbols = Boolean(args?.symbols?.length);
+  const cap = userSymbols ? CANSLIM_HARD_CAP : CANSLIM_DEFAULT_CAP;
   const uniq = [
-    ...new Set((args?.symbols?.length ? args.symbols : LIQUID_BOARD).map((s) => s.toUpperCase()).filter(Boolean)),
-  ].slice(0, 48);
+    ...new Set(
+      (args?.symbols?.length ? args.symbols : LIQUID_BOARD).map((s) => s.toUpperCase()).filter(Boolean),
+    ),
+  ].slice(0, cap);
 
-  const [quotesPack, market] = await Promise.all([hubVnQuotes(uniq).catch(() => null), resolveMarketDirection()]);
+  const [quotesPack, market] = await Promise.all([
+    hubVnQuotes(uniq).catch(() => null),
+    resolveMarketDirection(),
+  ]);
   const quoteMap = new Map((quotesPack?.quotes ?? []).map((q) => [q.symbol, q]));
 
-  let skipped = 0;
+  // Pass 1 — batch OHLCV (concurrency 10, 140 bars, no per-symbol retry sleep)
+  const ohlcvMap = await batchVnOhlcv(uniq, { bars: CANSLIM_BARS, concurrency: 10 });
   type Pack = { symbol: string; bars: OhlcvBar[]; ret6: number | null };
-
-  // Pass 1 — OHLCV with retry (pool 8)
-  const packs = await mapPool(uniq, 8, async (symbol): Promise<Pack | null> => {
-    let ohlcv = await getVnOhlcv(symbol, 260).catch(() => null);
-    if (!ohlcv?.bars?.length) {
-      await new Promise((r) => setTimeout(r, 80));
-      ohlcv = await getVnOhlcv(symbol, 260).catch(() => null);
-    }
-    const bars = ohlcv?.bars ?? [];
+  const valid: Pack[] = [];
+  let skipped = 0;
+  for (const sym of uniq) {
+    const pack = ohlcvMap.get(sym);
+    const bars = pack?.bars ?? [];
     if (bars.length < 30) {
       skipped += 1;
-      return null;
+      continue;
     }
-    return { symbol, bars, ret6: retPct(bars, 126) };
-  });
-  const valid = packs.filter((p): p is Pack => p != null);
+    valid.push({ symbol: sym, bars, ret6: retPct(bars, 126) });
+  }
+
   const rets = valid
     .map((p) => p.ret6)
     .filter((r): r is number => r != null)
@@ -179,25 +204,45 @@ export async function screenCanslim(args?: {
     withEquity: 0,
   };
 
+  // Pass 2 — BCTC bulk (shared cache hub)
   const finMap = await getFinancialPackagesBulk(
     valid.map((p) => p.symbol),
-    { concurrency: 5 },
+    { concurrency: 6, persist: false },
   );
 
-  const analyzed = await mapPool(valid, 4, async (p) => {
-    const [foreign, equity, ratios] = await Promise.all([
-      getVndSymbolForeignFlow(p.symbol, 8).catch(() => null),
-      getVndEquitySnapshot(p.symbol).catch(() => null),
-      getVndValuationRatios(p.symbol).catch(() => null),
-    ]);
+  const elapsedAfterFin = Date.now() - t0;
+  const allowSecondary = elapsedAfterFin < SECONDARY_BUDGET_MS;
+  const secondaryTimeoutMs = allowSecondary
+    ? Math.max(2_500, Math.min(6_000, SECONDARY_BUDGET_MS - elapsedAfterFin))
+    : 0;
+
+  // Pass 3 — score each symbol; secondary (I/ratios/equity) only if budget remains
+  const analyzed = await mapPool(valid, allowSecondary ? 5 : 8, async (p) => {
+    let foreign: Awaited<ReturnType<typeof getVndSymbolForeignFlow>> | null = null;
+    let equity: Awaited<ReturnType<typeof getVndEquitySnapshot>> | null = null;
+    let ratios: Awaited<ReturnType<typeof getVndValuationRatios>> | null = null;
+
+    if (allowSecondary && secondaryTimeoutMs > 0) {
+      const sec = await withTimeout(
+        Promise.all([
+          getVndSymbolForeignFlow(p.symbol, 5).catch(() => null),
+          getVndEquitySnapshot(p.symbol).catch(() => null),
+          getVndValuationRatios(p.symbol).catch(() => null),
+        ]),
+        secondaryTimeoutMs,
+      );
+      if (sec) {
+        foreign = sec[0];
+        equity = sec[1];
+        ratios = sec[2];
+      }
+    }
 
     const fin = finMap.get(p.symbol) ?? null;
     const net1 = foreign?.latest?.netVal ?? null;
     const hist = foreign?.history ?? [];
     const net5 =
-      hist.length > 0
-        ? hist.slice(0, 5).reduce((s, d) => s + (d.netVal || 0), 0)
-        : null;
+      hist.length > 0 ? hist.slice(0, 5).reduce((s, d) => s + (d.netVal || 0), 0) : null;
 
     if (fin?.growth && (fin.growth.yoy.length || fin.growth.qoq.length)) coverage.withGrowth += 1;
     if (fin?.health && fin.health.coverage > 0) coverage.withHealth += 1;
@@ -253,12 +298,14 @@ export async function screenCanslim(args?: {
   }
   if (args?.sector) rows = rows.filter((r) => r.sector === args.sector);
 
-  rows.sort((a, b) => b.score - a.score || b.passCount - a.passCount || (b.volume ?? 0) - (a.volume ?? 0));
+  rows.sort(
+    (a, b) => b.score - a.score || b.passCount - a.passCount || (b.volume ?? 0) - (a.volume ?? 0),
+  );
   const limit = Math.min(args?.limit ?? 40, 72);
   rows = rows.slice(0, limit);
 
-  // Never hard-fail — empty table + partial meta instead of "không khả dụng"
-  const covNote = `BCTC bulk ${coverage.withGrowth}/${valid.length} growth · health ${coverage.withHealth} · ROE/ratios ${coverage.withRatios} · NN ${coverage.withForeign} · CP ${coverage.withEquity} · nến ${coverage.withBars}`;
+  const ms = Date.now() - t0;
+  const covNote = `BCTC ${coverage.withGrowth}/${valid.length} growth · health ${coverage.withHealth} · ROE ${coverage.withRatios} · NN ${coverage.withForeign} · CP ${coverage.withEquity} · nến ${coverage.withBars} · ${ms}ms${allowSecondary ? "" : " · secondary-skipped"}`;
 
   return {
     rows,
@@ -269,12 +316,15 @@ export async function screenCanslim(args?: {
     coverage,
     meta: buildMeta({
       source:
-        [quotesPack?.meta?.source, "bctc-bulk", "vnd-ratios", "ohlcv", market.source]
+        [quotesPack?.meta?.source, "bctc-bulk", "ohlcv-batch", market.source]
           .filter(Boolean)
           .join("+") || "canslim-pipeline",
       sourceTimestampMs: Date.now(),
-      hasData: rows.length > 0,
-      partial: skipped > 0 || (valid.length > 0 && coverage.withGrowth < valid.length * 0.5),
+      hasData: rows.length > 0 || valid.length > 0,
+      partial:
+        skipped > 0 ||
+        (valid.length > 0 && coverage.withGrowth < valid.length * 0.5) ||
+        !allowSecondary,
       note: `CANSLIM · quét ${uniq.length} · ${covNote} · ${market.detail} · không phải tín hiệu GD`,
     }),
   };
