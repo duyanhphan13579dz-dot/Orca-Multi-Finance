@@ -1,13 +1,12 @@
 /**
  * DIVERGENCE ENGINE — deterministic regular + hidden divergence detection.
  *
- * Phase 0–1: RSI + MACD hist, confirmed pivots, Class A/B/C
- * Phase 5: + MACD line, Stochastic; double/triple structure on successive pivots
- * Quant-only: pivots on closed bars, no LLM. Callers attach freshness/meta.
- *
- * Short window (3–4 phiên D1):
- *   preset SHORT_3_4D — pivot nhỏ, maxBarsBetween≤4, last pivot gần nến cuối.
- * Volume confirmation at newer pivot (elevated / exhaustion by kind).
+ * Optimizations (v2):
+ * - Pair **adjacent** same-type pivots only (classic TA, O(n) not O(n²))
+ * - Min price / oscillator magnitude gates → fewer false positives
+ * - Slope-aware confidence (Δosc vs Δprice)
+ * - Volume confirmation at newer pivot
+ * - Short window SHORT_3_4D for 3–4 session swings
  */
 
 import type { OhlcvBar } from "../types";
@@ -31,6 +30,8 @@ export interface DetectDivergenceOptions {
   maxSignals?: number;
   maxAgeBarsFromEnd?: number;
   window?: "default" | "short_3_4d";
+  /** Min relative price move between pivots (default 0.15% short / 0.35% full). */
+  minPriceMovePct?: number;
 }
 
 const DEFAULTS = {
@@ -41,6 +42,7 @@ const DEFAULTS = {
   lookback: 120,
   oscillators: ["rsi", "macd_hist", "macd_line", "stoch"] as DivergenceOscillator[],
   maxSignals: 8,
+  minPriceMovePct: 0.0035,
 };
 
 export const SHORT_3_4D = {
@@ -52,6 +54,7 @@ export const SHORT_3_4D = {
   maxAgeBarsFromEnd: 3,
   oscillators: ["rsi", "macd_hist"] as DivergenceOscillator[],
   maxSignals: 6,
+  minPriceMovePct: 0.0015,
 } as const;
 
 interface PivotPoint {
@@ -61,6 +64,7 @@ interface PivotPoint {
   time: number;
 }
 
+/** Strict fractal peak: value strictly greater than left+right neighbors. */
 function findPeaks(
   values: (number | null)[],
   times: number[],
@@ -128,28 +132,34 @@ function toPivot(p: PivotPoint, usePrice: boolean): DivergencePivot {
   };
 }
 
+/** Strength from oscillator zone + magnitude of oscillator recovery/deterioration. */
 function strengthFor(
   kind: DivergenceKind,
   osc: DivergenceOscillator,
   firstOsc: number,
   secondOsc: number,
 ): DivergenceStrength {
+  const delta = secondOsc - firstOsc;
   if (osc === "rsi" || osc === "stoch") {
-    if (kind === "regular_bullish" || kind === "hidden_bullish") {
-      if (firstOsc <= 30) return "A";
-      if (firstOsc <= 40) return "B";
-      return "C";
-    }
-    if (firstOsc >= 70) return "A";
-    if (firstOsc >= 60) return "B";
+    const extreme =
+      kind === "regular_bullish" || kind === "hidden_bullish"
+        ? firstOsc <= 30
+        : firstOsc >= 70;
+    const strongZone =
+      kind === "regular_bullish" || kind === "hidden_bullish"
+        ? firstOsc <= 40
+        : firstOsc >= 60;
+    const magOk = Math.abs(delta) >= 3;
+    if (extreme && magOk) return "A";
+    if (extreme || (strongZone && magOk)) return "B";
+    if (strongZone) return "C";
     return "C";
   }
-  const mag = Math.abs(firstOsc);
+  // MACD hist / line: compare absolute levels and shrink ratio
+  const mag1 = Math.abs(firstOsc);
   const mag2 = Math.abs(secondOsc);
-  if (mag > 0 && mag2 / Math.max(mag, 1e-12) < 0.85) {
-    if (mag >= mag2 * 1.5) return "A";
-    return "B";
-  }
+  if (mag1 > 0 && mag2 < mag1 * 0.75 && mag1 >= mag2 * 1.4) return "A";
+  if (mag1 > 0 && mag2 < mag1 * 0.9) return "B";
   return "C";
 }
 
@@ -159,17 +169,26 @@ function confidenceFor(
   minBars: number,
   maxBars: number,
   structure: "single" | "double" | "triple",
+  slopeScore: number,
 ): number {
-  let c = strength === "A" ? 0.82 : strength === "B" ? 0.62 : 0.42;
+  let c = strength === "A" ? 0.84 : strength === "B" ? 0.64 : 0.44;
+  const span = Math.max(maxBars - minBars, 1);
   const mid = (minBars + maxBars) / 2;
-  const dist = Math.abs(barsBetween - mid) / Math.max(maxBars - minBars, 1);
-  c -= dist * 0.12;
-  if (structure === "double") c = Math.min(0.95, c + 0.08);
-  if (structure === "triple") c = Math.min(0.95, c + 0.12);
-  return Math.max(0.15, Math.min(0.95, Math.round(c * 100) / 100));
+  const dist = Math.abs(barsBetween - mid) / span;
+  c -= dist * 0.1;
+  // slopeScore 0..1 from magnitude quality
+  c += slopeScore * 0.1;
+  if (structure === "double") c = Math.min(0.96, c + 0.07);
+  if (structure === "triple") c = Math.min(0.96, c + 0.11);
+  return Math.max(0.12, Math.min(0.96, Math.round(c * 100) / 100));
 }
 
-function nearestPivot(pivots: PivotPoint[], index: number): PivotPoint | null {
+/**
+ * Find oscillator pivot nearest to price pivot index.
+ * Osc list is sorted by index — binary-ish linear is fine (few pivots).
+ */
+function nearestPivot(pivots: PivotPoint[], index: number, maxDist = 3): PivotPoint | null {
+  if (!pivots.length) return null;
   let best: PivotPoint | null = null;
   let bestDist = Infinity;
   for (const p of pivots) {
@@ -177,9 +196,12 @@ function nearestPivot(pivots: PivotPoint[], index: number): PivotPoint | null {
     if (d < bestDist) {
       bestDist = d;
       best = p;
+    } else if (p.index > index + maxDist) {
+      // pivots sorted ascending — can stop
+      break;
     }
   }
-  return bestDist <= 3 ? best : null;
+  return bestDist <= maxDist ? best : null;
 }
 
 function smaVolume(volumes: number[], endIdx: number, n = 20): number {
@@ -196,7 +218,6 @@ function smaVolume(volumes: number[], endIdx: number, n = 20): number {
   return count > 0 ? sum / count : 0;
 }
 
-/** Volume confirmation at newer price pivot vs SMA20 + kind-specific rules. */
 function volumeAtPivot(
   volumes: number[],
   p1: PivotPoint,
@@ -221,12 +242,36 @@ function volumeAtPivot(
       ratio,
     };
   }
-  if (kind === "hidden_bullish") {
-    const light = v1 > 0 && v2 > 0 && v2 <= v1 * 1.05;
-    return { confirmed: light || mildElevated, ratio };
-  }
+  // hidden: lighter volume on pullback preferred
   const light = v1 > 0 && v2 > 0 && v2 <= v1 * 1.05;
   return { confirmed: light || mildElevated, ratio };
+}
+
+/** Min oscillator delta so tiny noise is not labeled divergence. */
+function minOscDelta(osc: DivergenceOscillator): number {
+  if (osc === "rsi" || osc === "stoch") return 2.5;
+  return 0; // MACD scale varies — rely on price gate + relative check
+}
+
+/**
+ * Slope quality 0..1: stronger when |Δosc| is meaningful relative to |Δprice%|.
+ */
+function slopeScore(
+  osc: DivergenceOscillator,
+  priceDeltaPct: number,
+  o1: number,
+  o2: number,
+): number {
+  const absPrice = Math.abs(priceDeltaPct);
+  const absOsc = Math.abs(o2 - o1);
+  if (absPrice < 1e-9) return 0.3;
+  if (osc === "rsi" || osc === "stoch") {
+    // ~5 RSI pts per 1% price is strong disagreement
+    const ratio = absOsc / (absPrice * 100);
+    return Math.max(0, Math.min(1, ratio / 5));
+  }
+  // MACD: any clear directional osc move scores mid+
+  return absOsc > 0 ? 0.55 : 0.2;
 }
 
 type PairCond = {
@@ -237,6 +282,10 @@ type PairCond = {
   oscList: PivotPoint[];
 };
 
+/**
+ * Pair **consecutive** pivots only — O(n) and matches standard chart analysis
+ * (compare last trough to previous trough, not every historical pair).
+ */
 function pairDivergences(
   pricePeaks: PivotPoint[],
   priceTroughs: PivotPoint[],
@@ -247,8 +296,11 @@ function pairDivergences(
   maxBars: number,
   timeframe: string | undefined,
   volumes: number[],
+  minPriceMovePct: number,
 ): DivergenceSignal[] {
   const signals: DivergenceSignal[] = [];
+  const oscMin = minOscDelta(osc);
+
   const conditions: PairCond[] = [
     {
       kind: "regular_bullish",
@@ -282,61 +334,63 @@ function pairDivergences(
 
   for (const cond of conditions) {
     const prices = cond.priceList;
+    if (prices.length < 2) continue;
+
+    // Track which consecutive pairs diverged for structure detection
+    const pairHit: boolean[] = new Array(prices.length - 1).fill(false);
+
     for (let i = 0; i < prices.length - 1; i++) {
-      for (let j = i + 1; j < prices.length; j++) {
-        const p1 = prices[i]!;
-        const p2 = prices[j]!;
-        const barsBetween = p2.index - p1.index;
-        if (barsBetween < minBars || barsBetween > maxBars) continue;
-        const o1 = nearestPivot(cond.oscList, p1.index);
-        const o2 = nearestPivot(cond.oscList, p2.index);
-        if (!o1 || !o2) continue;
-        if (Math.abs(o1.index - p1.index) > 3 || Math.abs(o2.index - p2.index) > 3) continue;
-        if (!cond.priceOk(p1, p2) || !cond.oscOk(o1, o2)) continue;
+      const p1 = prices[i]!;
+      const p2 = prices[i + 1]!;
+      const barsBetween = p2.index - p1.index;
+      if (barsBetween < minBars || barsBetween > maxBars) continue;
 
-        let legs = 1;
-        for (let m = i + 1; m < j; m++) {
-          const pm = prices[m]!;
-          const om = nearestPivot(cond.oscList, pm.index);
-          if (!om) continue;
-          const leg1 =
-            cond.priceOk(p1, pm) &&
-            cond.oscOk(o1, om) &&
-            pm.index - p1.index >= minBars &&
-            pm.index - p1.index <= maxBars;
-          const leg2 =
-            cond.priceOk(pm, p2) &&
-            cond.oscOk(om, o2) &&
-            p2.index - pm.index >= minBars &&
-            p2.index - pm.index <= maxBars;
-          if (leg1 && leg2) legs++;
-        }
-        const structure: "single" | "double" | "triple" =
-          legs >= 3 ? "triple" : legs >= 2 ? "double" : "single";
+      const base = Math.abs(p1.price) > 1e-12 ? Math.abs(p1.price) : 1;
+      const priceDeltaPct = (p2.price - p1.price) / base;
+      if (Math.abs(priceDeltaPct) < minPriceMovePct) continue;
 
-        const strength = strengthFor(cond.kind, osc, o1.value, o2.value);
-        let confidence = confidenceFor(strength, barsBetween, minBars, maxBars, structure);
-        const vol = volumeAtPivot(volumes, p1, p2, cond.kind);
-        if (vol.confirmed) confidence = Math.min(0.95, confidence + 0.08);
-        else if (vol.ratio != null && vol.ratio < 0.7) confidence = Math.max(0.15, confidence - 0.06);
+      if (!cond.priceOk(p1, p2)) continue;
 
-        signals.push({
-          kind: cond.kind,
-          oscillator: osc,
-          timeframe: timeframe ?? null,
-          strength,
-          confidence,
-          barsBetween,
-          pricePivots: [toPivot(p1, true), toPivot(p2, true)],
-          oscPivots: [toPivot(o1, false), toPivot(o2, false)],
-          structure,
-          confirmed: true,
-          confirmedAt: new Date(p2.time).toISOString(),
-          forming: false,
-          volumeConfirmed: vol.confirmed,
-          volumeRatio: vol.ratio != null ? Math.round(vol.ratio * 100) / 100 : null,
-        });
-      }
+      const o1 = nearestPivot(cond.oscList, p1.index);
+      const o2 = nearestPivot(cond.oscList, p2.index);
+      if (!o1 || !o2) continue;
+      if (Math.abs(o1.index - p1.index) > 3 || Math.abs(o2.index - p2.index) > 3) continue;
+      if (!cond.oscOk(o1, o2)) continue;
+
+      if (oscMin > 0 && Math.abs(o2.value - o1.value) < oscMin) continue;
+
+      pairHit[i] = true;
+
+      // Structure: consecutive adjacent divergences of same kind
+      let legs = 1;
+      if (i > 0 && pairHit[i - 1]) legs = 2;
+      if (i > 1 && pairHit[i - 1] && pairHit[i - 2]) legs = 3;
+      const structure: "single" | "double" | "triple" =
+        legs >= 3 ? "triple" : legs >= 2 ? "double" : "single";
+
+      const strength = strengthFor(cond.kind, osc, o1.value, o2.value);
+      const slope = slopeScore(osc, priceDeltaPct, o1.value, o2.value);
+      let confidence = confidenceFor(strength, barsBetween, minBars, maxBars, structure, slope);
+      const vol = volumeAtPivot(volumes, p1, p2, cond.kind);
+      if (vol.confirmed) confidence = Math.min(0.96, confidence + 0.07);
+      else if (vol.ratio != null && vol.ratio < 0.7) confidence = Math.max(0.12, confidence - 0.05);
+
+      signals.push({
+        kind: cond.kind,
+        oscillator: osc,
+        timeframe: timeframe ?? null,
+        strength,
+        confidence,
+        barsBetween,
+        pricePivots: [toPivot(p1, true), toPivot(p2, true)],
+        oscPivots: [toPivot(o1, false), toPivot(o2, false)],
+        structure,
+        confirmed: true,
+        confirmedAt: new Date(p2.time).toISOString(),
+        forming: false,
+        volumeConfirmed: vol.confirmed,
+        volumeRatio: vol.ratio != null ? Math.round(vol.ratio * 100) / 100 : null,
+      });
     }
   }
 
@@ -358,6 +412,8 @@ export function detectDivergences(
   const maxSignals = opts.maxSignals ?? (short ? SHORT_3_4D.maxSignals : DEFAULTS.maxSignals);
   const maxAge =
     opts.maxAgeBarsFromEnd ?? (short ? SHORT_3_4D.maxAgeBarsFromEnd : undefined);
+  const minPriceMovePct =
+    opts.minPriceMovePct ?? (short ? SHORT_3_4D.minPriceMovePct : DEFAULTS.minPriceMovePct);
   const timeframe = opts.timeframe;
 
   const minLen = left + right + minBars + (short ? 12 : 20);
@@ -392,6 +448,7 @@ export function detectDivergences(
         maxBars,
         timeframe,
         volumes,
+        minPriceMovePct,
       ),
     );
   };
@@ -410,19 +467,24 @@ export function detectDivergences(
     filtered = all.filter((s) => s.pricePivots[1]!.index >= minIdx);
   }
 
+  // Prefer recent, higher structure, volume-confirmed, then confidence
   filtered.sort((a, b) => {
     const tb = b.pricePivots[1]!.time - a.pricePivots[1]!.time;
     if (tb !== 0) return tb;
     const sa = a.structure === "triple" ? 3 : a.structure === "double" ? 2 : 1;
     const sb = b.structure === "triple" ? 3 : b.structure === "double" ? 2 : 1;
     if (sb !== sa) return sb - sa;
+    const va = a.volumeConfirmed === true ? 1 : 0;
+    const vb = b.volumeConfirmed === true ? 1 : 0;
+    if (vb !== va) return vb - va;
     return b.confidence - a.confidence;
   });
 
   const seen = new Set<string>();
   const deduped: DivergenceSignal[] = [];
   for (const s of filtered) {
-    const key = `${s.kind}|${s.oscillator}|${s.pricePivots[1]!.index}`;
+    // Dedup by kind + later pivot (keep best osc per kind at same swing)
+    const key = `${s.kind}|${s.pricePivots[1]!.index}`;
     if (seen.has(key)) continue;
     seen.add(key);
     deduped.push(s);
@@ -490,8 +552,8 @@ export function divergenceSummaryLine(s: DivergenceSignal): string {
   const osc = OSC_LABEL[s.oscillator] ?? s.oscillator;
   const tf = s.timeframe ? ` ${s.timeframe}` : "";
   const struct =
-    s.structure === "double" ? " · double" : s.structure === "triple" ? " · triple" : "";
+    s.structure === "double" ? " · kép" : s.structure === "triple" ? " · ba đỉnh/đáy" : "";
   const vol =
     s.volumeConfirmed === true ? " · vol✓" : s.volumeConfirmed === false ? " · vol✗" : "";
-  return `${DIVERGENCE_KIND_VI[s.kind]} · ${osc}${tf}${struct} · class ${s.strength} · ${s.barsBetween} nến${vol}`;
+  return `${DIVERGENCE_KIND_VI[s.kind]} · ${osc}${tf}${struct} · hạng ${s.strength} · ${s.barsBetween} nến${vol}`;
 }
