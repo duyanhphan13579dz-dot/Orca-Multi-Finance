@@ -9,6 +9,7 @@ import { PortfolioAiPanel } from "@/components/journal/portfolio-ai-panel";
 import { BacktestPanel } from "@/components/journal/backtest-panel";
 import { PriceAlertsPanel } from "@/components/journal/price-alerts-panel";
 import { SmartPortfolioJournal } from "@/components/portfolio/smart-portfolio-journal";
+import { PortfolioInsights } from "@/components/portfolio/portfolio-insights";
 import {
   buildPortfolioSnapshot,
   collectPortfolioSymbols,
@@ -244,6 +245,7 @@ function Overview({
           }}
         />
         <BacktestPanel trades={trades} />
+        <PortfolioInsights snapshot={snapshot} />
       </div>
       <Panel title="Action queue" right={<Badge tone={snapshot.alerts.length ? "warn" : "up"}>{snapshot.alerts.length} canh bao</Badge>}>
         {snapshot.alerts.length ? (
@@ -270,10 +272,10 @@ function Overview({
             <div key={item.label} className="mb-2">
               <div className="mb-1 flex justify-between text-[11px]">
                 <span>{item.label}</span>
-                <span className="num">{(item.weight * 100).toFixed(0)}%</span>
+                <span className="num">{(item.percentage * 100).toFixed(0)}%</span>
               </div>
               <div className="h-1.5 rounded-full bg-surface-elevated">
-                <div className="h-full rounded-full bg-accent-primary/70" style={{ width: `${Math.min(100, item.weight * 100)}%` }} />
+                <div className="h-full rounded-full bg-accent-primary/70" style={{ width: `${Math.min(100, item.percentage * 100)}%` }} />
               </div>
             </div>
           ))
