@@ -99,6 +99,8 @@ export async function screenCandlestickPatterns(
     let patterns = detectCandlePatterns(pack.bars, {
       assetClass,
       recentBars: assetClass === "stock" ? 3 : 5,
+      reversalOnly: cat === "all" || cat.includes("reversal"),
+      maxAgeBars: 3,
     });
     if (cat !== "all") patterns = patterns.filter((p) => p.category === cat);
     if (opts.volumeOnly) patterns = patterns.filter((p) => p.volumeConfirmed);
@@ -110,6 +112,9 @@ export async function screenCandlestickPatterns(
       const ra = isReversal(a) ? 1 : 0;
       const rb = isReversal(b) ? 1 : 0;
       if (rb !== ra) return rb - ra;
+      const ageA = a.ageBars ?? 0;
+      const ageB = b.ageBars ?? 0;
+      if (ageA !== ageB) return ageA - ageB;
       return b.score - a.score;
     });
 
@@ -141,7 +146,7 @@ export async function screenCandlestickPatterns(
     meta: buildMeta({
       source: "candlestick-engine+ohlcv",
       sourceTimestampMs: Date.now(),
-      note: `Ruleset multi-bar · minScore≥${minScore} · ${cat} · ${assetClass} · universe≤${SCREENER_UNIVERSE_CAP}`,
+      note: `Reversal cluster last 2–3 bars · minScore≥${minScore} · ${cat} · ${assetClass}`,
       hasData: rows.length > 0,
       partial: skipped > 0,
     }),
@@ -176,7 +181,12 @@ export async function screenCryptoCandlePatterns(
         skipped++;
         continue;
       }
-      let patterns = detectCandlePatterns(bars, { assetClass: "crypto", recentBars: 5 });
+      let patterns = detectCandlePatterns(bars, {
+        assetClass: "crypto",
+        recentBars: 3,
+        reversalOnly: true,
+        maxAgeBars: 3,
+      });
       if (cat !== "all") patterns = patterns.filter((p) => p.category === cat);
       patterns = patterns.filter((p) => p.score >= minScore && p.category !== "neutral");
       if (!patterns.length) continue;
@@ -209,7 +219,7 @@ export async function screenCryptoCandlePatterns(
     meta: buildMeta({
       source: "candlestick-crypto+binance",
       sourceTimestampMs: Date.now(),
-      note: `crypto daily · minScore≥${minScore}`,
+      note: `crypto daily · reversal last 2–3 · minScore≥${minScore}`,
       partial: skipped > 0,
     }),
   };
@@ -249,7 +259,12 @@ export async function screenForexCandlePatterns(
         close: c.close,
         volume: c.volume ?? 0,
       }));
-      let patterns = detectCandlePatterns(ohlcv, { assetClass: "forex", recentBars: 5 });
+      let patterns = detectCandlePatterns(ohlcv, {
+        assetClass: "forex",
+        recentBars: 3,
+        reversalOnly: true,
+        maxAgeBars: 3,
+      });
       if (cat !== "all") patterns = patterns.filter((p) => p.category === cat);
       patterns = patterns.filter((p) => p.score >= minScore && p.category !== "neutral");
       if (!patterns.length) continue;
@@ -282,7 +297,7 @@ export async function screenForexCandlePatterns(
     meta: buildMeta({
       source: "candlestick-forex+chart",
       sourceTimestampMs: Date.now(),
-      note: `forex/XAU daily · minScore≥${minScore}`,
+      note: `forex/XAU · reversal last 2–3 · minScore≥${minScore}`,
       partial: skipped > 0,
     }),
   };
@@ -320,7 +335,7 @@ export async function screenMultiAssetCandlePatterns(
     meta: buildMeta({
       source: "candlestick-multi-asset",
       sourceTimestampMs: Date.now(),
-      note: "stock+crypto+forex · XAU included",
+      note: "stock+crypto+forex · recent reversal cluster",
       partial: skipped > 0,
     }),
   };
