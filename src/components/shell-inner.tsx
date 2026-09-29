@@ -138,51 +138,79 @@ export function ShellInner({ children }: { children: ReactNode }) {
         onClick={(e) => onNav(href, e)}
         onMouseEnter={() => onHover(href)}
         className={
-          "flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-[13px] transition-colors " +
+          "group relative flex h-9 shrink-0 items-center gap-2.5 rounded-lg text-[13px] leading-none " +
+          "transition-[background-color,color,padding] duration-200 ease-out " +
+          (collapsed ? "justify-center px-0" : "px-2.5") +
+          " " +
           (active
             ? "bg-accent-primary/15 font-medium text-accent-primary"
             : "text-text-secondary hover:bg-surface-elevated hover:text-text-primary")
         }
         title={label}
       >
-        <Icon className="size-4 shrink-0" />
-        {!collapsed ? <span className="truncate">{label}</span> : null}
+        <Icon className="size-4 shrink-0 opacity-90" />
+        <span
+          className={
+            "truncate transition-[opacity,max-width,margin] duration-200 ease-out " +
+            (collapsed
+              ? "pointer-events-none ml-0 max-w-0 opacity-0"
+              : "max-w-[160px] opacity-100")
+          }
+        >
+          {label}
+        </span>
       </Link>
     );
   };
 
   const sidebar = (
-    <div className="flex h-full flex-col">
-      <div className="flex h-12 items-center gap-2 border-b border-border-subtle px-3">
-        <Link href="/" className="min-w-0 flex-1" onClick={(e) => onNav("/", e)}>
+    <div className="flex h-full min-h-0 flex-col overflow-hidden">
+      <div
+        className={
+          "flex h-12 shrink-0 items-center gap-1.5 border-b border-border-subtle " +
+          (collapsed ? "justify-center px-1.5" : "px-3")
+        }
+      >
+        <Link
+          href="/"
+          className={"min-w-0 " + (collapsed ? "" : "flex-1")}
+          onClick={(e) => onNav("/", e)}
+        >
           {collapsed ? <OrcaMark className="size-7" /> : <OrcaWordmark />}
         </Link>
         <button
           type="button"
-          className="hidden rounded-md p-1 text-text-muted hover:bg-surface-elevated md:inline-flex"
+          className="hidden size-8 shrink-0 place-items-center rounded-md text-text-muted transition-colors hover:bg-surface-elevated hover:text-text-primary md:grid"
           onClick={() => setCollapsed((v) => !v)}
-          aria-label="Thu gọn"
+          aria-label={collapsed ? "Mở rộng sidebar" : "Thu gọn sidebar"}
         >
           {collapsed ? <ChevronsRight className="size-4" /> : <ChevronsLeft className="size-4" />}
         </button>
         <button
           type="button"
-          className="inline-flex rounded-md p-1 text-text-muted hover:bg-surface-elevated md:hidden"
+          className="grid size-8 shrink-0 place-items-center rounded-md text-text-muted hover:bg-surface-elevated md:hidden"
           onClick={() => setMobileOpen(false)}
-          aria-label="Đóng menu"
+          aria-label="Đóng"
         >
           <X className="size-4" />
         </button>
       </div>
-      <nav className="flex-1 space-y-4 overflow-y-auto p-2">
+
+      <nav className="min-h-0 flex-1 space-y-3 overflow-y-auto overflow-x-hidden overscroll-contain px-2 py-3">
         {NAV_SECTIONS.map((section) => (
-          <div key={section.title}>
-            {!collapsed ? (
-              <div className="mb-1 px-2.5 text-[10px] font-semibold uppercase tracking-wider text-text-muted">
-                {section.title}
-              </div>
+          <div key={section.title} className="space-y-0.5">
+            <div
+              className={
+                "px-2.5 text-[10px] font-semibold uppercase tracking-wider text-text-muted transition-[opacity,height,margin] duration-200 ease-out " +
+                (collapsed ? "mb-0 h-0 overflow-hidden opacity-0" : "mb-1 opacity-100")
+              }
+            >
+              {section.title}
+            </div>
+            {collapsed ? (
+              <div className="mx-auto mb-1 h-px w-6 bg-border-subtle/80" aria-hidden />
             ) : null}
-            <div className="space-y-0.5">
+            <div className="flex flex-col gap-0.5">
               {section.items.map((item) => (
                 <NavItem key={item.href} href={item.href} label={item.label} icon={item.icon} />
               ))}
@@ -190,7 +218,8 @@ export function ShellInner({ children }: { children: ReactNode }) {
           </div>
         ))}
       </nav>
-      <div className="border-t border-border-subtle p-2">
+
+      <div className="shrink-0 border-t border-border-subtle p-2">
         <UserMenu collapsed={collapsed} />
       </div>
     </div>
@@ -199,38 +228,52 @@ export function ShellInner({ children }: { children: ReactNode }) {
   return (
     <div className="flex h-full min-h-0 flex-col bg-background-primary text-text-primary">
       <PriceAlertEngine />
-      <div className="border-b border-border-subtle">
+      <div className="relative z-20 border-b border-border-subtle">
         <TickerTape />
       </div>
-      <div className="flex min-h-0 flex-1">
+      <div className="relative z-10 flex min-h-0 flex-1">
         <aside
           className={
-            "hidden shrink-0 border-r border-border-subtle bg-surface-base transition-[width] md:block " +
+            "relative hidden h-full shrink-0 overflow-hidden border-r border-border-subtle bg-surface-base " +
+            "transition-[width] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] will-change-[width] md:block " +
             (collapsed ? "w-[56px]" : "w-[220px]")
           }
         >
           {sidebar}
         </aside>
 
-        {mobileOpen ? (
-          <div className="fixed inset-0 z-50 md:hidden">
-            <button
-              type="button"
-              className="absolute inset-0 bg-black/50"
-              aria-label="Đóng menu"
-              onClick={() => setMobileOpen(false)}
-            />
-            <aside className="absolute left-0 top-0 h-full w-[260px] bg-surface-base shadow-xl">
-              {sidebar}
-            </aside>
-          </div>
-        ) : null}
+        <div
+          className={
+            "fixed inset-0 z-50 md:hidden " +
+            (mobileOpen ? "pointer-events-auto" : "pointer-events-none")
+          }
+          aria-hidden={!mobileOpen}
+        >
+          <button
+            type="button"
+            className={
+              "absolute inset-0 bg-black/50 transition-opacity duration-300 ease-out " +
+              (mobileOpen ? "opacity-100" : "opacity-0")
+            }
+            aria-label="Đóng menu"
+            onClick={() => setMobileOpen(false)}
+          />
+          <aside
+            className={
+              "absolute left-0 top-0 h-full w-[260px] max-w-[85vw] overflow-hidden bg-surface-base shadow-2xl " +
+              "transition-transform duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] will-change-transform " +
+              (mobileOpen ? "translate-x-0" : "-translate-x-full")
+            }
+          >
+            {sidebar}
+          </aside>
+        </div>
 
         <div className="flex min-w-0 flex-1 flex-col">
-          <header className="flex h-12 items-center gap-2 border-b border-border-subtle px-3">
+          <header className="flex h-12 shrink-0 items-center gap-2 border-b border-border-subtle px-3">
             <button
               type="button"
-              className="grid size-9 place-items-center rounded-lg text-text-secondary hover:bg-surface-elevated md:hidden"
+              className="grid size-9 place-items-center rounded-lg text-text-secondary transition-colors hover:bg-surface-elevated md:hidden"
               onClick={() => setMobileOpen(true)}
               aria-label="Mở menu"
             >
@@ -242,7 +285,7 @@ export function ShellInner({ children }: { children: ReactNode }) {
             <NotifBell />
             <Link
               href="/settings"
-              className="grid size-9 place-items-center rounded-lg text-text-secondary hover:bg-surface-elevated hover:text-text-primary"
+              className="grid size-9 place-items-center rounded-lg text-text-secondary transition-colors hover:bg-surface-elevated hover:text-text-primary"
               aria-label="Cài đặt"
             >
               <Settings className="size-4" />
