@@ -6,7 +6,7 @@ export const runtime = "nodejs";
 export const maxDuration = 60;
 
 /**
- * External cron (cronjob.org) — price alerts + candlestick pattern scan + divergence scan.
+ * External cron (cronjob.org) — price alerts + candlestick + divergence + warm cache.
  */
 export async function GET(req: Request) {
   const cronSecret = process.env.CRON_SECRET?.trim();
@@ -15,7 +15,10 @@ export async function GET(req: Request) {
     const querySecret = new URL(req.url).searchParams.get("secret") ?? "";
     if (auth !== `Bearer ${cronSecret}` && querySecret !== cronSecret) {
       return new Response(
-        JSON.stringify({ success: false, error: { code: "UNAUTHORIZED", message: "Invalid cron secret" } }),
+        JSON.stringify({
+          success: false,
+          error: { code: "UNAUTHORIZED", message: "Invalid cron secret" },
+        }),
         { status: 401, headers: { "Content-Type": "application/json" } },
       );
     }
@@ -25,17 +28,31 @@ export async function GET(req: Request) {
   const result = await runServerAlertMonitor();
   let patterns: unknown = null;
   let divergences: unknown = null;
+  let divergenceWarm: unknown = null;
+
   try {
     const { runCandlestickPatternAlerts } = await import("@/lib/services/candlestick-screener");
     patterns = await runCandlestickPatternAlerts();
   } catch (e) {
     patterns = { error: e instanceof Error ? e.message : "pattern scan failed" };
   }
+
   try {
-    const { runDivergenceAlerts } = await import("@/lib/services/divergence-screener");
+    const { runDivergenceAlerts, warmVnDivergenceScreen } = await import(
+      "@/lib/services/divergence-screener"
+    );
     divergences = await runDivergenceAlerts();
+    // Refill default UI cache so next user open is instant
+    divergenceWarm = await warmVnDivergenceScreen();
   } catch (e) {
     divergences = { error: e instanceof Error ? e.message : "divergence scan failed" };
   }
-  return ok({ ...result, patterns, divergences, durationMs: Date.now() - t0 });
+
+  return ok({
+    ...result,
+    patterns,
+    divergences,
+    divergenceWarm,
+    durationMs: Date.now() - t0,
+  });
 }
