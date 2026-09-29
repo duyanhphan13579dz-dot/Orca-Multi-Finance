@@ -32,6 +32,8 @@ export async function GET(req: Request) {
   const session = getVnSession();
   ensureHeartbeatStarted();
   const poller = ensureSessionPollerStarted();
+  // WS stays off by default on Vercel (ws-policy). Only starts when
+  // VNDIRECT_WS_DISABLED=false / SSI_WS_DISABLED=false is set explicitly.
   try {
     ensureVndirectWsStarted();
     ensureSsiWsStarted();
