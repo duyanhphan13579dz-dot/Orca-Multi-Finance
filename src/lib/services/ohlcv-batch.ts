@@ -95,5 +95,5 @@ export async function batchVnOhlcv(
   return out;
 }
 
-/** Soft default universe size for screeners (was 120). */
-export const SCREENER_UNIVERSE_CAP = 60;
+/** Default cap = full VN100 for technical screeners. */
+export const SCREENER_UNIVERSE_CAP = 100;
