@@ -18,16 +18,39 @@ export async function GET(req: Request) {
     const auth = req.headers.get("authorization") ?? "";
     const querySecret = new URL(req.url).searchParams.get("secret") ?? "";
     if (auth !== `Bearer ${cronSecret}` && querySecret !== cronSecret) {
-      return fail("UNAUTHORIZED", "Invalid cron secret", 401);
+      return new Response(
+        JSON.stringify({ success: false, error: { code: "UNAUTHORIZED", message: "Invalid cron secret" } }),
+        { status: 401, headers: { "Content-Type": "application/json" } },
+      );
     }
   }
 
   const t0 = Date.now();
-  const symbols = [...new Set([...LIQUID_BOARD.slice(0, 80), ...DEFAULT_SYMBOLS])].slice(0, 100);
+  const url = new URL(req.url);
+  const limit = Math.min(Number(url.searchParams.get("limit") ?? 60) || 60, 100);
+  const custom = (url.searchParams.get("symbols") ?? "")
+    .split(/[,\s;]+/)
+    .map((s) => s.trim().toUpperCase())
+    .filter(Boolean);
+
+  const universe = [
+    ...new Set([...(custom.length ? custom : LIQUID_BOARD), ...DEFAULT_SYMBOLS.split(",")]),
+  ].slice(0, limit);
+
   try {
-    const result = await warmFundamentalSnapshots(symbols);
-    return ok({ ...result, symbolCount: symbols.length, durationMs: Date.now() - t0 });
+    const r = await warmFundamentalSnapshots(universe, { concurrency: 4 });
+    return ok({
+      ok: true,
+      scanned: r.scanned,
+      warmed: r.warmed,
+      durationMs: Date.now() - t0,
+      note: "BCTC package + snapshot warm · persist financial_statements best-effort",
+    });
   } catch (e) {
-    return fail("FINANCIALS_WARM_FAILED", e instanceof Error ? e.message : "warm failed", 502);
+    return fail(
+      "CRON_FINANCIALS_ERROR",
+      e instanceof Error ? e.message : "Warm BCTC thất bại",
+      500,
+    );
   }
 }
