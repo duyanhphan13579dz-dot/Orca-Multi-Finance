@@ -111,6 +111,22 @@ export interface TechnicalSnapshot {
   signals: string[];
   /** Regular + hidden divergences (RSI / MACD hist / MACD line / Stoch). Empty when insufficient bars. */
   divergences?: DivergenceSignal[];
+  /** Recent candle clusters, classified as reversal or continuation. */
+  candleClusters?: {
+    name: string;
+    category: "bullish_reversal" | "bearish_reversal" | "continuation" | "neutral";
+    score: number;
+    ageBars: number;
+    candles: number;
+  }[];
+  /** Data quality signals used to prevent analysis from silently using stale bars. */
+  dataQuality?: {
+    bars: number;
+    latestBarTime: number;
+    ageMs: number;
+    stale: boolean;
+    deduplicated: boolean;
+  };
 }
 
 export interface CandlePattern {
