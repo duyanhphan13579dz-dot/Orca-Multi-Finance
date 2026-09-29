@@ -1,5 +1,6 @@
 import "server-only";
 import { buildMeta } from "../freshness";
+import { cached } from "../cache";
 import {
   detectDivergences,
   divergenceSummaryLine,
@@ -47,12 +48,19 @@ export type DivergenceScreenOpts = {
   limit?: number;
   asset?: "stock" | "crypto" | "multi";
   window?: "default" | "short_3_4d";
+  /** Bypass result cache (e.g. cron force refresh). */
+  skipCache?: boolean;
 };
 
 const STRENGTH_RANK: Record<DivergenceStrength, number> = { A: 3, B: 2, C: 1 };
 
+/** Result cache: short TTL so UI feels instant; stale serves while revalidate. */
+const SCREEN_TTL_MS = 90_000;
+const SCREEN_STALE_MS = 300_000;
+
 function oscillatorsFor(opts: DivergenceScreenOpts): DivergenceOscillator[] | undefined {
   if (!opts.oscillator || opts.oscillator === "any") {
+    // short window: RSI + MACD hist only — enough for 3–4d and faster
     if ((opts.window ?? "short_3_4d") === "short_3_4d") return ["rsi", "macd_hist"];
     return ["rsi", "macd_hist", "macd_line", "stoch"];
   }
@@ -117,11 +125,28 @@ function detectOptsFor(opts: DivergenceScreenOpts, timeframe: string) {
   return {
     window,
     timeframe,
-    maxSignals: 8,
+    maxSignals: 6,
     oscillators: oscillatorsFor(opts),
   } as const;
 }
 
+function cacheKeyVn(opts: DivergenceScreenOpts, universe: string[]): string {
+  const w = opts.window ?? "short_3_4d";
+  const tf = opts.timeframe ?? "1d";
+  const k = opts.kind ?? "any";
+  const o = opts.oscillator ?? "any";
+  const s = opts.minStrength ?? "C";
+  const lim = Math.min(opts.limit ?? 40, 80);
+  const symPart = opts.symbols?.length ? universe.slice(0, 20).join(",") : "board";
+  return `div:vn:v2:${w}:${tf}:${k}:${o}:${s}:${lim}:${symPart}`;
+}
+
+/**
+ * VN divergence screen — optimized path:
+ * - short_3_4d: ~45 bars, high concurrency, deadline budget
+ * - result-level cache (90s / stale 5m) + singleflight via cached()
+ * - OHLCV already cached per-symbol in getVnOhlcv
+ */
 export async function screenVnDivergences(
   opts: DivergenceScreenOpts = {},
 ): Promise<DivergenceScreenResult> {
@@ -132,62 +157,96 @@ export async function screenVnDivergences(
   const limit = Math.min(opts.limit ?? 40, 80);
   const tf = opts.timeframe ?? "1d";
   const window = opts.window ?? "short_3_4d";
+  const short = window === "short_3_4d";
 
-  const [ohlcvMap, quotesPack] = await Promise.all([
-    batchVnOhlcv(universe, { bars: window === "short_3_4d" ? 60 : 120, concurrency: 10 }),
-    getVnQuotes(universe).catch(() => null),
-  ]);
-  const quoteBy = new Map((quotesPack?.quotes ?? []).map((q) => [q.symbol.toUpperCase(), q]));
+  const run = async (): Promise<DivergenceScreenResult> => {
+    const t0 = Date.now();
+    // Fast path: fewer bars, higher concurrency, hard deadline so UI never hangs
+    const [ohlcvMap, quotesPack] = await Promise.all([
+      batchVnOhlcv(universe, {
+        bars: short ? 48 : 120,
+        concurrency: short ? 16 : 12,
+        perSymbolMs: short ? 2_500 : 4_000,
+        deadlineMs: short ? 18_000 : 28_000,
+      }),
+      getVnQuotes(universe).catch(() => null),
+    ]);
+    const quoteBy = new Map((quotesPack?.quotes ?? []).map((q) => [q.symbol.toUpperCase(), q]));
 
-  const rows: DivergenceScreenRow[] = [];
-  let skipped = 0;
-  const minBarsNeed = window === "short_3_4d" ? 25 : 40;
+    const rows: DivergenceScreenRow[] = [];
+    let skipped = 0;
+    const minBarsNeed = short ? 22 : 40;
+    let ohlcvHits = 0;
 
-  for (const sym of universe) {
-    const pack = ohlcvMap.get(sym);
-    if (!pack?.bars || pack.bars.length < minBarsNeed) {
-      skipped++;
-      continue;
+    for (const sym of universe) {
+      const pack = ohlcvMap.get(sym);
+      if (!pack?.bars || pack.bars.length < minBarsNeed) {
+        skipped++;
+        continue;
+      }
+      ohlcvHits++;
+      let divs = detectDivergences(pack.bars, detectOptsFor(opts, tf));
+      divs = filterSignals(divs, opts);
+      if (!divs.length) continue;
+      divs.sort(rankSignals);
+      const top = divs[0]!;
+      const q = quoteBy.get(sym);
+      const sec = getSecurity(sym);
+      rows.push({
+        symbol: sym,
+        name: sec?.name ?? q?.name ?? null,
+        sector: sectorOf(sym) ?? sec?.sector ?? null,
+        asset: "stock",
+        price: q?.price ?? pack.bars[pack.bars.length - 1]?.close ?? null,
+        changePercent: q?.changePercent ?? null,
+        volume: q?.volume ?? pack.bars[pack.bars.length - 1]?.volume ?? null,
+        divergences: divs,
+        top,
+        alertWorthy: isAlertWorthy(top),
+        summary: divergenceSummaryLine(top),
+      });
     }
-    let divs = detectDivergences(pack.bars, detectOptsFor(opts, tf));
-    divs = filterSignals(divs, opts);
-    if (!divs.length) continue;
-    divs.sort(rankSignals);
-    const top = divs[0]!;
-    const q = quoteBy.get(sym);
-    const sec = getSecurity(sym);
-    rows.push({
-      symbol: sym,
-      name: sec?.name ?? q?.name ?? null,
-      sector: sectorOf(sym) ?? sec?.sector ?? null,
-      asset: "stock",
-      price: q?.price ?? pack.bars[pack.bars.length - 1]?.close ?? null,
-      changePercent: q?.changePercent ?? null,
-      volume: q?.volume ?? pack.bars[pack.bars.length - 1]?.volume ?? null,
-      divergences: divs,
-      top,
-      alertWorthy: isAlertWorthy(top),
-      summary: divergenceSummaryLine(top),
+
+    rows.sort((a, b) => {
+      if (a.alertWorthy !== b.alertWorthy) return a.alertWorthy ? -1 : 1;
+      return rankSignals(a.top, b.top);
     });
-  }
 
-  rows.sort((a, b) => {
-    if (a.alertWorthy !== b.alertWorthy) return a.alertWorthy ? -1 : 1;
-    return rankSignals(a.top, b.top);
-  });
-
-  return {
-    rows: rows.slice(0, limit),
-    scanned: universe.length,
-    skipped,
-    meta: buildMeta({
-      source: "divergence-engine+vn-ohlcv",
-      sourceTimestampMs: Date.now(),
-      note: `VN · tf=${tf} · window=${window} · vol-confirm · minStrength=${opts.minStrength ?? "C"}`,
-      hasData: rows.length > 0,
-      partial: skipped > 0,
-    }),
+    const ms = Date.now() - t0;
+    return {
+      rows: rows.slice(0, limit),
+      scanned: universe.length,
+      skipped,
+      meta: buildMeta({
+        source: "divergence-engine+vn-ohlcv",
+        sourceTimestampMs: Date.now(),
+        note: `VN · tf=${tf} · window=${window} · ohlcv=${ohlcvHits}/${universe.length} · ${ms}ms · vol-confirm`,
+        hasData: rows.length > 0,
+        partial: skipped > 0 || ohlcvHits < universe.length,
+        latencyMs: ms,
+      }),
+    };
   };
+
+  if (opts.skipCache) return run();
+
+  const key = cacheKeyVn(opts, universe);
+  const pack = await cached(key, {
+    ttlMs: SCREEN_TTL_MS,
+    staleMs: SCREEN_STALE_MS,
+    producer: run,
+  });
+  const result = pack.value;
+  // Annotate cache hit on meta note
+  if (pack.cached && result.meta) {
+    result.meta = {
+      ...result.meta,
+      cached: true,
+      stale: pack.stale,
+      note: `${result.meta.note ?? ""} · cache${pack.stale ? "-stale" : "-hit"}`,
+    };
+  }
+  return result;
 }
 
 export async function screenCryptoDivergences(
@@ -200,13 +259,14 @@ export async function screenCryptoDivergences(
   const limit = Math.min(opts.limit ?? 20, 40);
   const interval = opts.timeframe ?? "1h";
   const window = opts.window ?? "short_3_4d";
+  const short = window === "short_3_4d";
   const rows: DivergenceScreenRow[] = [];
   let skipped = 0;
 
   const { mapPool } = await import("./ohlcv-batch");
-  const packs = await mapPool(universe, 6, async (sym) => {
+  const packs = await mapPool(universe, short ? 8 : 6, async (sym) => {
     try {
-      const bars = await getKlinesDeep(sym, interval, window === "short_3_4d" ? 80 : 120);
+      const bars = await getKlinesDeep(sym, interval, short ? 60 : 120);
       return { sym, bars };
     } catch {
       return { sym, bars: null as Awaited<ReturnType<typeof getKlinesDeep>> | null };
@@ -214,7 +274,7 @@ export async function screenCryptoDivergences(
   });
 
   for (const { sym, bars } of packs) {
-    if (!bars?.length || bars.length < 25) {
+    if (!bars?.length || bars.length < 22) {
       skipped++;
       continue;
     }
@@ -289,6 +349,37 @@ export async function screenMultiAssetDivergences(
   };
 }
 
+/**
+ * Pre-warm default VN short-window divergence screen (for cron / cold start).
+ * Uses skipCache so OHLCV + engine run once and refill result cache.
+ */
+export async function warmVnDivergenceScreen(): Promise<{
+  ok: boolean;
+  rows: number;
+  scanned: number;
+  ms: number;
+}> {
+  const t0 = Date.now();
+  try {
+    const r = await screenVnDivergences({
+      window: "short_3_4d",
+      timeframe: "1d",
+      minStrength: "C",
+      limit: 40,
+      skipCache: true,
+    });
+    return {
+      ok: true,
+      rows: r.rows.length,
+      scanned: r.scanned,
+      ms: Date.now() - t0,
+    };
+  } catch (e) {
+    console.warn("[warmVnDivergenceScreen]", e);
+    return { ok: false, rows: 0, scanned: 0, ms: Date.now() - t0 };
+  }
+}
+
 export type DivergenceAlertEvent = {
   id: string;
   symbol: string;
@@ -333,11 +424,13 @@ export async function runDivergenceAlerts(): Promise<{
   alerted: number;
   symbols: string[];
 }> {
+  // Force fresh scan for alerts (still benefits from per-symbol OHLCV cache)
   const result = await screenVnDivergences({
     minStrength: "B",
     limit: 30,
     timeframe: "1d",
     window: "short_3_4d",
+    skipCache: true,
   });
   const hits = (result?.rows ?? []).filter((r) => r.alertWorthy);
   const scanned = result?.scanned ?? 0;
@@ -386,7 +479,7 @@ export async function runDivergenceAlerts(): Promise<{
         title: `Phân kỳ · ${row.symbol}`,
         description:
           `${DIVERGENCE_KIND_VI[d.kind]}\n` +
-          `Giá ${priceStr} (${chgStr}) · class ${d.strength} · conf ${(d.confidence * 100).toFixed(0)}%${volTag}\n` +
+          `Giá ${priceStr} (${chgStr}) · hạng ${d.strength} · tin cậy ${(d.confidence * 100).toFixed(0)}%${volTag}\n` +
           `${oscLabel} · ${d.barsBetween} nến · ${row.summary}`,
         color: colorForKind(d.kind),
         username: "ORCA Divergence",
@@ -395,9 +488,9 @@ export async function runDivergenceAlerts(): Promise<{
           { name: "Giá", value: priceStr, inline: true },
           { name: "% phiên", value: chgStr, inline: true },
           { name: "Loại", value: d.kind, inline: true },
-          { name: "Oscillator", value: oscLabel, inline: true },
+          { name: "Chỉ báo", value: oscLabel, inline: true },
           {
-            name: "Volume",
+            name: "Khối lượng",
             value: d.volumeConfirmed
               ? `✓ ${d.volumeRatio != null ? d.volumeRatio.toFixed(2) + "×SMA" : ""}`
               : "—",
