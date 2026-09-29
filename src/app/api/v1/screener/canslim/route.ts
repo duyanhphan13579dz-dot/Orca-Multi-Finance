@@ -4,26 +4,28 @@ import type { CanslimLetter } from "@/lib/engines/canslim";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
-/** Full phase may pull BCTC; tech phase is OHLCV-only and much faster. */
-export const maxDuration = 90;
+/** Realtime path targets ~22s; full phase may use more when explicitly requested. */
+export const maxDuration = 60;
 
 const LETTERS = new Set<CanslimLetter>(["C", "A", "N", "S", "L", "I", "M"]);
 
 /**
- * GET /api/v1/screener/canslim
+ * GET /api/v1/screener/canslim — realtime-first, always usable when OHLCV works.
  *
- * Progressive pipeline (P2):
- *   Phase A (tech): quotes + OHLCV → N/S/L/M + sector-relative RS
- *   Phase B (full): + BCTC/ROE/NN → C/A/I when budget remains
+ * Default (phase=auto):
+ *   Phase A: quotes + OHLCV → N/S/L/M (guaranteed)
+ *   Phase B: BCTC/ROE/NN best-effort under ~10s budget (hub cache-first)
  *
- * Query:
- *   ?phase=tech|full|auto   (default auto→full; tech returns faster partial)
- *   ?symbols=FPT,HPG&minScore=50&minPass=3&letters=C,A&sector=...
+ * Never hard-fails to UNAVAILABLE if any bars exist; strict filters fall back to top-by-score.
+ *
+ * Query: ?phase=tech|full|auto  ?symbols=  ?minScore=  ?minPass=  ?letters=  ?sector=
  */
 export async function GET(req: Request) {
   const url = new URL(req.url);
-  const minScore = url.searchParams.get("minScore") != null ? Number(url.searchParams.get("minScore")) : 50;
-  const minPass = url.searchParams.get("minPass") != null ? Number(url.searchParams.get("minPass")) : 0;
+  const minScore =
+    url.searchParams.get("minScore") != null ? Number(url.searchParams.get("minScore")) : 40;
+  const minPass =
+    url.searchParams.get("minPass") != null ? Number(url.searchParams.get("minPass")) : 0;
   const sector = url.searchParams.get("sector") || undefined;
   const symbols = (url.searchParams.get("symbols") ?? "")
     .split(",")
@@ -38,17 +40,58 @@ export async function GET(req: Request) {
   const phase =
     phaseRaw === "tech" || phaseRaw === "full" ? (phaseRaw as "tech" | "full") : ("auto" as const);
 
-  let payload: Awaited<ReturnType<typeof screenCanslim>>;
   try {
-    payload = await screenCanslim({
+    const payload = await screenCanslim({
       symbols: symbols.length ? symbols : undefined,
-      minScore: Number.isFinite(minScore) ? minScore : 50,
+      minScore: Number.isFinite(minScore) ? minScore : 40,
       minPass: Number.isFinite(minPass) ? minPass : 0,
       requireLetters: requireLetters.length ? requireLetters : undefined,
       sector,
       limit,
       phase,
     });
+
+    const body = payload ?? {
+      rows: [] as NonNullable<typeof payload> extends infer R
+        ? R extends { rows: infer Rows }
+          ? Rows
+          : never
+        : never,
+      scanned: 0,
+      skipped: 0,
+      marketBullish: null as boolean | null,
+      marketDetail: "OHLCV tạm lỗi",
+      coverage: {
+        withBars: 0,
+        withGrowth: 0,
+        withHealth: 0,
+        withForeign: 0,
+        withRatios: 0,
+        withEquity: 0,
+      },
+      phase: "tech" as const,
+      meta: {
+        source: "canslim-realtime",
+        sourceTimestampMs: Date.now(),
+        hasData: false,
+        partial: true,
+        note: "OHLCV tạm lỗi — thử lại hoặc chọn ít mã hơn",
+      },
+    };
+
+    return ok(
+      {
+        universe: "canslim",
+        phase: body.phase,
+        rows: body.rows,
+        scanned: body.scanned,
+        skipped: body.skipped,
+        marketBullish: body.marketBullish,
+        marketDetail: body.marketDetail,
+        coverage: body.coverage,
+      },
+      body.meta,
+    );
   } catch (e) {
     const msg = e instanceof Error ? e.message : "pipeline error";
     return ok(
@@ -60,46 +103,22 @@ export async function GET(req: Request) {
         skipped: 0,
         marketBullish: null,
         marketDetail: msg.slice(0, 120),
-        coverage: { withBars: 0, withGrowth: 0, withHealth: 0, withForeign: 0, withRatios: 0, withEquity: 0 },
+        coverage: {
+          withBars: 0,
+          withGrowth: 0,
+          withHealth: 0,
+          withForeign: 0,
+          withRatios: 0,
+          withEquity: 0,
+        },
       },
       {
-        source: "canslim-screener",
+        source: "canslim-realtime",
         sourceTimestampMs: Date.now(),
         hasData: false,
         partial: true,
-        note: `CANSLIM lỗi tạm — ${msg.slice(0, 80)} — thử lại hoặc thu hẹp mã`,
+        note: `CANSLIM lỗi tạm — ${msg.slice(0, 80)} — thử lại`,
       },
     );
   }
-
-  const body = payload ?? {
-    rows: [],
-    scanned: 0,
-    skipped: 0,
-    marketBullish: null as boolean | null,
-    marketDetail: "OHLCV/BCTC tạm lỗi",
-    coverage: { withBars: 0, withGrowth: 0, withHealth: 0, withForeign: 0, withRatios: 0, withEquity: 0 },
-    phase: "tech" as const,
-    meta: {
-      source: "canslim-screener",
-      sourceTimestampMs: Date.now(),
-      hasData: false,
-      partial: true,
-      note: "OHLCV/BCTC tạm lỗi — thử lại sau",
-    },
-  };
-
-  return ok(
-    {
-      universe: "canslim",
-      phase: body.phase,
-      rows: body.rows,
-      scanned: body.scanned,
-      skipped: body.skipped,
-      marketBullish: body.marketBullish,
-      marketDetail: body.marketDetail,
-      coverage: body.coverage,
-    },
-    body.meta,
-  );
 }
