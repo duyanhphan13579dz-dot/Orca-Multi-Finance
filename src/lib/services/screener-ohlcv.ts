@@ -1,5 +1,9 @@
 import "server-only";
 import { getVnOhlcv } from "./stocks";
+import { getVndOhlcv, getVndIndexOhlcv, isVnIndexSymbol } from "../providers/vndirect";
+import { fetchVndDchartHistory } from "../providers/vndirect-dchart";
+import { getPublicOhlcv } from "../providers/public-vn-feed";
+import { raceHealthy } from "../data-engine/resilience";
 import type { OhlcvBar } from "../types";
 
 type OhlcvPack = Awaited<ReturnType<typeof getVnOhlcv>>;
@@ -10,14 +14,38 @@ type OhlcvPack = Awaited<ReturnType<typeof getVnOhlcv>>;
  */
 export async function fetchOhlcvResilient(
   symbol: string,
-  bars = 120,
+  bars = 260,
 ): Promise<{ bars: OhlcvBar[]; pack: OhlcvPack | null }> {
-  let pack = await getVnOhlcv(symbol, bars).catch(() => null);
-  if (!pack?.bars?.length) {
-    await new Promise((r) => setTimeout(r, 80 + Math.floor(Math.random() * 80)));
-    pack = await getVnOhlcv(symbol, bars).catch(() => null);
+  const sym = symbol.trim().toUpperCase();
+  const isIndex = isVnIndexSymbol(sym);
+  const attempts = [
+    {
+      id: "vndirect-dchart",
+      run: () => fetchVndDchartHistory(sym, "D", bars),
+      accept: (v: OhlcvBar[]) => Array.isArray(v) && v.length >= 30,
+    },
+    {
+      id: "vndirect-ohlcv",
+      run: () => (isIndex ? getVndIndexOhlcv(sym, bars) : getVndOhlcv(sym, bars)),
+      accept: (v: OhlcvBar[]) => Array.isArray(v) && v.length >= 30,
+    },
+    {
+      id: "entrade-public-ohlcv",
+      run: () => getPublicOhlcv(sym, bars, isIndex ? "index" : "stock"),
+      accept: (v: OhlcvBar[]) => Array.isArray(v) && v.length >= 30,
+    },
+  ];
+
+  try {
+    const hit = await raceHealthy(attempts, { perAttemptMs: 6_500, label: `screener-ohlcv:${sym}` });
+    return {
+      bars: hit.value,
+      pack: { bars: hit.value, meta: { source: hit.sourceId, sourceTimestampMs: Date.now() } } as OhlcvPack,
+    };
+  } catch {
+    const pack = await getVnOhlcv(sym, bars).catch(() => null);
+    return { bars: pack?.bars ?? [], pack };
   }
-  return { bars: pack?.bars ?? [], pack };
 }
 
 /** Bounded concurrency map (same pattern used across screeners). */
