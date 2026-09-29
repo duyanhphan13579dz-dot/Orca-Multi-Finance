@@ -9,7 +9,7 @@ export const maxDuration = 60;
 /**
  * Daily commodities refresh.
  * Auth: Authorization: Bearer $CRON_SECRET  OR  ?secret=$CRON_SECRET
- * Auth: Bearer CRON_SECRET or ?secret= (cronjob.org / any HTTP scheduler).
+ * Auth: Bearer CRON_SECRET or ?secret= (cronjob.org / any HTTP scheduler). See docs/CRONJOB_ORG.md.
  */
 function authorized(req: Request): boolean {
   const secret = process.env.CRON_SECRET?.trim();
@@ -30,29 +30,24 @@ export async function GET(req: Request) {
       { status: 401 },
     );
   }
+  const result = await refreshCommodityMarket();
+  const meta = buildMeta({
+    source: "cron:commodities",
+    sourceTimestampMs: result.sourceTimestamp ? Date.parse(result.sourceTimestamp) : Date.now(),
+    note: result.ok
+      ? `Đã đồng bộ ${result.count} mặt hàng (${result.durationMs}ms)`
+      : `Lỗi đồng bộ: ${result.errors.join("; ")}`,
+  });
+  return NextResponse.json(
+    {
+      success: result.ok,
+      data: result,
+      meta,
+    },
+    { status: result.ok ? 200 : 502 },
+  );
+}
 
-  const t0 = Date.now();
-  try {
-    const market = await refreshCommodityMarket();
-    return NextResponse.json({
-      success: true,
-      data: {
-        items: market?.items?.length ?? 0,
-        source: market?.meta?.source,
-        durationMs: Date.now() - t0,
-      },
-      meta: market?.meta ?? buildMeta({ source: "commodities-cron" }),
-    });
-  } catch (e) {
-    return NextResponse.json(
-      {
-        success: false,
-        error: {
-          code: "COMMODITIES_CRON_FAILED",
-          message: e instanceof Error ? e.message : "refresh failed",
-        },
-      },
-      { status: 502 },
-    );
-  }
+export async function POST(req: Request) {
+  return GET(req);
 }
