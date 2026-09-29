@@ -1,66 +1,64 @@
 # Cron jobs — cronjob.org (not Vercel Cron)
 
 All scheduled work is triggered **externally** via [cronjob.org](https://cronjob.org)
-(or any HTTP cron). Vercel `crons` in `vercel.json` is intentionally empty so
-Pro/Hobby limits and cold-start coupling do not affect the app.
+(or any HTTP cron). Vercel `crons` in `vercel.json` is intentionally empty.
+
+**Important:** many cronjob.org plans cap request timeout at **30 seconds**.
+Heavy warm work is split into **phases** so each job finishes under ~25s.
 
 ## Auth
-
-Every endpoint requires one of:
 
 ```http
 Authorization: Bearer $CRON_SECRET
 ```
 
-or
+or `?secret=$CRON_SECRET`
 
-```text
-?secret=$CRON_SECRET
-```
-
-Set `CRON_SECRET` in Vercel env and in each cronjob.org job URL/header.
-
-Base URL example: `https://<your-app>.vercel.app`
+Base URL: `https://<your-app>.vercel.app`
 
 ## Recommended schedule (Asia/Ho_Chi_Minh)
 
-cronjob.org uses your chosen timezone — set **Asia/Ho_Chi_Minh**.
+| Job | Path + query | Schedule (VN) | Timeout |
+|-----|----------------|---------------|---------|
+| market-live | `/api/v1/cron/market-live` | Every 1–2 min Mon–Fri 08:45–15:15 | 25–30s |
+| stocks | `/api/v1/cron/stocks` | Every 5 min Mon–Fri 09:00–15:00 | 30s |
+| alerts | `/api/v1/cron/alerts` | Every 10 min Mon–Fri 09:00–15:30 | 30s |
+| reports | `/api/v1/cron/reports` | Session slots (morning/lunch/ATC…) | 30s |
+| **Financials BCTC #1** | `/api/v1/cron/financials?phase=bctc&offset=0&limit=20` | Mon–Fri **16:10** | **30s** |
+| **Financials BCTC #2** | `...?phase=bctc&offset=20&limit=20` | Mon–Fri **16:12** | **30s** |
+| **Financials BCTC #3** | `...?phase=bctc&offset=40&limit=20` | Mon–Fri **16:14** | **30s** |
+| **Financials OHLCV** | `...?phase=ohlcv` | Mon–Fri **16:16** | **30s** |
+| **Financials CANSLIM** | `...?phase=canslim` | Mon–Fri **16:18** | **30s** |
+| commodities | `/api/v1/cron/commodities` | Daily 00:05 | 30s |
 
-| Job | Path | Schedule (VN) | Notes |
-|-----|------|---------------|-------|
-| market-live | `GET /api/v1/cron/market-live` | Every **1–2 min** Mon–Fri 08:45–15:15 | Warm board + indices; `maxDuration=25` |
-| stocks | `GET /api/v1/cron/stocks` | Every **5 min** Mon–Fri 09:00–15:00 | Board + SSI order-book snapshot; `maxDuration=30` |
-| alerts | `GET /api/v1/cron/alerts` | Every **10 min** Mon–Fri 09:00–15:30 | Price alerts + candlestick + divergence; `maxDuration=60` |
-| reports | `GET /api/v1/cron/reports` | Every **30 min** Mon–Fri 08:00–17:00 | Session-aware morning/intraday/summary; `maxDuration=60` |
-| financials | `GET /api/v1/cron/financials` | **Once** Mon–Fri **16:15** (+ optional late **17:30**) | Warm BCTC + OHLCV board + **seed CANSLIM result cache**; `maxDuration=90` — set job timeout **≥ 90s** |
-| commodities | `GET /api/v1/cron/commodities` | **Daily 00:05** | Commodity refresh; `maxDuration=60` |
+Optional late backup (17:30): repeat BCTC slices if morning/afternoon failed.
 
-Outside session, market-live / stocks can be slowed to every 30–120 min or disabled.
+### Financials phases (30s-safe)
 
-### Financials query flags
+| `phase` | Work | Notes |
+|---------|------|-------|
+| `bctc` | Warm fundamental packages for `offset..offset+limit` | Use limit ≤ 20–25 per job |
+| `ohlcv` | Pre-warm OHLCV for CANSLIM default board (28 mã) | Fast |
+| `canslim` | Seed CANSLIM result cache (UI filter score≥50 pass≥3) | After bctc+ohlcv |
+| `auto` | Same as small `bctc` slice only | Default |
+
+Example URLs:
 
 ```text
-?limit=80          # universe size (default 80, max 100)
-?canslim=0         # skip CANSLIM cache seed (default runs seed)
-?ohlcv=0           # skip OHLCV pre-warm for CANSLIM board
+https://YOUR_DOMAIN/api/v1/cron/financials?phase=bctc&offset=0&limit=20&secret=SECRET
+https://YOUR_DOMAIN/api/v1/cron/financials?phase=ohlcv&secret=SECRET
+https://YOUR_DOMAIN/api/v1/cron/financials?phase=canslim&secret=SECRET
 ```
 
-After a successful financials run, default CANSLIM UI filters (`minScore=50`, `minPass=3`) and the unfiltered board are stored in memory/Redis for **8 min fresh / 30 min SWR**.
+## CANSLIM screener (API)
 
-## Example cronjob.org URL
-
-```text
-https://YOUR_DOMAIN/api/v1/cron/market-live?secret=YOUR_CRON_SECRET
-https://YOUR_DOMAIN/api/v1/cron/financials?secret=YOUR_CRON_SECRET
-```
-
-Request method: **GET**. Enable “Save response” for debugging. Timeout ≥ 60s for alerts/reports; **≥ 90s for financials**.
+- Result cache: **8 min** fresh / **30 min** SWR (memory + Redis)
+- `?phase=tech` → N/S/L/M only (fast)
+- `?phase=full` or default → + C/A/I when budget allows
+- L (Leadership): RS = max(universe percentile, sector-peer percentile if ≥4 peers)
 
 ## Why not Vercel Cron?
 
-- Hobby plan: limited cron slots and frequency
-- Couples deploy region cold-starts to schedule
-- Harder to pause one pipeline without redeploy
-- cronjob.org can hit different paths at different cadences and timezones cleanly
-
-Routes under `/api/v1/cron/*` remain public HTTP endpoints (secret-protected) so any external scheduler works.
+- Plan limits on frequency/slots
+- Cold-start coupling
+- cronjob.org can stagger phase jobs every 2 minutes cleanly
