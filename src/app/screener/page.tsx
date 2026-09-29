@@ -33,10 +33,10 @@ const UNIVERSE_TABS: { id: Universe; label: string }[] = [
   { id: "canslim", label: "CANSLIM" },
   { id: "minervini", label: "Minervini" },
   { id: "wyckoff", label: "Wyckoff" },
-  { id: "elliott", label: "Elliott Wave" },
+  { id: "elliott", label: "Sóng Elliott" },
   { id: "valuation", label: "Định giá P" },
   { id: "fundamental", label: "Chỉ số cơ bản" },
-  { id: "crypto", label: "Crypto" },
+  { id: "crypto", label: "Tiền mã hóa" },
 ];
 
 function parseUniverse(raw: string | null): Universe {
@@ -54,14 +54,14 @@ function ScreenerInner() {
       <Panel pad={false}>
         <div className="p-4">
           <h1 className="flex items-center gap-2 text-lg font-semibold">
-            <FlatsIcon /> Asset Screener
+            <FlatsIcon /> Bộ lọc tài sản
           </h1>
           <p className="mt-1 text-[12px] text-text-muted">
             Ưu tiên thị trường chứng khoán Việt Nam — chạy hoàn toàn trên dữ liệu thật mới nhất, không minh họa bằng dữ
             liệu giả.
           </p>
           <div className="seg-scroll mt-3">
-            <div className="seg" role="tablist" aria-label="Chọn bộ lọc screener">
+            <div className="seg" role="tablist" aria-label="Chọn bộ lọc">
               {UNIVERSE_TABS.map((tab) => (
                 <button
                   key={tab.id}
