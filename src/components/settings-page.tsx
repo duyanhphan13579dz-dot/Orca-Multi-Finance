@@ -4,24 +4,35 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import {
-  Bell, Bot, Database, LayoutDashboard, Monitor, ShieldCheck, SlidersHorizontal, User2,
+  Bell, Bot, Database, LayoutDashboard, Monitor, ShieldCheck, SlidersHorizontal, User2, Wallet, Save,
 } from "lucide-react";
 import { useSettings, DASHBOARD_WIDGETS, type UserSettings } from "@/lib/settings";
 import { Badge, Panel } from "@/components/ui";
 import { useApi } from "@/lib/hooks";
 import type { ProviderStatus } from "@/lib/types";
 import { ProfileTab, AppearanceTab } from "@/components/settings-panels-extra";
-import { SecurityTab, SystemTab, DataRealtimeTab, AiTab, DashboardTab, NotificationsTab } from "@/components/settings-panels";
+import {
+  SecurityTab,
+  SystemTab,
+  DataRealtimeTab,
+  AiTab,
+  DashboardTab,
+  NotificationsTab,
+  TradingTab,
+  DataManagementTab,
+} from "@/components/settings-panels";
 import { SheetsSyncPanel } from "@/components/sheets-sync-panel";
 
 const TABS = [
   { id: "profile", label: "Profile", icon: User2 },
   { id: "appearance", label: "Appearance", icon: Monitor },
   { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { id: "trading", label: "Giao dịch & Phí", icon: Wallet },
   { id: "realtime", label: "Data & Realtime", icon: Database },
   { id: "notifications", label: "Notifications", icon: Bell },
   { id: "ai", label: "AI Settings", icon: Bot },
   { id: "security", label: "Security", icon: ShieldCheck },
+  { id: "data", label: "Dữ liệu", icon: Save },
   { id: "system", label: "System", icon: SlidersHorizontal },
 ] as const;
 
@@ -63,6 +74,7 @@ export function SettingsPage() {
           {tab === "profile" && <ProfileTab />}
           {tab === "appearance" && <AppearanceTab />}
           {tab === "dashboard" && <DashboardTab />}
+          {tab === "trading" && <TradingTab />}
           {tab === "realtime" && (
             <>
               <DataRealtimeTab />
@@ -72,6 +84,7 @@ export function SettingsPage() {
           {tab === "notifications" && <NotificationsTab />}
           {tab === "ai" && <AiTab />}
           {tab === "security" && <SecurityTab />}
+          {tab === "data" && <DataManagementTab />}
           {tab === "system" && <SystemTab />}
         </div>
       </div>
