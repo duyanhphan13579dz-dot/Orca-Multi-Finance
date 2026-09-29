@@ -5,9 +5,8 @@ import { isCircuitOpen, recordFailure, recordSuccess } from "./health";
  * Resilient HTTP client for all outbound provider traffic.
  * timeout + retry with exponential backoff + circuit breaker + health recording.
  *
- * Domain timeouts (fail-fast):
- *  quote ~4.5s · ohlcv/dchart ~6.5s · financials ~8s · default 8s
- * Callers may still pass explicit timeoutMs.
+ * Domain timeouts (fail-fast, tuned for realtime screeners):
+ *  quote ~3.5s · ohlcv/dchart ~4.5s · financials ~7s · default 7s
  */
 
 const DEFAULT_UA =
@@ -15,17 +14,17 @@ const DEFAULT_UA =
 
 /** Soft domain budgets for callers that want a semantic default. */
 export const DOMAIN_TIMEOUT_MS = {
-  quote: 4_500,
-  ohlcv: 6_500,
-  indices: 7_000,
-  financials: 8_000,
-  orderbook: 4_000,
-  foreign: 5_000,
-  news: 8_000,
-  crypto: 8_000,
-  forex: 6_000,
-  commodities: 10_000,
-  default: 8_000,
+  quote: 3_500,
+  ohlcv: 4_500,
+  indices: 4_000,
+  financials: 7_000,
+  orderbook: 3_500,
+  foreign: 4_000,
+  news: 7_000,
+  crypto: 6_000,
+  forex: 5_000,
+  commodities: 8_000,
+  default: 7_000,
 } as const;
 
 export type DomainTimeoutKey = keyof typeof DOMAIN_TIMEOUT_MS;
@@ -35,26 +34,26 @@ export type DomainTimeoutKey = keyof typeof DOMAIN_TIMEOUT_MS;
  * Keep these ≤ domain budgets so multi-source races stay within hardStop.
  */
 const PROVIDER_TIMEOUT_MS: Record<string, number> = {
-  vndirect: 5_000,
-  "vndirect-dchart": 6_500,
-  "vndirect-company": 5_000,
-  "vndirect-foreign": 5_000,
-  "ssi-fcdata": 6_000,
-  "ssi-iboard": 5_500,
-  vps: 5_500,
-  vietcap: 5_000,
-  "public-vn": 5_500,
-  entrade: 6_500,
-  binance: 8_000,
-  "binance-fapi": 8_000,
-  biquote: 6_000,
-  yahoo: 8_000,
-  "yahoo-fx": 8_000,
-  simplize: 8_000,
-  vietnambiz: 10_000,
-  msn: 10_000,
-  exchangerate: 6_000,
-  frankfurter: 6_000,
+  vndirect: 3_800,
+  "vndirect-dchart": 4_500,
+  "vndirect-company": 4_000,
+  "vndirect-foreign": 4_000,
+  "ssi-fcdata": 4_500,
+  "ssi-iboard": 4_000,
+  vps: 4_000,
+  vietcap: 4_000,
+  "public-vn": 4_000,
+  entrade: 5_000,
+  binance: 6_000,
+  "binance-fapi": 6_000,
+  biquote: 5_000,
+  yahoo: 6_000,
+  "yahoo-fx": 6_000,
+  simplize: 6_000,
+  vietnambiz: 8_000,
+  msn: 8_000,
+  exchangerate: 5_000,
+  frankfurter: 5_000,
 };
 
 export function resolveProviderTimeout(provider: string, explicit?: number): number {
@@ -102,8 +101,9 @@ export async function httpText(url: string, opts: HttpOptions): Promise<HttpResu
 async function httpRequest<T>(url: string, opts: HttpOptions): Promise<HttpResult<T>> {
   const provider = opts.provider;
   const timeoutMs = resolveProviderTimeout(provider, opts.timeoutMs);
-  const retries = opts.retries ?? 2;
-  const backoffBase = opts.backoffBaseMs ?? 280;
+  // Default 1 retry (was 2) — fail-fast for realtime; callers can raise retries
+  const retries = opts.retries ?? 1;
+  const backoffBase = opts.backoffBaseMs ?? 180;
 
   if (isCircuitOpen(provider)) {
     return {
@@ -145,7 +145,7 @@ async function httpRequest<T>(url: string, opts: HttpOptions): Promise<HttpResul
         lastError = `http_${res.status}`;
         recordFailure(provider, lastError);
         if (attempt < retries && res.status >= 500) {
-          await sleep(backoffBase * 2 ** attempt + Math.random() * 120);
+          await sleep(backoffBase * 2 ** attempt + Math.random() * 80);
           continue;
         }
         return {
@@ -193,7 +193,7 @@ async function httpRequest<T>(url: string, opts: HttpOptions): Promise<HttpResul
       lastError =
         e instanceof Error ? (e.name === "AbortError" ? "timeout" : e.message) : "network_error";
       if (attempt < retries) {
-        await sleep(backoffBase * 2 ** attempt + Math.random() * 150);
+        await sleep(backoffBase * 2 ** attempt + Math.random() * 100);
         continue;
       }
       recordFailure(provider, lastError);
