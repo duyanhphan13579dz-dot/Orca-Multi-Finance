@@ -266,8 +266,7 @@ body {
 .ticker-track.is-paused,
 .ticker-track:hover { animation-play-state: paused; }
 
-/* Reduced motion — bật qua Settings → Appearance hoặc tự động theo prefers-reduced-motion.
-   applyHtmlAttrs ghi data-reduced-motion="true" lên <html>. */
+/* Reduced motion */
 html[data-reduced-motion="true"] .ticker-track { animation: none; }
 @media (prefers-reduced-motion: reduce) {
   html:not([data-reduced-motion="false"]) .ticker-track { animation: none; }
@@ -388,7 +387,7 @@ html[data-reduced-motion="true"] .ticker-track { animation: none; }
   word-break: break-word;
 }
 
-/* Meta chips — TC/Trần/Sàn + NN flow (never jammed) */
+/* Meta chips */
 .stock-meta-strip {
   display: flex;
   flex-wrap: wrap;
@@ -475,4 +474,92 @@ html[data-reduced-motion="true"] .ticker-track { animation: none; }
   .stock-stat { padding: 0.4rem 0.45rem; }
   .stock-stat-value { font-size: 0.78rem; }
   .stock-hero { padding: 0.875rem 0.875rem 0.75rem; }
+}
+
+/* Form controls — dark-theme selects / inputs
+   Native <option> lists often ignore parent styles; set explicit colors so
+   dropdowns match panel surfaces and stay readable (high contrast). */
+.input,
+input.input,
+select.input,
+textarea.input {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  margin: 0;
+  padding: 0.45rem 0.65rem;
+  border: 1px solid var(--color-border-default);
+  border-radius: 0.5rem;
+  background-color: var(--color-surface-elevated);
+  color: var(--color-text-primary);
+  font-size: 0.8125rem;
+  line-height: 1.35;
+  outline: none;
+  transition: border-color 140ms ease, box-shadow 140ms ease, background-color 140ms ease;
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--color-text-primary) 4%, transparent);
+}
+.input:hover,
+select.input:hover {
+  border-color: color-mix(in srgb, var(--color-accent-primary) 35%, var(--color-border-default));
+  background-color: color-mix(in srgb, var(--color-surface-elevated) 88%, var(--color-panel-3));
+}
+.input:focus,
+select.input:focus,
+textarea.input:focus {
+  border-color: color-mix(in srgb, var(--color-accent-primary) 65%, var(--color-border-default));
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--color-accent-primary) 22%, transparent),
+    inset 0 1px 0 color-mix(in srgb, var(--color-text-primary) 4%, transparent);
+}
+.input:disabled,
+select.input:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+select.input {
+  appearance: none;
+  -webkit-appearance: none;
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--color-text-muted) 50%),
+    linear-gradient(135deg, var(--color-text-muted) 50%, transparent 50%);
+  background-position:
+    calc(100% - 14px) calc(50% - 2px),
+    calc(100% - 10px) calc(50% - 2px);
+  background-size: 4px 4px, 4px 4px;
+  background-repeat: no-repeat;
+  padding-right: 1.75rem;
+  cursor: pointer;
+}
+/* Dropdown list items — match elevated surface; selected row uses accent tint */
+select.input option,
+select option {
+  background-color: var(--color-surface-elevated);
+  color: var(--color-text-primary);
+  padding: 0.4rem 0.55rem;
+}
+select.input option:checked,
+select option:checked {
+  background: linear-gradient(
+    0deg,
+    color-mix(in srgb, var(--color-accent-primary) 28%, var(--color-surface-elevated)),
+    color-mix(in srgb, var(--color-accent-primary) 28%, var(--color-surface-elevated))
+  );
+  color: var(--color-text-primary);
+  font-weight: 600;
+}
+select.input option:hover,
+select option:hover {
+  background-color: color-mix(in srgb, var(--color-accent-primary) 16%, var(--color-surface-elevated));
+}
+html[data-theme="light"] .input,
+html[data-theme="light"] select.input,
+html[data-theme="light"] textarea.input {
+  background-color: var(--color-surface-primary);
+  border-color: var(--color-border-default);
+  color: var(--color-text-primary);
+}
+html[data-theme="light"] select.input option,
+html[data-theme="light"] select option {
+  background-color: var(--color-surface-primary);
+  color: var(--color-text-primary);
 }
