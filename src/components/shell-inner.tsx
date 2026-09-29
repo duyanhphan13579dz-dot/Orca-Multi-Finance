@@ -167,16 +167,23 @@ export function ShellInner({ children }: { children: ReactNode }) {
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
       <div
         className={
-          "flex h-12 shrink-0 items-center gap-1.5 border-b border-border-subtle " +
-          (collapsed ? "justify-center px-1.5" : "px-3")
+          "shrink-0 border-b border-border-subtle " +
+          (collapsed
+            ? "flex flex-col items-center gap-1 px-1 py-2"
+            : "flex h-14 items-center gap-1 px-2.5")
         }
       >
         <Link
           href="/"
-          className={"min-w-0 " + (collapsed ? "" : "flex-1")}
           onClick={(e) => onNav("/", e)}
+          className={
+            collapsed
+              ? "grid place-items-center"
+              : "min-w-0 flex-1 overflow-hidden pr-0.5"
+          }
+          title="ORCA Financial"
         >
-          {collapsed ? <OrcaMark className="size-7" /> : <OrcaWordmark />}
+          {collapsed ? <OrcaMark size={28} /> : <OrcaWordmark size={28} subtitle />}
         </Link>
         <button
           type="button"
