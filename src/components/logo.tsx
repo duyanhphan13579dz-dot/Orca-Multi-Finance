@@ -13,22 +13,34 @@ export function OrcaMark({ size = 32, className = "" }: { size?: number; classNa
       alt="ORCA Financial"
       width={size}
       height={size}
-      className={`shrink-0 rounded-lg ${className}`}
+      className={`block shrink-0 rounded-lg ${className}`}
       style={{ width: size, height: size }}
       draggable={false}
     />
   );
 }
 
-export function OrcaWordmark({ size = 32, subtitle = true }: { size?: number; subtitle?: boolean }) {
+export function OrcaWordmark({
+  size = 32,
+  subtitle = true,
+  className = "",
+}: {
+  size?: number;
+  subtitle?: boolean;
+  className?: string;
+}) {
   return (
-    <span className="flex items-center gap-2.5">
+    <span className={`flex min-w-0 items-center gap-2 ${className}`}>
       <OrcaMark size={size} />
-      <span className="flex flex-col leading-none">
-        <span className="text-[15px] font-bold tracking-[0.06em] text-text-primary">
+      <span className="flex min-w-0 flex-col leading-none">
+        <span className="truncate text-[14px] font-bold tracking-[0.04em] text-text-primary">
           ORCA<span className="text-accent-primary"> FINANCIAL</span>
         </span>
-        {subtitle && <span className="mt-1 text-[9px] font-medium uppercase tracking-[0.22em] text-text-muted">Intelligent Investment</span>}
+        {subtitle ? (
+          <span className="mt-0.5 truncate text-[8.5px] font-medium uppercase tracking-[0.18em] text-text-muted">
+            Intelligent Investment
+          </span>
+        ) : null}
       </span>
     </span>
   );
