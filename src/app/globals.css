@@ -266,13 +266,6 @@ body {
 .ticker-track.is-paused,
 .ticker-track:hover { animation-play-state: paused; }
 
-/* Reduced motion — bật qua Settings → Appearance hoặc tự động theo prefers-reduced-motion.
-   applyHtmlAttrs ghi data-reduced-motion="true" lên <html>. */
-html[data-reduced-motion="true"] .ticker-track { animation: none; }
-@media (prefers-reduced-motion: reduce) {
-  html:not([data-reduced-motion="false"]) .ticker-track { animation: none; }
-}
-
 .page-stack {
   display: flex;
   flex-direction: column;

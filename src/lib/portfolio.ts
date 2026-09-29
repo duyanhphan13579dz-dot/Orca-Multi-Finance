@@ -138,19 +138,7 @@ export type PortfolioSymbolBuckets = {
 function pnl(trade: PortfolioTrade, price: number | null): number | null {
   if (price == null || !Number.isFinite(price) || !Number.isFinite(trade.entry)) return null;
   const direction = trade.side === "short" ? -1 : 1;
-  const gross = (price - trade.entry) * direction * (trade.size ?? 1) * (trade.leverage ?? 1);
-  // Trừ phí giao dịch (cấu hình trong Settings → Giao dịch & Phí) cho lệnh đã đóng.
-  // Lệnh đang mở chỉ tính phí entry.
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { tradeFeesValue } = require("./settings") as {
-      tradeFeesValue: (a: PortfolioTrade["assetType"], s: PortfolioTrade["side"], e: number, x: number | null, sz: number | null, lv: number | null) => number;
-    };
-    const fees = tradeFeesValue(trade.assetType, trade.side, trade.entry, price, trade.size, trade.leverage);
-    return gross - fees;
-  } catch {
-    return gross;
-  }
+  return (price - trade.entry) * direction * (trade.size ?? 1) * (trade.leverage ?? 1);
 }
 
 function percent(from: number, to: number, side: PortfolioSide): number | null {

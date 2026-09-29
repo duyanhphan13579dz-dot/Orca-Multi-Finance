@@ -149,15 +149,9 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
             fontSize: 11,
             fontFamily: "ui-monospace, Menlo, Consolas, monospace",
           },
-          grid: prefs.grid
-            ? { vertLines: { color: T.grid }, horzLines: { color: T.grid } }
-            : { vertLines: { visible: false }, horzLines: { visible: false } },
-          crosshair: { mode: prefs.crosshairMagnet ? CrosshairMode.Magnet : CrosshairMode.Normal },
-          rightPriceScale: {
-            borderVisible: false,
-            mode: prefs.logScale ? 1 : 0, // 1 = Logarithmic
-            scaleMargins: { top: 0.08, bottom: 0.18 },
-          },
+          grid: { vertLines: { color: T.grid }, horzLines: { color: T.grid } },
+          crosshair: { mode: CrosshairMode.Normal },
+          rightPriceScale: { borderVisible: false, scaleMargins: { top: 0.08, bottom: 0.18 } },
           timeScale: { borderVisible: false, timeVisible: true, secondsVisible: false },
         });
 
@@ -189,7 +183,7 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
       mgrRef.current = null;
       setEngineReady(false);
     };
-  }, [height, prefs.grid, prefs.crosshairMagnet, prefs.logScale]);
+  }, [height]);
 
   useEffect(() => {
     const k = normalizeKind(prefs.chartType);

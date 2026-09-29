@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { isQuietHoursNow, useSettings } from "@/lib/settings";
+import { useSettings } from "@/lib/settings";
 import {
   dispatchAlertWebhook,
   usePriceAlertMonitor,
@@ -78,7 +78,6 @@ export function PriceAlertEngine() {
     for (const [sym, q] of Object.entries(quotes)) {
       if (!q?.price) continue;
       const prev = prevRef.current[sym] ?? null;
-      const quiet = isQuietHoursNow();
       const matched = alerts.filter(
         (a) =>
           a.symbol === sym &&
@@ -89,11 +88,9 @@ export function PriceAlertEngine() {
         if (firingRef.current.has(a.id)) continue;
         firingRef.current.add(a.id);
         markTriggered(a.id, q.price);
-        // Quiet hours: chỉ đẩy webhook + Notification ngoài khung giờ yên tĩnh
-        // (alert vẫn được markTriggered để không re-fire khi hết quiet hours).
-        if (!quiet) void dispatchAlertWebhook(a, q.price);
+        void dispatchAlertWebhook(a, q.price);
         try {
-          if (!quiet && "Notification" in window && Notification.permission === "granted") {
+          if ("Notification" in window && Notification.permission === "granted") {
             new Notification(
               a.kind === "ceiling"
                 ? "Cham tran · " + a.symbol

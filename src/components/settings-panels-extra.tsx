@@ -387,13 +387,6 @@ export function AppearanceTab() {
             ]}
           />
         </Row>
-        <Row label="Giảm hiệu ứng chuyển động" hint="Tắt animation marquee/pulse — tự động bật khi hệ điều hành bật reduced motion">
-          <Switch
-            on={settings.accessibility.reducedMotion}
-            onChange={(v) => update({ accessibility: { ...settings.accessibility, reducedMotion: v } })}
-            label="Reduced motion"
-          />
-        </Row>
         <Row label="Định dạng số">
           <Seg
             value={a.numberFormat}
