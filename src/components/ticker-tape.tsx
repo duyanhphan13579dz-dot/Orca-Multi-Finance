@@ -5,11 +5,25 @@ import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { useApi } from "@/lib/hooks";
 import type { MarketSnapshot } from "@/lib/services/market";
 
-const INDEX_PRIORITY = ["VNINDEX", "VN30", "HNX", "UPCOM", "HNX30", "VN100"];
+const REGION_ORDER: Array<MarketSnapshot["indices"][number]["region"]> = [
+  "vn",
+  "asia",
+  "us",
+  "forex",
+];
 
-/** Realtime ticker — VN indices + crypto + FX majors, CSS marquee. */
+const REGION_DOT: Record<string, string> = {
+  vn: "bg-accent-primary",
+  asia: "bg-warning",
+  us: "bg-positive",
+  forex: "bg-accent-2",
+};
+
+/** Realtime ticker — VN · Châu Á · Mỹ · Forex, CSS marquee. */
 export const TickerTape = memo(function TickerTape() {
-  const { data } = useApi<MarketSnapshot>("/api/v1/market/snapshot", { refreshInterval: 45_000 });
+  const { data, isLoading } = useApi<MarketSnapshot>("/api/v1/market/snapshot", {
+    refreshInterval: 45_000,
+  });
   const trackRef = useRef<HTMLDivElement>(null);
   const [paused, setPaused] = useState(false);
   const [narrow, setNarrow] = useState(false);
@@ -22,71 +36,62 @@ export const TickerTape = memo(function TickerTape() {
     return () => mq.removeEventListener("change", apply);
   }, []);
 
-  // Pause CSS animation when ticker is not visible (saves GPU on mobile scroll)
   useEffect(() => {
     const el = trackRef.current?.parentElement;
     if (!el || typeof IntersectionObserver === "undefined") return;
-    const io = new IntersectionObserver(
-      ([entry]) => setPaused(!entry.isIntersecting),
-      { threshold: 0.05 },
-    );
+    const io = new IntersectionObserver(([entry]) => setPaused(!entry.isIntersecting), {
+      threshold: 0.05,
+    });
     io.observe(el);
     return () => io.disconnect();
   }, []);
 
   const items = useMemo(() => {
-    const result: { key: string; label: string; href: string; price: number; chg: number | null; digits: number }[] = [];
+    const result: {
+      key: string;
+      label: string;
+      href: string;
+      price: number;
+      chg: number | null;
+      digits: number;
+      region: string;
+    }[] = [];
 
-    if (data?.indices?.length) {
-      const sorted = [...data.indices].sort((a, b) => {
-        const ia = INDEX_PRIORITY.indexOf(a.code);
-        const ib = INDEX_PRIORITY.indexOf(b.code);
-        return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
-      });
-      for (const i of sorted.slice(0, narrow ? 4 : 6)) {
+    const rows = data?.indices ?? [];
+    const byRegion = (r: string) => rows.filter((i) => i.region === r);
+
+    const budgets: Record<string, number> = narrow
+      ? { vn: 3, asia: 2, us: 2, forex: 2 }
+      : { vn: 5, asia: 4, us: 4, forex: 4 };
+
+    for (const region of REGION_ORDER) {
+      const slice = byRegion(region).slice(0, budgets[region] ?? 3);
+      for (const i of slice) {
+        if (!Number.isFinite(i.value)) continue;
+        const digits = region === "forex" ? (i.value >= 100 ? 2 : 4) : 2;
         result.push({
-          key: `idx-${i.code}`,
-          label: i.code === "VNINDEX" ? "VN-Index" : i.code,
-          href: "/stocks",
+          key: `${region}-${i.code}`,
+          label: i.label || i.code,
+          href: i.href || "/market",
           price: i.value,
           chg: i.changePercent,
-          digits: 2,
+          digits,
+          region,
         });
       }
     }
-    if (data?.crypto) {
-      for (const c of data.crypto.top.slice(0, narrow ? 6 : 14)) {
+
+    if (!narrow && data?.global?.cryptoTip?.length) {
+      for (const c of data.global.cryptoTip.slice(0, 2)) {
+        if (!Number.isFinite(c.price)) continue;
         result.push({
-          key: `c-${c.symbol}`,
-          label: c.baseAsset,
-          href: `/crypto/${c.symbol}`,
+          key: `crypto-${c.symbol}`,
+          label: c.symbol,
+          href: `/crypto/${c.symbol}USDT`,
           price: c.price,
           chg: c.changePercent,
-          digits: c.price >= 100 ? 2 : c.price >= 1 ? 3 : 6,
-        });
-      }
-    }
-    if (data?.forex) {
-      for (const f of data.forex.rows.filter((r) => r.group === "major").slice(0, narrow ? 3 : 5)) {
-        result.push({
-          key: `f-${f.pair}`,
-          label: f.symbol,
-          href: `/forex/${f.pair}`,
-          price: f.price,
-          chg: f.changePercent,
-          digits: f.price >= 100 ? 2 : 4,
-        });
-      }
-    }
-    if (data?.commodities) {
-      for (const c of data.commodities.filter((x) => ["XAUUSD", "CL"].includes(x.symbol))) {
-        result.push({
-          key: `cm-${c.symbol}`,
-          label: c.symbol === "XAUUSD" ? "GOLD" : c.symbol,
-          href: "/commodities",
-          price: c.price,
-          chg: c.changePercent,
-          digits: 2,
+          digits: c.price >= 100 ? 2 : 4,
+          region: "crypto",
         });
       }
     }
@@ -98,19 +103,22 @@ export const TickerTape = memo(function TickerTape() {
     return (
       <div className="ticker-bar flex items-center px-4 text-[11px] text-ink-3">
         <span className="size-1.5 animate-pulse rounded-full bg-accent/60" />
-        <span className="ml-2">Đang kết nối luồng dữ liệu thị trường…</span>
+        <span className="ml-2">
+          {isLoading
+            ? "Đang kết nối luồng dữ liệu thị trường…"
+            : "Đang tải chỉ số VN · Châu Á · Mỹ · Forex…"}
+        </span>
       </div>
     );
   }
 
-  // Duplicate strip — CSS translates -50% for a seamless loop
   const loop = [...items, ...items];
   return (
-    <div className="ticker-bar">
+    <div className="ticker-bar relative">
       <div
         ref={trackRef}
         className={`ticker-track ${paused ? "is-paused" : ""}`}
-        aria-label="Bảng giá chạy"
+        aria-label="Băng chỉ số thị trường"
       >
         {loop.map((it, i) => (
           <Link
@@ -118,6 +126,10 @@ export const TickerTape = memo(function TickerTape() {
             href={it.href}
             className="num mx-3 flex shrink-0 items-center gap-1.5 whitespace-nowrap text-[11px] text-ink-2 transition-colors hover:text-ink sm:mx-4 sm:text-[12px]"
           >
+            <span
+              className={`inline-block size-1.5 shrink-0 rounded-full ${REGION_DOT[it.region] ?? "bg-ink-3"}`}
+              aria-hidden
+            />
             <span className="font-medium text-ink">{it.label}</span>
             <span>
               {it.price.toLocaleString("en-US", {
