@@ -4,6 +4,7 @@ import {
   screenCryptoDivergences,
   screenMultiAssetDivergences,
   screenVnDivergences,
+  warmVnDivergenceScreen,
 } from "@/lib/services/divergence-screener";
 import type { DivergenceKind, DivergenceOscillator, DivergenceStrength } from "@/lib/types";
 
@@ -28,8 +29,11 @@ const STR = new Set(["A", "B", "C"]);
  *   &oscillator=rsi|macd_hist|macd_line|stoch|any
  *   &minStrength=A|B|C
  *   &timeframe=1d|1h|4h
+ *   &window=short_3_4d|default
  *   &limit=40&symbols=VCB,FPT
- *   &recent=1 → alerts already fired by cron
+ *   &skipCache=1  → force recompute
+ *   &warm=1      → pre-warm default VN short screen only
+ *   &recent=1    → alerts already fired by cron
  */
 export async function GET(req: Request) {
   const url = new URL(req.url);
@@ -40,7 +44,15 @@ export async function GET(req: Request) {
     return ok({
       events,
       count: events.length,
-      note: "Divergence alerts fired by cron (deduped per day)",
+      note: "Cảnh báo phân kỳ đã bắn bởi cron (dedupe theo ngày)",
+    });
+  }
+
+  if (url.searchParams.get("warm") === "1") {
+    const warm = await warmVnDivergenceScreen();
+    return ok({
+      warm,
+      note: "Đã làm nóng cache màn phân kỳ VN short_3_4d",
     });
   }
 
@@ -58,8 +70,13 @@ export async function GET(req: Request) {
   const minStrength = (url.searchParams.get("minStrength") ?? "C").toUpperCase();
   if (!STR.has(minStrength)) return badRequest("minStrength phải là A|B|C");
 
+  const windowRaw = (url.searchParams.get("window") ?? "short_3_4d").toLowerCase();
+  const window = windowRaw === "default" ? "default" : "short_3_4d";
+
   const timeframe = url.searchParams.get("timeframe") ?? (asset === "crypto" ? "1h" : "1d");
   const limit = Number(url.searchParams.get("limit") ?? 40);
+  const skipCache =
+    url.searchParams.get("skipCache") === "1" || url.searchParams.get("fresh") === "1";
   const symbolsRaw = url.searchParams.get("symbols") ?? "";
   const symbols = symbolsRaw
     ? symbolsRaw
@@ -75,6 +92,8 @@ export async function GET(req: Request) {
     timeframe,
     limit: Number.isFinite(limit) ? limit : 40,
     symbols,
+    window: window as "default" | "short_3_4d",
+    skipCache,
   };
 
   try {
@@ -97,8 +116,9 @@ export async function GET(req: Request) {
           oscillator: opts.oscillator,
           minStrength: opts.minStrength,
           timeframe: opts.timeframe,
+          window: opts.window,
         },
-        engine: "divergence Phase 5–8 — RSI/MACD/Stoch · structure · confirmed pivots",
+        engine: "phân kỳ · short 3–4d · vol-confirm · cache+OHLCV batch",
       },
       r.meta,
     );
