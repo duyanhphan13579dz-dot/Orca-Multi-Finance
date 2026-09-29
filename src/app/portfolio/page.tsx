@@ -49,6 +49,66 @@ export default function SmartPortfolioPage() {
     return subscribePortfolioStorage(refresh);
   }, []);
 
+  /** Pipeline nhật ký → Data Hub: marks đa loại tài sản. */
+  const [hubMarks, setHubMarks] = useState<PortfolioMark[]>([]);
+  useEffect(() => {
+    const open = trades.filter((t) => t.exit == null);
+    const positions = [
+      ...open.map((t) => ({ assetType: t.assetType, symbol: t.symbol })),
+      ...watchlist.map((w) => ({ assetType: w.assetType, symbol: w.symbol })),
+    ].slice(0, 80);
+    if (!positions.length) {
+      setHubMarks([]);
+      return;
+    }
+    let cancelled = false;
+    const pull = async () => {
+      try {
+        const res = await fetch("/api/v1/portfolio/marks", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ positions }),
+        });
+        if (!res.ok) return;
+        const data = (await res.json()) as {
+          rows?: Array<{
+            assetType: PortfolioMark["assetType"];
+            symbol: string;
+            price: number;
+            changePercent?: number | null;
+            change?: number | null;
+            volume?: number | null;
+            updatedAt?: string | number | null;
+            source?: string;
+            fresh?: boolean;
+          }>;
+        };
+        if (cancelled) return;
+        setHubMarks(
+          (data.rows ?? []).map((r) => ({
+            assetType: r.assetType,
+            symbol: r.symbol,
+            price: r.price,
+            changePercent: r.changePercent ?? null,
+            change: r.change ?? null,
+            volume: r.volume ?? null,
+            updatedAt: r.updatedAt ?? null,
+            source: r.source ?? "hub",
+            fresh: r.fresh ?? true,
+          })),
+        );
+      } catch {
+        /* soft-fail */
+      }
+    };
+    void pull();
+    const id = window.setInterval(pull, 20_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [trades, watchlist]);
+
   const symbolBuckets = useMemo(() => collectPortfolioSymbols(trades, watchlist), [trades, watchlist]);
   const stockQs = symbolBuckets.stock.slice(0, 40).join(",");
   const { data: stocks, meta: stocksMeta } = useApi<StockQuotesData>(
@@ -107,10 +167,18 @@ export default function SmartPortfolioPage() {
         source: commoditiesMeta?.source ?? "vietnambiz",
         fresh: true,
       }));
-    return [...cryptoMarks, ...forexMarks, ...stockMarks, ...commodityMarks].filter(
+    const feed = [...cryptoMarks, ...forexMarks, ...stockMarks, ...commodityMarks].filter(
       (mark) => mark.price != null && Number.isFinite(mark.price),
     );
-  }, [crypto, forex, stocks, stocksMeta, commodities, commoditiesMeta, symbolBuckets.commodity]);
+    const map = new Map<string, PortfolioMark>();
+    for (const m of feed) map.set(`${m.assetType}:${m.symbol.toUpperCase()}`, m);
+    for (const m of hubMarks) {
+      if (m.price != null && Number.isFinite(m.price)) {
+        map.set(`${m.assetType}:${m.symbol.toUpperCase()}`, m);
+      }
+    }
+    return [...map.values()];
+  }, [crypto, forex, stocks, stocksMeta, commodities, commoditiesMeta, symbolBuckets.commodity, hubMarks]);
 
   const snapshot = useMemo(() => buildPortfolioSnapshot(trades, watchlist, marks), [trades, watchlist, marks]);
   const watchMarkMap = useMemo(
@@ -128,37 +196,37 @@ export default function SmartPortfolioPage() {
             <Badge tone="accent">Local-first</Badge>
           </div>
           <p className="mt-1 max-w-2xl text-[12px] text-text-muted">
-            Watchlist, nhat ky lenh, canh bao gia (Discord) trong mot noi.
+            Watchlist, nhật ký lệnh, cảnh báo giá — marks đa tài sản qua Data Hub.
           </p>
         </div>
         <Link
           href="/watchlist"
           className="rounded-md border border-border-subtle px-2.5 py-1.5 text-[11px] hover:border-border-default"
         >
-          Quan ly watchlist
+          Quản lý watchlist
         </Link>
       </header>
 
       <div className="grid grid-cols-2 gap-2 md:grid-cols-4 lg:grid-cols-9">
-        <Metric label="Vi the mo" value={String(snapshot.positions.length)} icon={<Eye />} />
+        <Metric label="Vị thế mở" value={String(snapshot.positions.length)} icon={<Eye />} />
         <Metric label="Exposure" value={snapshot.totalExposure ? fmtNum(snapshot.totalExposure, 2) : "—"} icon={<Activity />} />
         <Metric label="rPnL" value={fmtNum(snapshot.realizedPnl, 2)} tone={snapshot.realizedPnl >= 0 ? "up" : "down"} icon={<TrendingUp />} />
         <Metric label="uPnL" value={snapshot.unrealizedPnl == null ? "—" : fmtNum(snapshot.unrealizedPnl, 2)} tone={snapshot.unrealizedPnl == null ? undefined : snapshot.unrealizedPnl >= 0 ? "up" : "down"} icon={<TrendingDown />} />
         <Metric label="Win rate" value={snapshot.winRate == null ? "—" : `${(snapshot.winRate * 100).toFixed(0)}%`} icon={<Target />} />
         <Metric label="PF" value={snapshot.profitFactor == null ? "—" : snapshot.profitFactor.toFixed(2)} icon={<BrainCircuit />} />
         <Metric label="Max DD" value={snapshot.maxDrawdown ? fmtNum(snapshot.maxDrawdown, 2) : "—"} icon={<TrendingDown />} />
-        <Metric label="Ky luat" value={`${snapshot.disciplineScore}/100`} icon={<ShieldCheck />} />
+        <Metric label="Kỷ luật" value={`${snapshot.disciplineScore}/100`} icon={<ShieldCheck />} />
         <Metric label="Score" value={`${snapshot.portfolioScore}/100`} icon={<Activity />} />
       </div>
 
       <nav className="flex flex-wrap gap-1 rounded-lg border border-border-subtle bg-surface-base p-1">
         {(
           [
-            ["overview", "Tong quan"],
-            ["positions", `Vi the (${snapshot.positions.length})`],
-            ["journal", `Nhat ky (${trades.length})`],
-            ["alerts", "Canh bao gia"],
-            ["watchlist", `Theo doi (${watchlist.length})`],
+            ["overview", "Tổng quan"],
+            ["positions", `Vị thế (${snapshot.positions.length})`],
+            ["journal", `Nhật ký (${trades.length})`],
+            ["alerts", "Cảnh báo giá"],
+            ["watchlist", `Theo dõi (${watchlist.length})`],
           ] as const
         ).map(([id, label]) => (
           <button
@@ -247,7 +315,7 @@ function Overview({
         <BacktestPanel trades={trades} />
         <PortfolioInsights snapshot={snapshot} />
       </div>
-      <Panel title="Action queue" right={<Badge tone={snapshot.alerts.length ? "warn" : "up"}>{snapshot.alerts.length} canh bao</Badge>}>
+      <Panel title="Hàng đợi hành động" right={<Badge tone={snapshot.alerts.length ? "warn" : "up"}>{snapshot.alerts.length} cảnh báo</Badge>}>
         {snapshot.alerts.length ? (
           <div className="space-y-2">
             {snapshot.alerts.map((alert, index) => (
@@ -263,10 +331,10 @@ function Overview({
             ))}
           </div>
         ) : (
-          <p className="text-[12px] text-positive">Chua phat hien vi pham ky luat.</p>
+          <p className="text-[12px] text-positive">Chưa phát hiện vi phạm kỷ luật.</p>
         )}
       </Panel>
-      <Panel title="Allocation">
+      <Panel title="Phân bổ">
         {snapshot.allocation.length ? (
           snapshot.allocation.map((item) => (
             <div key={item.label} className="mb-2">
@@ -280,7 +348,7 @@ function Overview({
             </div>
           ))
         ) : (
-          <p className="text-[12px] text-text-muted">Chua co allocation.</p>
+          <p className="text-[12px] text-text-muted">Chưa có phân bổ.</p>
         )}
       </Panel>
     </div>
@@ -289,13 +357,13 @@ function Overview({
 
 function Positions({ snapshot }: { snapshot: ReturnType<typeof buildPortfolioSnapshot> }) {
   return (
-    <Panel title="Vi the dang mo" pad={false}>
+    <Panel title="Vị thế đang mở" pad={false}>
       {snapshot.positions.length ? (
         <div className="overflow-x-auto">
           <table className="w-full min-w-[520px] text-[12px]">
             <thead>
               <tr className="border-b border-border-subtle text-left text-[10px] uppercase text-text-muted">
-                <th className="px-3 py-2">Ma</th>
+                <th className="px-3 py-2">Mã</th>
                 <th className="py-2">Entry → Mark</th>
                 <th className="py-2 text-right">uPnL</th>
                 <th className="py-2 pr-3 text-right">SL</th>
@@ -312,14 +380,14 @@ function Positions({ snapshot }: { snapshot: ReturnType<typeof buildPortfolioSna
                   <td className={"num py-2.5 text-right " + (p.unrealizedPnl == null ? "" : p.unrealizedPnl >= 0 ? "text-positive" : "text-negative")}>
                     {p.unrealizedPnl == null ? "—" : fmtNum(p.unrealizedPnl, 2)}
                   </td>
-                  <td className="py-2.5 pr-3 text-right">{p.stopLoss == null ? <Badge tone="warn">Thieu SL</Badge> : <Badge tone="up">Co SL</Badge>}</td>
+                  <td className="py-2.5 pr-3 text-right">{p.stopLoss == null ? <Badge tone="warn">Thiếu SL</Badge> : <Badge tone="up">Có SL</Badge>}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
       ) : (
-        <p className="p-4 text-[12px] text-text-muted">Chua co vi the mo.</p>
+        <p className="p-4 text-[12px] text-text-muted">Chưa có vị thế mở.</p>
       )}
     </Panel>
   );
@@ -331,7 +399,7 @@ function JournalView({ trades, setTrades }: { trades: PortfolioTrade[]; setTrade
 
 function Watchlist({ items, marks }: { items: PortfolioWatchItem[]; marks: Map<string, PortfolioMark> }) {
   return (
-    <Panel title="Watchlist" right={<Link href="/watchlist" className="text-[11px] text-accent-primary">Quan ly <ArrowRight className="inline size-3" /></Link>} pad={false}>
+    <Panel title="Watchlist" right={<Link href="/watchlist" className="text-[11px] text-accent-primary">Quản lý <ArrowRight className="inline size-3" /></Link>} pad={false}>
       {items.length ? (
         <ul className="divide-y divide-border-subtle">
           {items.map((item) => {
@@ -356,7 +424,7 @@ function Watchlist({ items, marks }: { items: PortfolioWatchItem[]; marks: Map<s
           })}
         </ul>
       ) : (
-        <p className="p-4 text-[12px] text-text-muted">Watchlist trong.</p>
+        <p className="p-4 text-[12px] text-text-muted">Watchlist trống.</p>
       )}
     </Panel>
   );
