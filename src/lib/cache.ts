@@ -37,10 +37,28 @@ async function getRedis(): Promise<RedisLike | null> {
   if (!env.redisUrl) return null;
   try {
     const mod = await import("ioredis");
-    const client = new mod.default(env.redisUrl, { lazyConnect: true, maxRetriesPerRequest: 1, connectTimeout: 1500 });
+    const client = new mod.default(env.redisUrl, {
+      lazyConnect: true,
+      maxRetriesPerRequest: 1,
+      connectTimeout: 1_200,
+      enableOfflineQueue: false,
+      enableReadyCheck: false,
+      // Fail fast — never block quote/OHLCV path on Redis
+      commandTimeout: 800,
+    });
     client.on("error", () => {});
-    await client.connect().catch(() => {});
-    redis = client as unknown as RedisLike;
+    await Promise.race([
+      client.connect().catch(() => undefined),
+      new Promise<void>((r) => setTimeout(r, 1_200)),
+    ]);
+    // Only adopt client if still usable
+    const status = (client as { status?: string }).status;
+    if (status === "ready" || status === "connect" || status === "connecting") {
+      redis = client as unknown as RedisLike;
+    } else {
+      try { client.disconnect(false); } catch { /* */ }
+      redis = null;
+    }
   } catch {
     redis = null;
   }
