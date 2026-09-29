@@ -31,6 +31,7 @@ export {
   hubMacro,
   hubCrossCheckNumbers,
   hubPrefetch,
+  hubPortfolioMarks,
   HubKeys,
   SOURCE_CATALOG,
   catalogSummary,
@@ -44,3 +45,14 @@ export { sourcesByDomain } from "./catalog";
 
 export { firstHealthy, withTimeout, rankSourceIds } from "./resilience";
 export type { SourceSyncReport, SyncProbe } from "./source-sync";
+
+export {
+  ASSET_TYPE_REGISTRY,
+  listAssetTypes,
+  normalizeAssetType,
+  formatAssetTypeVi,
+  groupByAssetType,
+  isKnownAssetType,
+} from "./asset-registry";
+export type { HubAssetType, AssetTypeDef } from "./asset-registry";
+export type { HubPortfolioMark } from "./hub";
