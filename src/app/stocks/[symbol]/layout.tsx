@@ -20,8 +20,27 @@ export default function StockSymbolLayout({
   }, [params]);
 
   const { res, data, meta, isLoading } = useApi<VnStockDetail>(symbol ? `/api/v1/stocks/${symbol}` : null, {
-    refreshInterval: 30_000,
+    refreshInterval: 20_000,
   });
+
+  // Prefetch tab APIs when idle — warm cache for financials / valuation / tech
+  useEffect(() => {
+    if (!symbol) return;
+    const paths = [
+      `/api/v1/stocks/${symbol}/technical`,
+      `/api/v1/stocks/${symbol}/valuation`,
+      `/api/v1/stocks/${symbol}/financials`,
+      `/api/v1/stocks/${symbol}/structure`,
+      `/api/v1/stocks/${symbol}/tech-reco`,
+    ];
+    const run = () => {
+      for (const url of paths) {
+        void fetch(url, { headers: { Accept: "application/json" } }).catch(() => undefined);
+      }
+    };
+    if (typeof requestIdleCallback !== "undefined") requestIdleCallback(run, { timeout: 2_500 });
+    else setTimeout(run, 400);
+  }, [symbol]);
 
   if (!symbol || (isLoading && !res)) {
     return (
@@ -79,11 +98,13 @@ export default function StockSymbolLayout({
             <Stat
               label="NN ròng"
               value={
-                data?.foreignFlow?.latest != null ? fmtCompact(data.foreignFlow.latest.netVal) : "—"
+                data?.foreignFlow?.latest != null
+                  ? fmtCompact((data.foreignFlow.latest as { netVal?: number }).netVal)
+                  : "—"
               }
               tone={
                 data?.foreignFlow?.latest != null
-                  ? data.foreignFlow.latest.netVal >= 0
+                  ? ((data.foreignFlow.latest as { netVal?: number }).netVal ?? 0) >= 0
                     ? "up"
                     : "down"
                   : undefined
@@ -148,40 +169,40 @@ export default function StockSymbolLayout({
           </div>
         )}
 
-        {data?.foreignFlow?.latest && (
+        {data?.foreignFlow?.latest ? (
           <div className="stock-meta-strip" aria-label="Dòng vốn nước ngoài">
             <span className="stock-meta-chip">
               <span className="stock-meta-chip-label">NN mua</span>
               <span className="num stock-meta-chip-value text-up">
-                {fmtCompact(data.foreignFlow.latest.buyVal)}
+                {fmtCompact((data.foreignFlow.latest as { buyVal?: number }).buyVal)}
               </span>
             </span>
             <span className="stock-meta-chip">
               <span className="stock-meta-chip-label">NN bán</span>
               <span className="num stock-meta-chip-value text-down">
-                {fmtCompact(data.foreignFlow.latest.sellVal)}
+                {fmtCompact((data.foreignFlow.latest as { sellVal?: number }).sellVal)}
               </span>
             </span>
             <span className="stock-meta-chip">
               <span className="stock-meta-chip-label">Ròng</span>
               <span
                 className={`num stock-meta-chip-value ${
-                  data.foreignFlow.latest.netVal >= 0 ? "text-up" : "text-down"
+                  ((data.foreignFlow.latest as { netVal?: number }).netVal ?? 0) >= 0 ? "text-up" : "text-down"
                 }`}
               >
-                {fmtCompact(data.foreignFlow.latest.netVal)}
+                {fmtCompact((data.foreignFlow.latest as { netVal?: number }).netVal)}
               </span>
             </span>
-            {data.foreignFlow.latest.currentRoom != null && (
+            {(data.foreignFlow.latest as { currentRoom?: number }).currentRoom != null && (
               <span className="stock-meta-chip">
                 <span className="stock-meta-chip-label">Room còn</span>
                 <span className="num stock-meta-chip-value">
-                  {fmtCompact(data.foreignFlow.latest.currentRoom)}
+                  {fmtCompact((data.foreignFlow.latest as { currentRoom?: number }).currentRoom)}
                 </span>
               </span>
             )}
           </div>
-        )}
+        ) : null}
 
         <StockTabs symbol={symbol} />
       </Panel>
