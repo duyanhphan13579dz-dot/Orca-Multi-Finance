@@ -171,8 +171,9 @@ export function ShellInner({ children }: { children: ReactNode }) {
           }}
           onMouseEnter={() => onHover(href)}
           className={
-            "group relative flex h-9 shrink-0 items-center gap-2.5 rounded-lg text-[13px] leading-none orca-nav-item " +
-            (isCollapsed ? "justify-center px-0" : "px-2.5") +
+            "group relative flex shrink-0 items-center gap-2.5 rounded-lg leading-none orca-nav-item " +
+            (isMobile ? "min-h-11 text-[14px] " : "h-9 text-[13px] ") +
+            (isCollapsed ? "justify-center px-0" : isMobile ? "px-3" : "px-2.5") +
             " " +
             (active
               ? "bg-accent-primary/15 font-medium text-accent-primary"
@@ -186,7 +187,9 @@ export function ShellInner({ children }: { children: ReactNode }) {
               "truncate orca-nav-item-label " +
               (isCollapsed
                 ? "pointer-events-none ml-0 max-w-0 overflow-hidden opacity-0"
-                : "max-w-[160px] opacity-100")
+                : isMobile
+                  ? "max-w-none flex-1 opacity-100"
+                  : "max-w-[160px] opacity-100")
             }
           >
             {label}
@@ -202,7 +205,9 @@ export function ShellInner({ children }: { children: ReactNode }) {
             "shrink-0 border-b border-border-subtle " +
             (isCollapsed
               ? "flex flex-col items-center gap-1.5 px-1 py-2.5"
-              : "flex min-h-14 items-center gap-2 px-2.5 py-2")
+              : isMobile
+                ? "flex min-h-16 items-center gap-2.5 px-3 py-3"
+                : "flex min-h-14 items-center gap-2 px-2.5 py-2")
           }
         >
           <Link
@@ -219,17 +224,22 @@ export function ShellInner({ children }: { children: ReactNode }) {
             {isCollapsed ? (
               <OrcaMark size={28} />
             ) : (
-              <OrcaWordmark size={isMobile ? 26 : 28} subtitle className="w-full" />
+              <OrcaWordmark
+                size={isMobile ? 30 : 28}
+                subtitle
+                compact={isMobile}
+                className="w-full min-w-0"
+              />
             )}
           </Link>
           {isMobile ? (
             <button
               type="button"
-              className="grid size-9 shrink-0 place-items-center rounded-md text-text-muted hover:bg-surface-elevated hover:text-text-primary"
+              className="grid size-10 shrink-0 place-items-center rounded-md text-text-muted hover:bg-surface-elevated hover:text-text-primary"
               onClick={() => setMobileOpen(false)}
               aria-label="Đóng menu"
             >
-              <X className="size-4" />
+              <X className="size-5" />
             </button>
           ) : (
             <button
@@ -247,13 +257,22 @@ export function ShellInner({ children }: { children: ReactNode }) {
           )}
         </div>
 
-        <nav className="orca-sidebar-nav min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain px-2 py-3">
+        <nav
+          className={
+            "orca-sidebar-nav min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain py-3 " +
+            (isMobile ? "px-2.5" : "px-2")
+          }
+        >
           {NAV_SECTIONS.map((section) => (
             <div key={section.title} className="space-y-0.5">
               <div
                 className={
                   "px-2.5 text-[10px] font-semibold uppercase tracking-wider text-text-muted transition-[opacity,height,margin] duration-200 ease-out " +
-                  (isCollapsed ? "mb-0 h-0 overflow-hidden opacity-0" : "mb-1 opacity-100")
+                  (isCollapsed
+                    ? "mb-0 h-0 overflow-hidden opacity-0"
+                    : isMobile
+                      ? "mb-1.5 opacity-100"
+                      : "mb-1 opacity-100")
                 }
               >
                 {section.title}
@@ -261,7 +280,7 @@ export function ShellInner({ children }: { children: ReactNode }) {
               {isCollapsed ? (
                 <div className="mx-auto mb-1 h-px w-6 bg-border-subtle/80" aria-hidden />
               ) : null}
-              <div className="flex flex-col gap-0.5">
+              <div className={"flex flex-col " + (isMobile ? "gap-1" : "gap-0.5")}>
                 {section.items.map((item) => (
                   <NavItem key={item.href} href={item.href} label={item.label} icon={item.icon} />
                 ))}
@@ -270,7 +289,7 @@ export function ShellInner({ children }: { children: ReactNode }) {
           ))}
         </nav>
 
-        <div className="shrink-0 border-t border-border-subtle p-2">
+        <div className={"shrink-0 border-t border-border-subtle " + (isMobile ? "p-3" : "p-2")}>
           <UserMenu collapsed={isCollapsed} />
         </div>
       </div>
@@ -312,11 +331,11 @@ export function ShellInner({ children }: { children: ReactNode }) {
           />
           <aside
             className={
-              "orca-drawer absolute left-0 top-0 flex h-full w-[min(280px,88vw)] flex-col overflow-hidden bg-surface-base shadow-2xl transition-transform duration-200 ease-out " +
+              "orca-drawer absolute left-0 top-0 flex h-full w-[min(304px,92vw)] flex-col overflow-hidden bg-surface-base pb-[env(safe-area-inset-bottom)] pt-[env(safe-area-inset-top)] shadow-2xl transition-transform duration-200 ease-out " +
               (mobileOpen ? "translate-x-0" : "-translate-x-full")
             }
           >
-            {/* Mobile luôn expanded — không dùng collapsed desktop */}
+            {/* Mobile luôn expanded — logo + chữ + mục đầy đủ */}
             {renderSidebar({ collapsed: false, mobile: true })}
           </aside>
         </div>
