@@ -2,6 +2,7 @@ import { ok, fail } from "@/lib/envelope";
 import { warmFundamentalSnapshots } from "@/lib/financial/snapshots";
 import { LIQUID_BOARD } from "@/lib/providers/public-vn-feed";
 import { DEFAULT_SYMBOLS } from "@/lib/services/valuation-screener";
+import { resolveListedEquityUniverse, listedEquityUniverseSync } from "@/lib/financial/equity-universe";
 import { warmCanslimDefault, CANSLIM_DEFAULT_CAP } from "@/lib/services/canslim-screener";
 import { batchVnOhlcv } from "@/lib/services/ohlcv-batch";
 
@@ -10,7 +11,6 @@ export const runtime = "nodejs";
 /** cronjob.org free/plan timeout is often 30s — finish before that. */
 export const maxDuration = 30;
 
-/** Soft wall-clock so we respond before cronjob.org kills the request. */
 const BUDGET_MS = 25_000;
 
 type Phase = "bctc" | "ohlcv" | "canslim" | "auto";
@@ -22,22 +22,15 @@ function parsePhase(raw: string | null): Phase {
 }
 
 /**
- * Warm BCTC / OHLCV / CANSLIM cache in **30s-safe phases** (cronjob.org).
+ * Warm BCTC / OHLCV / CANSLIM cache in 30s-safe phases (cronjob.org).
  *
- * Auth: Bearer CRON_SECRET or ?secret=
- *
- * Recommended jobs (Asia/Ho_Chi_Minh), timeout **30s** each:
- *   16:10  .../financials?phase=bctc&offset=0&limit=20
- *   16:12  .../financials?phase=bctc&offset=20&limit=20
- *   16:14  .../financials?phase=bctc&offset=40&limit=20
+ * Recommended (Asia/Ho_Chi_Minh), timeout 30s each:
+ *   16:05  .../financials?phase=bctc&offset=0&limit=25
+ *   16:07  .../financials?phase=bctc&offset=25&limit=25
+ *   16:09  .../financials?phase=bctc&offset=50&limit=25
+ *   … lặp offset += 25 tới hết universe (~400–600 mã)
  *   16:16  .../financials?phase=ohlcv
  *   16:18  .../financials?phase=canslim
- *   17:30  late backup: phase=bctc&offset=0&limit=25 (or repeat slice)
- *
- * Query:
- *   ?phase=bctc|ohlcv|canslim|auto   (default auto = bctc small slice only)
- *   ?offset=0&limit=20               BCTC window into universe
- *   ?symbols=FPT,HPG                 optional override list
  */
 export async function GET(req: Request) {
   const cronSecret = process.env.CRON_SECRET?.trim();
@@ -62,9 +55,18 @@ export async function GET(req: Request) {
     .map((s) => s.trim().toUpperCase())
     .filter(Boolean);
 
-  const fullUniverse = [
-    ...new Set([...(custom.length ? custom : LIQUID_BOARD), ...DEFAULT_SYMBOLS.split(",")]),
-  ];
+  let board = custom.length
+    ? custom
+    : [...new Set([...LIQUID_BOARD, ...DEFAULT_SYMBOLS.split(","), ...listedEquityUniverseSync(500)])];
+  if (!custom.length) {
+    try {
+      const uni = await resolveListedEquityUniverse({ max: 600 });
+      if (uni.symbols.length) board = uni.symbols;
+    } catch {
+      /* keep merged board */
+    }
+  }
+  const fullUniverse = [...new Set(board.map((s) => s.toUpperCase()))];
 
   try {
     const out: Record<string, unknown> = { ok: true, phase, durationMs: 0 };
@@ -81,25 +83,25 @@ export async function GET(req: Request) {
           note: "empty BCTC slice",
         });
       }
-      const r = await warmFundamentalSnapshots(slice, { concurrency: 5 });
+      const r = await warmFundamentalSnapshots(slice, { concurrency: 8 });
       out.scanned = r.scanned;
       out.warmed = r.warmed;
       out.offset = offset;
       out.limit = limit;
       out.sliceSize = slice.length;
-      out.note = `BCTC slice offset=${offset} limit=${limit} · cronjob.org 30s-safe`;
+      out.universeSize = fullUniverse.length;
+      out.note = `BCTC slice offset=${offset} limit=${limit} / universe ${fullUniverse.length} · 30s-safe`;
     }
 
     if (phase === "ohlcv") {
-      const board = fullUniverse.slice(0, CANSLIM_DEFAULT_CAP);
-      const map = await batchVnOhlcv(board, { bars: 140, concurrency: 10 });
+      const ohlcvBoard = fullUniverse.slice(0, CANSLIM_DEFAULT_CAP);
+      const map = await batchVnOhlcv(ohlcvBoard, { bars: 140, concurrency: 10 });
       out.ohlcvWarmed = map.size;
-      out.board = board.length;
+      out.board = ohlcvBoard.length;
       out.note = "OHLCV pre-warm CANSLIM board";
     }
 
     if (phase === "canslim") {
-      // Single pass only if budget left (warmCanslimDefault does 2 screens — may be tight)
       const remaining = BUDGET_MS - (Date.now() - t0);
       if (remaining < 8_000) {
         out.canslim = null;
