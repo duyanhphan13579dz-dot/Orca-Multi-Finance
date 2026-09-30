@@ -52,6 +52,30 @@ export const FEEDS: FeedDef[] = [
     category: "macro",
     lang: "en",
   },
+  {
+    name: "FRED — Releases",
+    url: "https://fred.stlouisfed.org/feeds/releases.xml",
+    category: "macro",
+    lang: "en",
+  },
+  {
+    name: "Federal Reserve — Press releases",
+    url: "https://www.federalreserve.gov/feeds/press_all.xml",
+    category: "macro",
+    lang: "en",
+  },
+  {
+    name: "ECB — Press releases",
+    url: "https://www.ecb.europa.eu/rss/press.html",
+    category: "macro",
+    lang: "en",
+  },
+  {
+    name: "U.S. SEC — Press releases",
+    url: "https://www.sec.gov/news/pressreleases.rss",
+    category: "corporate",
+    lang: "en",
+  },
 ];
 
 export const NEWS_PROVIDER = "rss-news";
