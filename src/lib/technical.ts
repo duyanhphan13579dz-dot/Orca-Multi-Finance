@@ -141,6 +141,48 @@ export function atr(bars: OhlcvBar[], period = 14): number | null {
   return avg;
 }
 
+export interface MoneyFlowSnapshot {
+  cmf20: number | null;
+  obvTrend: "inflow" | "outflow" | "neutral" | "unknown";
+  volumeRatio20: number | null;
+  pressure: number;
+  label: "strong-inflow" | "inflow" | "balanced" | "outflow" | "strong-outflow" | "unknown";
+}
+
+/** Volume-aware flow proxy that works across stocks, crypto, commodities and tick-based FX. */
+export function moneyFlow(bars: OhlcvBar[], period = 20): MoneyFlowSnapshot {
+  const usable = bars.filter((b) => Number.isFinite(b.volume) && b.volume > 0);
+  if (usable.length < Math.min(period, 5)) {
+    return { cmf20: null, obvTrend: "unknown", volumeRatio20: null, pressure: 0, label: "unknown" };
+  }
+  const recent = usable.slice(-period);
+  let flowVolume = 0;
+  let totalVolume = 0;
+  for (const b of recent) {
+    const range = Math.max(b.high - b.low, Math.abs(b.close) * 1e-8);
+    const multiplier = ((b.close - b.low) - (b.high - b.close)) / range;
+    flowVolume += multiplier * b.volume;
+    totalVolume += b.volume;
+  }
+  const cmf = totalVolume > 0 ? flowVolume / totalVolume : null;
+  let obv = 0;
+  const obvSeries: number[] = [];
+  for (let i = 1; i < usable.length; i++) {
+    if (usable[i].close > usable[i - 1].close) obv += usable[i].volume;
+    else if (usable[i].close < usable[i - 1].close) obv -= usable[i].volume;
+    obvSeries.push(obv);
+  }
+  const span = Math.min(period, obvSeries.length);
+  const obvDelta = span > 1 ? obvSeries.at(-1)! - obvSeries.at(-span)! : 0;
+  const avgVolume = recent.reduce((sum, b) => sum + b.volume, 0) / recent.length;
+  const lastVolume = usable.at(-1)!.volume;
+  const volumeRatio20 = avgVolume > 0 ? lastVolume / avgVolume : null;
+  const pressure = Math.max(-1, Math.min(1, (cmf ?? 0) * 0.7 + (obvDelta === 0 ? 0 : Math.sign(obvDelta) * 0.3)));
+  const obvTrend = pressure > 0.15 ? "inflow" : pressure < -0.15 ? "outflow" : "neutral";
+  const label = pressure >= 0.45 ? "strong-inflow" : pressure >= 0.15 ? "inflow" : pressure <= -0.45 ? "strong-outflow" : pressure <= -0.15 ? "outflow" : "balanced";
+  return { cmf20: cmf, obvTrend, volumeRatio20, pressure, label };
+}
+
 export function annualizedVolatility(closes: number[], lookback = 30): number | null {
   if (closes.length < lookback + 1) return null;
   const rets: number[] = [];
@@ -269,6 +311,7 @@ export function analyzeSeries(bars: OhlcvBar[]): TechnicalSnapshot | null {
   const high52w = highs.length ? Math.max(...highs) : null;
   const low52w = lows.length ? Math.min(...lows) : null;
   const sr = supportResistance(bars);
+  const flow = moneyFlow(bars);
 
   let score = 0;
   if (sma20 != null) score += last > sma20 ? 1 : -1;
@@ -316,6 +359,16 @@ export function analyzeSeries(bars: OhlcvBar[]): TechnicalSnapshot | null {
   }
   if (high52w != null && last >= high52w * 0.98) signals.push("Tiệm cận đỉnh 52 tuần");
   if (low52w != null && last <= low52w * 1.02) signals.push("Tiệm cận đáy 52 tuần");
+  if (flow.label !== "unknown") {
+    const ratio = flow.volumeRatio20 != null ? ` · vol ${flow.volumeRatio20.toFixed(1)}x TB20` : "";
+    signals.push(
+      flow.label.includes("inflow")
+        ? `Dòng tiền vào${ratio} · CMF ${flow.cmf20?.toFixed(2) ?? "n/a"}`
+        : flow.label.includes("outflow")
+          ? `Dòng tiền ra${ratio} · CMF ${flow.cmf20?.toFixed(2) ?? "n/a"}`
+          : `Dòng tiền cân bằng${ratio}`,
+    );
+  }
 
   const candlePatterns = detectCandlePatterns(bars, {
     assetClass: "stock",
@@ -369,6 +422,7 @@ export function analyzeSeries(bars: OhlcvBar[]): TechnicalSnapshot | null {
     ema: { ema12: emaArr(12), ema26: emaArr(26) },
     bollinger: bb,
     atr14,
+    moneyFlow: flow,
     volatility30d: vol,
     maxDrawdown: maxDrawdown(closes.slice(-252)),
     returns: {

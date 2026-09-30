@@ -98,6 +98,14 @@ export interface TechnicalSnapshot {
   ema: { ema12: number | null; ema26: number | null };
   bollinger: { upper: number; mid: number; lower: number } | null;
   atr14: number | null;
+  /** Volume-derived money-flow state; null when the asset has no usable volume. */
+  moneyFlow?: {
+  cmf20: number | null;
+  obvTrend: "inflow" | "outflow" | "neutral" | "unknown";
+  volumeRatio20: number | null;
+  pressure: number;
+  label: "strong-inflow" | "inflow" | "balanced" | "outflow" | "strong-outflow" | "unknown";
+  };
   volatility30d: number | null;
   maxDrawdown: number | null;
   returns: { d7: number | null; d30: number | null; ytd: number | null; y1: number | null };
