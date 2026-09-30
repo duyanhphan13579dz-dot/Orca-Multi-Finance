@@ -61,6 +61,7 @@ export class SeriesManager {
   private lastBarOhlc: { open: number; high: number; low: number; close: number; volume: number } | null = null;
   private liveRaf: number | null = null;
   private pendingLive: ChartCandle | null = null;
+  private extraLevelLines: IPriceLine[] = [];
 
   constructor(private chart: IChartApi) {}
 
@@ -149,6 +150,11 @@ export class SeriesManager {
 
   private base() {
     return (this.baseSeries.candles || this.baseSeries.bar) as ISeriesApi<"Candlestick"> | undefined;
+  }
+
+  /** Public access for SMC/ICT overlay helpers. */
+  getCandleSeries(): ISeriesApi<"Candlestick"> | null {
+    return (this.baseSeries.candles as ISeriesApi<"Candlestick"> | undefined) ?? null;
   }
 
   private ensureVolume() {
@@ -263,7 +269,6 @@ export class SeriesManager {
     let close = c.close;
     let volume = c.volume ?? 0;
 
-    // Align scale vs last bar — blocks board-lot/full-VND mix that draws a spike to ~0
     if (this.lastBarOhlc && this.lastBarOhlc.close > 0) {
       const ref = this.lastBarOhlc.close;
       const align = (p: number) => {
@@ -460,8 +465,6 @@ export class SeriesManager {
     if (!c) return null;
     return c.createPriceLine({ price, color: T.warn, lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible: true, title: "H" });
   }
-
-  private extraLevelLines: IPriceLine[] = [];
 
   rebuildExtraLevels(levels: { label: string; price: number; color: string }[]) {
     const c = this.base();
