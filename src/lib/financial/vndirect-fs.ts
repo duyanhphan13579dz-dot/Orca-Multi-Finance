@@ -14,7 +14,6 @@ const DSTOCK_HEADERS: Record<string, string> = {
   "User-Agent": "OrcaFinancial/1.0 (+dstock-api-finfo)",
 };
 
-/** Balance sheet (VAS + CK model 89) */
 const BS: Record<number, keyof NormalizedMetrics> = {
   11000: "currentAssets",
   11100: "cash",
@@ -277,40 +276,91 @@ async function fetchStatementPage(
   modelKind: 1 | 2 | 3,
   reportType: "QUARTER" | "ANNUAL",
   size: number,
+  timeoutMs = 9_000,
 ): Promise<RawRow[]> {
   const modelType = MODEL_TYPES[modelKind];
   const q = `code:${symbol}~reportType:${reportType}~modelType:${modelType}`;
   const path = `/v4/financial_statements?q=${encodeURIComponent(q)}&size=${size}&sort=${encodeURIComponent("fiscalDate:desc")}`;
-  const res = await httpJson<{ data?: RawRow[] }>(`${BASE}${path}`, {
-    provider: VND,
-    timeoutMs: 18_000,
-    retries: 2,
-    headers: DSTOCK_HEADERS,
-  });
-  if (!res.ok || !res.data?.data?.length) return [];
-  return res.data.data.map((row) => ({
-    ...row,
-    unit: row.unit ?? "VND",
-    sourceUrl: sourceUrlForModel(Number(row.modelType), symbol),
-  }));
+  try {
+    const res = await httpJson<{ data?: RawRow[] }>(`${BASE}${path}`, {
+      provider: VND,
+      timeoutMs,
+      retries: 1,
+      headers: DSTOCK_HEADERS,
+    });
+    if (!res.ok || !res.data?.data?.length) return [];
+    return res.data.data.map((row) => ({
+      ...row,
+      unit: row.unit ?? "VND",
+      sourceUrl: sourceUrlForModel(Number(row.modelType), symbol),
+    }));
+  } catch {
+    return [];
+  }
 }
 
+/** Fast VNDirect FS — quarter-first, cache, shorter timeouts. */
 export async function fetchVndirectFinancials(
   symbol: string,
   opts?: { limitPeriods?: number },
 ): Promise<{ periods: NormalizedPeriod[]; latencyMs: number; profile: MetricProfile } | null> {
   const sym = symbol.toUpperCase();
   const profile = metricProfileForSymbol(sym);
-  const t0 = performance.now();
   const limit = opts?.limitPeriods ?? 12;
+  const t0 = performance.now();
 
-  const jobs: Promise<RawRow[]>[] = [];
-  for (const model of [1, 2, 3] as const) {
-    jobs.push(fetchStatementPage(sym, model, "QUARTER", 2000));
-    jobs.push(fetchStatementPage(sym, model, "ANNUAL", 800));
+  try {
+    const { cached } = await import("../cache");
+    const hit = await cached<{ periods: NormalizedPeriod[]; profile: MetricProfile } | null>(
+      `vnd-fs:periods:${sym}:v3:${limit}`,
+      {
+        ttlMs: 6 * 3_600_000,
+        staleMs: 14 * 24 * 3_600_000,
+        softSwr: true,
+        producer: async () => {
+          const inner = await fetchVndirectFinancialsUncached(sym, profile, limit);
+          if (!inner) return null;
+          return { periods: inner.periods, profile: inner.profile };
+        },
+      },
+    );
+    if (hit.value?.periods?.length) {
+      return {
+        periods: hit.value.periods,
+        profile: hit.value.profile,
+        latencyMs: Math.round(performance.now() - t0),
+      };
+    }
+  } catch {
+    /* fall through */
   }
-  const chunks = await Promise.all(jobs);
-  const all = chunks.flat();
+
+  return fetchVndirectFinancialsUncached(sym, profile, limit);
+}
+
+async function fetchVndirectFinancialsUncached(
+  sym: string,
+  profile: MetricProfile,
+  limit: number,
+): Promise<{ periods: NormalizedPeriod[]; latencyMs: number; profile: MetricProfile } | null> {
+  const t0 = performance.now();
+
+  const qChunks = await Promise.all([
+    fetchStatementPage(sym, 1, "QUARTER", 600, 8_000),
+    fetchStatementPage(sym, 2, "QUARTER", 600, 8_000),
+    fetchStatementPage(sym, 3, "QUARTER", 600, 8_000),
+  ]);
+  let all = qChunks.flat();
+
+  if (all.length < 80) {
+    const aChunks = await Promise.all([
+      fetchStatementPage(sym, 1, "ANNUAL", 400, 7_000),
+      fetchStatementPage(sym, 2, "ANNUAL", 400, 7_000),
+      fetchStatementPage(sym, 3, "ANNUAL", 400, 7_000),
+    ]);
+    all = all.concat(aChunks.flat());
+  }
+
   if (!all.length) return null;
 
   const dates = [...new Set(all.map((r) => r.fiscalDate))].sort().reverse().slice(0, limit);
