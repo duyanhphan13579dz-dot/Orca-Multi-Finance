@@ -22,6 +22,7 @@ export function TechnicalPanel({ tech, patterns }: { tech: TechnicalSnapshot | n
   }
   const t = TREND_LABEL[tech.trend.label] ?? { vi: tech.trend.label, tone: "neutral" as const };
   const digits = priceDigits(tech.last);
+  const sig = tech.tradeSignal;
   return (
     <div className="space-y-3">
       <Panel
@@ -38,6 +39,28 @@ export function TechnicalPanel({ tech, patterns }: { tech: TechnicalSnapshot | n
           </Badge>
         }
       >
+        {sig ? (
+          <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-border-subtle bg-surface-elevated/60 px-3 py-2">
+            <span
+              className={
+                "rounded-md px-2 py-0.5 text-[12px] font-bold " +
+                (sig.action === "buy"
+                  ? "bg-bull/20 text-bull"
+                  : sig.action === "sell"
+                    ? "bg-bear/20 text-bear"
+                    : "bg-surface-base text-text-muted")
+              }
+            >
+              {sig.actionVi}
+            </span>
+            <span className="text-[12px] font-semibold tabular-nums text-text-primary">
+              Độ tin cậy {sig.confidence}%
+            </span>
+            {sig.reasons?.[0] ? (
+              <span className="text-[11px] text-text-muted">· {sig.reasons[0]}</span>
+            ) : null}
+          </div>
+        ) : null}
         <SectionLabel>Momentum</SectionLabel>
         <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
           <Metric
