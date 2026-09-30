@@ -1,6 +1,6 @@
 import "server-only";
 import { cached } from "../cache";
-import { listAllEquitySymbols } from "../vn/master";
+import { VN_SECURITIES } from "../vn/master";
 import { fetchVndFullUniverse, IPO_SEED_2025_2026 } from "../providers/vndirect-universe";
 
 /**
@@ -10,6 +10,10 @@ import { fetchVndFullUniverse, IPO_SEED_2025_2026 } from "../providers/vndirect-
 
 const EQUITY_TYPE_RE = /stock|equity|cổ phiếu|ordinary|common/i;
 const SKIP_RE = /^(VNINDEX|VN30|HNXINDEX|UPCOMINDEX|VN100|VNMID|VNSML)$/i;
+
+function listAllEquitySymbols(): string[] {
+  return [...new Set(VN_SECURITIES.map((s) => s.symbol.toUpperCase()))].sort();
+}
 
 function isLikelyEquity(symbol: string, type?: string | null, status?: string | null): boolean {
   if (!symbol || symbol.length < 2 || symbol.length > 5) return false;
