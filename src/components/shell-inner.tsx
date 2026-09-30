@@ -37,7 +37,7 @@ import {
 } from "lucide-react";
 import { TickerTape } from "@/components/ticker-tape";
 import { GlobalSearch } from "@/components/search";
-import { OrcaWordmark, OrcaMark } from "@/components/logo";
+import { OrcaWordmark, OrcaMark, OrcaMobileBrand } from "@/components/logo";
 import { useApi } from "@/lib/hooks";
 import { useSettings } from "@/lib/settings";
 import { ErrorBoundary } from "@/components/error-boundary";
@@ -206,7 +206,7 @@ export function ShellInner({ children }: { children: ReactNode }) {
             (isCollapsed
               ? "flex flex-col items-center gap-1.5 px-1 py-2.5"
               : isMobile
-                ? "flex min-h-16 items-center gap-2.5 px-3 py-3"
+                ? "flex items-center gap-2 px-3 py-3.5"
                 : "flex min-h-14 items-center gap-2 px-2.5 py-2")
           }
         >
@@ -217,25 +217,26 @@ export function ShellInner({ children }: { children: ReactNode }) {
               if (isMobile) setMobileOpen(false);
             }}
             className={
-              isCollapsed ? "grid place-items-center" : "min-w-0 flex-1 overflow-hidden"
+              isCollapsed
+                ? "grid place-items-center"
+                : isMobile
+                  ? "min-w-0 flex-1"
+                  : "min-w-0 flex-1 overflow-hidden"
             }
             title="ORCA Financial"
           >
             {isCollapsed ? (
               <OrcaMark size={28} />
+            ) : isMobile ? (
+              <OrcaMobileBrand />
             ) : (
-              <OrcaWordmark
-                size={isMobile ? 30 : 28}
-                subtitle
-                compact={isMobile}
-                className="w-full min-w-0"
-              />
+              <OrcaWordmark size={28} subtitle className="w-full" />
             )}
           </Link>
           {isMobile ? (
             <button
               type="button"
-              className="grid size-10 shrink-0 place-items-center rounded-md text-text-muted hover:bg-surface-elevated hover:text-text-primary"
+              className="grid size-10 shrink-0 place-items-center rounded-lg text-text-muted hover:bg-surface-elevated hover:text-text-primary"
               onClick={() => setMobileOpen(false)}
               aria-label="Đóng menu"
             >
@@ -331,11 +332,10 @@ export function ShellInner({ children }: { children: ReactNode }) {
           />
           <aside
             className={
-              "orca-drawer absolute left-0 top-0 flex h-full w-[min(304px,92vw)] flex-col overflow-hidden bg-surface-base pb-[env(safe-area-inset-bottom)] pt-[env(safe-area-inset-top)] shadow-2xl transition-transform duration-200 ease-out " +
+              "orca-drawer absolute left-0 top-0 flex h-full w-[min(320px,94vw)] flex-col overflow-hidden bg-surface-base pb-[env(safe-area-inset-bottom)] pt-[env(safe-area-inset-top)] shadow-2xl transition-transform duration-200 ease-out " +
               (mobileOpen ? "translate-x-0" : "-translate-x-full")
             }
           >
-            {/* Mobile luôn expanded — logo + chữ + mục đầy đủ */}
             {renderSidebar({ collapsed: false, mobile: true })}
           </aside>
         </div>
