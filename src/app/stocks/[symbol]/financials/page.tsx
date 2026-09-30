@@ -180,12 +180,11 @@ export default function StockFinancialsPage({ params }: { params: Promise<{ symb
 
   const { res, data, isLoading, error } = useApi<FinTablePayload>(
     symbol ? financialsApiUrl(symbol) : null,
-    { refreshInterval: 300_000, timeoutMs: 45_000 },
+    { refreshInterval: 300_000, timeoutMs: 55_000 },
   );
 
   if (!symbol || (isLoading && !res)) return <Loading rows={8} />;
 
-  // note luôn là string — SWR `error` là Error object, không được render trực tiếp
   const failNote = (() => {
     if (res && !res.success) {
       const msg = (res as { error?: { message?: string } }).error?.message;
@@ -198,10 +197,7 @@ export default function StockFinancialsPage({ params }: { params: Promise<{ symb
 
   if (!res?.success || !data?.financials) {
     return (
-      <Unavailable
-        title={`Không lấy được BCTC ${symbol || ""}`}
-        note={failNote}
-      />
+      <Unavailable title={`Không lấy được BCTC ${symbol || ""}`} note={failNote} />
     );
   }
 
@@ -262,13 +258,21 @@ export default function StockFinancialsPage({ params }: { params: Promise<{ symb
         {!rows.length ? (
           <p className="text-[12px] text-ink-3">Bảng này chưa có dữ liệu từ {sourceLabel}.</p>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="stock-table">
+          <div className="w-full min-w-0 overflow-x-auto">
+            <table className="stock-table stock-fs-table w-full table-fixed text-[12px]">
+              <colgroup>
+                <col className="stock-fs-col-metric" />
+                {rows.slice(0, 8).map((_, i) => (
+                  <col key={i} className="stock-fs-col-period" />
+                ))}
+              </colgroup>
               <thead>
-                <tr className="border-b border-line text-left text-ink-3">
-                  <th className="sticky left-0 z-10 bg-bg-2 pr-3 text-left font-medium">Chỉ tiêu</th>
+                <tr className="border-b border-line text-ink-3">
+                  <th className="sticky left-0 z-10 bg-bg-2 py-2 pr-3 text-left font-medium">
+                    Chỉ tiêu
+                  </th>
                   {rows.slice(0, 8).map((r, i) => (
-                    <th key={i} className="num min-w-24 pl-2 text-right font-medium tabular-nums">
+                    <th key={i} className="num px-1.5 py-2 text-right font-medium tabular-nums">
                       {periodHeader(r)}
                     </th>
                   ))}
@@ -278,7 +282,7 @@ export default function StockFinancialsPage({ params }: { params: Promise<{ symb
                 {orderedKeys.map((k) => (
                   <tr key={k} className="border-t border-line/40">
                     <td
-                      className="sticky left-0 z-10 max-w-64 truncate bg-bg-2 py-1.5 pr-3 text-ink-2"
+                      className="sticky left-0 z-10 truncate bg-bg-2 py-1.5 pr-3 text-left text-ink-2"
                       title={METRIC_VI[k] ?? k}
                     >
                       {METRIC_VI[k] ?? k}
@@ -287,7 +291,7 @@ export default function StockFinancialsPage({ params }: { params: Promise<{ symb
                       const val = r[k];
                       const ok = typeof val === "number" && Number.isFinite(val);
                       return (
-                        <td key={i} className="num py-1.5 pl-2 text-right tabular-nums">
+                        <td key={i} className="num px-1.5 py-1.5 text-right tabular-nums text-ink-2">
                           {ok ? formatMetricValue(k, val as number) : "—"}
                         </td>
                       );
