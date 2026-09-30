@@ -85,9 +85,12 @@ export const TickerTape = memo(function TickerTape() {
   const trackRef = useRef<HTMLDivElement>(null);
   const [paused, setPaused] = useState(false);
   const [narrow, setNarrow] = useState(false);
-  const [seed] = useState<MarketSnapshot | null>(() => stickySnap ?? readSessionSnap());
+  const [mounted, setMounted] = useState(false);
+  const [seed, setSeed] = useState<MarketSnapshot | null>(null);
 
   useEffect(() => {
+    setMounted(true);
+    setSeed(stickySnap ?? readSessionSnap());
     prefetchMarketSnapshot();
   }, []);
 
@@ -109,8 +112,13 @@ export const TickerTape = memo(function TickerTape() {
     return () => io.disconnect();
   }, []);
 
-  const snap = pickSnap(data) ?? seed;
-  if (data?.indices?.length) writeSessionSnap(data);
+  const snap = mounted
+    ? (data?.indices?.length ? data : stickySnap?.indices?.length ? stickySnap : seed)
+    : null;
+
+  useEffect(() => {
+    if (data?.indices?.length) writeSessionSnap(data);
+  }, [data]);
 
   const items = useMemo(() => {
     const result: {
