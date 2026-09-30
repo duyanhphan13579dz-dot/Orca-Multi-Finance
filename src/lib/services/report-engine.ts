@@ -108,31 +108,56 @@ async function buildCtx(): Promise<DailyCtx> {
   const session = getVnSession();
   const slot = detectIntradaySlot(vnNow.getHours(), vnNow.getMinutes());
 
-  const [s, intelRes, morningReport, priorStrategy, weekSummaries] = await Promise.all([
+  const [s, intelRes, morningReport, priorStrategy, weekSummaries, crossPack] = await Promise.all([
     buildMarketSnapshot(),
     buildMarketIntel().catch(() => null),
     loadLatestByType("morning_brief"),
     loadLatestByType("strategy"),
     loadWeekSummaries(),
+    import("./cross-asset")
+      .then((m) => m.getCrossAsset())
+      .catch(() => null),
   ]);
 
+  const intelRaw = (intelRes as { intel?: Record<string, unknown> } | null)?.intel ?? null;
   let snap = s.snapshot;
   try {
-    snap = await enrichSnapshotForReports(s.snapshot);
+    snap = enrichSnapshotForReports(s.snapshot, intelRaw as { news?: never[] } | null);
   } catch {
     snap = s.snapshot;
   }
-  const news = await resolveReportNews().catch(() => []);
-  const cross = pickCrossHighlights(snap as MarketSnapshot);
+  if (!snap.pulse) {
+    const vn = snap.indices?.find((i) => i.code === "VNINDEX") ?? snap.indices?.[0];
+    const score =
+      vn?.changePercent != null ? Math.max(-1, Math.min(1, vn.changePercent / 2)) : 0;
+    snap = {
+      ...snap,
+      pulse: {
+        score,
+        headline: vn
+          ? `${vn.label ?? vn.code} ${vn.changePercent != null ? (vn.changePercent >= 0 ? "+" : "") + vn.changePercent.toFixed(2) + "%" : ""}`
+          : "Chưa có chỉ số LIVE",
+        body: [],
+      },
+    };
+  }
 
-  const breadth = (intelRes as { intel?: { breadth?: BreadthData | null } } | null)?.intel?.breadth ?? null;
+  const news = resolveReportNews(snap, intelRaw as { news?: never[] } | null, 24);
+  const crossItems =
+    (crossPack as { items?: never[] } | null)?.items ??
+    (Array.isArray(crossPack) ? crossPack : null);
+  const cross = pickCrossHighlights(crossItems as Parameters<typeof pickCrossHighlights>[0]);
+
+  const breadth = (intelRaw as { breadth?: BreadthData | null } | null)?.breadth ?? null;
   const intel: MorningIntelSlice = {
     ...({
-      indices: (intelRes as { intel?: { indices?: unknown } } | null)?.intel?.indices ?? null,
       breadth,
-      flow: (intelRes as { intel?: { flow?: unknown } } | null)?.intel?.flow ?? null,
-      condition: (intelRes as { intel?: { condition?: unknown } } | null)?.intel?.condition ?? null,
-      news: (news as unknown[]).slice(0, 6),
+      flow: (intelRaw as { flow?: unknown } | null)?.flow ?? null,
+      liquidity: (intelRaw as { liquidity?: unknown } | null)?.liquidity ?? null,
+      contributors: (intelRaw as { contributors?: unknown } | null)?.contributors ?? null,
+      conditionScore: (intelRaw as { conditionScore?: number } | null)?.conditionScore ?? null,
+      conditionRating: (intelRaw as { conditionRating?: string } | null)?.conditionRating ?? null,
+      news: news.slice(0, 8),
       crossHighlights: cross,
     } as MorningIntelSlice),
   };
