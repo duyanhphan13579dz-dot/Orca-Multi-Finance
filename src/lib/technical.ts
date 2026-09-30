@@ -1,11 +1,12 @@
 import type { CandlePattern, OhlcvBar, TechnicalSnapshot } from "./types";
 import { detectCandlePatterns, toLegacyCandlePatterns } from "./engines/candlestick-patterns";
+import { computeTradeSignal, type TradeSignal } from "./engines/trade-signal";
 import { detectDivergences, divergenceSummaryLine } from "./engines/divergence";
 
 /**
  * Technical analysis engine — deterministic quantitative computations.
- * All indicators are computed from real OHLCV series supplied by callers.
  * Candlestick patterns use the VN ruleset engine (candlestick-patterns.ts).
+ * tradeSignal = MUA / BÁN / QUAN SÁT + confidence.
  */
 
 export function sma(values: number[], period: number): (number | null)[] {
@@ -76,10 +77,6 @@ export function macd(
   return { macd: line, signal: sig, histogram: hist };
 }
 
-/**
- * Stochastic oscillator %K (slow). period=14, smooth=3.
- * Returns series aligned with input length; null until warm-up.
- */
 export function stochastic(
   highs: number[],
   lows: number[],
@@ -218,17 +215,11 @@ export function supportResistance(
   return { support: cluster(lows, true), resistance: cluster(highs, false) };
 }
 
-/* -------------------------------- patterns --------------------------------- */
-
 export function detectPatterns(bars: OhlcvBar[]): CandlePattern[] {
   return toLegacyCandlePatterns(detectCandlePatterns(bars));
 }
 
-/* ------------------------------ full snapshot ------------------------------ */
-
 export function analyzeSeries(bars: OhlcvBar[]): TechnicalSnapshot | null {
-  // Normalize provider output first: newest data wins, duplicate timestamps are removed,
-  // and malformed bars cannot poison RSI/MACD or pivot detection.
   const byTime = new Map<number, OhlcvBar>();
   for (const bar of bars) {
     if (
@@ -239,7 +230,11 @@ export function analyzeSeries(bars: OhlcvBar[]): TechnicalSnapshot | null {
       Number.isFinite(bar.close) &&
       bar.high >= bar.low &&
       bar.close > 0
-    ) byTime.set(bar.time, { ...bar, volume: Number.isFinite(bar.volume) ? Math.max(0, bar.volume) : 0 });
+    )
+      byTime.set(bar.time, {
+        ...bar,
+        volume: Number.isFinite(bar.volume) ? Math.max(0, bar.volume) : 0,
+      });
   }
   const normalizedBars = [...byTime.values()].sort((a, b) => a.time - b.time);
   if (normalizedBars.length < 30) return null;
@@ -322,11 +317,12 @@ export function analyzeSeries(bars: OhlcvBar[]): TechnicalSnapshot | null {
   if (high52w != null && last >= high52w * 0.98) signals.push("Tiệm cận đỉnh 52 tuần");
   if (low52w != null && last <= low52w * 1.02) signals.push("Tiệm cận đáy 52 tuần");
 
-  const candleClusters = detectCandlePatterns(bars, {
+  const candlePatterns = detectCandlePatterns(bars, {
     assetClass: "stock",
     recentBars: 5,
     maxAgeBars: 4,
-  })
+  });
+  const candleClusters = candlePatterns
     .filter((p) => p.category !== "neutral")
     .slice(0, 6)
     .map((p) => ({
@@ -348,6 +344,23 @@ export function analyzeSeries(bars: OhlcvBar[]): TechnicalSnapshot | null {
   const latestBarTime = bars[bars.length - 1]!.time;
   const ageMs = Math.max(0, Date.now() - latestBarTime);
 
+  let macdCross: "bull" | "bear" | null = null;
+  if (macdRes && macdFull.histogram[closes.length - 2] != null) {
+    const prevH = macdFull.histogram[closes.length - 2] as number;
+    if (prevH <= 0 && macdRes.histogram > 0) macdCross = "bull";
+    if (prevH >= 0 && macdRes.histogram < 0) macdCross = "bear";
+  }
+
+  const tradeSignal: TradeSignal = computeTradeSignal(candlePatterns, {
+    trendScore: score,
+    trendLabel: label,
+    rsi14,
+    macdHistogram: macdRes?.histogram ?? null,
+    macdCross,
+    priceAboveSma20: sma20 != null ? last > sma20 : null,
+    priceAboveSma50: sma50 != null ? last > sma50 : null,
+  });
+
   return {
     last,
     rsi14,
@@ -358,7 +371,12 @@ export function analyzeSeries(bars: OhlcvBar[]): TechnicalSnapshot | null {
     atr14,
     volatility30d: vol,
     maxDrawdown: maxDrawdown(closes.slice(-252)),
-    returns: { d7: pctChange(closes, 7), d30: pctChange(closes, 30), ytd: ytd ?? null, y1: pctChange(closes, 252) },
+    returns: {
+      d7: pctChange(closes, 7),
+      d30: pctChange(closes, 30),
+      ytd: ytd ?? null,
+      y1: pctChange(closes, 252),
+    },
     high52w,
     low52w,
     support: sr.support,
@@ -367,6 +385,7 @@ export function analyzeSeries(bars: OhlcvBar[]): TechnicalSnapshot | null {
     signals,
     divergences,
     candleClusters,
+    tradeSignal,
     dataQuality: {
       bars: bars.length,
       latestBarTime,
