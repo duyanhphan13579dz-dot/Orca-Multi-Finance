@@ -11,23 +11,23 @@ import { OrderBookPanel } from "@/components/stocks/order-book-panel";
 
 const TechnicalPanel = dynamic(
   () => import("@/components/technical-panel").then((m) => m.TechnicalPanel),
-  { ssr: false, loading: () => <Panel><Loading rows={3} /></Panel> },
+  { ssr: false, loading: () => <Panel title="Phân tích kỹ thuật"><Loading rows={3} /></Panel> },
 );
 const TechRecoPanel = dynamic(
   () => import("@/components/stocks/tech-reco-panel").then((m) => m.TechRecoPanel),
-  { ssr: false, loading: () => <Panel><Loading rows={2} /></Panel> },
+  { ssr: false, loading: () => <Panel title="Tín hiệu kỹ thuật"><Loading rows={2} /></Panel> },
 );
 const ValuationPanel = dynamic(
   () => import("@/components/stocks/valuation-panel").then((m) => m.ValuationPanel),
-  { ssr: false, loading: () => <Panel><Loading rows={3} /></Panel> },
+  { ssr: false, loading: () => <Panel title="Định giá"><Loading rows={3} /></Panel> },
 );
 const ForecastPanel = dynamic(
   () => import("@/components/stocks/forecast-panel").then((m) => m.ForecastPanel),
-  { ssr: false, loading: () => <Panel><Loading rows={2} /></Panel> },
+  { ssr: false, loading: () => <Panel title="Dự báo"><Loading rows={2} /></Panel> },
 );
 const StockStructurePanel = dynamic(
   () => import("@/components/stocks/structure-panel").then((m) => m.StockStructurePanel),
-  { ssr: false, loading: () => <Panel><Loading rows={2} /></Panel> },
+  { ssr: false, loading: () => <Panel title="Cấu trúc"><Loading rows={2} /></Panel> },
 );
 
 function useChartHeight() {
@@ -83,34 +83,73 @@ export default function StockOverviewPage({ params }: { params: Promise<{ symbol
               title={data.symbol}
               extraLevels={[
                 ...(q?.ceilingPrice != null
-                  ? [{ label: "Trần", price: q.ceilingPrice, color: "#a78bfa" }]
-                  : []),
-                ...(q?.floorPrice != null
-                  ? [{ label: "Sàn", price: q.floorPrice, color: "#67e8f9" }]
+                  ? [{ label: "Trần", price: q.ceilingPrice, color: "rgba(181,140,255,0.7)" }]
                   : []),
                 ...(q?.referencePrice != null
-                  ? [{ label: "TC", price: q.referencePrice, color: "#94a3b8" }]
+                  ? [{ label: "Tham chiếu", price: q.referencePrice, color: "rgba(245,165,36,0.7)" }]
+                  : []),
+                ...(q?.floorPrice != null
+                  ? [{ label: "Sàn", price: q.floorPrice, color: "rgba(56,189,248,0.7)" }]
                   : []),
               ]}
             />
           ) : (
-            <Panel>
-              <p className="text-[13px] text-text-muted">Chưa có dữ liệu biểu đồ.</p>
+            <Panel title="Biểu đồ">
+              <p className="stock-copy">Chưa có chuỗi giá để vẽ biểu đồ.</p>
             </Panel>
           )}
         </div>
-        <div className="flex min-w-0 flex-col gap-3">
-          <OrderBookPanel symbol={symbol} />
-          <StockNewsSentiment symbol={symbol} />
-          <TechnicalPanel symbol={symbol} bars={data.bars} technical={data.technical} patterns={data.patterns} />
-          <TechRecoPanel symbol={symbol} />
+        <div className="min-w-0">
+          <OrderBookPanel symbol={data.symbol} compact />
         </div>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2">
-        <ValuationPanel symbol={symbol} />
-        <ForecastPanel symbol={symbol} />
-        <StockStructurePanel symbol={symbol} />
+      <div className="grid gap-4 lg:grid-cols-2 lg:items-start">
+        <TechRecoPanel symbol={data.symbol} />
+        <StockStructurePanel symbol={data.symbol} />
+      </div>
+
+      {data.technical ? <TechnicalPanel tech={data.technical} patterns={data.patterns} /> : null}
+
+      <ValuationPanel symbol={data.symbol} compact showAnalyst={false} />
+
+      <ForecastPanel symbol={data.symbol} compact />
+
+      <div className="grid gap-4 md:grid-cols-2 md:items-start">
+        <Panel title="Trạng thái cổ phiếu">
+          {data.technical ? (
+            <ul className="stock-list">
+              <li className="stock-list-row">
+                <span>Xu hướng</span>
+                <strong className="text-text-primary">
+                  {String(
+                    (data.technical.trend as { label?: string } | null)?.label ??
+                      data.technical.trend ??
+                      "—",
+                  )}
+                </strong>
+              </li>
+              <li className="stock-list-row">
+                <span>RSI(14)</span>
+                <span className="num text-text-primary">
+                  {data.technical.rsi14 != null ? data.technical.rsi14.toFixed(1) : "—"}
+                </span>
+              </li>
+              <li className="stock-list-row">
+                <span>Biến động 30d</span>
+                <span className="num text-text-primary">
+                  {data.technical.volatility30d != null
+                    ? `${(data.technical.volatility30d * 100).toFixed(1)}%`
+                    : "—"}
+                </span>
+              </li>
+            </ul>
+          ) : (
+            <p className="stock-copy">Chưa đủ dữ liệu kỹ thuật.</p>
+          )}
+        </Panel>
+
+        <StockNewsSentiment symbol={data.symbol} />
       </div>
     </div>
   );
