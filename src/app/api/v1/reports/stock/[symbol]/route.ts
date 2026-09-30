@@ -7,7 +7,7 @@ export const maxDuration = 90;
 
 /**
  * GET /api/v1/reports/stock/:symbol
- * Báo cáo phân tích doanh nghiệp chi tiết (Company Report).
+ * Báo cáo phân tích doanh nghiệp — chạy trong Data Hub scope (singleflight).
  */
 export async function GET(_req: Request, ctx: { params: Promise<{ symbol: string }> }) {
   const { symbol: raw } = await ctx.params;
@@ -17,14 +17,18 @@ export async function GET(_req: Request, ctx: { params: Promise<{ symbol: string
   }
 
   try {
-    const r = await generateCompanyAnalysisReport(symbol);
+    const { runInDataHub } = await import("@/lib/data-engine/hub");
+    const r = await runInDataHub(() => generateCompanyAnalysisReport(symbol));
     if (!r) {
       return unavailable(
         "company-report",
         `Không tạo được báo cáo phân tích cho ${symbol}. Thử lại hoặc kiểm tra mã.`,
       );
     }
-    return ok(r.report, r.meta);
+    return ok(r.report, {
+      ...r.meta,
+      note: `${r.meta?.note ?? ""} · data-hub-scope`.trim(),
+    });
   } catch (e) {
     console.error("[company-report]", e);
     return unavailable(
