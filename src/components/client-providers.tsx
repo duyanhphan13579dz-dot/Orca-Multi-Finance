@@ -1,10 +1,11 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
 import { SWRConfig } from "swr";
 import { PriceAlertMonitorHost } from "@/components/price-alert-monitor-host";
 import { PatternAlertMonitorHost } from "@/components/pattern-alert-monitor-host";
 import { ErrorBoundary } from "@/components/error-boundary";
+import { prefetchMarketSnapshot } from "@/components/ticker-tape";
 
 /** Stable SWR cache across ClientProviders re-renders (tab hops keep data). */
 const globalSwrCache = new Map();
@@ -15,8 +16,13 @@ const globalSwrCache = new Map();
  * - Soft error boundary so one page crash does not blank the shell
  * - Price alert monitor (singleton)
  * - Candlestick reversal pattern push monitor
+ * - Prefetch market snapshot so ticker paints early
  */
 export function ClientProviders({ children }: { children: ReactNode }) {
+  useEffect(() => {
+    prefetchMarketSnapshot();
+  }, []);
+
   return (
     <SWRConfig
       value={{
