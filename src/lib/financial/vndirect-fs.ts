@@ -61,6 +61,17 @@ const BS_BANK: Record<number, keyof NormalizedMetrics> = {
   413300: "longTermDebt",
   413700: "totalLiabilities",
   413740: "currentLiabilities",
+  12700: "totalAssets",
+  14400: "totalAssets",
+  14000: "equity",
+  14100: "equity",
+  13000: "totalLiabilities",
+  13100: "currentLiabilities",
+  11100: "cash",
+  11110: "cash",
+  12200: "fixedAssets",
+  14220: "retainedEarnings",
+  412410: "longTermAssets",
 };
 
 const IS: Record<number, keyof NormalizedMetrics> = {
@@ -85,7 +96,21 @@ const IS_BANK: Record<number, keyof NormalizedMetrics> = {
   421100: "revenue",
   421200: "grossProfit",
   421900: "netRevenue",
+  421600: "operatingProfit",
+  421601: "operatingProfit",
+  421602: "operatingProfit",
+  421700: "operatingProfit",
+  421701: "operatingProfit",
+  422100: "interestExpense",
+  422200: "interestExpense",
   422900: "interestExpense",
+  423500: "netIncome",
+  23000: "netIncomeParent",
+  23001: "netIncome",
+  23003: "netIncome",
+  23800: "profitBeforeTax",
+  23500: "taxExpense",
+  22070: "taxExpense",
 };
 
 const CF: Record<number, keyof NormalizedMetrics> = {
@@ -102,6 +127,15 @@ const CF: Record<number, keyof NormalizedMetrics> = {
 
 const CF_BANK: Record<number, keyof NormalizedMetrics> = {
   400760: "capex",
+  32000: "operatingCashFlow",
+  32500: "operatingCashFlow",
+  33000: "investingCashFlow",
+  34000: "financingCashFlow",
+  32100: "capex",
+  33100: "capex",
+  36000: "cashBegin",
+  36100: "cashBegin",
+  37000: "cashEnd",
 };
 
 const MODEL_TYPES: Record<1 | 2 | 3, string> = {
@@ -172,10 +206,7 @@ function resolveMetricKey(
 ): keyof NormalizedMetrics | null {
   const mt = Number(modelType);
   const isBankModel = mt === 412 || mt === 413 || mt === 414;
-  if (isBankModel && profile !== "bank") return null;
-  if (!isBankModel && profile === "bank") {
-    if (!BS_BANK[itemCode] && !IS_BANK[itemCode] && !CF_BANK[itemCode]) return null;
-  }
+
   const primary = BS_MODELS.has(mt)
     ? isBankModel
       ? BS_BANK
@@ -190,6 +221,23 @@ function resolveMetricKey(
           : CF
         : null;
   if (primary && primary[itemCode]) return primary[itemCode];
+
+  // Ngân hàng trên model 101/102/103 (HDB, VCB…): nhận cả mã retail + bank
+  if (profile === "bank") {
+    if (BS_BANK[itemCode]) return BS_BANK[itemCode];
+    if (IS_BANK[itemCode]) return IS_BANK[itemCode];
+    if (CF_BANK[itemCode]) return CF_BANK[itemCode];
+    if (BS[itemCode]) return BS[itemCode];
+    if (IS[itemCode]) return IS[itemCode];
+    if (CF[itemCode]) return CF[itemCode];
+  }
+
+  if (isBankModel) {
+    if (BS_BANK[itemCode]) return BS_BANK[itemCode];
+    if (IS_BANK[itemCode]) return IS_BANK[itemCode];
+    if (CF_BANK[itemCode]) return CF_BANK[itemCode];
+  }
+
   return metricKeyFromItemCode(itemCode, profile);
 }
 
@@ -299,7 +347,7 @@ async function fetchStatementPage(
   }
 }
 
-/** Fast VNDirect FS — quarter-first, cache, shorter timeouts. */
+/** Fast VNDirect FS — parallel quarter+annual, long cache. */
 export async function fetchVndirectFinancials(
   symbol: string,
   opts?: { limitPeriods?: number },
@@ -312,10 +360,10 @@ export async function fetchVndirectFinancials(
   try {
     const { cached } = await import("../cache");
     const hit = await cached<{ periods: NormalizedPeriod[]; profile: MetricProfile } | null>(
-      `vnd-fs:periods:${sym}:v3:${limit}`,
+      `vnd-fs:periods:${sym}:v5:${limit}`,
       {
-        ttlMs: 6 * 3_600_000,
-        staleMs: 14 * 24 * 3_600_000,
+        ttlMs: 12 * 3_600_000,
+        staleMs: 21 * 24 * 3_600_000,
         softSwr: true,
         producer: async () => {
           const inner = await fetchVndirectFinancialsUncached(sym, profile, limit);
@@ -345,21 +393,15 @@ async function fetchVndirectFinancialsUncached(
 ): Promise<{ periods: NormalizedPeriod[]; latencyMs: number; profile: MetricProfile } | null> {
   const t0 = performance.now();
 
-  const qChunks = await Promise.all([
-    fetchStatementPage(sym, 1, "QUARTER", 600, 8_000),
-    fetchStatementPage(sym, 2, "QUARTER", 600, 8_000),
-    fetchStatementPage(sym, 3, "QUARTER", 600, 8_000),
+  const [q1, q2, q3, a1, a2, a3] = await Promise.all([
+    fetchStatementPage(sym, 1, "QUARTER", 800, 10_000),
+    fetchStatementPage(sym, 2, "QUARTER", 800, 10_000),
+    fetchStatementPage(sym, 3, "QUARTER", 800, 10_000),
+    fetchStatementPage(sym, 1, "ANNUAL", 500, 9_000),
+    fetchStatementPage(sym, 2, "ANNUAL", 500, 9_000),
+    fetchStatementPage(sym, 3, "ANNUAL", 500, 9_000),
   ]);
-  let all = qChunks.flat();
-
-  if (all.length < 80) {
-    const aChunks = await Promise.all([
-      fetchStatementPage(sym, 1, "ANNUAL", 400, 7_000),
-      fetchStatementPage(sym, 2, "ANNUAL", 400, 7_000),
-      fetchStatementPage(sym, 3, "ANNUAL", 400, 7_000),
-    ]);
-    all = all.concat(aChunks.flat());
-  }
+  const all = [...q1, ...q2, ...q3, ...a1, ...a2, ...a3];
 
   if (!all.length) return null;
 
