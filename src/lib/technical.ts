@@ -2,6 +2,7 @@ import type { CandlePattern, OhlcvBar, TechnicalSnapshot } from "./types";
 import { detectCandlePatterns, toLegacyCandlePatterns } from "./engines/candlestick-patterns";
 import { computeTradeSignal, type TradeSignal } from "./engines/trade-signal";
 import { detectDivergences, divergenceSummaryLine } from "./engines/divergence";
+import { analyzeMoneyFlow } from "./engines/money-flow";
 
 /**
  * Technical analysis engine — deterministic quantitative computations.
@@ -312,6 +313,7 @@ export function analyzeSeries(bars: OhlcvBar[]): TechnicalSnapshot | null {
   const low52w = lows.length ? Math.min(...lows) : null;
   const sr = supportResistance(bars);
   const flow = moneyFlow(bars);
+  const moneyFlowAnalysis = analyzeMoneyFlow(bars);
 
   let score = 0;
   if (sma20 != null) score += last > sma20 ? 1 : -1;
@@ -393,6 +395,9 @@ export function analyzeSeries(bars: OhlcvBar[]): TechnicalSnapshot | null {
   for (const d of divergences.slice(0, 4)) {
     signals.push(divergenceSummaryLine(d));
   }
+  if (moneyFlowAnalysis) {
+    signals.push(`Money Flow ${moneyFlowAnalysis.score >= 0 ? "cầu" : "cung"} ${moneyFlowAnalysis.score >= 0 ? "+" : ""}${moneyFlowAnalysis.score} · ${moneyFlowAnalysis.state} · độ tin cậy ${moneyFlowAnalysis.confidence}%`);
+  }
 
   const latestBarTime = bars[bars.length - 1]!.time;
   const ageMs = Math.max(0, Date.now() - latestBarTime);
@@ -423,6 +428,7 @@ export function analyzeSeries(bars: OhlcvBar[]): TechnicalSnapshot | null {
     bollinger: bb,
     atr14,
     moneyFlow: flow,
+    moneyFlowAnalysis,
     volatility30d: vol,
     maxDrawdown: maxDrawdown(closes.slice(-252)),
     returns: {

@@ -1,4 +1,5 @@
 /* Shared domain types + data-freshness model used across the whole platform. */
+import type { MoneyFlowAnalysis } from "./engines/money-flow";
 
 export type FreshnessStatus = "LIVE" | "FRESH" | "DELAYED" | "STALE" | "DEGRADED" | "UNAVAILABLE";
 
@@ -106,6 +107,8 @@ export interface TechnicalSnapshot {
   pressure: number;
   label: "strong-inflow" | "inflow" | "balanced" | "outflow" | "strong-outflow" | "unknown";
   };
+  /** Deterministic VSA + SMC + ICT analysis; it describes evidence, not institutional intent. */
+  moneyFlowAnalysis?: MoneyFlowAnalysis;
   volatility30d: number | null;
   maxDrawdown: number | null;
   returns: { d7: number | null; d30: number | null; ytd: number | null; y1: number | null };
