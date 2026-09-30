@@ -16,7 +16,6 @@ const DSTOCK_HEADERS: Record<string, string> = {
 
 /** Balance sheet (VAS + CK model 89) */
 const BS: Record<number, keyof NormalizedMetrics> = {
-  // ===== Mẫu doanh nghiệp (model 1) — VAS =====
   11000: "currentAssets",
   11100: "cash",
   11110: "cash",
@@ -51,11 +50,6 @@ const BS: Record<number, keyof NormalizedMetrics> = {
   12700: "totalAssets",
 };
 
-/**
- * Mẫu ngân hàng (model 413 balance / 412 income / 414 cashflow).
- * Tách riêng để không ô nhiễm mapping DN thường: item 421200 (LN gộp NH)
- * không được lọt vào bảng income của DN sản xuất — thương mại.
- */
 const BS_BANK: Record<number, keyof NormalizedMetrics> = {
   411100: "cash",
   411200: "cash",
@@ -71,37 +65,30 @@ const BS_BANK: Record<number, keyof NormalizedMetrics> = {
 };
 
 const IS: Record<number, keyof NormalizedMetrics> = {
-  // ===== Mẫu doanh nghiệp (model 2) — VAS =====
-  21000: "revenue", // Tổng doanh thu hoạt động kinh doanh
-  21001: "netRevenue", // Doanh thu thuần = 21000 − giảm trừ
+  21000: "revenue",
+  21001: "netRevenue",
   22100: "cogs",
   23100: "grossProfit",
   23110: "operatingProfit",
   23010: "ebit",
-  22510: "interestExpense", // Chi phí lãi vay (luôn ghi dương = chi phí)
+  22510: "interestExpense",
   22500: "interestExpense",
   23800: "profitBeforeTax",
   23810: "profitBeforeTax",
   22070: "taxExpense",
   23500: "taxExpense",
-  23003: "netIncome", // LNST (sau lãi thiểu số)
-  23000: "netIncomeParent", // LNST thuộc công ty mẹ
-  23001: "netIncome", // LNST sau CSTC (mẫu cũ)
+  23003: "netIncome",
+  23000: "netIncomeParent",
+  23001: "netIncome",
 };
 
-/** Mẫu ngân hàng (model 412) — chỉ dùng khi profile = bank. */
 const IS_BANK: Record<number, keyof NormalizedMetrics> = {
-  421100: "revenue", // Thu nhập lãi thuần
-  421200: "grossProfit", // LN gộp NH
+  421100: "revenue",
+  421200: "grossProfit",
   421900: "netRevenue",
-  422900: "interestExpense", // Chi phí lãi tiền gửi/cho vay NH
+  422900: "interestExpense",
 };
 
-/**
- * Cash flow codes.
- * 35000 trên mẫu CK (model 91) = biến động tiền thuần — KHÔNG map thành FCF.
- * FCF chỉ tính: OCF − |Capex| trong normalizeCashflowMetrics.
- */
 const CF: Record<number, keyof NormalizedMetrics> = {
   32000: "operatingCashFlow",
   32500: "operatingCashFlow",
@@ -114,17 +101,10 @@ const CF: Record<number, keyof NormalizedMetrics> = {
   37000: "cashEnd",
 };
 
-/** Mẫu ngân hàng (model 414) */
 const CF_BANK: Record<number, keyof NormalizedMetrics> = {
   400760: "capex",
 };
 
-/**
- * Model VNDirect:
- * BS: 1 (DN), 89 (CK), 101/111 (NH)
- * IS: 2, 90 (CK), 102/112 (NH)
- * CF: 3, 91 (CK), 92, 103/104/113 (NH)
- */
 const MODEL_TYPES: Record<1 | 2 | 3, string> = {
   1: "1,89,101,111,413",
   2: "2,90,102,112,412",
@@ -192,8 +172,6 @@ function resolveMetricKey(
   profile: MetricProfile,
 ): keyof NormalizedMetrics | null {
   const mt = Number(modelType);
-  // Tách bộ mapping theo modelType thực tế của row (bank = 412/413/414)
-  // để item-code ngân hàng không lọt vào bảng DN thường (và ngược lại).
   const isBankModel = mt === 412 || mt === 413 || mt === 414;
   if (isBankModel && profile !== "bank") return null;
   if (!isBankModel && profile === "bank") {
@@ -237,7 +215,6 @@ function pivot(rows: RawRow[], profile: MetricProfile, _symbol: string): Normali
       if (!key) continue;
       let v = Number(r.numericValue);
       if (!Number.isFinite(v)) continue;
-      // Chi phí (lãi vay / thuế) luôn lưu dương — DStock có lúc trả số âm dạng "khoản chi".
       if (key === "interestExpense" || key === "taxExpense") v = Math.abs(v);
       if (v === 0 && (key === "interestExpense" || key === "taxExpense")) continue;
       if (key === "capex") {
@@ -249,13 +226,11 @@ function pivot(rows: RawRow[], profile: MetricProfile, _symbol: string): Normali
       const cur = metrics[key];
       if (cur == null || Math.abs(v) > Math.abs(cur as number)) metrics[key] = v;
     }
-    // Dedupe LNST: nếu netIncome và netIncomeParent trùng nhau (DN không có lãi thiểu số)
-    // chỉ giữ netIncomeParent khi giá trị khác — tránh hiển thị 2 dòng giống hệt nhau.
     if (metrics.netIncome != null && metrics.netIncomeParent != null) {
       const a = metrics.netIncome as number;
       const b = metrics.netIncomeParent as number;
       if (Math.abs(a - b) < Math.max(1, Math.abs(a) * 0.0001)) {
-        metrics.netIncomeParent = a; // giữ 1 giá trị, 2 dòng vẫn hợp lệ về ý nghĩa
+        metrics.netIncomeParent = a;
       }
     }
     const sourceUrls = [...new Set(group.map((r) => r.sourceUrl).filter((url): url is string => Boolean(url)))];
@@ -304,17 +279,17 @@ async function fetchStatementPage(
   size: number,
 ): Promise<RawRow[]> {
   const modelType = MODEL_TYPES[modelKind];
-  const path = `/v4/financial_statements?q=code:${symbol}~reportType:${reportType}~modelType:${modelType}&size=${size}&sort=fiscalDate:desc`;
+  const q = `code:${symbol}~reportType:${reportType}~modelType:${modelType}`;
+  const path = `/v4/financial_statements?q=${encodeURIComponent(q)}&size=${size}&sort=${encodeURIComponent("fiscalDate:desc")}`;
   const res = await httpJson<{ data?: RawRow[] }>(`${BASE}${path}`, {
     provider: VND,
-    timeoutMs: 16_000,
-    retries: 1,
+    timeoutMs: 18_000,
+    retries: 2,
     headers: DSTOCK_HEADERS,
   });
   if (!res.ok || !res.data?.data?.length) return [];
   return res.data.data.map((row) => ({
     ...row,
-    // Preserve the provider's unit when present; never scale numericValue implicitly.
     unit: row.unit ?? "VND",
     sourceUrl: sourceUrlForModel(Number(row.modelType), symbol),
   }));
