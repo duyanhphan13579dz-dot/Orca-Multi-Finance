@@ -3,7 +3,12 @@
 import Link from "next/link";
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { useApi } from "@/lib/hooks";
+import { clientCacheGet, clientCacheSet } from "@/lib/client-cache";
 import type { MarketSnapshot } from "@/lib/services/market";
+import type { ApiResponse } from "@/lib/types";
+
+const SNAP_URL = "/api/v1/market/snapshot";
+const SS_KEY = "orca:ticker:snap:v1";
 
 const REGION_ORDER: Array<MarketSnapshot["indices"][number]["region"]> = [
   "vn",
@@ -19,14 +24,72 @@ const REGION_DOT: Record<string, string> = {
   forex: "bg-accent-2",
 };
 
-/** Realtime ticker — VN · Châu Á · Mỹ · Forex, CSS marquee. */
+/** Module sticky — survives remount when chuyển trang trong SPA. */
+let stickySnap: MarketSnapshot | null = null;
+
+function readSessionSnap(): MarketSnapshot | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = sessionStorage.getItem(SS_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { at: number; snap: MarketSnapshot };
+    if (Date.now() - parsed.at > 30 * 60_000) return null;
+    if (!parsed.snap?.indices?.length) return null;
+    return parsed.snap;
+  } catch {
+    return null;
+  }
+}
+
+function writeSessionSnap(snap: MarketSnapshot) {
+  if (typeof window === "undefined") return;
+  if (!snap?.indices?.length) return;
+  stickySnap = snap;
+  try {
+    sessionStorage.setItem(SS_KEY, JSON.stringify({ at: Date.now(), snap }));
+  } catch {
+    /* quota */
+  }
+}
+
+function pickSnap(live: MarketSnapshot | null | undefined): MarketSnapshot | null {
+  if (live?.indices?.length) {
+    writeSessionSnap(live);
+    return live;
+  }
+  if (stickySnap?.indices?.length) return stickySnap;
+  return readSessionSnap();
+}
+
+/** Prefetch snapshot early — call from providers on boot. */
+export function prefetchMarketSnapshot() {
+  if (typeof window === "undefined") return;
+  if (clientCacheGet(SNAP_URL, 45_000)) return;
+  void fetch(SNAP_URL, { headers: { Accept: "application/json" }, cache: "no-store" })
+    .then((r) => r.json())
+    .then((json: ApiResponse<MarketSnapshot>) => {
+      if (json?.success && json.data) {
+        clientCacheSet(SNAP_URL, json);
+        if (json.data.indices?.length) writeSessionSnap(json.data);
+      }
+    })
+    .catch(() => undefined);
+}
+
+/** Realtime ticker — cố định, sticky data khi chuyển trang. */
 export const TickerTape = memo(function TickerTape() {
-  const { data, isLoading } = useApi<MarketSnapshot>("/api/v1/market/snapshot", {
-    refreshInterval: 55_000,
+  const { data, isLoading } = useApi<MarketSnapshot>(SNAP_URL, {
+    refreshInterval: 40_000,
+    timeoutMs: 12_000,
   });
   const trackRef = useRef<HTMLDivElement>(null);
   const [paused, setPaused] = useState(false);
   const [narrow, setNarrow] = useState(false);
+  const [seed] = useState<MarketSnapshot | null>(() => stickySnap ?? readSessionSnap());
+
+  useEffect(() => {
+    prefetchMarketSnapshot();
+  }, []);
 
   useEffect(() => {
     const mq = window.matchMedia("(max-width: 767px)");
@@ -46,6 +109,9 @@ export const TickerTape = memo(function TickerTape() {
     return () => io.disconnect();
   }, []);
 
+  const snap = pickSnap(data) ?? seed;
+  if (data?.indices?.length) writeSessionSnap(data);
+
   const items = useMemo(() => {
     const result: {
       key: string;
@@ -57,7 +123,7 @@ export const TickerTape = memo(function TickerTape() {
       region: string;
     }[] = [];
 
-    const rows = data?.indices ?? [];
+    const rows = snap?.indices ?? [];
     const byRegion = (r: string) => rows.filter((i) => i.region === r);
 
     const budgets: Record<string, number> = narrow
@@ -81,8 +147,8 @@ export const TickerTape = memo(function TickerTape() {
       }
     }
 
-    if (!narrow && data?.global?.cryptoTip?.length) {
-      for (const c of data.global.cryptoTip.slice(0, 2)) {
+    if (!narrow && snap?.global?.cryptoTip?.length) {
+      for (const c of snap.global.cryptoTip.slice(0, 2)) {
         if (!Number.isFinite(c.price)) continue;
         result.push({
           key: `crypto-${c.symbol}`,
@@ -97,11 +163,11 @@ export const TickerTape = memo(function TickerTape() {
     }
 
     return result;
-  }, [data, narrow]);
+  }, [snap, narrow]);
 
   if (!items.length) {
     return (
-      <div className="ticker-bar flex items-center px-4 text-[11px] text-ink-3">
+      <div className="ticker-bar sticky top-0 z-30 flex h-8 items-center px-4 text-[11px] text-ink-3">
         <span className="size-1.5 animate-pulse rounded-full bg-accent/60" />
         <span className="ml-2">
           {isLoading
@@ -114,7 +180,7 @@ export const TickerTape = memo(function TickerTape() {
 
   const loop = [...items, ...items];
   return (
-    <div className="ticker-bar relative">
+    <div className="ticker-bar sticky top-0 z-30 h-8">
       <div
         ref={trackRef}
         className={`ticker-track ${paused ? "is-paused" : ""}`}
