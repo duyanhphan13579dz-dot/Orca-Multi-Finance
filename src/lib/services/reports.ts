@@ -4,10 +4,7 @@ import { buildMarketSnapshot } from "./market";
 import type { Meta } from "../types";
 
 /**
- * Report system — analyst-style narratives generated strictly AFTER fetching
- * the freshest snapshot (Report Freshness Gate). Every report records the
- * underlying data timestamps + freshness so readers know exactly what data
- * vintage they are looking at.
+ * Legacy thin report helper — Morning Brief prefers full report-engine (Data Hub).
  */
 
 export interface ReportSection {
@@ -27,46 +24,68 @@ export interface Report {
 }
 
 export async function generateMorningBrief(): Promise<{ report: Report; meta: Meta }> {
+  // Ưu tiên engine đầy đủ (composers + Data Hub); fallback snapshot đơn giản nếu lỗi
+  try {
+    const { generateDailyReport } = await import("./report-engine");
+    const { report: daily, meta } = await generateDailyReport("morning_brief");
+    return {
+      report: {
+        type: "morning_brief",
+        title: daily.title,
+        subtitle: daily.subtitle,
+        generatedAt: daily.generatedAt,
+        marketDataTimestamp: daily.marketDataTimestamp,
+        freshness: daily.freshness as unknown as Report["freshness"],
+        sections: daily.sections,
+      },
+      meta,
+    };
+  } catch {
+    /* fallback below */
+  }
+
   const snap = await buildMarketSnapshot();
   const { snapshot, meta } = snap;
   const now = new Date();
   const vnNow = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Ho_Chi_Minh" }));
-  const dateVi = vnNow.toLocaleDateString("vi-VN", { weekday: "long", day: "2-digit", month: "2-digit", year: "numeric" });
+  const dateVi = vnNow.toLocaleDateString("vi-VN", {
+    weekday: "long",
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  });
 
   const sections: ReportSection[] = [];
-  const p = snapshot.pulse;
+  const p = snapshot.pulse ?? { score: 0, headline: "", body: [] as string[] };
 
-  // 1. Tổng quan
   sections.push({
     heading: "Bức tranh chung",
     tone: p.score > 0.15 ? "up" : p.score < -0.15 ? "down" : "neutral",
     paragraphs: [p.headline + ".", ...p.body.slice(0, 2)],
   });
 
-  // 2. Việt Nam
   if (snapshot.indices?.length) {
     sections.push({
       heading: "Chứng khoán Việt Nam",
-      tone: snapshot.indices[0].changePercent > 0 ? "up" : "down",
+      tone: (snapshot.indices[0].changePercent ?? 0) > 0 ? "up" : "down",
       paragraphs: [
         snapshot.indices
           .slice(0, 4)
-          .map((i) => `${i.code}: ${i.value.toLocaleString("vi-VN")} điểm (${i.changePercent >= 0 ? "+" : ""}${i.changePercent.toFixed(2)}%)`)
-          .join("; ") +
-          ". Cần quan sát thêm độ rộng và thanh khoản thực tế trước khi kết luận về chất lượng của nhịp điều chỉnh/tăng điểm.",
+          .map(
+            (i) =>
+              `${i.code}: ${i.value.toLocaleString("vi-VN")} điểm (${i.changePercent != null && i.changePercent >= 0 ? "+" : ""}${i.changePercent?.toFixed(2) ?? "—"}%)`,
+          )
+          .join("; ") + ".",
       ],
     });
   } else {
     sections.push({
       heading: "Chứng khoán Việt Nam",
       tone: "neutral",
-      paragraphs: [
-        "Nguồn dữ liệu VNStock hiện chưa sẵn sàng (chưa cấu hình khóa API hoặc kết nối gián đoạn), nên bản tin hôm nay tạm thiếu phần chỉ số trong nước. Hệ thống ghi nhận trạng thái này một cách minh bạch thay vì lấp vào bằng số liệu cũ — khi kết nối phục hồi, phần này sẽ tự động cập nhật.",
-      ],
+      paragraphs: ["Chưa có chỉ số VN trong snapshot — chờ nguồn LIVE."],
     });
   }
 
-  // 3. Crypto
   if (snapshot.crypto) {
     const s = snapshot.crypto.summary;
     const top = snapshot.crypto.top.slice(0, 5);
@@ -74,97 +93,55 @@ export async function generateMorningBrief(): Promise<{ report: Report; meta: Me
       heading: "Tài sản số",
       tone: s.avgChangePercent > 0 ? "up" : "down",
       paragraphs: [
-        `Trên ${s.marketCount} mã USDT có thanh khoản, ${s.advancers} mã tăng và ${s.decliners} mã giảm trong 24 giờ qua; mức biến động bình quân ${s.avgChangePercent >= 0 ? "+" : ""}${s.avgChangePercent.toFixed(2)}%. Tổng khối lượng quy đổi đạt khoảng $${(s.totalQuoteVolume / 1e9).toFixed(1)} tỷ.`,
-        `Nhóm vốn hóa lớn: ${top.map((t) => `${t.baseAsset} ${t.changePercent != null ? (t.changePercent >= 0 ? "+" : "") + t.changePercent.toFixed(1) + "%" : "?"}`).join(", ")}.`,
+        `Trên ${s.marketCount} mã: ${s.advancers} tăng / ${s.decliners} giảm; TB ${s.avgChangePercent >= 0 ? "+" : ""}${s.avgChangePercent.toFixed(2)}%.`,
+        `Nhóm lớn: ${top.map((t) => `${t.baseAsset} ${t.changePercent != null ? (t.changePercent >= 0 ? "+" : "") + t.changePercent.toFixed(1) + "%" : "?"}`).join(", ")}.`,
       ],
     });
   }
 
-  // 4. Forex
   if (snapshot.forex) {
     const majors = snapshot.forex.rows.filter((r) => r.group === "major").slice(0, 5);
     sections.push({
       heading: "Ngoại hối",
       tone: "neutral",
       paragraphs: [
-        snapshot.forex.usdStrengthNote,
-        majors
-          .map((r) => `${r.symbol} ${r.price >= 100 ? r.price.toFixed(2) : r.price.toFixed(4)}${r.changePercent != null ? ` (${r.changePercent >= 0 ? "+" : ""}${r.changePercent.toFixed(2)}%)` : ""}`)
-          .join("; ") + ".",
-        "Số liệu tỷ giá là tham chiếu từ nguồn công khai (exchangerate-api/ECB) khi Biquote chưa được cấu hình — phù hợp để quan sát xu hướng, cần đối chiếu giá giao dịch trước khi hành động.",
-      ],
+        majors.length
+          ? majors
+              .map(
+                (r) =>
+                  `${r.pair ?? r.symbol}: ${r.price != null ? r.price : "—"}${r.changePercent != null ? ` (${r.changePercent >= 0 ? "+" : ""}${r.changePercent.toFixed(2)}%)` : ""}`,
+              )
+              .join("; ")
+          : "Chưa có majors.",
+        snapshot.forex.usdStrengthNote ?? "",
+      ].filter(Boolean),
     });
   }
 
-  // 5. Hàng hóa
-  if (snapshot.commodities?.length) {
-    sections.push({
-      heading: "Hàng hóa",
-      tone: "neutral",
-      paragraphs: [
-        snapshot.commodities
-          .slice(0, 8)
-          .map((c) => `${c.commodity}: ${c.price.toLocaleString("vi-VN")} ${c.unit ?? ""}${c.changePercent != null ? ` (${c.changePercent >= 0 ? "+" : ""}${c.changePercent.toFixed(2)}%)` : ""}`)
-          .join("; ") + ".",
-        "Diễn biến hàng hóa đầu vào (dầu, thép, nông sản) thường lan sang lợi nhuận các nhóm ngành tương ứng tại Việt Nam theo độ trễ nhất định — xem bản đồ tác động tại mục Commodities.",
-      ],
-    });
-  }
-
-  // 6. Tin doanh nghiệp & vĩ mô
   if (snapshot.news?.length) {
     sections.push({
-      heading: "Dòng tin đáng chú ý",
+      heading: "Tin nổi bật",
       tone: "neutral",
-      paragraphs: snapshot.news.slice(0, 6).map((n) => `${n.title} — ${n.source}.`),
+      paragraphs: (snapshot.news as { title?: string; source?: string }[])
+        .slice(0, 6)
+        .map((n) => `${n.title ?? "—"} — ${n.source ?? ""}.`),
     });
   }
 
-  // 7. Triển vọng & rủi ro
-  sections.push({
-    heading: "Điều cần theo dõi trong phiên",
-    tone: "neutral",
-    paragraphs: [
-      p.score >= 0.15
-        ? "Dòng tiền đang nghiêng về tài sản rủi ro, nhưng độ rộng chưa đồng thuận hoàn toàn — ưu tiên các nhóm có thanh khoản xác nhận thay vì đuổi những mã đã tăng nóng. Theo dõi phản ứng của BTC tại các vùng kháng cự gần và diễn biến USD."
-        : p.score <= -0.15
-          ? "Ưu thế phòng thủ đang hiện hữu: các nhịp hồi nên được kiểm chứng bằng thanh khoản trước khi coi là đảo chiều. Quản trị tỷ trọng, tránh đòn bẩy cao khi volatility giãn nở."
-          : "Thị trường phân hóa mạnh — đây là giai đoạn chọn lọc cổ phiếu/tài sản theo câu chuyện riêng hơn là đánh theo beta. Kiên nhẫn chờ xác nhận ở các vùng hỗ trợ quan trọng.",
-      "Lưu ý: nội dung bản tin được dựng hoàn toàn từ dữ liệu thị trường realtime tại thờ điểm phát hành, phục vụ mục đích nghiên cứu — không phải khuyến nghị đầu tư.",
-    ],
-  });
-
-  const report: Report = {
-    type: "morning_brief",
-    title: `ORCA Morning Brief — ${dateVi}`,
-    subtitle: "Tổng hợp từ dữ liệu thị trường mới nhất tại thờ điểm phát hành",
-    generatedAt: now.toISOString(),
-    marketDataTimestamp: meta.sourceTimestamp,
-    freshness: (meta.sections ?? {}) as Record<string, string>,
-    sections,
+  return {
+    report: {
+      type: "morning_brief",
+      title: `ORCA Morning Brief — ${dateVi}`,
+      subtitle: "Fallback snapshot · Data Hub path ưu tiên qua report-engine",
+      generatedAt: now.toISOString(),
+      marketDataTimestamp: meta.sourceTimestamp ?? null,
+      freshness: (meta.sections as Record<string, string>) ?? {},
+      sections,
+    },
+    meta: buildMeta({
+      source: "orca-reports-legacy+snapshot",
+      sourceTimestampMs: meta.sourceTimestamp ? Date.parse(String(meta.sourceTimestamp)) : null,
+      note: "legacy fallback after report-engine",
+    }),
   };
-  void persist(report);
-  const outMeta = buildMeta({
-    source: "orca-report-engine",
-    sourceTimestampMs: meta.sourceTimestamp ? Date.parse(meta.sourceTimestamp) : null,
-    sections: meta.sections,
-    note: "Dữ liệu sử dụng: " + Object.entries(meta.sections ?? {}).map(([k, v]) => `${k}=${v}`).join(", "),
-  });
-  return { report, meta: outMeta };
-}
-
-async function persist(report: Report) {
-  try {
-    const { db } = await import("@/db");
-    const { reports } = await import("@/db/schema");
-    await db.insert(reports).values({
-      type: report.type,
-      title: report.title,
-      body: report as unknown as Record<string, unknown>,
-      marketDataTimestamp: report.marketDataTimestamp ? new Date(report.marketDataTimestamp) : null,
-      freshness: JSON.stringify(report.freshness),
-    });
-  } catch {
-    /* best-effort */
-  }
 }
