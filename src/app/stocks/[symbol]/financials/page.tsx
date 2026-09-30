@@ -184,26 +184,37 @@ export default function StockFinancialsPage({ params }: { params: Promise<{ symb
   );
 
   if (!symbol || (isLoading && !res)) return <Loading rows={8} />;
+
+  // note luôn là string — SWR `error` là Error object, không được render trực tiếp
+  const failNote = (() => {
+    if (res && !res.success) {
+      const msg = (res as { error?: { message?: string } }).error?.message;
+      if (typeof msg === "string" && msg.trim()) return msg;
+    }
+    if (error instanceof Error && error.message) return error.message;
+    if (typeof error === "string" && error.trim()) return error;
+    return "Nguồn báo cáo đang gián đoạn. Thử lại sau hoặc mở link DStock bên dưới.";
+  })();
+
   if (!res?.success || !data?.financials) {
     return (
       <Unavailable
-        title={`Không lấy được BCTC ${symbol}`}
-        note={
-          (res && !res.success ? res.error.message : null) ||
-          error ||
-          "Nguồn báo cáo đang gián đoạn. Thử lại sau hoặc mở link DStock bên dưới."
-        }
+        title={`Không lấy được BCTC ${symbol || ""}`}
+        note={failNote}
       />
     );
   }
 
   const fm = data.packageMeta ?? null;
-  const sourceLabel = fm?.primarySource ?? "vndirect-fs";
+  const sourceLabel = typeof fm?.primarySource === "string" ? fm.primarySource : "vndirect-fs";
   const fin = data.financials;
-  const rawRows = (fin[tab] ?? []) as Record<string, unknown>[];
+  const rawList = fin[tab];
+  const rawRows: Record<string, unknown>[] = Array.isArray(rawList)
+    ? (rawList.filter((r) => r && typeof r === "object") as Record<string, unknown>[])
+    : [];
   const rows = sortColumnsPeriods(
     rawRows as { year?: number | null; quarter?: number | null }[],
-  ) as typeof rawRows;
+  ) as Record<string, unknown>[];
 
   const metricKeys = Object.keys(rows[0] ?? {}).filter(
     (k) => !META_KEYS.has(k) && !HIDDEN_DUPLICATE_KEYS.has(k) && typeof rows[0]?.[k] === "number",
@@ -258,7 +269,7 @@ export default function StockFinancialsPage({ params }: { params: Promise<{ symb
                   <th className="sticky left-0 z-10 bg-bg-2 pr-3 text-left font-medium">Chỉ tiêu</th>
                   {rows.slice(0, 8).map((r, i) => (
                     <th key={i} className="num min-w-24 pl-2 text-right font-medium tabular-nums">
-                      {periodHeader(r as Record<string, unknown>)}
+                      {periodHeader(r)}
                     </th>
                   ))}
                 </tr>
@@ -272,11 +283,15 @@ export default function StockFinancialsPage({ params }: { params: Promise<{ symb
                     >
                       {METRIC_VI[k] ?? k}
                     </td>
-                    {rows.slice(0, 8).map((r, i) => (
-                      <td key={i} className="num py-1.5 pl-2 text-right tabular-nums">
-                        {typeof r[k] === "number" ? formatMetricValue(k, r[k] as number) : "—"}
-                      </td>
-                    ))}
+                    {rows.slice(0, 8).map((r, i) => {
+                      const val = r[k];
+                      const ok = typeof val === "number" && Number.isFinite(val);
+                      return (
+                        <td key={i} className="num py-1.5 pl-2 text-right tabular-nums">
+                          {ok ? formatMetricValue(k, val as number) : "—"}
+                        </td>
+                      );
+                    })}
                   </tr>
                 ))}
               </tbody>
@@ -290,7 +305,7 @@ export default function StockFinancialsPage({ params }: { params: Promise<{ symb
         {data.notes?.length ? (
           <ul className="mt-2 space-y-0.5 text-[10px] text-ink-3">
             {data.notes.slice(0, 4).map((n, i) => (
-              <li key={i}>· {n}</li>
+              <li key={i}>· {typeof n === "string" ? n : String(n)}</li>
             ))}
           </ul>
         ) : null}
