@@ -30,14 +30,14 @@ export function OrcaWordmark({
   className?: string;
 }) {
   return (
-    <span className={`flex min-w-0 max-w-full items-center gap-2 overflow-hidden ${className}`}>
-      <OrcaMark size={size} />
-      <span className="flex min-w-0 flex-1 flex-col overflow-hidden leading-none">
-        <span className="truncate text-[13px] font-bold tracking-[0.03em] text-text-primary sm:text-[14px]">
+    <span className={`flex min-w-0 items-center gap-2 ${className}`}>
+      <OrcaMark size={size} className="shrink-0" />
+      <span className="flex min-w-0 flex-col justify-center leading-none">
+        <span className="whitespace-nowrap text-[13px] font-bold tracking-[0.02em] text-text-primary">
           ORCA<span className="text-accent-primary"> FINANCIAL</span>
         </span>
         {subtitle ? (
-          <span className="mt-0.5 truncate text-[8px] font-medium uppercase tracking-[0.12em] text-text-muted">
+          <span className="mt-0.5 whitespace-nowrap text-[8px] font-medium uppercase tracking-[0.06em] text-text-muted">
             Intelligent Investment
           </span>
         ) : null}
@@ -47,17 +47,17 @@ export function OrcaWordmark({
 }
 
 /**
- * Mobile drawer brand — không dùng overflow clip, luôn hiện logo + tên + slogan.
+ * Mobile drawer brand — full logo + name + slogan, no overflow clip.
  */
 export function OrcaMobileBrand({ className = "" }: { className?: string }) {
   return (
     <span className={`flex items-center gap-2.5 ${className}`}>
       <OrcaMark size={36} className="shrink-0" />
       <span className="flex flex-col gap-0.5 leading-none">
-        <span className="text-[15px] font-bold tracking-wide text-text-primary">
+        <span className="whitespace-nowrap text-[15px] font-bold tracking-wide text-text-primary">
           ORCA<span className="text-accent-primary"> FINANCIAL</span>
         </span>
-        <span className="text-[10px] font-medium uppercase tracking-[0.06em] text-text-muted">
+        <span className="whitespace-nowrap text-[10px] font-medium uppercase tracking-[0.06em] text-text-muted">
           Intelligent Investment
         </span>
       </span>
