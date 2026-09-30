@@ -1,0 +1,26 @@
+/* BCTC table — full width equal period columns */
+.stock-fs-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+.stock-fs-table .stock-fs-col-metric {
+  width: 18%;
+  min-width: 9.5rem;
+}
+.stock-fs-table .stock-fs-col-period {
+  width: auto;
+}
+.stock-fs-table th,
+.stock-fs-table td {
+  vertical-align: middle;
+}
+.stock-fs-table thead th {
+  white-space: nowrap;
+}
+@media (max-width: 768px) {
+  .stock-fs-table .stock-fs-col-metric {
+    width: 28%;
+    min-width: 7rem;
+  }
+}
