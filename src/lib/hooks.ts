@@ -6,20 +6,10 @@ import type { ApiResponse } from "./types";
 import { getSettingsSnapshot, resolveRefresh } from "./settings";
 import { clientCacheGet, clientCacheSet, clientCacheHas } from "./client-cache";
 
-/**
- * Client data hooks — every call goes through the internal API only.
- * Tuned for fastest perceived load:
- *  - last-good cache → instant paint on tab hop
- *  - short client dedupe + nav freeze to avoid request storms
- *  - adaptive poll; pause when tab hidden
- *  - isLoading only when no fallback (no blank flash)
- */
-
 const FETCH_TIMEOUT_MS = 11_000;
 const CLIENT_DEDUPE_MS = 2_400;
 const pendingFetches = new Map<string, { promise: Promise<ApiResponse<unknown>>; startedAt: number }>();
 
-/** Soft freeze window after route change — skip non-critical revalidations. */
 let navFreezeUntil = 0;
 export function markAppNavigating(ms = 220) {
   navFreezeUntil = Date.now() + ms;
@@ -63,12 +53,20 @@ const fetcherUncached = async <T>(url: string, timeoutMs = FETCH_TIMEOUT_MS): Pr
     if (!json) throw new Error(`bad_response:${res.status}`);
     if (json.success) clientCacheSet(url, json);
     return json;
+  } catch (e) {
+    const name = e instanceof Error ? e.name : "";
+    const msg = e instanceof Error ? e.message : String(e);
+    if (name === "AbortError" || /aborted/i.test(msg)) {
+      throw new Error(
+        `Hết thời gian chờ (${Math.round(timeoutMs / 1000)}s). Thử lại — BCTC có thể đang tải lần đầu.`,
+      );
+    }
+    throw e;
   } finally {
     clearTimeout(timer);
   }
 };
 
-/** Shared: one visibility listener for every API hook on the page. */
 let pageVisible = true;
 const visibilityListeners = new Set<() => void>();
 
