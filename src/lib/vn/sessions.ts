@@ -28,18 +28,14 @@ export interface VnSessionInfo {
   state: VnSessionState;
   labelVi: string;
   open: boolean;
-  trading: boolean; // continuous matching in progress
-  sessionDate: string; // YYYY-MM-DD VN
+  trading: boolean;
+  sessionDate: string;
   checkedAt: string;
 }
 
-/* ~VN public holidays with market closures (natural + substituted dates).
-   Refresh annually; engine remains correct for ordinary business days regardless. */
 const HOLIDAYS: Set<string> = new Set([
-  // 2025
   "2025-01-01", "2025-01-27", "2025-01-28", "2025-01-29", "2025-01-30", "2025-01-31",
   "2025-04-07", "2025-04-30", "2025-05-01", "2025-09-01", "2025-09-02",
-  // 2026 (projected from lunar calendar where applicable)
   "2026-01-01", "2026-01-02",
   "2026-02-16", "2026-02-17", "2026-02-18", "2026-02-19", "2026-02-20",
   "2026-04-07", "2026-04-30", "2026-05-01", "2026-09-02",
@@ -80,7 +76,11 @@ export function getVnSession(): VnSessionInfo {
     holiday_closed: "Đóng cửa (nghỉ lễ)",
     closed: "Đã đóng cửa",
   };
-  const trading = state === "morning_continuous" || state === "afternoon_continuous" || state === "opening_auction" || state === "closing_auction";
+  const trading =
+    state === "morning_continuous" ||
+    state === "afternoon_continuous" ||
+    state === "opening_auction" ||
+    state === "closing_auction";
   return {
     state,
     labelVi: labels[state],
@@ -91,16 +91,11 @@ export function getVnSession(): VnSessionInfo {
   };
 }
 
-/**
- * Allowed data-age given the session state. During continuous trading, quotes
- * older than a few minutes are DELAYED; after close, the official closing data
- * legitimately stays FRESH until next session.
- */
 export function allowedDataAgeMs(): number {
   const s = getVnSession();
   if (s.trading) return 10 * 60_000;
   if (s.state === "pre_open" || s.state === "lunch_break") return 60 * 60_000;
-  return 18 * 3_600_000; // overnight: closing data is the latest valid truth
+  return 18 * 3_600_000;
 }
 
 export function sessionFreshnessHint(state: VnSessionState): string {
@@ -108,7 +103,7 @@ export function sessionFreshnessHint(state: VnSessionState): string {
     pre_open: "Chưa vào phiên — dữ liệu snapshot đóng cửa phiên trước là mới nhất",
     opening_auction: "Đang khớp ATO — giá dao động theo lệnh dự kiến",
     morning_continuous: "Phiên sáng — hệ thống ưu tiên tốc độ cập nhật",
-    lunch_break: "Nghỉ trưa — dữ liệu 11:30 làmới nhất hợp lệ",
+    lunch_break: "Nghỉ trưa — dữ liệu 11:30 là mới nhất hợp lệ",
     afternoon_continuous: "Phiên chiều — hệ thống ưu tiên tốc độ cập nhật",
     closing_auction: "Khớp ATC — chuẩn bị chốt giá ngày",
     post_trading: "Sau giờ — dữ liệu chốt ngày chính thức",
@@ -116,4 +111,29 @@ export function sessionFreshnessHint(state: VnSessionState): string {
     holiday_closed: "Nghỉ lễ — dữ liệu phiên gần nhất là mới nhất",
     closed: "Ngoài giờ — dữ liệu chốt phiên là mới nhất",
   }[state];
+}
+
+/**
+ * Nhãn trạng thái phiên theo *loại báo cáo* (khung phân tích),
+ * không phụ thuộc đồng hồ thực tại lúc bấm "Tạo báo cáo".
+ *  - morning_brief  → Chưa mở phiên
+ *  - intraday_brief → Hết phiên sáng
+ *  - market_summary → Đã đóng phiên
+ *  - strategy       → Khung tuần
+ */
+export type ReportPhaseKind = "morning_brief" | "intraday_brief" | "market_summary" | "strategy";
+
+export function reportPhaseLabelVi(kind: ReportPhaseKind): string {
+  switch (kind) {
+    case "morning_brief":
+      return "Chưa mở phiên";
+    case "intraday_brief":
+      return "Hết phiên sáng";
+    case "market_summary":
+      return "Đã đóng phiên";
+    case "strategy":
+      return "Khung tuần";
+    default:
+      return "—";
+  }
 }
