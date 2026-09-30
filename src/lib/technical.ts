@@ -204,7 +204,7 @@ export function maxDrawdown(closes: number[]): number | null {
   for (const c of closes) {
     if (c > peak) peak = c;
     const dd = (c - peak) / peak;
-    if (dd < maxDd) maxDd = dd;
+  if (dd < maxDd) maxDd = dd;
   }
   return maxDd;
 }
@@ -396,7 +396,47 @@ export function analyzeSeries(bars: OhlcvBar[]): TechnicalSnapshot | null {
     signals.push(divergenceSummaryLine(d));
   }
   if (moneyFlowAnalysis) {
-    signals.push(`Money Flow ${moneyFlowAnalysis.score >= 0 ? "cầu" : "cung"} ${moneyFlowAnalysis.score >= 0 ? "+" : ""}${moneyFlowAnalysis.score} · ${moneyFlowAnalysis.state} · độ tin cậy ${moneyFlowAnalysis.confidence}%`);
+    signals.push(
+      `Money Flow ${moneyFlowAnalysis.score >= 0 ? "cầu" : "cung"} ${moneyFlowAnalysis.score >= 0 ? "+" : ""}${moneyFlowAnalysis.score} · ${moneyFlowAnalysis.state} · độ tin cậy ${moneyFlowAnalysis.confidence}%`,
+    );
+    if (moneyFlowAnalysis.structure.mss) {
+      signals.push(
+        `MSS ${moneyFlowAnalysis.structure.mss === "bullish" ? "tăng" : "giảm"} · structure ${moneyFlowAnalysis.structure.trend}`,
+      );
+    } else if (moneyFlowAnalysis.structure.bos) {
+      signals.push(
+        `BOS ${moneyFlowAnalysis.structure.bos === "bullish" ? "tăng" : "giảm"} · trend ${moneyFlowAnalysis.structure.trend}`,
+      );
+    }
+    if (moneyFlowAnalysis.liquidity.sweep) {
+      signals.push(
+        moneyFlowAnalysis.liquidity.sweep === "SELL_SIDE"
+          ? "Liquidity sweep SSL (bẫy bán) — khả năng đảo chiều lên"
+          : "Liquidity sweep BSL (bẫy mua) — khả năng đảo chiều xuống",
+      );
+    }
+    if (moneyFlowAnalysis.smc.fvg && moneyFlowAnalysis.smc.fvg.status !== "FILLED") {
+      const f = moneyFlowAnalysis.smc.fvg;
+      signals.push(
+        `FVG ${f.direction === "bullish" ? "bullish" : "bearish"} ${f.status} · ${f.low.toFixed(2)}–${f.high.toFixed(2)}`,
+      );
+    }
+    if (moneyFlowAnalysis.smc.orderBlock && moneyFlowAnalysis.smc.orderBlock.status !== "BREAKER") {
+      const ob = moneyFlowAnalysis.smc.orderBlock;
+      signals.push(
+        `Order Block ${ob.direction === "bullish" ? "bullish" : "bearish"} ${ob.status ?? "OPEN"} · ${ob.low.toFixed(2)}–${ob.high.toFixed(2)}`,
+      );
+    }
+    if (moneyFlowAnalysis.ict.inOte) {
+      signals.push(
+        `Giá trong OTE (${moneyFlowAnalysis.ict.premiumDiscount}) — vùng entry ICT ưu tiên`,
+      );
+    } else if (moneyFlowAnalysis.ict.premiumDiscount !== "EQUILIBRIUM") {
+      signals.push(`ICT ${moneyFlowAnalysis.ict.premiumDiscount} zone`);
+    }
+    for (const ev of moneyFlowAnalysis.vsa.events.slice(0, 3)) {
+      signals.push(`VSA: ${ev}`);
+    }
   }
 
   const latestBarTime = bars[bars.length - 1]!.time;
