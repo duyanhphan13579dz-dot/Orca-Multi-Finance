@@ -235,7 +235,7 @@ export function ShellInner({ children }: { children: ReactNode }) {
   return (
     <div className="flex h-full min-h-0 flex-col bg-background-primary text-text-primary">
       <PriceAlertEngine />
-      <div className="relative z-20 border-b border-border-subtle">
+      <div className="sticky top-0 z-30 shrink-0 border-b border-border-subtle bg-surface-base/95 backdrop-blur-sm">
         <TickerTape />
       </div>
       <div className="relative z-10 flex min-h-0 flex-1">
