@@ -14,6 +14,7 @@ import { composeMarketSummaryFramework } from "./market-summary-composer";
 import { composeWeeklyStrategyFramework } from "./weekly-strategy-composer";
 import { buildMarketIntel, type BreadthData } from "./market-intel";
 import { enrichSnapshotForReports, pickCrossHighlights, resolveReportNews } from "./report-data";
+import { loadReportHubPack, mergeSnapshotWithHub } from "./report-hub";
 
 export { MAX_REPORTS_PER_TYPE } from "./report-retention";
 export type DailyReportType = "morning_brief" | "intraday_brief" | "market_summary" | "strategy";
@@ -108,23 +109,32 @@ async function buildCtx(): Promise<DailyCtx> {
   const session = getVnSession();
   const slot = detectIntradaySlot(vnNow.getHours(), vnNow.getMinutes());
 
-  const [s, intelRes, morningReport, priorStrategy, weekSummaries, crossPack] = await Promise.all([
-    buildMarketSnapshot(),
-    buildMarketIntel().catch(() => null),
-    loadLatestByType("morning_brief"),
-    loadLatestByType("strategy"),
-    loadWeekSummaries(),
-    import("./cross-asset")
-      .then((m) => m.getCrossAsset())
-      .catch(() => null),
-  ]);
+  const [s, intelRes, morningReport, priorStrategy, weekSummaries, crossPack, hubPack] =
+    await Promise.all([
+      buildMarketSnapshot(),
+      buildMarketIntel().catch(() => null),
+      loadLatestByType("morning_brief"),
+      loadLatestByType("strategy"),
+      loadWeekSummaries(),
+      import("./cross-asset")
+        .then((m) => m.getCrossAsset())
+        .catch(() => null),
+      loadReportHubPack().catch(() => null),
+    ]);
 
   const intelRaw = (intelRes as { intel?: Record<string, unknown> } | null)?.intel ?? null;
   let snap = s.snapshot;
+  if (hubPack) {
+    try {
+      snap = mergeSnapshotWithHub(snap, hubPack);
+    } catch {
+      /* soft */
+    }
+  }
   try {
-    snap = enrichSnapshotForReports(s.snapshot, intelRaw as { news?: never[] } | null);
+    snap = enrichSnapshotForReports(snap, intelRaw as { news?: never[] } | null);
   } catch {
-    snap = s.snapshot;
+    /* keep snap */
   }
   if (!snap.pulse) {
     const vn = snap.indices?.find((i) => i.code === "VNINDEX") ?? snap.indices?.[0];
@@ -169,8 +179,8 @@ async function buildCtx(): Promise<DailyCtx> {
     dateVi,
     breadth,
     intel,
-    sourcesLive: 1,
-    sourcesTotal: 1,
+    sourcesLive: hubPack?.sourcesLive ?? (s.snapshot.indices?.length ? 1 : 0),
+    sourcesTotal: hubPack?.sourcesTotal ?? 3,
     morningReport,
     priorStrategy,
     weekSummaries,
@@ -346,7 +356,7 @@ export async function generateDailyReport(
     source: "orca-report-engine",
     sourceTimestampMs: ctx.meta.sourceTimestamp ? Date.parse(String(ctx.meta.sourceTimestamp)) : null,
     sections: ctx.meta.sections,
-    note: `scheduler-ready · freshness gate · ${persistResult.keptPolicy}`,
+    note: `scheduler-ready · data-hub · freshness gate · ${persistResult.keptPolicy}`,
   });
   return { report, meta };
 }
