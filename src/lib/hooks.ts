@@ -21,7 +21,7 @@ const pendingFetches = new Map<string, { promise: Promise<ApiResponse<unknown>>;
 
 /** Soft freeze window after route change — skip non-critical revalidations. */
 let navFreezeUntil = 0;
-export function markAppNavigating(ms = 380) {
+export function markAppNavigating(ms = 220) {
   navFreezeUntil = Date.now() + ms;
 }
 
@@ -108,7 +108,6 @@ export function useApi<T>(url: string | null, opts?: { refreshInterval?: number;
   const baseRefresh = resolveRefresh(opts?.refreshInterval);
   const freshnessRef = useRef<string | undefined>(undefined);
 
-  // Adaptive: LIVE → tighter poll; STALE/UNAVAILABLE → back off; pause in background tabs
   const adaptiveBase = (() => {
     const f = freshnessRef.current;
     if (f === "STALE" || f === "UNAVAILABLE") return Math.max(baseRefresh, 28_000);
@@ -117,9 +116,7 @@ export function useApi<T>(url: string | null, opts?: { refreshInterval?: number;
     return baseRefresh;
   })();
 
-  // During rapid tab switches, hold polling so the UI paints first
   const inNavFreeze = isNavFrozen();
-  // If we already have warm cache for this URL, shorten freeze impact (revalidate sooner)
   const hasWarm = url ? clientCacheHas(url, 90_000) : false;
   const refreshInterval = visible && rt.liveUpdates && !inNavFreeze ? adaptiveBase : 0;
 
@@ -140,11 +137,8 @@ export function useApi<T>(url: string | null, opts?: { refreshInterval?: number;
       errorRetryInterval: rt.lowDataMode ? 45_000 : 10_000,
       errorRetryCount: rt.autoReconnect ? 2 : 0,
       keepPreviousData: true,
-      // Instant paint from session last-good when remounting after tab hop
       fallbackData,
-      // Warm cache → revalidate in background; cold → still fetch
       revalidateIfStale: true,
-      // Short dedupe so parallel widgets share one flight; long enough for tab hop
       dedupingInterval: rt.lowDataMode ? 16_000 : 4_000,
       suspense: false,
       onSuccess: (payload) => {
@@ -153,18 +147,14 @@ export function useApi<T>(url: string | null, opts?: { refreshInterval?: number;
           if (payload.meta?.freshness) freshnessRef.current = payload.meta.freshness;
         }
       },
-      onError: () => {
-        // Keep showing last-good; SWR already falls back via keepPreviousData/fallbackData
-      },
+      onError: () => {},
     },
   );
 
-  // Keep ref in sync when data already present (hydration / cache)
   if (data?.success && data.meta?.freshness && freshnessRef.current !== data.meta.freshness) {
     freshnessRef.current = data.meta.freshness;
   }
 
-  // When freeze ends, nudge a light revalidate once (stale-while-revalidate feel)
   useEffect(() => {
     if (!url || !visible) return;
     const left = navFreezeUntil - Date.now();
@@ -175,7 +165,6 @@ export function useApi<T>(url: string | null, opts?: { refreshInterval?: number;
     return () => window.clearTimeout(t);
   }, [url, visible, mutate, hasWarm]);
 
-  // Never treat as "loading" when we already have paintable data (cache or previous)
   const effectiveLoading = Boolean(isLoading && !data && !fallbackData);
 
   return {
