@@ -8,7 +8,7 @@ import {
 } from "../financial/snapshots";
 import { hubVnQuotes } from "../data-engine";
 import { sectorOf } from "../vn/master";
-import { DEFAULT_SYMBOLS } from "./valuation-screener";
+import { resolveListedEquityUniverse, listedEquityUniverseSync } from "../financial/equity-universe";
 
 export type FundamentalScreenRow = {
   symbol: string;
@@ -68,7 +68,6 @@ function bandScore(v: number | null, bands: [number, number][]): number | null {
   return 20;
 }
 
-/** Weighted quality score 0–100 from snapshot metrics (percent units). */
 function computeScreenScore(s: FundamentalSnapshot): number {
   const parts: { w: number; s: number }[] = [];
   const roeS = bandScore(s.roe, [[22, 95], [15, 85], [10, 70], [5, 50], [0, 35]]);
@@ -119,7 +118,11 @@ function passesFilters(row: FundamentalScreenRow, f: FundamentalFilterOpts): boo
   if (!check(row.debtEquity, f.minDebtEquity, f.maxDebtEquity)) return false;
   if (!check(row.currentRatio, f.minCurrentRatio, f.maxCurrentRatio)) return false;
   if (f.minCoverage != null && Number.isFinite(f.minCoverage) && row.coverage < f.minCoverage) return false;
-  if (f.minHealthScore != null && Number.isFinite(f.minHealthScore) && (row.healthScore == null || row.healthScore < f.minHealthScore))
+  if (
+    f.minHealthScore != null &&
+    Number.isFinite(f.minHealthScore) &&
+    (row.healthScore == null || row.healthScore < f.minHealthScore)
+  )
     return false;
   if (f.minNiYoy != null && Number.isFinite(f.minNiYoy) && (row.niYoyPct == null || row.niYoyPct < f.minNiYoy))
     return false;
@@ -156,15 +159,25 @@ function toRow(s: FundamentalSnapshot, price: number | null): FundamentalScreenR
 }
 
 export async function screenFundamental(opts: FundamentalFilterOpts = {}) {
-  const symbols = normalizeSymbols(opts.symbols, DEFAULT_SYMBOLS.split(","), 80);
-  const cacheKey = `screener:fundamental:v2:${symbols.join(",")}`;
+  let fallback = listedEquityUniverseSync(400);
+  try {
+    if (!opts.symbols?.length) {
+      const uni = await resolveListedEquityUniverse({ max: 500 });
+      if (uni.symbols.length) fallback = uni.symbols;
+    }
+  } catch {
+    /* master fallback */
+  }
+  const symbols = normalizeSymbols(opts.symbols, fallback, opts.symbols?.length ? 600 : 500);
+  const cacheKey = `screener:fundamental:v3:${symbols.length}:${symbols.slice(0, 8).join(",")}`;
 
   const result = await cached(cacheKey, {
-    ttlMs: 15 * 60_000,
-    staleMs: 60 * 60_000,
+    ttlMs: 20 * 60_000,
+    staleMs: 2 * 60 * 60_000,
+    softSwr: true,
     producer: async () => {
       const [snapPack, quotes] = await Promise.all([
-        getFundamentalSnapshots(symbols, { concurrency: 5 }),
+        getFundamentalSnapshots(symbols, { concurrency: 10, persist: true }),
         hubVnQuotes(symbols).catch(() => null),
       ]);
       const quoteMap = new Map((quotes?.quotes ?? []).map((q) => [q.symbol, q]));
@@ -199,9 +212,9 @@ export async function screenFundamental(opts: FundamentalFilterOpts = {}) {
       cached: result.cached,
       stale: result.stale,
       partial: result.value.scanned > result.value.withData,
-      note: `BCTC snapshot bulk · ${rows.length} khớp lọc / ${result.value.withData} có data / ${result.value.scanned} quét · score = ROE·ROIC·biên·đòn bẩy·coverage`,
+      note: `BCTC toàn sàn · ${rows.length} khớp / ${result.value.withData} có data / ${result.value.scanned} quét · ROE·ROIC·biên·đòn bẩy·coverage`,
     }),
   };
 }
 
-export { DEFAULT_SYMBOLS };
+export { listedEquityUniverseSync as DEFAULT_FUNDAMENTAL_UNIVERSE };
