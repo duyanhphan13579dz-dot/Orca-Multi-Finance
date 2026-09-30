@@ -2,8 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { useApi } from "@/lib/hooks";
-import type { VnStockDetail } from "@/lib/services/stocks";
 import { fmtCompact, Loading, Panel, Unavailable } from "@/components/ui";
+import { financialsApiUrl, type FinTablePayload } from "@/components/stocks/financials-table-data";
 
 type TabKey = "income" | "balance" | "cashflow" | "ratios";
 
@@ -24,11 +24,12 @@ const META_KEYS = new Set([
   "metricProfile",
   "metricLabelsVi",
   "metricLabelsEn",
+  "sourceUrl",
+  "sourceUrls",
+  "unit",
 ]);
 
-/** Chuẩn hóa tên chỉ tiêu tiếng Việt (bám DStock / VAS) */
 const METRIC_VI: Record<string, string> = {
-  // Kết quả kinh doanh
   revenue: "Doanh thu",
   netRevenue: "Doanh thu thuần",
   cogs: "Giá vốn hàng bán",
@@ -41,7 +42,6 @@ const METRIC_VI: Record<string, string> = {
   taxExpense: "Chi phí thuế TNDN",
   netIncome: "Lợi nhuận sau thuế",
   netIncomeParent: "LNST thuộc về công ty mẹ",
-  // Cân đối kế toán
   cash: "Tiền và tương đương tiền",
   shortTermInvestments: "Đầu tư tài chính ngắn hạn",
   receivables: "Các khoản phải thu ngắn hạn",
@@ -56,7 +56,6 @@ const METRIC_VI: Record<string, string> = {
   totalLiabilities: "Tổng nợ phải trả",
   equity: "Vốn chủ sở hữu",
   retainedEarnings: "Lợi nhuận sau thuế chưa phân phối",
-  // Lưu chuyển tiền tệ
   operatingCashFlow: "Lưu chuyển tiền thuần từ HĐKD",
   investingCashFlow: "Lưu chuyển tiền thuần từ HĐ đầu tư",
   financingCashFlow: "Lưu chuyển tiền thuần từ HĐ tài chính",
@@ -64,7 +63,6 @@ const METRIC_VI: Record<string, string> = {
   freeCashFlow: "Dòng tiền tự do (FCF)",
   cashBegin: "Tiền và tương đương tiền đầu kỳ",
   cashEnd: "Tiền và tương đương tiền cuối kỳ",
-  // Chỉ số tự động tính
   grossMargin: "Biên lợi nhuận gộp",
   operatingMargin: "Biên lợi nhuận HĐKD",
   netMargin: "Biên lợi nhuận ròng",
@@ -75,10 +73,8 @@ const METRIC_VI: Record<string, string> = {
   ocfToNi: "OCF / Lợi nhuận sau thuế",
 };
 
-// netIncome và netProfit cùng nhãn VI — chỉ hiển thị netIncome (tránh dòng trùng).
 const HIDDEN_DUPLICATE_KEYS = new Set(["netProfit"]);
 
-/** Thứ tự hiển thị ưu tiên theo từng bảng */
 const ORDER: Record<TabKey, string[]> = {
   income: [
     "netRevenue",
@@ -134,7 +130,7 @@ const ORDER: Record<TabKey, string[]> = {
 
 const RATIO_PCT_KEYS = new Set(["grossMargin", "operatingMargin", "netMargin", "roe", "roa"]);
 
-function statusVi(s: string | undefined): string {
+function statusVi(s: string | undefined | null): string {
   switch (s) {
     case "VERIFIED":
       return "Đã xác thực";
@@ -144,6 +140,8 @@ function statusVi(s: string | undefined): string {
       return "Bản lưu gần nhất";
     case "SOURCE_UNAVAILABLE":
       return "Nguồn không khả dụng";
+    case "FRESH":
+      return "Mới";
     default:
       return s ?? "—";
   }
@@ -165,20 +163,11 @@ function periodHeader(r: Record<string, unknown>): string {
   return "—";
 }
 
-/**
- * Sắp cột kỳ theo thứ tự: quý mới nhất → cũ (giữ nguyên thứ tự từ API),
- * nhưng năm (ANNUAL) chen giữa quý của cùng năm phải đưa về ĐÚNG vị trí thời gian:
- * 2025 (năm) luôn nằm SAU 2025-Q4 và TRƯỚC 2024-Q4 — không chen giữa 2025-Q1 và 2024-Q4.
- */
-function sortColumnsPeriods<T extends { year?: number | null; quarter?: number | null }>(
-  rows: T[],
-): T[] {
+function sortColumnsPeriods<T extends { year?: number | null; quarter?: number | null }>(rows: T[]): T[] {
   const rank = (r: T): number => {
     const y = r.year ?? 0;
-    // Năm (quarter == null) đứng sau Q4 cùng năm → sort key lớn hơn mọi quý của năm đó
     return r.quarter == null ? y * 10 + 5 : y * 10 + (r.quarter - 1) * 1.2;
   };
-  // Mới nhất trước (giảm dần)
   return [...rows].sort((a, b) => rank(b) - rank(a));
 }
 
@@ -189,25 +178,32 @@ export default function StockFinancialsPage({ params }: { params: Promise<{ symb
     params.then((p) => setSymbol(p.symbol.toUpperCase()));
   }, [params]);
 
-  const { res, data, isLoading } = useApi<VnStockDetail>(symbol ? `/api/v1/stocks/${symbol}` : null, {
-    refreshInterval: 300_000,
-  });
+  const { res, data, isLoading, error } = useApi<FinTablePayload>(
+    symbol ? financialsApiUrl(symbol) : null,
+    { refreshInterval: 300_000, timeoutMs: 45_000 },
+  );
 
   if (!symbol || (isLoading && !res)) return <Loading rows={8} />;
-  if (!res?.success || !data) {
+  if (!res?.success || !data?.financials) {
     return (
       <Unavailable
         title={`Không lấy được BCTC ${symbol}`}
-        note={res && !res.success ? res.error.message : "Nguồn báo cáo đang gián đoạn."}
+        note={
+          (res && !res.success ? res.error.message : null) ||
+          error ||
+          "Nguồn báo cáo đang gián đoạn. Thử lại sau hoặc mở link DStock bên dưới."
+        }
       />
     );
   }
 
-  const fm = data.financialMeta;
+  const fm = data.packageMeta ?? null;
   const sourceLabel = fm?.primarySource ?? "vndirect-fs";
-  const rawRows = data.financials[tab] ?? [];
-  // Sắp cột kỳ theo đúng trục thời gian (năm không chen giữa quý của năm sau)
-  const rows = sortColumnsPeriods(rawRows as { year?: number | null; quarter?: number | null }[]) as typeof rawRows;
+  const fin = data.financials;
+  const rawRows = (fin[tab] ?? []) as Record<string, unknown>[];
+  const rows = sortColumnsPeriods(
+    rawRows as { year?: number | null; quarter?: number | null }[],
+  ) as typeof rawRows;
 
   const metricKeys = Object.keys(rows[0] ?? {}).filter(
     (k) => !META_KEYS.has(k) && !HIDDEN_DUPLICATE_KEYS.has(k) && typeof rows[0]?.[k] === "number",
@@ -218,7 +214,6 @@ export default function StockFinancialsPage({ params }: { params: Promise<{ symb
 
   return (
     <div className="stock-workspace">
-      {/* Ưu tiên: bảng báo cáo tài chính lên đầu */}
       <Panel
         title="Bảng báo cáo tài chính"
         right={
@@ -292,6 +287,13 @@ export default function StockFinancialsPage({ params }: { params: Promise<{ symb
         <p className="mt-2 text-[10px] text-ink-3">
           Số tuyệt đối theo VND (api-finfo / DStock). Biên lợi nhuận, ROE, ROA hiển thị %.
         </p>
+        {data.notes?.length ? (
+          <ul className="mt-2 space-y-0.5 text-[10px] text-ink-3">
+            {data.notes.slice(0, 4).map((n, i) => (
+              <li key={i}>· {n}</li>
+            ))}
+          </ul>
+        ) : null}
       </Panel>
 
       <Panel title="Trạng thái báo cáo">
