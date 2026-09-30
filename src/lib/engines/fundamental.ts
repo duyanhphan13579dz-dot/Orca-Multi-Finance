@@ -3,12 +3,10 @@ import { getIndustryProfile } from "../financial/industry-profiles";
 
 /**
  * FINANCIAL HEALTH ENGINE — deterministic ratio computation from financial
- * statement rows (any provider shape; alias-based extraction). Pure code: the
- * LLM layer only ever receives these calculated results.
- * Phase 4 complete: industry weights + expanded ratios + risk flags.
- * Phase 1 valuation: anchors.cash exported for EV.
+ * statement rows (any provider shape; alias-based extraction).
  *
- * Perf: pre-index row keys + sort each statement once (indexAndSort).
+ * Perf: Map-indexed rows, pre-stripped aliases, sort once, smart TTM.
+ * Algo: ROE/ROA on average equity/assets; NOPAT-style ROIC; abs interest cover.
  */
 
 type Row = Record<string, unknown>;
@@ -16,24 +14,53 @@ type Row = Record<string, unknown>;
 const strip = (s: string) =>
   s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/đ/g, "d").replace(/[^a-z0-9]/g, "");
 
-type RowIndex = { row: Row; keys: string[]; stripped: string[] };
+function toNum(v: unknown): number | null {
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  if (v == null || v === "") return null;
+  if (typeof v === "string") {
+    const n = Number(v.replace(/\s/g, "").replace(/,/g, ""));
+    return Number.isFinite(n) ? n : null;
+  }
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+type RowIndex = {
+  row: Row;
+  keys: string[];
+  stripped: string[];
+  byKey: Map<string, number>;
+  periodScore: number;
+};
 
 function indexRow(row: Row): RowIndex {
   const keys = Object.keys(row);
-  return { row, keys, stripped: keys.map(strip) };
+  const stripped = keys.map(strip);
+  const byKey = new Map<string, number>();
+  for (let i = 0; i < keys.length; i++) {
+    const n = toNum(row[keys[i]]);
+    if (n != null && !byKey.has(stripped[i])) byKey.set(stripped[i], n);
+  }
+  const y = byKey.get("year") ?? byKey.get("nam") ?? byKey.get("periodyear") ?? 0;
+  const q =
+    byKey.get("quarter") ??
+    byKey.get("quy") ??
+    byKey.get("periodquarter") ??
+    byKey.get("lengthyear") ??
+    0;
+  return { row, keys, stripped, byKey, periodScore: y * 10 + q };
 }
 
 function findNumIndexed(ix: RowIndex, aliases: string[]): number | null {
-  const { row, keys, stripped } = ix;
   for (const alias of aliases) {
-    for (let i = 0; i < stripped.length; i++) {
-      if (stripped[i].includes(alias)) {
-        const v = row[keys[i]];
-        if (typeof v === "number" && Number.isFinite(v)) return v;
-        if (v != null) {
-          const n = Number(String(v).replace(/[,.]/g, (m) => (m === "," ? "" : m)));
-          if (Number.isFinite(n)) return n;
-        }
+    const exact = ix.byKey.get(alias);
+    if (exact != null) return exact;
+  }
+  for (const alias of aliases) {
+    for (let i = 0; i < ix.stripped.length; i++) {
+      if (ix.stripped[i].includes(alias)) {
+        const n = toNum(ix.row[ix.keys[i]]);
+        if (n != null) return n;
       }
     }
   }
@@ -41,21 +68,12 @@ function findNumIndexed(ix: RowIndex, aliases: string[]): number | null {
 }
 
 function findNum(row: Row, aliases: string[]): number | null {
-  return findNumIndexed(indexRow(row), aliases);
-}
-
-const PERIOD_AL = ["year", "nam", "periodyear"];
-const QUARTER_AL = ["quarter", "quy", "periodquarter", "lengthyear"];
-
-function periodScoreIndexed(ix: RowIndex): number {
-  const y = findNumIndexed(ix, PERIOD_AL) ?? 0;
-  const q = findNumIndexed(ix, QUARTER_AL) ?? 0;
-  return y * 10 + q;
+  return findNumIndexed(indexRow(row), aliases.map(strip));
 }
 
 function indexAndSort(rows: Row[]): RowIndex[] {
   const indexed = rows.map(indexRow);
-  indexed.sort((a, b) => periodScoreIndexed(b) - periodScoreIndexed(a));
+  indexed.sort((a, b) => b.periodScore - a.periodScore);
   return indexed;
 }
 
@@ -67,15 +85,41 @@ function latestIndexed(sorted: RowIndex[], aliases: string[]): number | null {
   return null;
 }
 
-function ttmIndexed(sorted: RowIndex[], aliases: string[]): number | null {
+function avgIndexed(sorted: RowIndex[], aliases: string[], n = 2): number | null {
   const vals: number[] = [];
-  for (const ix of sorted.slice(0, 6)) {
+  for (const ix of sorted) {
     const v = findNumIndexed(ix, aliases);
-    if (v != null) vals.push(v);
-    if (vals.length === 4) break;
+    if (v != null) {
+      vals.push(v);
+      if (vals.length >= n) break;
+    }
   }
-  if (vals.length >= 2) return vals.reduce((a, b) => a + b, 0);
-  return latestIndexed(sorted, aliases);
+  if (!vals.length) return null;
+  return vals.reduce((a, b) => a + b, 0) / vals.length;
+}
+
+/** Quarterly → sum ≤4 periods; annual → latest only (avoid summing years). */
+function ttmIndexed(sorted: RowIndex[], aliases: string[]): number | null {
+  if (!sorted.length) return null;
+  const vals: number[] = [];
+  let quarterlyHits = 0;
+  for (const ix of sorted.slice(0, 8)) {
+    const v = findNumIndexed(ix, aliases);
+    if (v == null) continue;
+    const q =
+      ix.byKey.get("quarter") ??
+      ix.byKey.get("quy") ??
+      ix.byKey.get("periodquarter") ??
+      0;
+    if (q >= 1 && q <= 4) quarterlyHits++;
+    vals.push(v);
+    if (vals.length >= 4) break;
+  }
+  if (!vals.length) return null;
+  if (quarterlyHits >= 2 && vals.length >= 2) {
+    return vals.slice(0, Math.min(4, vals.length)).reduce((a, b) => a + b, 0);
+  }
+  return vals[0]!;
 }
 
 function newestFirst(rows: Row[]): Row[] {
@@ -83,11 +127,11 @@ function newestFirst(rows: Row[]): Row[] {
 }
 
 function latest(rows: Row[], aliases: string[]): number | null {
-  return latestIndexed(indexAndSort(rows), aliases);
+  return latestIndexed(indexAndSort(rows), aliases.map(strip));
 }
 
 function ttm(rows: Row[], aliases: string[]): number | null {
-  return ttmIndexed(indexAndSort(rows), aliases);
+  return ttmIndexed(indexAndSort(rows), aliases.map(strip));
 }
 
 const AL = {
@@ -115,6 +159,10 @@ const AL = {
   bvps: ["bvps", "bookvaluepershare"],
   shares: ["sharesoutstanding", "soluongcophieuluuhanh", "listedshare", "cophieuluuhanh"],
 };
+
+const AL_S: { [K in keyof typeof AL]: string[] } = Object.fromEntries(
+  Object.entries(AL).map(([k, arr]) => [k, (arr as string[]).map(strip)]),
+) as { [K in keyof typeof AL]: string[] };
 
 export type RatioSet = Record<string, number | null>;
 
@@ -167,7 +215,14 @@ export function computeFinancialHealth(
   if (!anyData) {
     return {
       groups: { profitability: {}, liquidity: {}, leverage: {}, cashflow: {}, efficiency: {} },
-      scores: { profitability: null, liquidity: null, leverage: null, cashflow: null, efficiency: null, overall: null },
+      scores: {
+        profitability: null,
+        liquidity: null,
+        leverage: null,
+        cashflow: null,
+        efficiency: null,
+        overall: null,
+      },
       coverage: 0,
       warnings: ["Không có dữ liệu báo cáo tài chính từ provider"],
       riskFlags: [],
@@ -191,39 +246,47 @@ export function computeFinancialHealth(
   const bal = indexAndSort(balance);
   const cf = indexAndSort(cashflow);
 
-  const revenue = ttmIndexed(inc, AL.revenue) ?? latestIndexed(inc, AL.revenue);
-  const grossProfit = ttmIndexed(inc, AL.grossProfit);
-  const ebit = ttmIndexed(inc, AL.ebit);
-  const ebitdaTtm = ttmIndexed(inc, AL.ebitda) ?? (ebit != null ? ebit * 1.15 : null);
-  const netProfit = ttmIndexed(inc, AL.netProfit) ?? latestIndexed(inc, AL.netProfit);
-  const interestExpense = ttmIndexed(inc, AL.interestExpense);
+  const revenue = ttmIndexed(inc, AL_S.revenue) ?? latestIndexed(inc, AL_S.revenue);
+  const grossProfit = ttmIndexed(inc, AL_S.grossProfit);
+  const ebit = ttmIndexed(inc, AL_S.ebit);
+  const ebitdaReported = ttmIndexed(inc, AL_S.ebitda);
+  const ebitdaTtm = ebitdaReported ?? (ebit != null ? ebit * 1.12 : null);
+  const netProfit = ttmIndexed(inc, AL_S.netProfit) ?? latestIndexed(inc, AL_S.netProfit);
+  const interestExpense = ttmIndexed(inc, AL_S.interestExpense);
 
-  const totalAssets = latestIndexed(bal, AL.totalAssets);
-  const currentAssets = latestIndexed(bal, AL.currentAssets);
-  const totalLiabilities = latestIndexed(bal, AL.totalLiabilities);
-  const currentLiabilities = latestIndexed(bal, AL.currentLiabilities);
-  const equity = latestIndexed(bal, AL.equity);
-  const cash = latestIndexed(bal, AL.cash);
-  const shortDebtRaw = latestIndexed(bal, AL.shortDebt);
-  const longDebtRaw = latestIndexed(bal, AL.longDebt);
+  const totalAssets = latestIndexed(bal, AL_S.totalAssets);
+  const currentAssets = latestIndexed(bal, AL_S.currentAssets);
+  const totalLiabilities = latestIndexed(bal, AL_S.totalLiabilities);
+  const currentLiabilities = latestIndexed(bal, AL_S.currentLiabilities);
+  const equity = latestIndexed(bal, AL_S.equity);
+  const cash = latestIndexed(bal, AL_S.cash);
+  const shortDebtRaw = latestIndexed(bal, AL_S.shortDebt);
+  const longDebtRaw = latestIndexed(bal, AL_S.longDebt);
   const shortDebt = shortDebtRaw ?? 0;
   const longDebt = longDebtRaw ?? 0;
   const totalDebt =
     shortDebtRaw != null || longDebtRaw != null ? shortDebt + longDebt : totalLiabilities;
-  const inventory = latestIndexed(bal, AL.inventory);
-  const receivables = latestIndexed(bal, AL.receivables);
+  const inventory = latestIndexed(bal, AL_S.inventory);
+  const receivables = latestIndexed(bal, AL_S.receivables);
 
-  const ocfTtm = ttmIndexed(cf, AL.ocf);
-  const capexTtm = cf.length
-    ? Math.abs(ttmIndexed(cf, AL.capex) ?? ttmIndexed(cf, AL.buyInvest) ?? 0)
+  const equityAvg = avgIndexed(bal, AL_S.equity, 2) ?? equity;
+  const assetsAvg = avgIndexed(bal, AL_S.totalAssets, 2) ?? totalAssets;
+
+  const ocfTtm = ttmIndexed(cf, AL_S.ocf);
+  const capexRaw = cf.length
+    ? ttmIndexed(cf, AL_S.capex) ?? ttmIndexed(cf, AL_S.buyInvest)
     : null;
+  const capexTtm = capexRaw != null ? Math.abs(capexRaw) : cf.length ? 0 : null;
   const fcfTtm = ocfTtm != null && capexTtm != null ? ocfTtm - capexTtm : ocfTtm;
-  const shares = latestIndexed(bal, AL.shares) ?? latestIndexed(inc, AL.shares);
+  const shares = latestIndexed(bal, AL_S.shares) ?? latestIndexed(inc, AL_S.shares);
+  const epsStmt = latestIndexed(inc, AL_S.eps);
   const epsTtm =
-    latestIndexed(inc, AL.eps) ??
-    (netProfit != null && shares ? netProfit / shares : null);
+    epsStmt != null && epsStmt !== 0
+      ? epsStmt
+      : netProfit != null && shares && shares > 0
+        ? netProfit / shares
+        : null;
 
-  // Keep findNum/newestFirst available for any residual use
   void findNum;
   void newestFirst;
   void ttm;
@@ -234,12 +297,14 @@ export function computeFinancialHealth(
       grossMargin: zz(div(grossProfit, revenue), 4),
       operatingMargin: zz(div(ebit, revenue), 4),
       netMargin: zz(div(netProfit, revenue), 4),
-      roa: zz(div(netProfit, totalAssets), 4),
-      roe: zz(div(netProfit, equity), 4),
+      roa: zz(div(netProfit, assetsAvg), 4),
+      roe: zz(div(netProfit, equityAvg), 4),
       roic: zz(
         div(
-          ebit != null ? ebit * 0.8 : null,
-          totalDebt != null && equity != null ? totalDebt + equity - (cash ?? 0) : null,
+          ebit != null ? ebit * (1 - 0.2) : null,
+          totalDebt != null && equityAvg != null
+            ? totalDebt + equityAvg - (cash ?? 0)
+            : null,
         ),
         4,
       ),
@@ -258,12 +323,12 @@ export function computeFinancialHealth(
       debtToEquity: zz(div(totalDebt, equity), 2),
       debtToAssets: zz(div(totalDebt, totalAssets), 2),
       equityRatio: zz(div(equity, totalAssets), 2),
-      interestCoverage: zz(div(ebit, interestExpense), 2),
+      interestCoverage: zz(
+        div(ebit, interestExpense != null ? Math.abs(interestExpense) : null),
+        2,
+      ),
       netDebtToEbitda: zz(
-        div(
-          totalDebt != null ? totalDebt - (cash ?? 0) : null,
-          ebitdaTtm,
-        ),
+        div(totalDebt != null ? totalDebt - (cash ?? 0) : null, ebitdaTtm),
         2,
       ),
     },
@@ -274,14 +339,14 @@ export function computeFinancialHealth(
       fcfYieldProxy: zz(div(fcfTtm, equity), 4),
     },
     efficiency: {
-      assetTurnover: zz(div(revenue, totalAssets), 2),
+      assetTurnover: zz(div(revenue, assetsAvg ?? totalAssets), 2),
       inventoryDays:
         inventory != null && revenue != null && revenue > 0
-          ? zz((inventory / (revenue / 365)), 0)
+          ? zz(inventory / (revenue / 365), 0)
           : null,
       receivableDays:
         receivables != null && revenue != null && revenue > 0
-          ? zz((receivables / (revenue / 365)), 0)
+          ? zz(receivables / (revenue / 365), 0)
           : null,
     },
   };
@@ -330,23 +395,35 @@ export function computeFinancialHealth(
       scoreBand(groups.cashflow.ocfToNi, 1.0, 0.6),
       scoreBand(groups.cashflow.fcfToSales, 0.08, 0.02),
     ]),
-    efficiency: avgDefined([
-      scoreBand(groups.efficiency.assetTurnover, 0.8, 0.4),
-    ]),
+    efficiency: avgDefined([scoreBand(groups.efficiency.assetTurnover, 0.8, 0.4)]),
   };
 
   const roe = groups.profitability.roe;
   const ic = groups.leverage.interestCoverage;
   const nde = groups.leverage.netDebtToEbitda;
   if (profile?.flags) {
-    if (profile.flags.minInterestCoverage != null && ic != null && ic < profile.flags.minInterestCoverage) {
-      riskFlags.push(`Interest coverage ${ic.toFixed(2)} dưới ngưỡng ngành ${profile.flags.minInterestCoverage}`);
+    if (
+      profile.flags.minInterestCoverage != null &&
+      ic != null &&
+      ic < profile.flags.minInterestCoverage
+    ) {
+      riskFlags.push(
+        `Interest coverage ${ic.toFixed(2)} dưới ngưỡng ngành ${profile.flags.minInterestCoverage}`,
+      );
     }
-    if (profile.flags.maxNetDebtEbitda != null && nde != null && nde > profile.flags.maxNetDebtEbitda) {
-      riskFlags.push(`Net debt/EBITDA ${nde.toFixed(2)} vượt ngưỡng ngành ${profile.flags.maxNetDebtEbitda}`);
+    if (
+      profile.flags.maxNetDebtEbitda != null &&
+      nde != null &&
+      nde > profile.flags.maxNetDebtEbitda
+    ) {
+      riskFlags.push(
+        `Net debt/EBITDA ${nde.toFixed(2)} vượt ngưỡng ngành ${profile.flags.maxNetDebtEbitda}`,
+      );
     }
     if (profile.flags.minRoe != null && roe != null && roe < profile.flags.minRoe) {
-      riskFlags.push(`ROE ${(roe * 100).toFixed(1)}% dưới kỳ vọng ngành ${(profile.flags.minRoe * 100).toFixed(0)}%`);
+      riskFlags.push(
+        `ROE ${(roe * 100).toFixed(1)}% dưới kỳ vọng ngành ${(profile.flags.minRoe * 100).toFixed(0)}%`,
+      );
     }
   }
 
@@ -365,9 +442,17 @@ export function computeFinancialHealth(
   );
   const coverage = totalSlots ? filled / totalSlots : 0;
   if (coverage < 0.4)
-    warnings.push("Dữ liệu báo cáo tài chính chưa đầy đủ — kết quả chỉ mang tính tham khảo phần có dữ liệu");
-  if (equity != null && equity < 0) warnings.push("Vốn chủ sở hữu âm — rủi ro cơ cấu nghiêm trọng");
-  if (groups.profitability.roe != null && groups.profitability.roe > 0.18 && fcfTtm != null && fcfTtm < 0)
+    warnings.push(
+      "Dữ liệu báo cáo tài chính chưa đầy đủ — kết quả chỉ mang tính tham khảo phần có dữ liệu",
+    );
+  if (equity != null && equity < 0)
+    warnings.push("Vốn chủ sở hữu âm — rủi ro cơ cấu nghiêm trọng");
+  if (
+    groups.profitability.roe != null &&
+    groups.profitability.roe > 0.18 &&
+    fcfTtm != null &&
+    fcfTtm < 0
+  )
     warnings.push("ROE cao nhưng FCF âm — chất lượng lợi nhuận cần kiểm tra");
 
   return {
@@ -377,7 +462,18 @@ export function computeFinancialHealth(
     warnings,
     riskFlags,
     industry: industryMeta,
-    anchors: { revenue, netProfit, equity, totalDebt, cash, ocfTtm, fcfTtm, shares, epsTtm, ebitdaTtm },
+    anchors: {
+      revenue,
+      netProfit,
+      equity,
+      totalDebt,
+      cash,
+      ocfTtm,
+      fcfTtm,
+      shares,
+      epsTtm,
+      ebitdaTtm,
+    },
   };
 }
 
