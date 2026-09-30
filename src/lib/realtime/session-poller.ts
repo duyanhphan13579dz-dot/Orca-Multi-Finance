@@ -99,6 +99,10 @@ class SessionPoller {
       this.lastError = this.lastOk ? null : "empty board/quotes";
       this.lastDurationMs = Date.now() - t0;
       this.lastAt = Date.now();
+      // Warm full market snapshot (ticker) in background
+      void import("../services/market")
+        .then((m) => m.buildMarketSnapshot())
+        .catch(() => undefined);
     } catch (e) {
       this.lastOk = false;
       this.lastError = e instanceof Error ? e.message : "poll failed";
