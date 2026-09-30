@@ -1,6 +1,6 @@
 /**
- * Market snapshot — VN · Asia · US · Forex for ticker tape.
- * Optimized: parallel sources + soft SWR cache + per-source timeout budget.
+ * Market snapshot — VN · Asia · US · Forex for ticker + report composers.
+ * Parallel sources + soft SWR + per-source timeout budget.
  */
 
 import { getVnSession, sessionFreshnessHint, type VnSessionInfo } from "@/lib/vn/sessions";
@@ -13,8 +13,15 @@ export type SnapshotIndexRow = {
   label: string;
   region: "vn" | "asia" | "us" | "forex";
   value: number;
+  change: number | null;
   changePercent: number | null;
   href: string;
+};
+
+export type SnapshotPulse = {
+  score: number;
+  headline: string;
+  body: string[];
 };
 
 export type GlobalPulseRow = {
@@ -29,6 +36,7 @@ export type MarketSnapshot = {
   vnSessionHint: string;
   checkedAt: string;
   indices: SnapshotIndexRow[];
+  pulse: SnapshotPulse;
   global?: {
     us: GlobalPulseRow[];
     asia: GlobalPulseRow[];
@@ -37,8 +45,39 @@ export type MarketSnapshot = {
     sources: string[];
   };
   news?: unknown[];
-  crypto?: unknown;
-  forex?: unknown;
+  crypto?: {
+    summary: {
+      marketCount: number;
+      advancers: number;
+      decliners: number;
+      avgChangePercent: number;
+      totalQuoteVolume: number;
+      btcChangePercent: number | null;
+      ethChangePercent: number | null;
+    };
+    top: Array<{
+      baseAsset: string;
+      symbol: string;
+      price: number;
+      changePercent: number | null;
+    }>;
+  };
+  forex?: {
+    rows: Array<{
+      pair?: string;
+      symbol?: string;
+      price?: number;
+      changePercent?: number | null;
+      group?: string;
+    }>;
+    usdStrengthNote?: string;
+  };
+  commodities?: Array<{
+    symbol: string;
+    name?: string;
+    price?: number;
+    changePercent?: number | null;
+  }>;
 };
 
 const ASIA_YAHOO: { yahoo: string; code: string; label: string }[] = [
@@ -51,7 +90,6 @@ const ASIA_YAHOO: { yahoo: string; code: string; label: string }[] = [
 const US_SYMBOLS = ["SPY", "QQQ", "DIA", "IWM"] as const;
 const FOREX_MAJORS = new Set(["EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCNH", "USDCHF", "USDCAD"]);
 
-/** Hard ceiling per external source — never block ticker on one slow provider. */
 const BUDGET_VN_MS = 2_200;
 const BUDGET_ASIA_MS = 2_400;
 const BUDGET_US_MS = 2_400;
@@ -107,6 +145,7 @@ async function loadVn(): Promise<PartialPack> {
         label: vnLabel(i.code),
         region: "vn",
         value: i.value,
+        change: (i as { change?: number }).change ?? null,
         changePercent: i.changePercent ?? null,
         href: vnHref(i.code),
       });
@@ -138,6 +177,7 @@ async function loadAsia(): Promise<PartialPack> {
         label: def.label,
         region: "asia",
         value: q.price,
+        change: null,
         changePercent: q.changePercent ?? null,
         href: "/market",
       });
@@ -193,6 +233,7 @@ async function loadUs(): Promise<PartialPack> {
     label: u.symbol,
     region: "us" as const,
     value: u.price,
+    change: null,
     changePercent: u.changePercent,
     href: "/market",
   }));
@@ -235,6 +276,7 @@ async function loadForex(): Promise<PartialPack> {
         label: pair.length === 6 ? `${pair.slice(0, 3)}/${pair.slice(3)}` : pair,
         region: "forex",
         value: px,
+        change: null,
         changePercent: r.changePercent != null ? Number(r.changePercent) : null,
         href: `/forex/${pair}`,
       });
@@ -303,11 +345,110 @@ async function produceSnapshot(): Promise<{ snapshot: MarketSnapshot; meta: Meta
   const forexRows = fx.forex ?? [];
   const cryptoTip = crypto.cryptoTip ?? [];
 
+  const vnIdx =
+    indices.find((i) => i.region === "vn" && (i.code === "VNINDEX" || i.code === "VN-INDEX")) ??
+    indices.find((i) => i.region === "vn") ??
+    null;
+  const pulseScoreRaw =
+    vnIdx?.changePercent != null
+      ? Math.max(-1, Math.min(1, vnIdx.changePercent / 2))
+      : indices.length
+        ? Math.max(
+            -1,
+            Math.min(
+              1,
+              indices.reduce((s, i) => s + (i.changePercent ?? 0), 0) / indices.length / 2,
+            ),
+          )
+        : 0;
+  const pulse: SnapshotPulse = {
+    score: pulseScoreRaw,
+    headline: vnIdx
+      ? `${vnIdx.label} ${vnIdx.value.toLocaleString("en-US", { maximumFractionDigits: 2 })} (${vnIdx.changePercent != null && vnIdx.changePercent >= 0 ? "+" : ""}${vnIdx.changePercent?.toFixed(2) ?? "—"}%)`
+      : indices.length
+        ? `${indices.length} chỉ số đã cập nhật`
+        : "Chưa có chỉ số LIVE — chờ nguồn",
+    body: [
+      vnIdx
+        ? `VN: ${vnIdx.label} ${vnIdx.changePercent != null ? (vnIdx.changePercent >= 0 ? "+" : "") + vnIdx.changePercent.toFixed(2) + "%" : "—"}`
+        : "VN-Index chưa có dữ liệu trong snapshot.",
+      usRows.length
+        ? `Mỹ: ${usRows
+            .map(
+              (u) =>
+                `${u.symbol} ${u.changePercent != null ? (u.changePercent >= 0 ? "+" : "") + u.changePercent.toFixed(2) + "%" : "—"}`,
+            )
+            .slice(0, 3)
+            .join(" · ")}`
+        : "Mỹ: chưa có SPY/QQQ trong snapshot.",
+      forexRows.length
+        ? `Forex: ${forexRows.slice(0, 3).map((f) => f.symbol).join(", ")}`
+        : "Forex: chưa có majors LIVE.",
+    ],
+  };
+
+  let cryptoBlock: MarketSnapshot["crypto"];
+  if (cryptoTip.length) {
+    const btc = cryptoTip.find((c) => /BTC/i.test(c.symbol));
+    const eth = cryptoTip.find((c) => /ETH/i.test(c.symbol));
+    const chgs = cryptoTip
+      .map((c) => c.changePercent)
+      .filter((x): x is number => x != null && Number.isFinite(x));
+    cryptoBlock = {
+      summary: {
+        marketCount: cryptoTip.length,
+        advancers: chgs.filter((x) => x > 0).length,
+        decliners: chgs.filter((x) => x < 0).length,
+        avgChangePercent: chgs.length ? chgs.reduce((a, b) => a + b, 0) / chgs.length : 0,
+        totalQuoteVolume: 0,
+        btcChangePercent: btc?.changePercent ?? null,
+        ethChangePercent: eth?.changePercent ?? null,
+      },
+      top: cryptoTip.map((c) => ({
+        baseAsset: c.symbol,
+        symbol: `${c.symbol}USDT`,
+        price: c.price,
+        changePercent: c.changePercent,
+      })),
+    };
+  }
+
+  let forexBlock: MarketSnapshot["forex"];
+  if (forexRows.length || fx.indices.length) {
+    const rows = forexRows.length
+      ? forexRows.map((f) => ({
+          pair: f.symbol,
+          symbol: f.symbol,
+          price: f.price,
+          changePercent: f.changePercent,
+          group: "major",
+        }))
+      : fx.indices.map((i) => ({
+          pair: i.code,
+          symbol: i.code,
+          price: i.value,
+          changePercent: i.changePercent,
+          group: "major",
+        }));
+    const usdUp = rows.filter((r) => r.pair?.startsWith("USD") && (r.changePercent ?? 0) > 0).length;
+    const usdDown = rows.filter((r) => r.pair?.startsWith("USD") && (r.changePercent ?? 0) < 0).length;
+    forexBlock = {
+      rows,
+      usdStrengthNote:
+        usdUp + usdDown > 0
+          ? `USD majors: ${usdUp} tăng / ${usdDown} giảm trong snapshot — theo dõi DXY/USDVND.`
+          : rows.length
+            ? `Majors: ${rows.slice(0, 3).map((r) => r.pair).join(", ")}.`
+            : undefined,
+    };
+  }
+
   const snapshot: MarketSnapshot = {
     vnSession,
     vnSessionHint: sessionFreshnessHint(vnSession.state),
     checkedAt,
     indices,
+    pulse,
     global:
       usRows.length || asiaRows.length || forexRows.length || cryptoTip.length
         ? {
@@ -318,6 +459,8 @@ async function produceSnapshot(): Promise<{ snapshot: MarketSnapshot; meta: Meta
             sources: sources.filter((s) => s !== "vn-session"),
           }
         : undefined,
+    crypto: cryptoBlock,
+    forex: forexBlock,
   };
 
   const meta = buildMeta({
@@ -329,13 +472,12 @@ async function produceSnapshot(): Promise<{ snapshot: MarketSnapshot; meta: Meta
   return { snapshot, meta };
 }
 
-/** Cached — soft SWR: fresh 25s · stale 180s (background refresh). */
+/** Cached — soft SWR: fresh 25s · stale 180s. Signature: cached(key, opts). */
 export async function buildMarketSnapshot(): Promise<{
   snapshot: MarketSnapshot;
   meta: Meta;
 }> {
-  const res = await cached<{ snapshot: MarketSnapshot; meta: Meta }>({
-    key: "market:snapshot:v2",
+  const res = await cached<{ snapshot: MarketSnapshot; meta: Meta }>("market:snapshot:v2", {
     ttlMs: SNAP_TTL_MS,
     staleMs: SNAP_STALE_MS,
     softSwr: true,
@@ -343,9 +485,15 @@ export async function buildMarketSnapshot(): Promise<{
   });
   const { snapshot, meta } = res.value;
   const session = getVnSession();
+  const safePulse = snapshot.pulse ?? {
+    score: 0,
+    headline: "Chưa có pulse",
+    body: [] as string[],
+  };
   return {
     snapshot: {
       ...snapshot,
+      pulse: safePulse,
       vnSession: session,
       vnSessionHint: sessionFreshnessHint(session.state),
       checkedAt: res.cached ? snapshot.checkedAt : new Date().toISOString(),
