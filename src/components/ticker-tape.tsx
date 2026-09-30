@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useApi } from "@/lib/hooks";
 import { clientCacheGet, clientCacheSet } from "@/lib/client-cache";
 import type { MarketSnapshot } from "@/lib/services/market";
@@ -76,6 +76,14 @@ export function prefetchMarketSnapshot() {
     .catch(() => undefined);
 }
 
+function useHydrated() {
+  return useSyncExternalStore(
+    () => () => undefined,
+    () => true,
+    () => false,
+  );
+}
+
 /** Realtime ticker — cố định, sticky data khi chuyển trang. */
 export const TickerTape = memo(function TickerTape() {
   const { data, isLoading } = useApi<MarketSnapshot>(SNAP_URL, {
@@ -85,11 +93,10 @@ export const TickerTape = memo(function TickerTape() {
   const trackRef = useRef<HTMLDivElement>(null);
   const [paused, setPaused] = useState(false);
   const [narrow, setNarrow] = useState(false);
-  const [mounted, setMounted] = useState(false);
+  const hydrated = useHydrated();
   const [seed, setSeed] = useState<MarketSnapshot | null>(null);
 
   useEffect(() => {
-    setMounted(true);
     setSeed(stickySnap ?? readSessionSnap());
     prefetchMarketSnapshot();
   }, []);
@@ -112,7 +119,7 @@ export const TickerTape = memo(function TickerTape() {
     return () => io.disconnect();
   }, []);
 
-  const snap = mounted
+  const snap = hydrated
     ? (data?.indices?.length ? data : stickySnap?.indices?.length ? stickySnap : seed)
     : null;
 
@@ -178,9 +185,7 @@ export const TickerTape = memo(function TickerTape() {
       <div className="ticker-bar sticky top-0 z-30 flex h-8 items-center px-4 text-[11px] text-ink-3">
         <span className="size-1.5 animate-pulse rounded-full bg-accent/60" />
         <span className="ml-2">
-          {isLoading
-            ? "Đang kết nối luồng dữ liệu thị trường…"
-            : "Đang tải chỉ số VN · Châu Á · Mỹ · Forex…"}
+          Đang tải chỉ số VN · Châu Á · Mỹ · Forex…
         </span>
       </div>
     );
