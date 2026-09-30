@@ -30,14 +30,14 @@ export function OrcaWordmark({
   className?: string;
 }) {
   return (
-    <span className={`flex min-w-0 items-center gap-2 ${className}`}>
+    <span className={`flex min-w-0 max-w-full items-center gap-2 overflow-hidden ${className}`}>
       <OrcaMark size={size} />
-      <span className="flex min-w-0 flex-col leading-none">
-        <span className="truncate text-[14px] font-bold tracking-[0.04em] text-text-primary">
+      <span className="flex min-w-0 flex-1 flex-col overflow-hidden leading-none">
+        <span className="truncate text-[13px] font-bold tracking-[0.03em] text-text-primary sm:text-[14px] sm:tracking-[0.04em]">
           ORCA<span className="text-accent-primary"> FINANCIAL</span>
         </span>
         {subtitle ? (
-          <span className="mt-0.5 truncate text-[8.5px] font-medium uppercase tracking-[0.18em] text-text-muted">
+          <span className="mt-0.5 truncate text-[8px] font-medium uppercase tracking-[0.12em] text-text-muted sm:text-[8.5px] sm:tracking-[0.18em]">
             Intelligent Investment
           </span>
         ) : null}
