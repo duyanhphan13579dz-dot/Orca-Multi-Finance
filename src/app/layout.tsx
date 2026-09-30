@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
+import "./motion.css";
 import { AppShell } from "@/components/shell";
 import { ClientProviders } from "@/components/client-providers";
 import { SettingsProvider } from "@/lib/settings";
