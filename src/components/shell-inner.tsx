@@ -95,10 +95,36 @@ export function ShellInner({ children }: { children: ReactNode }) {
   const router = useRouter();
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [sideAnimating, setSideAnimating] = useState(false);
+  const sideAnimTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    try {
+      const v = localStorage.getItem("orca:sidebar:collapsed");
+      if (v === "1") setCollapsed(true);
+    } catch {
+      /* ignore */
+    }
+  }, []);
 
   useEffect(() => {
     setMobileOpen(false);
   }, [pathname]);
+
+  const toggleCollapsed = useCallback(() => {
+    setSideAnimating(true);
+    setCollapsed((v) => {
+      const next = !v;
+      try {
+        localStorage.setItem("orca:sidebar:collapsed", next ? "1" : "0");
+      } catch {
+        /* ignore */
+      }
+      return next;
+    });
+    if (sideAnimTimer.current) clearTimeout(sideAnimTimer.current);
+    sideAnimTimer.current = setTimeout(() => setSideAnimating(false), 320);
+  }, []);
 
   const onNav = useCallback(
     (href: string, e: MouseEvent<HTMLAnchorElement>) => {
@@ -138,8 +164,7 @@ export function ShellInner({ children }: { children: ReactNode }) {
         onClick={(e) => onNav(href, e)}
         onMouseEnter={() => onHover(href)}
         className={
-          "group relative flex h-9 shrink-0 items-center gap-2.5 rounded-lg text-[13px] leading-none " +
-          "transition-[background-color,color,padding] duration-200 ease-out " +
+          "group relative flex h-9 shrink-0 items-center gap-2.5 rounded-lg text-[13px] leading-none orca-nav-item " +
           (collapsed ? "justify-center px-0" : "px-2.5") +
           " " +
           (active
@@ -151,7 +176,7 @@ export function ShellInner({ children }: { children: ReactNode }) {
         <Icon className="size-4 shrink-0 opacity-90" />
         <span
           className={
-            "truncate transition-[opacity,max-width,margin] duration-200 ease-out " +
+            "truncate orca-nav-item-label " +
             (collapsed
               ? "pointer-events-none ml-0 max-w-0 opacity-0"
               : "max-w-[160px] opacity-100")
@@ -177,9 +202,7 @@ export function ShellInner({ children }: { children: ReactNode }) {
           href="/"
           onClick={(e) => onNav("/", e)}
           className={
-            collapsed
-              ? "grid place-items-center"
-              : "min-w-0 flex-1 overflow-hidden pr-0.5"
+            collapsed ? "grid place-items-center" : "min-w-0 flex-1 overflow-hidden pr-0.5"
           }
           title="ORCA Financial"
         >
@@ -188,7 +211,7 @@ export function ShellInner({ children }: { children: ReactNode }) {
         <button
           type="button"
           className="hidden size-8 shrink-0 place-items-center rounded-md text-text-muted transition-colors hover:bg-surface-elevated hover:text-text-primary md:grid"
-          onClick={() => setCollapsed((v) => !v)}
+          onClick={toggleCollapsed}
           aria-label={collapsed ? "Mở rộng sidebar" : "Thu gọn sidebar"}
         >
           {collapsed ? <ChevronsRight className="size-4" /> : <ChevronsLeft className="size-4" />}
@@ -203,7 +226,7 @@ export function ShellInner({ children }: { children: ReactNode }) {
         </button>
       </div>
 
-      <nav className="min-h-0 flex-1 space-y-3 overflow-y-auto overflow-x-hidden overscroll-contain px-2 py-3">
+      <nav className="orca-sidebar-nav min-h-0 flex-1 space-y-3 px-2 py-3">
         {NAV_SECTIONS.map((section) => (
           <div key={section.title} className="space-y-0.5">
             <div
@@ -235,18 +258,18 @@ export function ShellInner({ children }: { children: ReactNode }) {
   return (
     <div className="flex h-full min-h-0 flex-col bg-background-primary text-text-primary">
       <PriceAlertEngine />
-      <div className="sticky top-0 z-30 shrink-0 border-b border-border-subtle bg-surface-base/95 backdrop-blur-sm">
+      <div className="sticky top-0 z-30 shrink-0 border-b border-border-subtle bg-surface-base">
         <TickerTape />
       </div>
       <div className="relative z-10 flex min-h-0 flex-1">
         <aside
           className={
-            "relative hidden h-full shrink-0 overflow-hidden border-r border-border-subtle bg-surface-base " +
-            "transition-[width] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] will-change-[width] md:block " +
+            "orca-aside relative hidden h-full shrink-0 overflow-hidden border-r border-border-subtle bg-surface-base md:block " +
+            (sideAnimating ? "is-collapsing " : "") +
             (collapsed ? "w-[56px]" : "w-[220px]")
           }
         >
-          {sidebar}
+          <div className="orca-sidebar h-full">{sidebar}</div>
         </aside>
 
         <div
@@ -259,7 +282,7 @@ export function ShellInner({ children }: { children: ReactNode }) {
           <button
             type="button"
             className={
-              "absolute inset-0 bg-black/50 transition-opacity duration-300 ease-out " +
+              "orca-drawer-backdrop absolute inset-0 bg-black/50 " +
               (mobileOpen ? "opacity-100" : "opacity-0")
             }
             aria-label="Đóng menu"
@@ -267,8 +290,7 @@ export function ShellInner({ children }: { children: ReactNode }) {
           />
           <aside
             className={
-              "absolute left-0 top-0 h-full w-[260px] max-w-[85vw] overflow-hidden bg-surface-base shadow-2xl " +
-              "transition-transform duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] will-change-transform " +
+              "orca-drawer absolute left-0 top-0 h-full w-[260px] max-w-[85vw] overflow-hidden bg-surface-base shadow-2xl " +
               (mobileOpen ? "translate-x-0" : "-translate-x-full")
             }
           >
@@ -298,9 +320,9 @@ export function ShellInner({ children }: { children: ReactNode }) {
               <Settings className="size-4" />
             </Link>
           </header>
-          <main className="min-h-0 flex-1 overflow-y-auto">
-            <ErrorBoundary key={pathname}>
-              <div className="p-3 sm:p-4">{children}</div>
+          <main className="orca-main-scroll min-h-0 flex-1 overflow-y-auto">
+            <ErrorBoundary name="page" resetKey={pathname}>
+              <div className="orca-page-enter p-3 sm:p-4">{children}</div>
             </ErrorBoundary>
           </main>
         </div>
