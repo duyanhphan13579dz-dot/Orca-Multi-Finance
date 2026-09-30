@@ -29,15 +29,24 @@ export function OrcaWordmark({
   subtitle?: boolean;
   className?: string;
 }) {
+  const titlePx = size >= 32 ? 15 : size >= 28 ? 14 : 13;
+  const subPx = size >= 32 ? 9.5 : size >= 28 ? 9 : 8;
+
   return (
-    <span className={`flex min-w-0 items-center gap-2 ${className}`}>
+    <span className={`flex min-w-0 items-center gap-2.5 ${className}`}>
       <OrcaMark size={size} className="shrink-0" />
-      <span className="flex min-w-0 flex-col justify-center leading-none">
-        <span className="whitespace-nowrap text-[13px] font-bold tracking-[0.02em] text-text-primary">
+      <span className="flex min-w-0 flex-col justify-center gap-0.5 leading-none">
+        <span
+          className="whitespace-nowrap font-bold tracking-[0.02em] text-text-primary"
+          style={{ fontSize: titlePx }}
+        >
           ORCA<span className="text-accent-primary"> FINANCIAL</span>
         </span>
         {subtitle ? (
-          <span className="mt-0.5 whitespace-nowrap text-[8px] font-medium uppercase tracking-[0.06em] text-text-muted">
+          <span
+            className="whitespace-nowrap font-medium uppercase tracking-[0.05em] text-text-muted"
+            style={{ fontSize: subPx }}
+          >
             Intelligent Investment
           </span>
         ) : null}
