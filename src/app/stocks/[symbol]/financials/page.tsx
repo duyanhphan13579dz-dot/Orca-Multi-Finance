@@ -9,11 +9,11 @@ import { financialsApiUrl, type FinTablePayload } from "@/components/stocks/fina
 
 type TabKey = "income" | "balance" | "cashflow" | "ratios";
 
-const TABS: { key: TabKey; label: string }[] = [
-  { key: "income", label: "Kết quả kinh doanh" },
-  { key: "balance", label: "Cân đối kế toán" },
-  { key: "cashflow", label: "Lưu chuyển tiền tệ" },
-  { key: "ratios", label: "Chỉ số tự động" },
+const TABS: { key: TabKey; label: string; short: string }[] = [
+  { key: "income", label: "Kết quả kinh doanh", short: "KQKD" },
+  { key: "balance", label: "Cân đối kế toán", short: "CĐKT" },
+  { key: "cashflow", label: "Lưu chuyển tiền tệ", short: "LCTT" },
+  { key: "ratios", label: "Chỉ số tự động", short: "Chỉ số" },
 ];
 
 const META_KEYS = new Set([
@@ -221,28 +221,45 @@ export default function StockFinancialsPage({ params }: { params: Promise<{ symb
   const rest = metricKeys.filter((k) => !preferred.includes(k));
   const orderedKeys = [...preferred, ...rest].slice(0, 28);
 
+  const periodRows = rows.slice(0, 8);
+  const mobilePeriodRows = rows.slice(0, 4);
+
   return (
-    <div className="stock-workspace">
-      <Panel
-        title="Bảng báo cáo tài chính"
-        right={
-          <div className="flex flex-wrap gap-1">
-            {TABS.map((t) => (
-              <button
-                key={t.key}
-                type="button"
-                onClick={() => setTab(t.key)}
-                className={`rounded-md px-2 py-0.5 text-[11px] ${
-                  tab === t.key ? "bg-accent/15 text-accent" : "text-ink-3 hover:text-ink"
-                }`}
-              >
-                {t.label}
-              </button>
-            ))}
-          </div>
-        }
-      >
-        <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-ink-3">
+    <div className="stock-workspace space-y-3">
+      <Panel title="Bảng báo cáo tài chính">
+        <div className="stock-fs-tabs mb-3 hidden max-md:grid">
+          {TABS.map((t) => (
+            <button
+              key={t.key}
+              type="button"
+              onClick={() => setTab(t.key)}
+              className={`rounded-lg border text-[11px] font-medium transition-colors ${
+                tab === t.key
+                  ? "border-accent/40 bg-accent/15 text-accent"
+                  : "border-border-subtle text-ink-3 hover:text-ink"
+              }`}
+            >
+              {t.short}
+              <span className="mt-0.5 block text-[9px] font-normal opacity-70">{t.label}</span>
+            </button>
+          ))}
+        </div>
+        <div className="mb-3 hidden flex-wrap gap-1 md:flex">
+          {TABS.map((t) => (
+            <button
+              key={t.key}
+              type="button"
+              onClick={() => setTab(t.key)}
+              className={`rounded-md px-2.5 py-1 text-[11px] ${
+                tab === t.key ? "bg-accent/15 text-accent" : "text-ink-3 hover:text-ink"
+              }`}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+
+        <div className="stock-fs-meta mb-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-ink-3">
           <span>
             {TABS.find((x) => x.key === tab)?.label} · Nguồn{" "}
             <strong className="text-ink-2">{sourceLabel}</strong>
@@ -260,52 +277,96 @@ export default function StockFinancialsPage({ params }: { params: Promise<{ symb
         {!rows.length ? (
           <p className="text-[12px] text-ink-3">Bảng này chưa có dữ liệu từ {sourceLabel}.</p>
         ) : (
-          <div className="w-full min-w-0 overflow-x-auto">
-            <table className="stock-table stock-fs-table w-full table-fixed text-[12px]">
-              <colgroup>
-                <col className="stock-fs-col-metric" />
-                {rows.slice(0, 8).map((_, i) => (
-                  <col key={i} className="stock-fs-col-period" />
-                ))}
-              </colgroup>
-              <thead>
-                <tr className="border-b border-line text-ink-3">
-                  <th className="sticky left-0 z-10 bg-bg-2 py-2 pr-3 text-left font-medium">
-                    Chỉ tiêu
-                  </th>
-                  {rows.slice(0, 8).map((r, i) => (
-                    <th key={i} className="num px-1.5 py-2 text-right font-medium tabular-nums">
-                      {periodHeader(r)}
-                    </th>
+          <>
+            <div className="stock-fs-scroll md:hidden">
+              <table className="stock-table stock-fs-table w-full text-[11px]">
+                <colgroup>
+                  <col className="stock-fs-col-metric" />
+                  {mobilePeriodRows.map((_, i) => (
+                    <col key={i} className="stock-fs-col-period" />
                   ))}
-                </tr>
-              </thead>
-              <tbody>
-                {orderedKeys.map((k) => (
-                  <tr key={k} className="border-t border-line/40">
-                    <td
-                      className="sticky left-0 z-10 truncate bg-bg-2 py-1.5 pr-3 text-left text-ink-2"
-                      title={METRIC_VI[k] ?? k}
-                    >
-                      {METRIC_VI[k] ?? k}
-                    </td>
-                    {rows.slice(0, 8).map((r, i) => {
-                      const val = r[k];
-                      const ok = typeof val === "number" && Number.isFinite(val);
-                      return (
-                        <td key={i} className="num px-1.5 py-1.5 text-right tabular-nums text-ink-2">
-                          {ok ? formatMetricValue(k, val as number) : "—"}
-                        </td>
-                      );
-                    })}
+                </colgroup>
+                <thead>
+                  <tr className="border-b border-line text-ink-3">
+                    <th className="stock-fs-sticky bg-bg-2 py-2 pr-2 text-left font-medium">Chỉ tiêu</th>
+                    {mobilePeriodRows.map((r, i) => (
+                      <th key={i} className="num px-1 py-2 text-right font-medium tabular-nums">
+                        {periodHeader(r)}
+                      </th>
+                    ))}
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody>
+                  {orderedKeys.map((k) => (
+                    <tr key={k} className="border-t border-line/40">
+                      <td className="stock-fs-sticky bg-bg-2 py-1.5 pr-2 text-left text-ink-2" title={METRIC_VI[k] ?? k}>
+                        {METRIC_VI[k] ?? k}
+                      </td>
+                      {mobilePeriodRows.map((r, i) => {
+                        const val = r[k];
+                        const ok = typeof val === "number" && Number.isFinite(val);
+                        return (
+                          <td key={i} className="num px-1 py-1.5 text-right tabular-nums text-ink-2">
+                            {ok ? formatMetricValue(k, val as number) : "—"}
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {rows.length > 4 ? (
+              <p className="mt-1.5 text-[10px] text-ink-3 md:hidden">
+                Đang hiện 4 kỳ gần nhất · xoay ngang hoặc dùng máy tính để xem thêm cột.
+              </p>
+            ) : null}
+
+            <div className="stock-fs-scroll hidden md:block">
+              <table className="stock-table stock-fs-table w-full table-fixed text-[12px]">
+                <colgroup>
+                  <col className="stock-fs-col-metric" />
+                  {periodRows.map((_, i) => (
+                    <col key={i} className="stock-fs-col-period" />
+                  ))}
+                </colgroup>
+                <thead>
+                  <tr className="border-b border-line text-ink-3">
+                    <th className="stock-fs-sticky bg-bg-2 py-2 pr-3 text-left font-medium">Chỉ tiêu</th>
+                    {periodRows.map((r, i) => (
+                      <th key={i} className="num px-1.5 py-2 text-right font-medium tabular-nums">
+                        {periodHeader(r)}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {orderedKeys.map((k) => (
+                    <tr key={k} className="border-t border-line/40">
+                      <td
+                        className="stock-fs-sticky truncate bg-bg-2 py-1.5 pr-3 text-left text-ink-2"
+                        title={METRIC_VI[k] ?? k}
+                      >
+                        {METRIC_VI[k] ?? k}
+                      </td>
+                      {periodRows.map((r, i) => {
+                        const val = r[k];
+                        const ok = typeof val === "number" && Number.isFinite(val);
+                        return (
+                          <td key={i} className="num px-1.5 py-1.5 text-right tabular-nums text-ink-2">
+                            {ok ? formatMetricValue(k, val as number) : "—"}
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
         )}
 
-        <p className="mt-2 text-[10px] text-ink-3">
+        <p className="stock-fs-hint mt-2 text-[10px] text-ink-3">
           Số tuyệt đối theo VND (api-finfo / DStock). Biên lợi nhuận, ROE, ROA hiển thị %.
         </p>
         {data.notes?.length ? (
@@ -318,7 +379,7 @@ export default function StockFinancialsPage({ params }: { params: Promise<{ symb
       </Panel>
 
       <Panel title="Trạng thái báo cáo">
-        <div className="grid gap-2 text-[12px] sm:grid-cols-2 lg:grid-cols-4">
+        <div className="stock-fs-status grid gap-2 text-[12px] sm:grid-cols-2 lg:grid-cols-4">
           <div>
             <div className="text-[10px] uppercase text-ink-3">Dữ liệu mới nhất</div>
             <div className="font-medium text-ink-2">{fm?.latestPeriod ?? "Chưa xác định kỳ"}</div>
@@ -349,7 +410,7 @@ export default function StockFinancialsPage({ params }: { params: Promise<{ symb
           <li>
             <span className="text-ink-3">Bảng cân đối kế toán: </span>
             <a
-              className="text-accent underline-offset-2 hover:underline"
+              className="break-all text-accent underline-offset-2 hover:underline"
               href={`https://dstock.vndirect.com.vn/bang-can-doi-ke-toan/${symbol}`}
               target="_blank"
               rel="noopener noreferrer"
@@ -360,7 +421,7 @@ export default function StockFinancialsPage({ params }: { params: Promise<{ symb
           <li>
             <span className="text-ink-3">Kết quả kinh doanh: </span>
             <a
-              className="text-accent underline-offset-2 hover:underline"
+              className="break-all text-accent underline-offset-2 hover:underline"
               href={`https://dstock.vndirect.com.vn/bao-cao-ket-qua-kinh-doanh/${symbol}`}
               target="_blank"
               rel="noopener noreferrer"
@@ -371,7 +432,7 @@ export default function StockFinancialsPage({ params }: { params: Promise<{ symb
           <li>
             <span className="text-ink-3">Lưu chuyển tiền tệ: </span>
             <a
-              className="text-accent underline-offset-2 hover:underline"
+              className="break-all text-accent underline-offset-2 hover:underline"
               href={`https://dstock.vndirect.com.vn/bao-cao-luu-chuyen-tien-te/${symbol}`}
               target="_blank"
               rel="noopener noreferrer"
