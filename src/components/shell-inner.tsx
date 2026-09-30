@@ -207,7 +207,7 @@ export function ShellInner({ children }: { children: ReactNode }) {
               ? "flex flex-col items-center gap-1.5 px-1 py-2.5"
               : isMobile
                 ? "flex items-center gap-2 px-3 py-3.5"
-                : "flex min-h-14 items-center gap-1.5 px-2 py-2.5")
+                : "flex min-h-[3.5rem] items-center gap-1 px-2 py-2")
           }
         >
           <Link
@@ -224,7 +224,7 @@ export function ShellInner({ children }: { children: ReactNode }) {
             ) : isMobile ? (
               <OrcaMobileBrand />
             ) : (
-              <OrcaWordmark size={26} subtitle className="w-full" />
+              <OrcaWordmark size={32} subtitle className="w-full" />
             )}
           </Link>
           {isMobile ? (
@@ -302,7 +302,7 @@ export function ShellInner({ children }: { children: ReactNode }) {
           className={
             "orca-aside relative hidden h-full shrink-0 overflow-hidden border-r border-border-subtle bg-surface-base md:block " +
             (sideAnimating ? "is-collapsing " : "") +
-            (collapsed ? "w-[56px]" : "w-[256px]")
+            (collapsed ? "w-[56px]" : "w-[268px]")
           }
         >
           <div className="orca-sidebar h-full">{renderSidebar({ collapsed })}</div>
