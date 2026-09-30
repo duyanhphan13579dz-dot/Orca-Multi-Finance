@@ -1,5 +1,7 @@
 "use client";
 
+import "@/app/stock-fs-table.css";
+
 import { useEffect, useState } from "react";
 import { useApi } from "@/lib/hooks";
 import { fmtCompact, Loading, Panel, Unavailable } from "@/components/ui";
