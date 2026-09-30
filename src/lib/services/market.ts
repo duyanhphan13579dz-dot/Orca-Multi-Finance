@@ -51,14 +51,15 @@ const ASIA_YAHOO: { yahoo: string; code: string; label: string }[] = [
 const US_SYMBOLS = ["SPY", "QQQ", "DIA", "IWM"] as const;
 const FOREX_MAJORS = new Set(["EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCNH", "USDCHF", "USDCAD"]);
 
-const BUDGET_VN_MS = 2_800;
-const BUDGET_ASIA_MS = 3_200;
-const BUDGET_US_MS = 3_000;
-const BUDGET_FX_MS = 2_800;
-const BUDGET_CRYPTO_MS = 2_500;
+/** Hard ceiling per external source — never block ticker on one slow provider. */
+const BUDGET_VN_MS = 2_200;
+const BUDGET_ASIA_MS = 2_400;
+const BUDGET_US_MS = 2_400;
+const BUDGET_FX_MS = 2_200;
+const BUDGET_CRYPTO_MS = 1_800;
 
-const SNAP_TTL_MS = 20_000;
-const SNAP_STALE_MS = 120_000;
+const SNAP_TTL_MS = 25_000;
+const SNAP_STALE_MS = 180_000;
 
 function vnLabel(code: string): string {
   if (code === "VNINDEX" || code === "VN-INDEX") return "VN-Index";
@@ -328,7 +329,7 @@ async function produceSnapshot(): Promise<{ snapshot: MarketSnapshot; meta: Meta
   return { snapshot, meta };
 }
 
-/** Cached — soft SWR: fresh 20s · stale 120s (background refresh). */
+/** Cached — soft SWR: fresh 25s · stale 180s (background refresh). */
 export async function buildMarketSnapshot(): Promise<{
   snapshot: MarketSnapshot;
   meta: Meta;
