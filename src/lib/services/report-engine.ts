@@ -1,7 +1,7 @@
 import "server-only";
 import { buildMeta } from "../freshness";
 import { buildMarketSnapshot, type MarketSnapshot } from "./market";
-import { getVnSession, type VnSessionState } from "../vn/sessions";
+import { getVnSession, reportPhaseLabelVi, type VnSessionState } from "../vn/sessions";
 import { VN_SECTOR_MAP } from "../vn/master";
 import type { FreshnessStatus, Meta } from "../types";
 import { composeMorningFramework, type MorningIntelSlice } from "./morning-brief-composer";
@@ -287,7 +287,27 @@ export async function generateDailyReport(
 ): Promise<{ report: DailyReport; meta: Meta }> {
   const ctx = await buildCtx();
   const composed = COMPOSERS[type](ctx);
-  const sections = composed.sections;
+  const phaseLabel = reportPhaseLabelVi(type);
+  const sections = composed.sections.map((sec) => ({
+    ...sec,
+    paragraphs: sec.paragraphs.map((para) => {
+      let out = para;
+      out = out.replace(/Trạng thái phiên:\s*[^·\n]+/g, `Trạng thái phiên: ${phaseLabel}`);
+      if (
+        type === "intraday_brief" &&
+        /Live Header/i.test(sec.heading) &&
+        !/Trạng thái phiên:/.test(out) &&
+        /^\[\d{1,2}:\d{2}\]/.test(out.trim())
+      ) {
+        out = out.replace(/^(\[[^\]]+\])/, `$1 · Trạng thái phiên: ${phaseLabel}`);
+      }
+      out = out.replace(/Phiên đóng cửa\s*·\s*/g, "");
+      if (type === "morning_brief") {
+        out = out.replace(/Phiên theo lịch:\s*[^·.]+/g, `Khung báo cáo: ${phaseLabel}`);
+      }
+      return out;
+    }),
+  }));
   const report: DailyReport = {
     type,
     title: `${type === "morning_brief" ? morningTitle() : TITLES[type]} — ${ctx.dateVi}${type === "intraday_brief" ? ` · ${ctx.timeLabel}` : ""}`,
