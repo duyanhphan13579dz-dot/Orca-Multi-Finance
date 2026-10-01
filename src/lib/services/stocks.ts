@@ -1,4 +1,5 @@
 import "server-only";
+import { env } from "../env";
 import { cached } from "../cache";
 import { buildMeta } from "../freshness";
 import { getFinancialsForSymbol, vnProviderLayout } from "../financial";
@@ -71,7 +72,7 @@ export function vnMarketConfigured(): boolean {
 }
 
 export function vnstockConfigured(): boolean {
-  return vnMarketConfigured();
+  return Boolean(env.vnstockApiKey && env.vnstockBaseUrl);
 }
 
 export function vnPrimaryProvider(): "ssi-fcdata" | "vndirect" {
@@ -92,13 +93,13 @@ export async function getVnIndices(): Promise<{ items: IndexQuote[]; meta: Meta 
     /* use public fallback */
   }
   try {
-    const items = await getPublicIndices();
-    if (items.length) {
+    const fallback = await getPublicIndices();
+    if (fallback.items.length) {
       return {
-        items: sortIndices(items),
+        items: sortIndices(fallback.items),
         meta: buildMeta({
           source: "public-vn",
-          sourceTimestampMs: Date.now(),
+          sourceTimestampMs: fallback.sourceTs ?? Date.now(),
           note: "Fallback public indices",
         }),
       };
@@ -290,6 +291,10 @@ export interface VnStockDetail {
   financialMeta: FinancialPackageMeta | null;
   financialGrowth: GrowthSnapshot | null;
   financialTtm: NormalizedPeriod | null;
+  /** Detailed ratios from multi-source quote + BCTC (ratio-engine) */
+  detailedRatios: import("../financial/ratio-engine").RatioEngineResult | null;
+  ratioMap: Record<string, number | null>;
+  metricsSources: string[];
   notes: string[];
 }
 
@@ -311,15 +316,20 @@ async function produceVnStockDetail(
   const failed: string[] = [];
   const notes: string[] = [];
 
-  const [quoteRes, ohlcvRes, profileRes, equityRes, bookRes, foreignRes, finRes] = await Promise.all([
-    getVnQuotes([sym]).catch(() => null),
-    getVnOhlcv(sym, 180).catch(() => null),
-    withBudget(getVndCompanyProfile(sym), 3_200),
-    withBudget(getVndEquitySnapshot(sym), 3_200),
-    withBudget(getVnOrderBook(sym), 2_800),
-    withBudget(getVndSymbolForeignFlow(sym, 12), 3_200),
-    withBudget(getFinancialsForSymbol(sym), 6_000),
-  ]);
+  const [quoteRes, ohlcvRes, profileRes, equityRes, bookRes, foreignRes, finRes, metricsRes] =
+    await Promise.all([
+      getVnQuotes([sym]).catch(() => null),
+      getVnOhlcv(sym, 180).catch(() => null),
+      withBudget(getVndCompanyProfile(sym), 3_200),
+      withBudget(getVndEquitySnapshot(sym), 3_200),
+      withBudget(getVnOrderBook(sym), 2_800),
+      withBudget(getVndSymbolForeignFlow(sym, 12), 3_200),
+      withBudget(getFinancialsForSymbol(sym), 6_000),
+      withBudget(
+        import("./stock-metrics-service").then((m) => m.getStockMetricsBundle(sym)),
+        8_000,
+      ),
+    ]);
 
   let quote: Quote | null = quoteRes?.quotes?.[0] ?? null;
   if (!quote) failed.push("quote");
@@ -362,6 +372,9 @@ async function produceVnStockDetail(
 
   const fin = finRes;
   if (!fin) failed.push("financials");
+  if (metricsRes?.bundle?.qualityScore != null) {
+    notes.push(`Chỉ số TC: quality ${metricsRes.bundle.qualityScore}/100`);
+  }
   if (failed.length) notes.push(`Thiếu: ${[...new Set(failed)].join(", ")}`);
 
   const detail: VnStockDetail = {
@@ -378,16 +391,26 @@ async function produceVnStockDetail(
     foreignFlow,
     financials: fin?.financials ?? { income: null, balance: null, cashflow: null, ratios: null },
     financialHealth: fin?.health ?? null,
-    financialMeta: fin?.meta ?? null,
+    financialMeta: fin?.packageMeta ?? null,
     financialGrowth: fin?.growth ?? null,
     financialTtm: fin?.ttm ?? null,
+    detailedRatios: metricsRes?.bundle?.ratios ?? null,
+    ratioMap: metricsRes?.bundle?.ratioMap ?? {},
+    metricsSources: [
+      ...(metricsRes?.bundle?.sources?.quote ?? []),
+      metricsRes?.bundle?.sources?.financials,
+      metricsRes?.bundle?.sources?.marketRatios,
+    ].filter(Boolean) as string[],
     notes,
   };
 
   return {
     detail,
     meta: buildMeta({
-      source: [quoteRes?.meta?.source, ohlcvRes?.meta?.source].filter(Boolean).join("+") || "vndirect",
+      source:
+        [quoteRes?.meta?.source, ohlcvRes?.meta?.source, ...(detail.metricsSources ?? [])]
+          .filter(Boolean)
+          .join("+") || "vndirect",
       sourceTimestampMs: Date.now(),
       note: notes.length ? notes.join(" · ") : undefined,
       partial: failed.length > 0,
@@ -415,7 +438,7 @@ export async function getVnStockDetail(
     /* */
   }
   try {
-    const res = await cached<{ detail: VnStockDetail; meta: Meta } | null>(`vn:stock-detail:${sym}:v2`, {
+    const res = await cached<{ detail: VnStockDetail; meta: Meta } | null>(`vn:stock-detail:${sym}:v3`, {
       ttlMs: ttl,
       staleMs: stale,
       softSwr: true,

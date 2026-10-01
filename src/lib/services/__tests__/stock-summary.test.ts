@@ -29,7 +29,7 @@ const rich: StockContract = {
       warnings: [],
       riskFlags: ["Nợ ngắn hạn cao"],
     },
-    valuation: { multiples: { pe: 12.4, pb: 2.1, evEbitda: 8.0, dividendYield: 0.021 }, confidence: "medium", notes: [] },
+    valuation: { multiples: { pe: 12.4, pb: 2.1, evEbitda: 8.0, dividendYield: 2.1 }, confidence: "medium", notes: [] },
   },
   risk_metrics: { atr14: 1.1, volatility_30d: 0.24, max_drawdown_52w: -0.18 },
 };

@@ -30,6 +30,9 @@ type RowIndex = {
   keys: string[];
   stripped: string[];
   byKey: Map<string, number>;
+  periodYear: number | null;
+  periodQuarter: number | null;
+  periodType: "quarter" | "year" | "unknown";
   periodScore: number;
 };
 
@@ -41,14 +44,45 @@ function indexRow(row: Row): RowIndex {
     const n = toNum(row[keys[i]]);
     if (n != null && !byKey.has(stripped[i])) byKey.set(stripped[i], n);
   }
-  const y = byKey.get("year") ?? byKey.get("nam") ?? byKey.get("periodyear") ?? 0;
-  const q =
+
+  const periodText = String(row.period ?? row.periodLabel ?? row.fiscalDate ?? row.date ?? "");
+  const yearMatch = periodText.match(/(?:19|20)\d{2}/);
+  let year =
+    byKey.get("year") ??
+    byKey.get("nam") ??
+    byKey.get("periodyear") ??
+    (yearMatch ? Number(yearMatch[0]) : null);
+  if (year != null && (!Number.isInteger(year) || year < 1900 || year > 2200)) year = null;
+
+  const rawQuarter =
     byKey.get("quarter") ??
     byKey.get("quy") ??
     byKey.get("periodquarter") ??
     byKey.get("lengthyear") ??
-    0;
-  return { row, keys, stripped, byKey, periodScore: y * 10 + q };
+    null;
+  let quarter = rawQuarter != null && rawQuarter >= 1 && rawQuarter <= 4 ? rawQuarter : null;
+  const qMatch = periodText.match(/(?:^|\D)(?:q|quarter|quy)\s*([1-4])(?:\D|$)/i);
+  if (quarter == null && qMatch) quarter = Number(qMatch[1]);
+  const typeText = String(row.periodType ?? row.reportType ?? "").toLowerCase();
+  const periodType: RowIndex["periodType"] =
+    typeText.includes("year") || typeText.includes("annual") || typeText.includes("nam")
+      ? "year"
+      : quarter != null || typeText.includes("quarter") || typeText.includes("quy")
+        ? "quarter"
+        : year != null
+          ? "year"
+          : "unknown";
+
+  return {
+    row,
+    keys,
+    stripped,
+    byKey,
+    periodYear: year,
+    periodQuarter: periodType === "quarter" ? quarter : null,
+    periodType,
+    periodScore: (year ?? 0) * 10 + (periodType === "quarter" ? (quarter ?? 0) : 0),
+  };
 }
 
 function findNumIndexed(ix: RowIndex, aliases: string[]): number | null {
@@ -85,41 +119,73 @@ function latestIndexed(sorted: RowIndex[], aliases: string[]): number | null {
   return null;
 }
 
-function avgIndexed(sorted: RowIndex[], aliases: string[], n = 2): number | null {
-  const vals: number[] = [];
+function uniqueByPeriod(sorted: RowIndex[], type: "quarter" | "year"): RowIndex[] {
+  const seen = new Set<string>();
+  const rows: RowIndex[] = [];
   for (const ix of sorted) {
-    const v = findNumIndexed(ix, aliases);
-    if (v != null) {
-      vals.push(v);
+    if (ix.periodType !== type || ix.periodYear == null) continue;
+    const period =
+      type === "quarter" && ix.periodQuarter != null
+        ? `${ix.periodYear}-Q${ix.periodQuarter}`
+        : String(ix.periodYear);
+    if (seen.has(period)) continue;
+    seen.add(period);
+    rows.push(ix);
+  }
+  return rows;
+}
+
+function avgIndexed(sorted: RowIndex[], aliases: string[], n = 2): number | null {
+  // Prefer distinct quarter-end balance snapshots when available; otherwise use annual rows.
+  const quarterly = uniqueByPeriod(sorted, "quarter");
+  const candidates = quarterly.length >= 2 ? quarterly : uniqueByPeriod(sorted, "year");
+  const vals: number[] = [];
+  for (const ix of candidates) {
+    const value = findNumIndexed(ix, aliases);
+    if (value != null) {
+      vals.push(value);
       if (vals.length >= n) break;
     }
   }
-  if (!vals.length) return null;
-  return vals.reduce((a, b) => a + b, 0) / vals.length;
+  return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
 }
 
-/** Quarterly → sum ≤4 periods; annual → latest only (avoid summing years). */
+/**
+ * A TTM flow is only the latest four distinct, consecutive quarters. If a full
+ * four-quarter window is unavailable, use the latest annual filing (if any),
+ * never sum two or three quarters and label that partial sum as TTM.
+ */
 function ttmIndexed(sorted: RowIndex[], aliases: string[]): number | null {
   if (!sorted.length) return null;
-  const vals: number[] = [];
-  let quarterlyHits = 0;
-  for (const ix of sorted.slice(0, 8)) {
-    const v = findNumIndexed(ix, aliases);
-    if (v == null) continue;
-    const q =
-      ix.byKey.get("quarter") ??
-      ix.byKey.get("quy") ??
-      ix.byKey.get("periodquarter") ??
-      0;
-    if (q >= 1 && q <= 4) quarterlyHits++;
-    vals.push(v);
-    if (vals.length >= 4) break;
+  const quarters = uniqueByPeriod(sorted, "quarter");
+  const annuals = uniqueByPeriod(sorted, "year");
+  if (!quarters.length && !annuals.length) {
+    // Legacy provider rows without fiscal period metadata cannot support TTM;
+    // retain the single latest reported value but never sum unlabelled rows.
+    for (const ix of sorted) {
+      const value = findNumIndexed(ix, aliases);
+      if (value != null) return value;
+    }
   }
-  if (!vals.length) return null;
-  if (quarterlyHits >= 2 && vals.length >= 2) {
-    return vals.slice(0, Math.min(4, vals.length)).reduce((a, b) => a + b, 0);
+  if (quarters.length >= 4) {
+    const window = quarters.slice(0, 4);
+    const consecutive = window.every((ix, index) => {
+      if (index === 0) return true;
+      const current = (ix.periodYear! * 4) + ix.periodQuarter!;
+      const previous = (window[index - 1]!.periodYear! * 4) + window[index - 1]!.periodQuarter!;
+      return previous - current === 1;
+    });
+    const values = window.map((ix) => findNumIndexed(ix, aliases));
+    if (consecutive && values.every((value): value is number => value != null)) {
+      return values.reduce((sum, value) => sum + value, 0);
+    }
   }
-  return vals[0]!;
+
+  for (const ix of annuals) {
+    const value = findNumIndexed(ix, aliases);
+    if (value != null) return value;
+  }
+  return null;
 }
 
 function newestFirst(rows: Row[]): Row[] {
@@ -246,12 +312,12 @@ export function computeFinancialHealth(
   const bal = indexAndSort(balance);
   const cf = indexAndSort(cashflow);
 
-  const revenue = ttmIndexed(inc, AL_S.revenue) ?? latestIndexed(inc, AL_S.revenue);
+  const revenue = ttmIndexed(inc, AL_S.revenue);
   const grossProfit = ttmIndexed(inc, AL_S.grossProfit);
   const ebit = ttmIndexed(inc, AL_S.ebit);
   const ebitdaReported = ttmIndexed(inc, AL_S.ebitda);
-  const ebitdaTtm = ebitdaReported ?? (ebit != null ? ebit * 1.12 : null);
-  const netProfit = ttmIndexed(inc, AL_S.netProfit) ?? latestIndexed(inc, AL_S.netProfit);
+  const ebitdaTtm = ebitdaReported;
+  const netProfit = ttmIndexed(inc, AL_S.netProfit);
   const interestExpense = ttmIndexed(inc, AL_S.interestExpense);
 
   const totalAssets = latestIndexed(bal, AL_S.totalAssets);
@@ -264,8 +330,9 @@ export function computeFinancialHealth(
   const longDebtRaw = latestIndexed(bal, AL_S.longDebt);
   const shortDebt = shortDebtRaw ?? 0;
   const longDebt = longDebtRaw ?? 0;
-  const totalDebt =
-    shortDebtRaw != null || longDebtRaw != null ? shortDebt + longDebt : totalLiabilities;
+  // Total liabilities contain trade payables, tax, deposits and other non-borrowing
+  // obligations. Use only reported short/long-term borrowings for EV/net-debt.
+  const totalDebt = shortDebtRaw != null || longDebtRaw != null ? shortDebt + longDebt : null;
   const inventory = latestIndexed(bal, AL_S.inventory);
   const receivables = latestIndexed(bal, AL_S.receivables);
 
@@ -276,16 +343,26 @@ export function computeFinancialHealth(
   const capexRaw = cf.length
     ? ttmIndexed(cf, AL_S.capex) ?? ttmIndexed(cf, AL_S.buyInvest)
     : null;
-  const capexTtm = capexRaw != null ? Math.abs(capexRaw) : cf.length ? 0 : null;
-  const fcfTtm = ocfTtm != null && capexTtm != null ? ocfTtm - capexTtm : ocfTtm;
+  const capexTtm = capexRaw != null ? Math.abs(capexRaw) : null;
+  const fcfTtm = ocfTtm != null && capexTtm != null ? ocfTtm - capexTtm : null;
   const shares = latestIndexed(bal, AL_S.shares) ?? latestIndexed(inc, AL_S.shares);
-  const epsStmt = latestIndexed(inc, AL_S.eps);
+  const epsStmt = ttmIndexed(inc, AL_S.eps);
   const epsTtm =
     epsStmt != null && epsStmt !== 0
       ? epsStmt
       : netProfit != null && shares && shares > 0
         ? netProfit / shares
         : null;
+
+  if (ebit != null && ebitdaReported == null) {
+    warnings.push("Thiếu EBITDA được báo cáo — không ước EBITDA từ EBIT.");
+  }
+  if (ocfTtm != null && capexTtm == null) {
+    warnings.push("Thiếu CAPEX — không tính FCF từ OCF.");
+  }
+  if (totalLiabilities != null && totalDebt == null) {
+    warnings.push("Thiếu nợ vay ngắn/dài hạn — không dùng tổng nợ phải trả thay cho nợ vay.");
+  }
 
   void findNum;
   void newestFirst;
@@ -353,7 +430,7 @@ export function computeFinancialHealth(
 
   const profile = opts?.symbol ? getIndustryProfile(opts.symbol) : null;
   const industryMeta = profile
-    ? { id: profile.id, labelVi: profile.labelVi, note: profile.note }
+    ? { id: profile.id, labelVi: profile.labelVi, note: profile.flags.note }
     : null;
   const w = profile?.weights ?? {
     profitability: 0.25,

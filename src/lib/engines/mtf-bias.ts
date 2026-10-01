@@ -1,6 +1,7 @@
 /**
  * Multi-timeframe bias engine — aggregates structure/SMC/VSA reads across TFs.
  * Pure deterministic; no provider calls. Caller supplies OHLCV per timeframe.
+ * Works with money-flow v1 and v2.
  */
 import type { OhlcvBar } from "../types";
 import { analyzeMoneyFlow, type FlowDirection, type MoneyFlowAnalysis } from "./money-flow";
@@ -24,7 +25,9 @@ export interface MtfTimeframeRead {
 
 export interface MtfBiasResult {
   bias: MtfBiasDirection;
+  /** 0–100 */
   confidence: number;
+  /** -100 … +100 weighted score */
   score: number;
   alignment: "aligned_bull" | "aligned_bear" | "mixed" | "insufficient";
   summary: string;
@@ -33,6 +36,7 @@ export interface MtfBiasResult {
   htfTimeframe: string | null;
 }
 
+/** Default weights: higher TF dominates. */
 export const DEFAULT_MTF_WEIGHTS: Record<string, number> = {
   "12M": 5,
   "1M": 4.5,
@@ -64,8 +68,9 @@ function scoreFromAnalysis(a: MoneyFlowAnalysis): number {
   if (a.structure.bos === "bearish") s -= 8;
   if (a.ict.premiumDiscount === "DISCOUNT") s += 4;
   if (a.ict.premiumDiscount === "PREMIUM") s -= 4;
-  if (a.ict.inOte && a.structure.trend === "bullish") s += 5;
-  if (a.ict.inOte && a.structure.trend === "bearish") s -= 5;
+  const ict = a.ict as { inOte?: boolean };
+  if (ict.inOte && a.structure.trend === "bullish") s += 5;
+  if (ict.inOte && a.structure.trend === "bearish") s -= 5;
   return Math.max(-100, Math.min(100, s));
 }
 
@@ -180,9 +185,27 @@ export function analyzeMtfBias(
   };
 }
 
-/** Suggested companion TFs for a chart timeframe (HTF → LTF cascade). */
+/**
+ * Suggested companion TFs for a chart timeframe (HTF → LTF cascade).
+ * Returns up to 2 HTF + current + 1 LTF that exist in assetTfs.
+ */
 export function companionTimeframes(chartTf: string, assetTfs: readonly string[]): string[] {
-  const order = ["12M", "1M", "1w", "1d", "12h", "6h", "4h", "2h", "1h", "30m", "15m", "5m", "3m", "1m"];
+  const order = [
+    "12M",
+    "1M",
+    "1w",
+    "1d",
+    "12h",
+    "6h",
+    "4h",
+    "2h",
+    "1h",
+    "30m",
+    "15m",
+    "5m",
+    "3m",
+    "1m",
+  ];
   const available = order.filter((t) => assetTfs.includes(t));
   const idx = available.indexOf(chartTf);
   if (idx < 0) return available.slice(0, 4);

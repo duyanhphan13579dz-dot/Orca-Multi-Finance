@@ -43,7 +43,9 @@ export function MtfBiasPanel({
             const res = await fetch(url);
             if (!res.ok) return;
             const json = await res.json();
-            const candles = json?.data?.candles as ChartCandle[] | undefined;
+            const candles =
+              (json?.data?.candles as ChartCandle[] | undefined) ??
+              (json?.candles as ChartCandle[] | undefined);
             if (!candles?.length) return;
             seriesByTf[t] = candles.map((c) => ({
               time: c.time,

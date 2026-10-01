@@ -4,83 +4,61 @@
  * Transport:
  *   crypto  → native WebSocket → Binance kline (lowest latency)
  *   stock   → SSE (server-side VNDirect WebSocket) + soft REST fallback if delayed
- *   forex   → REST live-quote poll (no public browser WS)
+ *   forex   → SSE chart stream (Biquote poll) + soft live-quote 2s
  *
  * Reconnect: full-jitter fast hops, host rotation, single-flight timer,
  * visibility/online urgent resume, handshake timeout, onerror+onclose de-duped.
  */
-import type { ChartCandle } from "@/lib/chart-const";
-import type { LiveState } from "./theme";
 
-export interface LiveHandlers {
-  onCandle: (c: ChartCandle, closed: boolean) => void;
-  onResyncNeeded: () => void;
+import { TF_MS } from "@/lib/chart-const";
+
+export type LiveCandle = {
+  time: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume?: number;
+};
+
+export type LiveState = {
+  state: "connecting" | "live" | "delayed" | "offline";
+  ageMs: number | null;
+};
+
+export type LiveHandlers = {
+  onCandle: (c: LiveCandle, closed: boolean) => void;
   onLiveState: (s: LiveState) => void;
-}
+};
 
 const BINANCE_KLINE_TF = new Set([
-  "1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "8h", "12h", "1d", "3d", "1w", "1M",
+  "1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "12h", "1d", "1w", "1M",
 ]);
-
-const TF_MS: Record<string, number> = {
-  "1m": 60_000,
-  "5m": 300_000,
-  "15m": 900_000,
-  "30m": 1_800_000,
-  "1h": 3_600_000,
-  "4h": 14_400_000,
-  "1d": 86_400_000,
-  "1w": 604_800_000,
-  "1M": 2_592_000_000,
-  "12M": 31_536_000_000,
-};
 
 function emitCandle(
   handlers: LiveHandlers,
-  c: ChartCandle,
+  candle: LiveCandle,
   closed: boolean,
-  state: { lastEmitSec: number; lastPrice: number | null; lastEventAt: number },
-): { lastEmitSec: number; lastPrice: number | null; lastEventAt: number } {
-  const close = Number(c.close);
-  const time = Number(c.time);
-  if (!Number.isFinite(close) || close <= 0 || !Number.isFinite(time) || time <= 0) return state;
-  const open = Number(c.open);
-  const high = Number(c.high);
-  const low = Number(c.low);
-  if (![open, high, low].every((v) => Number.isFinite(v) && v > 0)) return state;
-  const sec = Math.floor(time > 1e11 ? time / 1000 : time);
-  if (sec < state.lastEmitSec) return state;
-  const hi = Math.max(open, high, low, close);
-  const lo = Math.min(open, high, low, close);
-  handlers.onCandle(
-    {
-      time,
-      open,
-      high: hi,
-      low: lo,
-      close,
-      volume: Math.max(0, Number(c.volume) || 0),
-    },
-    closed,
-  );
-  return {
-    lastEmitSec: sec,
-    lastPrice: close,
-    lastEventAt: Date.now(),
-  };
+  state: { lastEmitSec: number; lastPrice: number | null; lastEventAt: number | null },
+) {
+  const sec = Math.floor(Date.now() / 1000);
+  if (!closed && state.lastEmitSec === sec && state.lastPrice != null && Math.abs(candle.close - state.lastPrice) < 1e-12) {
+    return { lastEmitSec: state.lastEmitSec, lastPrice: state.lastPrice, lastEventAt: Date.now() };
+  }
+  handlers.onCandle(candle, closed);
+  return { lastEmitSec: sec, lastPrice: candle.close, lastEventAt: Date.now() };
 }
 
 export class ChartLiveManager {
+  private token = 0;
   private es: EventSource | null = null;
   private ws: WebSocket | null = null;
-  private token = 0;
-  private everConnected = false;
-  private lastEventAt = 0;
   private interval: ReturnType<typeof setInterval> | null = null;
   private pollTimer: ReturnType<typeof setInterval> | null = null;
   private wsRetryTimer: ReturnType<typeof setTimeout> | null = null;
   private lastPrice: number | null = null;
   private lastEmitSec = 0;
+  private lastEventAt: number | null = null;
   private wsAttempts = 0;
   private visHandler: (() => void) | null = null;
   private onlineHandler: (() => void) | null = null;
@@ -114,7 +92,7 @@ export class ChartLiveManager {
       this.startSse(symbol, timeframe, handlers, assetType, tk);
     }
 
-    if (assetType === "stock" || assetType === "forex") {
+    if (assetType === "stock" || assetType === "forex" || assetType === "commodity") {
       this.startSoftPoll(symbol, timeframe, handlers, assetType, tk);
     }
 
@@ -128,25 +106,14 @@ export class ChartLiveManager {
             ? { state: "live", ageMs: age }
             : { state: "delayed", ageMs: age },
       );
-    }, 1_000);
+    }, 2_000);
 
     return tk;
   }
 
-  private wsBackoffMs(attempt: number): number {
-    const n = Math.max(1, attempt);
-    if (n === 1) return 40 + Math.floor(Math.random() * 80);
-    if (n === 2) return 120 + Math.floor(Math.random() * 180);
-    if (n === 3) return 300 + Math.floor(Math.random() * 400);
-    const ceiling = Math.min(400 * 2 ** Math.min(n - 1, 5), 12_000);
-    return Math.floor(ceiling * (0.4 + Math.random() * 0.6));
-  }
-
   private clearWsRetry() {
-    if (this.wsRetryTimer) {
-      clearTimeout(this.wsRetryTimer);
-      this.wsRetryTimer = null;
-    }
+    if (this.wsRetryTimer) clearTimeout(this.wsRetryTimer);
+    this.wsRetryTimer = null;
   }
 
   private scheduleWsReconnect(
@@ -158,124 +125,59 @@ export class ChartLiveManager {
   ) {
     if (tk !== this.token) return;
     this.clearWsRetry();
-    this.wsAttempts += 1;
-    const delay = urgent ? 30 + Math.floor(Math.random() * 50) : this.wsBackoffMs(this.wsAttempts);
-    handlers.onLiveState({ state: "reconnecting", ageMs: null });
+    const delay = urgent ? 200 + Math.random() * 400 : Math.min(8_000, 400 * 2 ** Math.min(this.wsAttempts, 4));
     this.wsRetryTimer = setTimeout(() => {
-      this.wsRetryTimer = null;
-      if (tk === this.token) this.startBinanceWs(symbol, timeframe, handlers, tk);
+      if (tk !== this.token) return;
+      this.wsAttempts++;
+      this.startBinanceWs(symbol, timeframe, handlers, tk);
     }, delay);
   }
 
   private startBinanceWs(symbol: string, timeframe: string, handlers: LiveHandlers, tk: number) {
-    const sym = symbol.toUpperCase().replace(/[^A-Z0-9]/g, "");
-    if (!sym) return;
-    this.clearWsRetry();
-
-    const hosts = [
-      "wss://stream.binance.com:9443/ws",
-      "wss://data-stream.binance.vision/ws",
-      "wss://stream.binance.com/ws",
-    ];
-    const host = hosts[this.wsAttempts % hosts.length]!;
-    const stream = `${sym.toLowerCase()}@kline_${timeframe}`;
-    const url = `${host}/${stream}`;
-
-    if (this.ws) {
-      try {
+    try {
+      if (this.ws) {
         this.ws.onopen = null;
         this.ws.onmessage = null;
         this.ws.onerror = null;
         this.ws.onclose = null;
         this.ws.close();
-      } catch {
-        /* */
+        this.ws = null;
       }
-      this.ws = null;
-    }
-
-    let closedHandled = false;
-    const onFail = (urgent = false) => {
-      if (closedHandled || tk !== this.token) return;
-      closedHandled = true;
-      this.ws = null;
-      this.scheduleWsReconnect(symbol, timeframe, handlers, tk, urgent);
-    };
-
-    try {
-      const ws = new WebSocket(url);
+      const stream = `${symbol.toLowerCase()}@kline_${timeframe}`;
+      const ws = new WebSocket(`wss://stream.binance.com:9443/ws/${stream}`);
       this.ws = ws;
-
-      const handshakeTimer = setTimeout(() => {
-        if (tk !== this.token || this.ws !== ws) return;
-        if (ws.readyState !== WebSocket.OPEN) {
-          try {
-            ws.close();
-          } catch {
-            onFail(true);
-          }
-        }
-      }, 5_000);
-
-      ws.onopen = () => {
-        if (tk !== this.token) return;
-        clearTimeout(handshakeTimer);
-        this.wsAttempts = 0;
-        if (this.everConnected) handlers.onResyncNeeded();
-        this.everConnected = true;
-        this.lastEventAt = Date.now();
-        handlers.onLiveState({ state: "live", ageMs: 0 });
-      };
-
       ws.onmessage = (ev) => {
         if (tk !== this.token) return;
         try {
-          const msg = JSON.parse(String(ev.data)) as {
-            k?: {
-              t?: number;
-              o?: string;
-              h?: string;
-              l?: string;
-              c?: string;
-              v?: string;
-              x?: boolean;
-            };
-          };
+          const msg = JSON.parse(String(ev.data));
           const k = msg.k;
-          if (!k || k.t == null) return;
-          const open = Number(k.o);
-          const high = Number(k.h);
-          const low = Number(k.l);
-          const close = Number(k.c);
-          const volume = Number(k.v) || 0;
-          if (![open, high, low, close].every((v) => Number.isFinite(v) && v > 0)) return;
+          if (!k) return;
           const next = emitCandle(
             handlers,
-            { time: k.t, open, high, low, close, volume },
-            Boolean(k.x),
             {
-              lastEmitSec: this.lastEmitSec,
-              lastPrice: this.lastPrice,
-              lastEventAt: this.lastEventAt,
+              time: Math.floor(k.t / 1000) * 1000,
+              open: Number(k.o),
+              high: Number(k.h),
+              low: Number(k.l),
+              close: Number(k.c),
+              volume: Number(k.v),
             },
+            Boolean(k.x),
+            { lastEmitSec: this.lastEmitSec, lastPrice: this.lastPrice, lastEventAt: this.lastEventAt },
           );
           this.lastEmitSec = next.lastEmitSec;
           this.lastPrice = next.lastPrice;
           this.lastEventAt = next.lastEventAt;
-          if (k.x) handlers.onResyncNeeded();
+          this.wsAttempts = 0;
         } catch {
-          /* drop */
+          /* ignore */
         }
       };
-
       ws.onerror = () => {
-        if (tk !== this.token) return;
-        handlers.onLiveState({ state: "reconnecting", ageMs: null });
+        if (tk === this.token) this.scheduleWsReconnect(symbol, timeframe, handlers, tk);
       };
-
       ws.onclose = () => {
-        clearTimeout(handshakeTimer);
-        onFail(false);
+        if (tk === this.token) this.scheduleWsReconnect(symbol, timeframe, handlers, tk);
       };
     } catch {
       this.startSse(symbol, timeframe, handlers, "crypto", tk);
@@ -294,42 +196,42 @@ export class ChartLiveManager {
     );
     this.es = es;
 
-    const candleHandler = (e: Event, closed: boolean) => {
+    const onPayload = (raw: string) => {
       if (tk !== this.token) return;
       try {
-        const payload = JSON.parse((e as MessageEvent).data as string) as { candle?: ChartCandle };
-        if (!payload.candle) return;
-        const next = emitCandle(handlers, payload.candle, closed, {
-          lastEmitSec: this.lastEmitSec,
-          lastPrice: this.lastPrice,
-          lastEventAt: this.lastEventAt,
-        });
-        this.lastEmitSec = next.lastEmitSec;
-        this.lastPrice = next.lastPrice;
-        this.lastEventAt = next.lastEventAt;
+        const p = JSON.parse(raw) as {
+          candle?: LiveCandle;
+          closed?: boolean;
+        };
+        if (p.candle && p.candle.close > 0) {
+          const next = emitCandle(handlers, p.candle, Boolean(p.closed), {
+            lastEmitSec: this.lastEmitSec,
+            lastPrice: this.lastPrice,
+            lastEventAt: this.lastEventAt,
+          });
+          this.lastEmitSec = next.lastEmitSec;
+          this.lastPrice = next.lastPrice;
+          this.lastEventAt = next.lastEventAt;
+        }
       } catch {
-        /* drop */
+        /* ignore */
       }
     };
 
-    es.addEventListener("chart.candle.updated", (e) => candleHandler(e, false));
-    es.addEventListener("snapshot", (e) => candleHandler(e, false));
-    es.addEventListener("chart.candle.closed", (e) => candleHandler(e, true));
-
-    es.onopen = () => {
-      if (tk !== this.token) return;
-      if (this.everConnected) handlers.onResyncNeeded();
-      this.everConnected = true;
-      handlers.onLiveState({ state: "connecting", ageMs: null });
-    };
+    es.addEventListener("chart.candle.updated", ((ev: MessageEvent) => onPayload(ev.data)) as EventListener);
+    es.addEventListener("chart.candle.closed", ((ev: MessageEvent) => onPayload(ev.data)) as EventListener);
+    es.addEventListener("snapshot", ((ev: MessageEvent) => onPayload(ev.data)) as EventListener);
     es.onerror = () => {
-      if (tk !== this.token) return;
-      handlers.onLiveState({ state: "reconnecting", ageMs: null });
-      es.close();
       if (tk === this.token) {
+        try {
+          es.close();
+        } catch {
+          /* */
+        }
+        this.es = null;
         setTimeout(() => {
           if (tk === this.token) this.startSse(symbol, timeframe, handlers, assetType, tk);
-        }, 3_000 + Math.random() * 2_000);
+        }, 2_500);
       }
     };
   }
@@ -343,14 +245,13 @@ export class ChartLiveManager {
   ) {
     const poll = async () => {
       if (tk !== this.token) return;
-      if (this.lastEventAt && Date.now() - this.lastEventAt < 8_000) return;
       try {
         const res = await fetch(
           `/api/v1/chart/live-quote?symbol=${encodeURIComponent(symbol)}&assetType=${encodeURIComponent(assetType)}&_=${Date.now()}`,
-          { cache: "no-store", headers: { Accept: "application/json" } },
+          { cache: "no-store" },
         );
+        if (!res.ok) return;
         const json = (await res.json()) as {
-          success?: boolean;
           data?: {
             price?: number;
             open?: number | null;
@@ -373,7 +274,7 @@ export class ChartLiveManager {
         }
 
         const parts = new Intl.DateTimeFormat("en-CA", {
-          timeZone: assetType === "forex" ? "UTC" : "Asia/Ho_Chi_Minh",
+          timeZone: assetType === "forex" || assetType === "commodity" ? "UTC" : "Asia/Ho_Chi_Minh",
           year: "numeric",
           month: "2-digit",
           day: "2-digit",
@@ -383,7 +284,7 @@ export class ChartLiveManager {
         const tfMs = TF_MS[timeframe] ?? 0;
         const bucket =
           timeframe === "1d" || timeframe === "1w" || timeframe === "1M" || timeframe === "12M"
-            ? assetType === "forex"
+            ? assetType === "forex" || assetType === "commodity"
               ? Date.parse(`${dayKey}T00:00:00Z`)
               : Date.parse(`${dayKey}T15:00:00+07:00`)
             : tfMs
@@ -415,7 +316,11 @@ export class ChartLiveManager {
       }
     };
 
-    this.pollTimer = setInterval(poll, assetType === "forex" ? 6_000 : 5_000);
+    this.pollTimer = setInterval(
+      poll,
+      assetType === "forex" || assetType === "commodity" ? 2_000 : 5_000,
+    );
+    void poll();
   }
 
   stop() {
@@ -433,7 +338,11 @@ export class ChartLiveManager {
       /* */
     }
     this.ws = null;
-    this.es?.close();
+    try {
+      this.es?.close();
+    } catch {
+      /* */
+    }
     this.es = null;
     if (this.interval) clearInterval(this.interval);
     this.interval = null;
@@ -442,15 +351,10 @@ export class ChartLiveManager {
     if (this.visHandler && typeof document !== "undefined") {
       document.removeEventListener("visibilitychange", this.visHandler);
     }
+    this.visHandler = null;
     if (this.onlineHandler && typeof window !== "undefined") {
       window.removeEventListener("online", this.onlineHandler);
     }
-    this.visHandler = null;
     this.onlineHandler = null;
-    this.everConnected = false;
-    this.lastEventAt = 0;
-    this.lastPrice = null;
-    this.lastEmitSec = 0;
-    this.wsAttempts = 0;
   }
 }

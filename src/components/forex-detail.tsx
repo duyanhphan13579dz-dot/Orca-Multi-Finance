@@ -1,8 +1,46 @@
 "use client";
 
-import { memo, useEffect, useMemo, useState } from "react";
+/**
+ * FOREX QUANT TERMINAL — Institutional cockpit matching mockup.
+ *
+ * Layout (XL):
+ *   Sticky ticker · Stage 3+6+3 (desk+flow | chart | scalp) · Bottom 7+5 (structure | calendar)
+ * Colors: system tokens. No mock order-book — volume from OHLCV CLV.
+ */
+import Link from "next/link";
+import { useMemo, useState } from "react";
 import { useApi } from "@/lib/hooks";
-import type { CandlePattern, ForexRow, NewsArticle, OhlcvBar, TechnicalSnapshot } from "@/lib/types";
+import type { CandlePattern, ForexRow, OhlcvBar, TechnicalSnapshot } from "@/lib/types";
+import {
+  Badge,
+  Chg,
+  fmtNum,
+  FreshnessDot,
+  Loading,
+  MetaLine,
+  priceDigits,
+  Unavailable,
+} from "@/components/ui";
+import { OrcaChart } from "@/components/orca-chart";
+import { ForexScalpPanel } from "@/components/forex-scalp-panel";
+import { ForexTradeDesk } from "@/components/forex-trade-desk";
+import { AddToWatchlist } from "@/components/watchlist-button";
+import { ArrowLeft } from "lucide-react";
+import {
+  deriveOrderFlow,
+  OrderFlowPanel,
+  LiquidityZonesPanel,
+  KeyZonesCompact,
+} from "@/components/forex-order-flow";
+import {
+  MarketStructurePanel,
+  type StructureTab,
+} from "@/components/forex-market-structure";
+import {
+  EconomicCalendarPanel,
+  SentimentPanelCompact,
+  ForexNewsPanel,
+} from "@/components/forex-side-panels";
 
 interface ForexDetail {
   pair: string;
@@ -15,374 +53,337 @@ interface ForexDetail {
   referenceNote: string;
 }
 
-interface NewsPayload {
-  articles: NewsArticle[];
-  errors: string[];
-}
+const INTERVALS = ["5m", "15m", "30m", "1h", "4h", "1d", "1w", "1M"] as const;
+const QUICK_PAIRS = [
+  "EURUSD",
+  "GBPUSD",
+  "USDJPY",
+  "XAUUSD",
+  "XAGUSD",
+  "AUDUSD",
+  "EURJPY",
+  "GBPJPY",
+  "EURCHF",
+  "AUDNZD",
+] as const;
 
-interface SentimentApi {
-  assetType: "crypto" | "forex";
-  symbol: string;
-  quant: { score: number; label: string; tone: "up" | "down" | "neutral"; factors: { w: number; text: string }[] };
-  llm: { narrative: string; stance: "confirm" | "diverge" | "neutral"; risks: string[]; model: string; latencyMs: number } | null;
-  llmStatus: "ok" | "unavailable" | "skipped" | "failed";
-}
+type MobileTab = "chart" | "desk" | "scalp" | "structure" | "news";
 
-import { Badge, Chg, FreshnessDot, Loading, MetaLine, Panel, Unavailable } from "@/components/ui";
-import { OrcaChart } from "@/components/orca-chart";
-import { TechnicalPanel } from "@/components/technical-panel";
-import { ForexScalpPanel } from "@/components/forex-scalp-panel";
-import { AddToWatchlist } from "@/components/watchlist-button";
-import { Brain, Layers, Newspaper, ExternalLink } from "lucide-react";
-
-function useChartHeight(desktop = 420, mobile = 280) {
-  const [h, setH] = useState(desktop);
-  useEffect(() => {
-    const mq = window.matchMedia("(max-width: 767px)");
-    const apply = () => setH(mq.matches ? mobile : desktop);
-    apply();
-    mq.addEventListener("change", apply);
-    return () => mq.removeEventListener("change", apply);
-  }, [desktop, mobile]);
-  return h;
-}
-
-export function ForexDetailPage({ pair }: { pair: string }) {
-  const { data, meta, isLoading } = useApi<ForexDetail>(`/api/v1/forex/${pair}`, { refreshInterval: 180_000 });
-  const chartH = useChartHeight(420, 280);
-  if (isLoading && !data) return <Loading rows={10} />;
-  if (!data) return <Unavailable title={`Không lấy được ${pair}`} meta={meta} />;
-
-  const cur = data.current;
-  const price = cur?.price ?? data.series[data.series.length - 1]?.close ?? null;
-  const tech = data.technical;
-  const patterns = data.patterns ?? [];
-
+function FILL({ children, className = "" }: { children: React.ReactNode; className?: string }) {
   return (
-    <div className="space-y-2.5 sm:space-y-3">
-      <Panel pad={false}>
-        <div className="flex flex-col gap-2 p-3 sm:p-4 md:flex-row md:items-end md:justify-between">
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
-              <h1 className="text-lg font-semibold sm:text-xl">
-                {data.base}/{data.quote}
-              </h1>
-              <Badge tone="accent">{pair}</Badge>
-              {cur?.group && <Badge tone="neutral">{cur.group}</Badge>}
-              <FreshnessDot status={meta?.freshness} ageMs={meta?.ageMs} />
-              <AddToWatchlist assetType="forex" symbol={pair} />
-            </div>
-            {price != null && (
-              <div className="num mt-1 flex flex-wrap items-baseline gap-2 sm:gap-3">
-                <span className="text-[24px] font-semibold sm:text-[28px]">
-                  {price >= 1000
-                    ? price.toLocaleString("vi-VN", { maximumFractionDigits: 0 })
-                    : price >= 100
-                      ? price.toFixed(2)
-                      : price.toFixed(4)}
-                </span>
-                {cur && <Chg value={cur.changePercent} className="text-[13px] sm:text-[14px]" />}
-              </div>
-            )}
-          </div>
-          <MetaLine meta={meta} />
-        </div>
-      </Panel>
-
-      <div className="grid grid-cols-12 gap-2.5 sm:gap-3">
-        <div className="col-span-12 space-y-2.5 sm:space-y-3 xl:col-span-8">
-          <OrcaChart
-            symbol={pair}
-            assetType="forex"
-            defaultTimeframe="1d"
-            height={chartH}
-            title={`${data.base}/${data.quote}`}
-          />
-          <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 sm:gap-3">
-            <CandlePatternsPanel patterns={patterns} />
-            <ForexNewsPanel pair={pair} base={data.base} quote={data.quote} />
-          </div>
-        </div>
-
-        <div className="col-span-12 flex flex-col gap-2.5 sm:gap-3 xl:col-span-4">
-          <ForexScalpPanel pair={pair} />
-          <SentimentPanel pair={pair} current={cur} tech={tech} />
-        </div>
-
-        <div className="col-span-12">
-          <TechnicalPanel tech={tech} patterns={patterns} />
-        </div>
-
-        {data.referenceNote && (
-          <div className="col-span-12">
-            <p className="rounded-lg border border-border-subtle bg-surface-elevated/40 px-3 py-2 text-[10.5px] leading-relaxed text-text-muted">
-              {data.referenceNote}
-            </p>
-          </div>
-        )}
-      </div>
+    <div className={`flex h-full min-h-0 flex-col overflow-hidden ${className}`}>
+      <div className="min-h-0 flex-1 overflow-y-auto">{children}</div>
     </div>
   );
 }
 
-const SentimentPanel = memo(function SentimentPanel({
-  pair,
-  current,
-  tech,
-}: {
-  pair: string;
-  current: ForexRow | null;
-  tech: TechnicalSnapshot | null;
-}) {
-  const fallback = useMemo(
-    () => computeLocalSentiment({ changePercent: current?.changePercent, price: current?.price }, tech, "forex"),
-    [current, tech],
-  );
-  const { data, meta, isLoading } = useApi<SentimentApi>(
-    `/api/v1/sentiment?assetType=forex&symbol=${encodeURIComponent(pair)}`,
-    { refreshInterval: 180_000 },
-  );
+function sessionLabel(now = new Date()): { name: string; active: boolean }[] {
+  const h = now.getUTCHours() + now.getUTCMinutes() / 60;
+  return [
+    { name: "Sydney", active: h >= 21 || h < 6 },
+    { name: "Tokyo", active: h >= 0 && h < 9 },
+    { name: "London", active: h >= 7 && h < 16 },
+    { name: "New York", active: h >= 12 && h < 21 },
+  ];
+}
 
-  const quant = data?.quant ?? fallback;
-  const llm = data?.llm ?? null;
-  const llmStatus = data?.llmStatus ?? "skipped";
+export function ForexDetailPage({ pair }: { pair: string }) {
+  const [interval, setInterval] = useState<(typeof INTERVALS)[number]>("1h");
+  const [mobileTab, setMobileTab] = useState<MobileTab>("chart");
+  const [structureTab, setStructureTab] = useState<StructureTab>("ms");
+
+  const { data, meta, isLoading } = useApi<ForexDetail>(`/api/v1/forex/${pair}`, {
+    refreshInterval: 60_000,
+  });
+
+  const seriesHigh = useMemo(() => {
+    const s = data?.series?.slice(-48) ?? [];
+    if (!s.length) return null;
+    return Math.max(...s.map((b) => b.high));
+  }, [data?.series]);
+  const seriesLow = useMemo(() => {
+    const s = data?.series?.slice(-48) ?? [];
+    if (!s.length) return null;
+    return Math.min(...s.map((b) => b.low));
+  }, [data?.series]);
+
+  const orderFlow = useMemo(() => deriveOrderFlow(data?.series ?? []), [data?.series]);
+
+  if (isLoading && !data) return <Loading rows={12} />;
+  if (!data) return <Unavailable title={`Không lấy được dữ liệu cặp ${pair}`} meta={meta} />;
+
+  const cur = data.current;
+  const price = cur?.price ?? data.series[data.series.length - 1]?.close ?? null;
+  const chg = cur?.changePercent ?? null;
+  const tech = data.technical;
+  const patterns = data.patterns ?? [];
+  const digits = priceDigits(price ?? 1);
+  const sessions = sessionLabel();
+  const rangePos =
+    price != null && seriesHigh != null && seriesLow != null && seriesHigh > seriesLow
+      ? ((price - seriesLow) / (seriesHigh - seriesLow)) * 100
+      : 50;
+
+  const supports = tech?.support?.slice(0, 3) ?? [];
+  const resistances = tech?.resistance?.slice(0, 3) ?? [];
 
   return (
-    <Panel
-      title={
-        <span className="flex items-center gap-2">
-          <Brain className="size-4 text-accent-primary" /> Tâm lý thị trường
-          {meta && <FreshnessDot status={meta.freshness} ageMs={meta.ageMs} />}
-        </span>
-      }
-    >
-      <div className="space-y-2.5">
-        <div className="flex items-center justify-between gap-2">
-          <Badge tone={quant.tone}>
-            <span className="font-bold">{quant.label}</span>
-          </Badge>
-          <span className="num text-[18px] font-semibold text-text-primary">
-            {quant.score > 0 ? "+" : ""}
-            {quant.score}
-          </span>
+    <div className="flex flex-col gap-2">
+      {/* Dense ticker */}
+      <div className="panel rounded-xl p-2.5 sm:p-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex flex-wrap items-center gap-2 sm:gap-2.5">
+            <Link
+              href="/forex"
+              className="inline-flex items-center gap-1 rounded-md border border-border-subtle bg-surface-elevated/60 px-2 py-1 text-[11px] text-text-secondary transition-colors hover:border-border-default hover:text-text-primary"
+            >
+              <ArrowLeft className="size-3" /> Forex
+            </Link>
+            <div className="flex size-7 items-center justify-center rounded-lg border border-accent-primary/30 bg-accent-primary/10 text-[11px] font-bold text-accent-primary">
+              {data.base.slice(0, 1)}
+            </div>
+            <div>
+              <div className="flex items-center gap-1.5">
+                <h1 className="text-[15px] font-bold text-text-primary sm:text-[16px]">
+                  {data.base}
+                  <span className="text-[12px] font-normal text-text-muted">/{data.quote}</span>
+                </h1>
+                <Badge tone="neutral">{pair}</Badge>
+                <AddToWatchlist symbol={pair} assetType="forex" />
+              </div>
+              <div className="num flex items-baseline gap-2 border-l border-border-subtle pl-2.5">
+                <span className="text-[18px] font-bold leading-none text-text-primary sm:text-[20px]">
+                  {price != null ? fmtNum(price, digits) : "—"}
+                </span>
+                {chg != null && <Chg value={chg} className="text-[12px] font-semibold" />}
+                {meta && <FreshnessDot status={meta.freshness} ageMs={meta.ageMs} />}
+              </div>
+            </div>
+          </div>
+
+          <div className="hidden items-center gap-3 lg:flex">
+            {seriesLow != null && seriesHigh != null && (
+              <div className="w-28">
+                <div className="flex justify-between text-[9px] uppercase tracking-wider text-text-muted">
+                  <span>Range</span>
+                  <span className="num text-text-primary">{rangePos.toFixed(0)}%</span>
+                </div>
+                <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-surface-elevated">
+                  <div
+                    className="h-full rounded-full bg-accent-primary/80"
+                    style={{ width: `${Math.min(100, Math.max(0, rangePos))}%` }}
+                  />
+                </div>
+                <div className="mt-0.5 flex justify-between text-[9px] text-text-muted">
+                  <span className="num">{fmtNum(seriesLow, digits)}</span>
+                  <span className="num">{fmtNum(seriesHigh, digits)}</span>
+                </div>
+              </div>
+            )}
+            <div className="flex gap-1">
+              {sessions.map((s) => (
+                <span
+                  key={s.name}
+                  className={`rounded px-1.5 py-0.5 text-[9px] font-medium ${
+                    s.active ? "bg-positive/15 text-positive" : "bg-surface-elevated text-text-muted"
+                  }`}
+                >
+                  {s.name}
+                </span>
+              ))}
+            </div>
+          </div>
         </div>
 
-        <div className="relative h-2 overflow-hidden rounded-full bg-background-secondary">
-          <div className="absolute inset-y-0 left-1/2 w-px bg-border-subtle" />
-          <div
-            className={`absolute inset-y-0 ${quant.score >= 0 ? "left-1/2 bg-positive/70" : "right-1/2 bg-negative/70"}`}
-            style={{ width: `${Math.min(50, Math.abs(quant.score) / 2)}%` }}
+        <div className="mt-2 flex flex-wrap items-center gap-1 border-t border-border-subtle/70 pt-2">
+          <span className="mr-1 text-[9px] uppercase tracking-wider text-text-muted">Quick</span>
+          {QUICK_PAIRS.map((p) => (
+            <Link
+              key={p}
+              href={`/forex/${p}`}
+              className={`rounded-md px-2 py-0.5 text-[10px] font-medium transition-colors ${
+                p === pair
+                  ? "bg-accent-primary/20 text-accent-primary"
+                  : "bg-surface-elevated text-text-secondary hover:text-text-primary"
+              }`}
+            >
+              {p}
+            </Link>
+          ))}
+          <div className="ml-auto flex gap-0.5">
+            {INTERVALS.map((tf) => (
+              <button
+                key={tf}
+                type="button"
+                onClick={() => setInterval(tf)}
+                className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${
+                  interval === tf
+                    ? "bg-accent-primary/20 text-accent-primary"
+                    : "text-text-muted hover:text-text-primary"
+                }`}
+              >
+                {tf.toUpperCase()}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Mobile tabs */}
+      <div className="xl:hidden">
+        <div className="flex gap-1 overflow-x-auto rounded-lg border border-border-subtle bg-surface-elevated/40 p-1">
+          {(
+            [
+              ["chart", "Chart"],
+              ["desk", "Vị thế"],
+              ["scalp", "Scalp"],
+              ["structure", "Cấu trúc"],
+              ["news", "Tin / Lịch"],
+            ] as const
+          ).map(([id, label]) => (
+            <button
+              key={id}
+              type="button"
+              onClick={() => setMobileTab(id)}
+              className={`flex-1 whitespace-nowrap rounded-md px-2 py-1.5 text-center text-[11px] font-medium ${
+                mobileTab === id ? "bg-accent-primary/20 text-accent-primary" : "text-text-secondary"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Top stage: 3+6+3 */}
+      <div className="hidden xl:grid xl:grid-cols-12 xl:gap-2 xl:items-stretch">
+        <div className="xl:col-span-3 flex min-h-[560px] flex-col gap-2">
+          <FILL className="min-h-0 flex-[1.2]">
+            <ForexTradeDesk
+              pair={pair}
+              base={data.base}
+              quote={data.quote}
+              price={price}
+              changePercent={chg}
+            />
+          </FILL>
+          <OrderFlowPanel flow={orderFlow} />
+          <LiquidityZonesPanel
+            price={price}
+            digits={digits}
+            supports={supports}
+            resistances={resistances}
+            seriesLow={seriesLow}
+            seriesHigh={seriesHigh}
           />
         </div>
 
-        <ul className="space-y-1 text-[11.5px] leading-relaxed text-text-secondary">
-          {quant.factors.map((f, i) => (
-            <li key={i} className="flex items-start gap-1.5">
-              <span className={f.w >= 0 ? "text-positive" : "text-negative"}>{f.w >= 0 ? "+" : "-"}</span>
-              <span>{f.text}</span>
-            </li>
-          ))}
-        </ul>
+        <div className="xl:col-span-6 flex min-h-[560px] flex-col overflow-hidden rounded-xl border border-border-subtle bg-surface-primary">
+          <OrcaChart
+            symbol={pair}
+            assetType="forex"
+            defaultTimeframe={interval}
+            height={560}
+            title={`${data.base}/${data.quote}`}
+          />
+        </div>
 
-        {isLoading && !data && <p className="text-[11px] text-text-muted">Đang tải diễn giải LLM…</p>}
-        {llm?.narrative && (
-          <div className="panel-inset space-y-1.5 p-2.5">
-            <div className="flex flex-wrap items-center gap-1.5 text-[10px] uppercase tracking-wider text-text-muted">
-              <span>AI insight</span>
-              <Badge tone={llm.stance === "confirm" ? "up" : llm.stance === "diverge" ? "down" : "neutral"}>
-                {llm.stance === "confirm" ? "Khớp quant" : llm.stance === "diverge" ? "Lệch quant" : "Trung lập"}
-              </Badge>
-            </div>
-            <p className="text-[12px] leading-relaxed text-text-primary">{llm.narrative}</p>
-            {llm.risks?.length > 0 && (
-              <ul className="space-y-0.5 text-[11px] text-text-muted">
-                {llm.risks.map((r, i) => (
-                  <li key={i}>• {r}</li>
-                ))}
-              </ul>
-            )}
+        <div className="xl:col-span-3 flex min-h-[560px] flex-col gap-2">
+          <FILL className="min-h-0 flex-1">
+            <ForexScalpPanel pair={pair} />
+          </FILL>
+          <KeyZonesCompact price={price} digits={digits} supports={supports} resistances={resistances} />
+        </div>
+      </div>
+
+      {/* Mobile content */}
+      <div className="space-y-2 xl:hidden">
+        {mobileTab === "chart" && (
+          <OrcaChart
+            symbol={pair}
+            assetType="forex"
+            defaultTimeframe={interval}
+            height={400}
+            title={`${data.base}/${data.quote}`}
+          />
+        )}
+        {mobileTab === "desk" && (
+          <>
+            <ForexTradeDesk
+              pair={pair}
+              base={data.base}
+              quote={data.quote}
+              price={price}
+              changePercent={chg}
+            />
+            <OrderFlowPanel flow={orderFlow} />
+            <LiquidityZonesPanel
+              price={price}
+              digits={digits}
+              supports={supports}
+              resistances={resistances}
+              seriesLow={seriesLow}
+              seriesHigh={seriesHigh}
+            />
+          </>
+        )}
+        {mobileTab === "scalp" && (
+          <>
+            <ForexScalpPanel pair={pair} />
+            <KeyZonesCompact price={price} digits={digits} supports={supports} resistances={resistances} />
+          </>
+        )}
+        {mobileTab === "structure" && (
+          <MarketStructurePanel
+            tab={structureTab}
+            onTab={setStructureTab}
+            pair={pair}
+            interval={interval}
+            tech={tech}
+            patterns={patterns}
+            cur={cur}
+            series={data.series}
+          />
+        )}
+        {mobileTab === "news" && (
+          <div className="space-y-2">
+            <EconomicCalendarPanel />
+            <SentimentPanelCompact pair={pair} current={cur} tech={tech} />
+            <ForexNewsPanel pair={pair} base={data.base} quote={data.quote} />
           </div>
         )}
-        {!llm && llmStatus === "skipped" && (
-          <p className="text-[10px] text-text-muted">LLM chưa bật (OPENROUTER_API_KEY) — chỉ điểm quant.</p>
-        )}
-        {!llm && (llmStatus === "unavailable" || llmStatus === "failed") && (
-          <p className="text-[10px] text-text-muted">LLM tạm không phản hồi — giữ điểm quant.</p>
-        )}
-        <p className="text-[10px] text-text-muted">Điểm quant từ % ngày, RSI, trend SMA — không phải khuyến nghị.</p>
       </div>
-    </Panel>
-  );
-});
 
-function computeLocalSentiment(
-  t: { changePercent?: number | null; price?: number },
-  tech: TechnicalSnapshot | null,
-  mode: "crypto" | "forex",
-) {
-  let score = 0;
-  const factors: { w: number; text: string }[] = [];
-  const chg = t.changePercent ?? null;
-  const hi = mode === "crypto" ? 3 : 0.4;
-  const mid = mode === "crypto" ? 0.5 : 0.08;
-  if (chg != null) {
-    if (chg > hi) {
-      score += 28;
-      factors.push({ w: 1, text: `Biến động +${chg.toFixed(2)}% — momentum tăng` });
-    } else if (chg > mid) {
-      score += 14;
-      factors.push({ w: 1, text: `Biến động +${chg.toFixed(2)}% — bias nhẹ tăng` });
-    } else if (chg < -hi) {
-      score -= 28;
-      factors.push({ w: -1, text: `Biến động ${chg.toFixed(2)}% — áp lực bán` });
-    } else if (chg < -mid) {
-      score -= 14;
-      factors.push({ w: -1, text: `Biến động ${chg.toFixed(2)}% — bias nhẹ giảm` });
-    } else factors.push({ w: 0, text: `Biến động ${chg.toFixed(2)}% — biên độ hẹp` });
-  }
-  if (tech?.rsi14 != null) {
-    if (tech.rsi14 >= 70) {
-      score -= 18;
-      factors.push({ w: -1, text: `RSI ${tech.rsi14.toFixed(0)} — quá mua` });
-    } else if (tech.rsi14 <= 30) {
-      score += 18;
-      factors.push({ w: 1, text: `RSI ${tech.rsi14.toFixed(0)} — quá bán` });
-    } else if (tech.rsi14 >= 55) {
-      score += 8;
-      factors.push({ w: 1, text: `RSI ${tech.rsi14.toFixed(0)} — nghiêng mua` });
-    } else if (tech.rsi14 <= 45) {
-      score -= 8;
-      factors.push({ w: -1, text: `RSI ${tech.rsi14.toFixed(0)} — nghiêng bán` });
-    }
-  }
-  if (tech?.trend) {
-    const map: Record<string, number> = { "strong-up": 22, up: 12, sideways: 0, down: -12, "strong-down": -22 };
-    const w = map[tech.trend.label] ?? 0;
-    score += w;
-    factors.push({ w, text: `Trend: ${tech.trend.label} (${tech.trend.score})` });
-  }
-  score = Math.max(-100, Math.min(100, Math.round(score)));
-  let label = "TRUNG LẬP";
-  let tone: "up" | "down" | "neutral" = "neutral";
-  if (score >= 35) {
-    label = "LẠC QUAN";
-    tone = "up";
-  } else if (score >= 12) {
-    label = "HƠI LẠC QUAN";
-    tone = "up";
-  } else if (score <= -35) {
-    label = "BI QUAN";
-    tone = "down";
-  } else if (score <= -12) {
-    label = "HƠI BI QUAN";
-    tone = "down";
-  }
-  return { score, label, tone, factors: factors.slice(0, 5) };
-}
-
-const CandlePatternsPanel = memo(function CandlePatternsPanel({ patterns }: { patterns: CandlePattern[] }) {
-  return (
-    <Panel
-      title={
-        <span className="flex items-center gap-2">
-          <Layers className="size-4 text-accent-primary" /> Nhận diện mẫu hình nến
-        </span>
-      }
-    >
-      {!patterns.length ? (
-        <p className="text-[12px] leading-relaxed text-text-muted">
-          Không có mô hình đáng chú ý trên nến intraday gần nhất — thị trường đang vận động theo cấu trúc thông thường.
-        </p>
-      ) : (
-        <div className="max-h-[180px] space-y-2 overflow-y-auto overscroll-contain sm:max-h-[200px]">
-          {patterns.map((p) => (
-            <div key={p.name} className="panel-inset space-y-1 p-2.5">
-              <div className="flex flex-wrap items-center gap-1.5">
-                <span className="text-[12px] font-medium text-text-primary">{p.nameVi}</span>
-                <Badge tone={p.type === "bullish" ? "up" : p.type === "bearish" ? "down" : "neutral"}>
-                  {p.type === "bullish" ? "Tăng" : p.type === "bearish" ? "Giảm" : "Trung lập"}
-                </Badge>
-                <Badge tone="neutral">{p.reliability}</Badge>
-              </div>
-              <p className="text-[11px] leading-relaxed text-text-secondary">{p.description}</p>
-            </div>
-          ))}
+      {/* Bottom cockpit: 7+5 */}
+      <div className="hidden xl:grid xl:grid-cols-12 xl:gap-2 xl:items-stretch">
+        <div className="xl:col-span-7 flex min-h-[300px] flex-col">
+          <MarketStructurePanel
+            tab={structureTab}
+            onTab={setStructureTab}
+            pair={pair}
+            interval={interval}
+            tech={tech}
+            patterns={patterns}
+            cur={cur}
+            series={data.series}
+          />
         </div>
+
+        <div className="xl:col-span-5 flex min-h-[300px] flex-col gap-2">
+          <EconomicCalendarPanel />
+          <div className="grid grid-cols-2 gap-2 min-h-0 flex-1">
+            <SentimentPanelCompact pair={pair} current={cur} tech={tech} />
+            <ForexNewsPanel pair={pair} base={data.base} quote={data.quote} />
+          </div>
+        </div>
+      </div>
+
+      {data.referenceNote && (
+        <p className="rounded-lg border border-border-subtle bg-surface-elevated/40 px-3 py-1.5 text-[10px] leading-relaxed text-text-muted">
+          {data.referenceNote}
+        </p>
       )}
-    </Panel>
+      {meta && <MetaLine meta={meta} />}
+    </div>
   );
-});
-
-const ForexNewsPanel = memo(function ForexNewsPanel({
-  pair,
-  base,
-  quote,
-}: {
-  pair: string;
-  base: string;
-  quote: string;
-}) {
-  const { data, meta, isLoading } = useApi<NewsPayload>(`/api/v1/news?category=forex&limit=12`, {
-    refreshInterval: 300_000,
-  });
-
-  const articles = useMemo(() => {
-    const list = data?.articles ?? [];
-    const keys = [pair, base, quote, `${base}/${quote}`, `${base}${quote}`].map((s) => s.toUpperCase());
-    const related = list.filter((a) => {
-      const title = a.title.toUpperCase();
-      const summary = (a.summary ?? "").toUpperCase();
-      const syms = (a.relatedSymbols ?? []).map((s) => s.toUpperCase());
-      return keys.some((k) => title.includes(k) || summary.includes(k) || syms.some((s) => s.includes(k)));
-    });
-    return (related.length ? related : list).slice(0, 5);
-  }, [data, pair, base, quote]);
-
-  return (
-    <Panel
-      title={
-        <span className="flex items-center gap-2">
-          <Newspaper className="size-4 text-accent-primary" /> Tin tức
-          {meta && <FreshnessDot status={meta.freshness} ageMs={meta.ageMs} />}
-        </span>
-      }
-    >
-      {isLoading && !data ? (
-        <Loading rows={3} />
-      ) : !articles.length ? (
-        <p className="text-[12px] text-text-muted">Chưa có tin forex liên quan — nguồn RSS tạm trống.</p>
-      ) : (
-        <ul className="max-h-[180px] space-y-2 overflow-y-auto overscroll-contain sm:max-h-[200px]">
-          {articles.map((a) => (
-            <li key={a.id || a.url} className="border-b border-border-subtle/60 pb-2 last:border-0 last:pb-0">
-              <a
-                href={a.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="group flex items-start gap-1.5 text-[12px] font-medium leading-snug text-text-primary hover:text-accent-primary"
-              >
-                <span className="line-clamp-2 flex-1">{a.title}</span>
-                <ExternalLink className="mt-0.5 size-3 shrink-0 opacity-40 group-hover:opacity-80" />
-              </a>
-              <div className="mt-0.5 flex flex-wrap items-center gap-2 text-[10px] text-text-muted">
-                <span>{a.source}</span>
-                <span>·</span>
-                <span>{formatAge(a.publishedAt)}</span>
-              </div>
-            </li>
-          ))}
-        </ul>
-      )}
-    </Panel>
-  );
-});
-
-function formatAge(iso: string): string {
-  const t = Date.parse(iso);
-  if (!Number.isFinite(t)) return "";
-  const mins = Math.max(0, Math.round((Date.now() - t) / 60_000));
-  if (mins < 60) return `${mins}p trước`;
-  const h = Math.round(mins / 60);
-  if (h < 48) return `${h}h trước`;
-  return `${Math.round(h / 24)}d trước`;
 }

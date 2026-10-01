@@ -13,6 +13,11 @@ import { SeriesManager } from "./series-manager";
 import { ChartLiveManager } from "./live-manager";
 import { ORCA_CHART_THEME as T, type ChartKind, type LiveState } from "./theme";
 import { Loading } from "@/components/ui";
+import { analyzeMoneyFlow } from "@/lib/engines/money-flow";
+import { buildSmcOverlay } from "@/chart/smc-overlay";
+import { applySmcPriceLines, type SmcLineBag } from "@/chart/smc-series-helpers";
+import { analyzeMtfBias, companionTimeframes, type MtfBiasResult } from "@/lib/engines/mtf-bias";
+import type { OhlcvBar } from "@/lib/types";
 
 interface Props {
   symbol: string;
@@ -105,6 +110,9 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
   const dataRef = useRef<ChartMarketData | null>(null);
   const extraLevelsRef = useRef(extraLevels);
   const [liveState, setLiveState] = useState<LiveState | null>(null);
+  const [smcOn, setSmcOn] = useState(true);
+  const smcLineBag = useRef<SmcLineBag>({ lines: [] });
+  const [mtfBias, setMtfBias] = useState<MtfBiasResult | null>(null);
   useEffect(() => {
     extraLevelsRef.current = extraLevels;
   }, [extraLevels]);
@@ -140,6 +148,7 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
       try {
         const { createChart, ColorType, CrosshairMode } = await import("lightweight-charts");
         if (cancelled || !hostRef.current) return;
+        hostRef.current.innerHTML = "";
 
         chart = createChart(hostRef.current, {
           height,
@@ -155,7 +164,7 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
           crosshair: { mode: prefs.crosshairMagnet ? CrosshairMode.Magnet : CrosshairMode.Normal },
           rightPriceScale: {
             borderVisible: false,
-            mode: prefs.logScale ? 1 : 0, // 1 = Logarithmic
+            mode: prefs.logScale ? 1 : 0,
             scaleMargins: { top: 0.08, bottom: 0.18 },
           },
           timeScale: { borderVisible: false, timeVisible: true, secondsVisible: false },
@@ -182,6 +191,7 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
       ro?.disconnect();
       try {
         chart?.remove();
+        if (hostRef.current) hostRef.current.innerHTML = "";
       } catch {
         /* */
       }
@@ -250,6 +260,65 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
   }, [data, prefs.volume, prefs.indicators, extraLevels, engineReady]);
 
   useEffect(() => {
+    const mgr = mgrRef.current;
+    if (!engineReady || !mgr || !data?.candles?.length) return;
+    try {
+      const series = mgr.getCandleSeries?.() ?? null;
+      if (!smcOn) {
+        applySmcPriceLines(series, smcLineBag.current, []);
+        return;
+      }
+      const bars: OhlcvBar[] = data.candles.map((c) => ({
+        time: c.time, open: c.open, high: c.high, low: c.low, close: c.close, volume: c.volume ?? 0,
+      }));
+      const analysis = analyzeMoneyFlow(bars);
+      const overlay = buildSmcOverlay(analysis);
+      applySmcPriceLines(series, smcLineBag.current, overlay.levels);
+      if (overlay.markers.length) mgr.applyMarkers(overlay.markers as any);
+    } catch {
+      /* */
+    }
+  }, [data, smcOn, engineReady]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const companions = companionTimeframes(tf, tfs);
+    if (!symbol || companions.length < 2) {
+      setMtfBias(null);
+      return;
+    }
+    (async () => {
+      try {
+        const seriesByTf: Record<string, OhlcvBar[]> = {};
+        await Promise.all(
+          companions.map(async (t) => {
+            const lim = historyLimit(assetType, t);
+            const url = `/api/v1/chart/history?symbol=${encodeURIComponent(symbol)}&assetType=${assetType}&timeframe=${t}&limit=${Math.min(lim, 400)}`;
+            const res = await fetch(url);
+            if (!res.ok) return;
+            const json = await res.json();
+            const candles =
+              (json?.data?.candles as ChartCandle[] | undefined) ??
+              (json?.candles as ChartCandle[] | undefined);
+            if (!candles?.length) return;
+            seriesByTf[t] = candles.map((c) => ({
+              time: c.time, open: c.open, high: c.high, low: c.low, close: c.close, volume: c.volume ?? 0,
+            }));
+          }),
+        );
+        if (cancelled) return;
+        if (Object.keys(seriesByTf).length) setMtfBias(analyzeMtfBias(seriesByTf));
+        else setMtfBias(null);
+      } catch {
+        if (!cancelled) setMtfBias(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [symbol, tf, assetType, tfs]);
+
+  useEffect(() => {
     const supportsLive = assetType === "crypto" || assetType === "stock";
     if (!engineReady || !supportsLive || !symbol) {
       liveRef.current?.stop();
@@ -275,22 +344,10 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
               const ratio = c.close / lastHist.close;
               if (ratio > 50) {
                 const factor = ratio > 500 ? 1_000 : ratio;
-                candle = {
-                  ...c,
-                  open: c.open / factor,
-                  high: c.high / factor,
-                  low: c.low / factor,
-                  close: c.close / factor,
-                };
+                candle = { ...c, open: c.open / factor, high: c.high / factor, low: c.low / factor, close: c.close / factor };
               } else if (ratio < 1 / 50) {
                 const factor = ratio < 1 / 500 ? 1_000 : Math.round(1 / ratio);
-                candle = {
-                  ...c,
-                  open: c.open * factor,
-                  high: c.high * factor,
-                  low: c.low * factor,
-                  close: c.close * factor,
-                };
+                candle = { ...c, open: c.open * factor, high: c.high * factor, low: c.low * factor, close: c.close * factor };
               }
             }
             mgr.updateLive(candle);
@@ -364,78 +421,25 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
             ? "border-transparent text-text-primary"
             : "border-border-subtle text-text-muted hover:border-border-default hover:text-text-secondary"
         }`}
-        style={
-          on
-            ? {
-                background: `color-mix(in srgb, ${t.color} 16%, transparent)`,
-                borderColor: `color-mix(in srgb, ${t.color} 45%, transparent)`,
-                color: t.color,
-              }
-            : undefined
-        }
+        style={on ? { backgroundColor: `${t.color}22`, borderColor: `${t.color}55`, color: t.color } : undefined}
       >
-        <span className="size-1.5 rounded-full" style={{ background: on ? t.color : "var(--color-text-muted)" }} />
+        <span className="size-1.5 rounded-full" style={{ background: on ? t.color : "#64748b" }} />
         {t.short}
       </button>
     );
   };
 
   return (
-    <div className="relative rounded-xl border border-border-subtle bg-background-secondary">
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-border-subtle px-3 py-1.5">
-        <span className="text-[13px] font-medium text-text-primary">{title ?? symbol}</span>
-        {(assetType === "crypto" || assetType === "stock") && liveState && (
-          <span
-            className="inline-flex items-center gap-1 text-[10px] uppercase tracking-wider"
-            title={liveState.ageMs != null ? `age ${Math.round(liveState.ageMs / 1000)}s` : undefined}
-          >
-            <span
-              className={`size-1.5 rounded-full ${
-                liveState.state === "live"
-                  ? "bg-positive animate-pulse"
-                  : liveState.state === "delayed" || liveState.state === "reconnecting"
-                    ? "bg-warning"
-                    : "bg-text-muted"
-              }`}
-            />
-            <span
-              className={
-                liveState.state === "live"
-                  ? "text-positive"
-                  : liveState.state === "delayed" || liveState.state === "reconnecting"
-                    ? "text-warning"
-                    : "text-text-muted"
-              }
-            >
-              {liveState.state === "live"
-                ? "LIVE"
-                : liveState.state === "delayed"
-                  ? "DELAYED"
-                  : liveState.state === "reconnecting"
-                    ? "RECONNECT"
-                    : "CONNECTING"}
+    <div className="relative overflow-hidden rounded-xl border border-border-subtle bg-background-secondary">
+      <div className="chart-toolbar-row border-b border-border-subtle">
+        <div className="chart-control-group min-w-0">
+          {title ? <span className="truncate text-[12px] font-semibold text-text-primary">{title}</span> : null}
+          {liveState ? (
+            <span className="text-[10px] text-text-muted">
+              {liveState.connected ? "● live" : "○ offline"}
             </span>
-          </span>
-        )}
-        {data?.candles?.length ? (
-          <span className="text-[10px] text-text-muted">
-            {data.candles.length} nến ·{" "}
-            {new Date(data.candles[0].time).toLocaleDateString("vi-VN", {
-              timeZone: "Asia/Ho_Chi_Minh",
-              day: "2-digit",
-              month: "2-digit",
-              year: "2-digit",
-            })}
-            {" → "}
-            {new Date(data.candles[data.candles.length - 1].time).toLocaleString("vi-VN", {
-              timeZone: "Asia/Ho_Chi_Minh",
-              hour: "2-digit",
-              minute: "2-digit",
-              day: "2-digit",
-              month: "2-digit",
-            })}
-          </span>
-        ) : null}
+          ) : null}
+        </div>
         <div className="chart-control-group ml-auto">
           <span className="chart-control-label">Khung thời gian</span>
           <div className="seg" role="group" aria-label="Khung thời gian biểu đồ">
@@ -454,6 +458,16 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
           <div className="chart-ind-row">
             <span className="text-[9px] font-semibold tracking-wide text-text-muted opacity-80">Overlay</span>
             {OVERLAY_INDS.map(renderChip)}
+            <button
+              type="button"
+              title="SMC / ICT / VSA overlay"
+              onClick={() => setSmcOn((v) => !v)}
+              aria-pressed={smcOn}
+              data-active={smcOn}
+              className="inline-flex items-center gap-1 rounded-md border border-border-subtle px-2 py-0.5 text-[10.5px] font-medium text-text-secondary transition-colors data-[active=true]:border-accent/40 data-[active=true]:bg-accent/10 data-[active=true]:text-accent"
+            >
+              SMC/ICT
+            </button>
             <span className="mx-0.5 hidden h-3 w-px shrink-0 bg-border-subtle sm:inline-block" aria-hidden />
             <span className="text-[9px] font-semibold tracking-wide text-text-muted opacity-80">Osc</span>
             {OSC_INDS.map(renderChip)}
@@ -478,42 +492,39 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
         </div>
       </div>
 
-      {readout && (
-        <div className="flex flex-wrap gap-x-3 gap-y-1 border-b border-border-subtle/80 px-3 py-1 text-[10px] text-text-muted">
-          {isIndOn("ema") && readout.ema20 != null && (
-            <span>
-              <span style={{ color: T.accent }}>EMA20</span>{" "}
-              <span className="num text-text-secondary">
-                {readout.ema20.toLocaleString(undefined, { maximumFractionDigits: 4 })}
+      {mtfBias && (
+        <div className="flex flex-wrap items-center gap-2 border-b border-border-subtle px-3 py-1.5 text-[11px]">
+          <span className="font-semibold uppercase tracking-wider text-ink-3">MTF</span>
+          <span
+            className={
+              mtfBias.bias === "bullish"
+                ? "rounded bg-up/15 px-1.5 py-0.5 font-semibold text-up"
+                : mtfBias.bias === "bearish"
+                  ? "rounded bg-down/15 px-1.5 py-0.5 font-semibold text-down"
+                  : "rounded bg-surface-elevated px-1.5 py-0.5 text-ink-2"
+            }
+          >
+            {mtfBias.bias === "bullish" ? "Tăng" : mtfBias.bias === "bearish" ? "Giảm" : "Trung tính"} · {mtfBias.confidence}%
+          </span>
+          <span className="text-ink-3">{mtfBias.summary}</span>
+          <span className="ml-auto flex flex-wrap gap-1">
+            {mtfBias.timeframes.map((r) => (
+              <span
+                key={r.timeframe}
+                className={
+                  "rounded px-1.5 py-0.5 tabular-nums " +
+                  (r.bias === "bullish"
+                    ? "bg-up/10 text-up"
+                    : r.bias === "bearish"
+                      ? "bg-down/10 text-down"
+                      : "bg-surface-elevated text-ink-3")
+                }
+                title={`${r.timeframe}: score ${r.score} · ${r.state}`}
+              >
+                {TF_LABEL[r.timeframe] ?? r.timeframe}
               </span>
-            </span>
-          )}
-          {isIndOn("ema") && readout.ema50 != null && (
-            <span>
-              <span style={{ color: T.warn }}>EMA50</span>{" "}
-              <span className="num text-text-secondary">
-                {readout.ema50.toLocaleString(undefined, { maximumFractionDigits: 4 })}
-              </span>
-            </span>
-          )}
-          {isIndOn("rsi") && readout.rsi != null && (
-            <span>
-              <span style={{ color: T.purple }}>RSI</span>{" "}
-              <span className="num text-text-secondary">{readout.rsi.toFixed(1)}</span>
-            </span>
-          )}
-          {isIndOn("macd") && readout.macd != null && (
-            <span>
-              <span style={{ color: T.accent2 }}>MACD</span>{" "}
-              <span className="num text-text-secondary">{readout.macd.toPrecision(3)}</span>
-              {readout.hist != null && (
-                <span className={readout.hist >= 0 ? " text-positive" : " text-negative"}>
-                  {" "}
-                  hist {readout.hist.toPrecision(3)}
-                </span>
-              )}
-            </span>
-          )}
+            ))}
+          </span>
         </div>
       )}
 

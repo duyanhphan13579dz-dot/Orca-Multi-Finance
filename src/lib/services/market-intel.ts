@@ -3,7 +3,7 @@ import { cached } from "../cache";
 import { buildMeta } from "../freshness";
 import { buildMarketSnapshot } from "./market";
 import { getCrossAsset, crossAssetChanges, type CrossAssetItem } from "./cross-asset";
-import { getVnQuotes, getVnMarketBoard, vnstockConfigured } from "./stocks";
+import { getVnQuotes, getVnMarketBoard } from "./stocks";
 import { getNews } from "./news";
 import * as vndirect from "../providers/vndirect";
 import { getCafefPropFlow } from "../providers/cafef";
@@ -134,7 +134,22 @@ async function produceMarketIntel(): Promise<{ intel: MarketIntel; meta: Meta }>
     })(), 9_000),
   ]);
   const foreignRes = foreignPrimary ?? foreignFb;
-  const indices = indicesPack?.items?.length ? indicesPack.items : snapRes?.snapshot?.indices?.length ? snapRes.snapshot.indices : null;
+  const snapshotIndices = (snapRes?.snapshot.indices ?? [])
+    .filter((index) => index.region === "vn")
+    .map((index): IndexQuote => ({
+      code: index.code,
+      name: index.label,
+      value: index.value,
+      change: index.change ?? 0,
+      changePercent: index.changePercent ?? 0,
+      volume: null,
+      updatedAt: snapRes?.snapshot.checkedAt ?? null,
+    }));
+  const indices = indicesPack?.items?.length
+    ? indicesPack.items
+    : snapshotIndices.length
+      ? snapshotIndices
+      : null;
   const indicesAvailable = Boolean(indices?.length);
   const session = getVnSession();
   const board = quotesPack;

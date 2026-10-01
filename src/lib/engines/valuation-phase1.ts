@@ -43,6 +43,8 @@ export interface ValuationInputs {
   minorityInterest?: number | null;
   preferredEquity?: number | null;
   nonOperatingInvestments?: number | null;
+  /** Optional full-VND market capitalization from a current market snapshot/source. */
+  marketCapOverride?: number | null;
   source?: string;
   sourceTimestamp?: string | null;
 }
@@ -107,7 +109,11 @@ export function calcMarketCap(price: number | null, shares: number | null): Metr
   if (!finite(shares) || shares <= 0) {
     return cell(null, "incomplete", "Thiếu số lượng cổ phiếu lưu hành", ["shares"]);
   }
-  return cell(round(price * shares, 0), "ok", undefined, ["price", "shares"]);
+  const value = price * shares;
+  if (!Number.isFinite(value)) {
+    return cell(null, "invalid", "Market Cap vượt giới hạn số học", ["price", "shares"]);
+  }
+  return cell(round(value, 0), "ok", undefined, ["price", "shares"]);
 }
 
 export function calcPE(input: {
@@ -227,28 +233,37 @@ export function calcEnterpriseValue(input: {
     missing,
   };
 
-  if (marketCap == null) {
+  if (missing.length > 0) {
+    const note =
+      marketCap == null
+        ? "Thiếu Market Cap — không tính EV"
+        : `Thiếu ${missing.filter((m) => m !== "marketCap").join(", ")} — không giả định bằng 0 khi tính EV`;
     return {
-      cell: cell(null, "incomplete", "Thiếu Market Cap — không tính EV", missing),
+      cell: cell(null, "incomplete", note, missing),
       components,
     };
   }
 
-  const debtPart = totalDebt ?? 0;
-  const cashPart = cash ?? 0;
-  const minorityPart = minority ?? 0;
-  const preferredPart = preferred ?? 0;
-  const nonOpPart = nonOp ?? 0;
-
-  const ev = marketCap + debtPart + minorityPart + preferredPart - cashPart - nonOpPart;
-  const status: MetricStatus = missing.length ? "incomplete" : "ok";
-  const note =
-    missing.length > 0
-      ? `EV ước lượng — thiếu: ${missing.filter((m) => m !== "marketCap").join(", ") || "một số thành phần"} (không tự suy diễn)`
-      : undefined;
+  const ev =
+    marketCap! +
+    totalDebt! +
+    (minority ?? 0) +
+    (preferred ?? 0) -
+    cash! -
+    (nonOp ?? 0);
+  if (!Number.isFinite(ev) || ev <= 0) {
+    return {
+      cell: cell(null, Number.isFinite(ev) ? "not_applicable" : "invalid", "EV không dương hoặc không hữu hạn", [
+        "marketCap",
+        "totalDebt",
+        "cash",
+      ]),
+      components,
+    };
+  }
 
   return {
-    cell: cell(round(ev, 0), status, note, ["marketCap", "totalDebt", "cash"]),
+    cell: cell(round(ev, 0), "ok", undefined, ["marketCap", "totalDebt", "cash"]),
     components,
   };
 }
@@ -301,7 +316,11 @@ export function buildPhase1Valuation(input: ValuationInputs): Phase1ValuationRes
   const sources: string[] = [];
   if (input.source) sources.push(input.source);
 
-  const marketCap = calcMarketCap(input.price, input.shares);
+  const override = input.marketCapOverride;
+  const marketCap =
+    finite(override) && override > 0
+      ? cell(round(override, 0), "ok", "Market Cap từ snapshot nguồn / giá hiện tại", ["marketCapOverride"])
+      : calcMarketCap(input.price, input.shares);
   if (marketCap.status !== "ok") notes.push(marketCap.note ?? "Market Cap incomplete");
 
   const pe = calcPE({

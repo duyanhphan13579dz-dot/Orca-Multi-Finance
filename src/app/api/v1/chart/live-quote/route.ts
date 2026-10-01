@@ -29,7 +29,7 @@ const METAL_YAHOO: Record<string, string> = {
 
 /**
  * GET /api/v1/chart/live-quote?symbol=XAUUSD&assetType=forex
- * stock: VNDirect · forex/metals: Yahoo GC=F / FX =X · Biquote · ER-API
+ * stock: VNDirect · forex/metals: Biquote public (primary) · Yahoo · ER-API
  */
 export async function GET(req: Request) {
   const url = new URL(req.url);
@@ -40,6 +40,54 @@ export async function GET(req: Request) {
   if (assetType === "forex" || assetType === "commodity") {
     const pair = symbol.length >= 6 ? symbol.slice(0, 6) : symbol;
     const ySym = METAL_YAHOO[pair] ?? METAL_YAHOO[symbol] ?? `${pair.slice(0, 3)}${pair.slice(3, 6)}=X`;
+
+    try {
+      const { getBiquoteLiveTick, ensureBiquotePollStarted, watchBiquoteSymbol } = await import(
+        "@/lib/realtime/biquote-poll"
+      );
+      ensureBiquotePollStarted();
+      watchBiquoteSymbol(pair);
+      const cached = getBiquoteLiveTick(pair, 45_000);
+      if (cached && cached.price > 0) {
+        return ok(
+          {
+            symbol: pair,
+            price: cached.price,
+            open: null,
+            high: cached.high,
+            low: cached.low,
+            volume: 0,
+            ts: cached.ts,
+            source: "biquote-public",
+          },
+          { source: "biquote-public", sourceTimestampMs: cached.ts },
+        );
+      }
+    } catch {
+      /* next */
+    }
+
+    try {
+      const { getBiquotePublicTick } = await import("@/lib/providers/forex");
+      const t = await getBiquotePublicTick(pair);
+      if (t.mid > 0) {
+        return ok(
+          {
+            symbol: pair,
+            price: t.mid,
+            open: null,
+            high: t.high,
+            low: t.low,
+            volume: 0,
+            ts: t.timestamp,
+            source: "biquote-public",
+          },
+          { source: "biquote-public", sourceTimestampMs: t.timestamp },
+        );
+      }
+    } catch {
+      /* next */
+    }
 
     try {
       const { getYahooQuote } = await import("@/lib/providers/yahoo");
@@ -63,57 +111,32 @@ export async function GET(req: Request) {
       /* next */
     }
 
-    if (!METAL_YAHOO[pair] && !METAL_YAHOO[symbol]) {
-      try {
-        const { getBiquoteQuotes } = await import("@/lib/providers/forex");
-        const bq = await getBiquoteQuotes([pair, `${pair.slice(0, 3)}/${pair.slice(3, 6)}`]);
-        const price = bq.rates[pair] ?? bq.rates[Object.keys(bq.rates)[0] ?? ""];
-        if (price && price > 0) {
-          return ok(
-            {
-              symbol: pair,
-              price,
-              open: null,
-              high: null,
-              low: null,
-              volume: 0,
-              ts: bq.ts ?? Date.now(),
-              source: "biquote",
-            },
-            { source: "biquote", sourceTimestampMs: bq.ts ?? Date.now() },
-          );
-        }
-      } catch {
-        /* next */
+    try {
+      const { getErApiLatest } = await import("@/lib/providers/forex");
+      const base = pair.slice(0, 3);
+      const quote = pair.slice(3, 6);
+      const er = await getErApiLatest();
+      let rate: number | null = null;
+      if (base === "USD" && er.rates[quote]) rate = er.rates[quote];
+      else if (quote === "USD" && er.rates[base]) rate = 1 / er.rates[base];
+      else if (er.rates[base] && er.rates[quote]) rate = er.rates[quote] / er.rates[base];
+      if (rate && rate > 0) {
+        return ok(
+          {
+            symbol: pair,
+            price: rate,
+            open: null,
+            high: null,
+            low: null,
+            volume: 0,
+            ts: er.ts ?? Date.now(),
+            source: er.source ?? "exchangerate-api",
+          },
+          { source: er.source ?? "exchangerate-api", sourceTimestampMs: er.ts ?? Date.now() },
+        );
       }
-
-      try {
-        const { getErApiLatest } = await import("@/lib/providers/forex");
-        const base = pair.slice(0, 3);
-        const quote = pair.slice(3, 6);
-        const er = await getErApiLatest();
-        let rate: number | null = null;
-        if (base === "USD" && er.rates[quote]) rate = er.rates[quote];
-        else if (quote === "USD" && er.rates[base]) rate = 1 / er.rates[base];
-        else if (er.rates[base] && er.rates[quote]) rate = er.rates[quote] / er.rates[base];
-        if (rate && rate > 0) {
-          return ok(
-            {
-              symbol: pair,
-              price: rate,
-              open: null,
-              high: null,
-              low: null,
-              volume: 0,
-              ts: er.ts ?? Date.now(),
-              source: er.source ?? "exchangerate-api",
-            },
-            { source: er.source ?? "exchangerate-api", sourceTimestampMs: er.ts ?? Date.now() },
-          );
-        }
-      } catch {
-        /* next */
-      }
+    } catch {
+      /* next */
     }
 
     return ok(null, { source: "none", note: "forex/commodity live quote unavailable" });

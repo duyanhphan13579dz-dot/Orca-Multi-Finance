@@ -75,7 +75,7 @@ export function OrcaChart(props: ChartProps) {
   }, []);
 
   return (
-    <div ref={hostRef} className="w-full" style={{ minHeight: height }}>
+    <div ref={hostRef} className="w-full overflow-hidden" style={{ minHeight: height }}>
       {ready ? <OrcaFinancialChartLazy {...props} /> : <ChartSkeleton height={height} />}
     </div>
   );

@@ -2,6 +2,7 @@ import { eventBus } from "@/lib/events";
 import { candleAggregator } from "@/lib/realtime/candles";
 import { ensureBinanceWsStarted } from "@/lib/realtime/binance-ws";
 import { ensureVndirectWsStarted, vndirectWs } from "@/lib/realtime/vndirect-ws";
+import { ensureBiquotePollStarted, watchBiquoteSymbol, getBiquoteLiveTick } from "@/lib/realtime/biquote-poll";
 import { tfsFor, type ChartAssetType } from "@/lib/chart-const";
 
 export const dynamic = "force-dynamic";
@@ -22,7 +23,7 @@ const INDEX_ALIASES: Record<string, string[]> = {
 
 /**
  * REALTIME CHART STREAM (SSE).
- * VN: VNDirect WS + 1.5s poll (WS cache → REST) — realtime ổn định, seed nhanh.
+ * crypto: Binance WS · stock: VNDirect · forex/commodity: Biquote public poll (~1.2s)
  */
 export async function GET(req: Request) {
   const url = new URL(req.url);
@@ -38,10 +39,12 @@ export async function GET(req: Request) {
   }
 
   if (assetType === "crypto") ensureBinanceWsStarted();
+  if (assetType === "forex" || assetType === "commodity") ensureBiquotePollStarted();
 
   const encoder = new TextEncoder();
   let unsubscribe: (() => void) | null = null;
   let unwatchVnd: (() => void) | null = null;
+  let unwatchBq: (() => void) | null = null;
   let offFns: (() => void)[] = [];
   let heartbeat: ReturnType<typeof setInterval> | null = null;
   let pollTimer: ReturnType<typeof setInterval> | null = null;
@@ -87,7 +90,12 @@ export async function GET(req: Request) {
     ]);
   }
 
-  const injectTick = (price: number, ts: number, volume: number, source: "vndirect" | "ssi-fallback") => {
+  const injectTick = (
+    price: number,
+    ts: number,
+    volume: number,
+    source: "vndirect" | "ssi-fallback" | "biquote",
+  ) => {
     if (!Number.isFinite(price) || price <= 0) return;
     lastPollPrice = price;
     eventBus.emit(`market-tick:${symbol}`, {
@@ -97,7 +105,7 @@ export async function GET(req: Request) {
       cumQuoteVolume: 0,
       ts: ts > 0 ? ts : Date.now(),
       source,
-      degraded: source !== "vndirect",
+      degraded: source !== "vndirect" && source !== "biquote",
     });
   };
 
@@ -193,14 +201,66 @@ export async function GET(req: Request) {
           source: vndDisabled ? "ssi-fallback+http-poll" : "vndirect-ws+poll",
           note: snap ? undefined : "đang kết nối VNDirect (WS + poll 1.5s)",
         });
+      } else if (assetType === "forex" || assetType === "commodity") {
+        unwatchBq = watchBiquoteSymbol(symbol);
+        unsubscribe = candleAggregator.subscribe(symbol, timeframe, { assetClass: "forex" });
+        offFns = [
+          eventBus.on(`candle.updated:${symbol}:${timeframe}`, (p) => send("chart.candle.updated", p)),
+          eventBus.on(`candle.closed:${symbol}:${timeframe}`, (p) => send("chart.candle.closed", p)),
+        ];
+
+        void (async () => {
+          try {
+            const { getBiquotePublicOhlc } = await import("@/lib/providers/forex");
+            const bars = await getBiquotePublicOhlc(symbol, timeframe === "4h" ? "1h" : timeframe, 3);
+            const last = bars.at(-1);
+            if (last && last.close > 0) {
+              candleAggregator.seed(
+                symbol,
+                timeframe,
+                {
+                  time: last.time,
+                  open: last.open,
+                  high: last.high,
+                  low: last.low,
+                  close: last.close,
+                  volume: last.volume ?? 0,
+                },
+                "biquote",
+              );
+            }
+          } catch {
+            /* optional */
+          }
+        })();
+
+        const pushLive = () => {
+          const t = getBiquoteLiveTick(symbol, 45_000);
+          if (t) injectTick(t.price, t.ts, 0, "biquote");
+        };
+        pushLive();
+        pollTimer = setInterval(pushLive, 1_200);
+        pollTimer.unref?.();
+
+        const snap = candleAggregator.snapshot(symbol, timeframe);
+        send("snapshot", {
+          symbol,
+          timeframe,
+          candle: snap,
+          live: true,
+          source: "biquote-public+poll",
+          note: snap
+            ? undefined
+            : "Live FX/metals qua Biquote public (poll ~1.2s; SignalR client-side optional)",
+        });
       } else {
         send("snapshot", {
           symbol,
           timeframe,
           candle: null,
           live: false,
-          source: "frankfurter-http",
-          note: "Frankfurter/ECB chart history dùng HTTP",
+          source: "http",
+          note: "Asset type chưa có live stream",
         });
       }
 
@@ -216,6 +276,7 @@ export async function GET(req: Request) {
     cancel() {
       unsubscribe?.();
       unwatchVnd?.();
+      unwatchBq?.();
       for (const f of offFns) f();
       if (heartbeat) clearInterval(heartbeat);
       if (pollTimer) clearInterval(pollTimer);

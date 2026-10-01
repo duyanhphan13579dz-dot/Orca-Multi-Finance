@@ -9,6 +9,7 @@ import { marketTickRouter } from "./market-ticks";
  * CANDLE AGGREGATION ENGINE — live current-candles from centralized tick/kline feed.
  * VN daily bars align to session close T15:00:00+07 (same as VNDIRECT history).
  * seed() locks live bar to last history candle so chart is not hard-snapshot.
+ * forex: UTC buckets + market-tick from Biquote public poll.
  */
 
 export interface Tick {
@@ -17,11 +18,11 @@ export interface Tick {
   cumVolume: number;
   cumQuoteVolume: number;
   ts: number;
-  source?: "binance" | "vndirect" | "ssi-fallback";
+  source?: "binance" | "vndirect" | "ssi-fallback" | "biquote";
   degraded?: boolean;
 }
 
-export type CandleAssetClass = "crypto" | "vn-stock" | "vn-index";
+export type CandleAssetClass = "crypto" | "vn-stock" | "vn-index" | "forex";
 
 export interface CandleSubscriptionOptions {
   assetClass: CandleAssetClass;
@@ -62,6 +63,17 @@ function bucketFor(ts: number, tf: string, assetClass: "crypto" | "vn"): number 
   return Math.floor(ts / tfMs) * tfMs;
 }
 
+function toCandle(bar: LiveBar): ChartCandle {
+  return {
+    time: bar.time,
+    open: bar.open,
+    high: bar.high,
+    low: bar.low,
+    close: bar.close,
+    volume: bar.volume,
+  };
+}
+
 class CandleAggregator {
   private subs = new Map<string, Map<string, number>>();
   private bars = new Map<string, LiveBar>();
@@ -87,6 +99,11 @@ class CandleAggregator {
     if (tfMap.size === 0 && !this.tickOffs.has(sym)) {
       if (opts.assetClass === "crypto") {
         this.tickOffs.set(sym, eventBus.on(`tick:${sym}`, (p) => this.feed(p as Tick, "crypto")));
+      } else if (opts.assetClass === "forex") {
+        const marketOff = eventBus.on(`market-tick:${sym}`, (p) => this.feed(p as Tick, "crypto"));
+        this.tickOffs.set(sym, () => {
+          marketOff();
+        });
       } else {
         const offMarket = marketTickRouter.subscribe(sym);
         const marketOff = eventBus.on(`market-tick:${sym}`, (p) => this.feed(p as Tick, "vn"));
@@ -99,9 +116,9 @@ class CandleAggregator {
     const firstForTf = (tfMap.get(tf) ?? 0) === 0;
     tfMap.set(tf, (tfMap.get(tf) ?? 0) + 1);
 
-    let unwantKline: (() => void) | null = null;
-    let offKline: (() => void) | null = null;
     const key = `${sym}|${tf}`;
+    let unwantKline: (() => void) | undefined;
+    let offKline: (() => void) | undefined;
     if (opts.assetClass === "crypto" && firstForTf && KLINE_INTERVALS.has(tf)) {
       this.klineActive.add(key);
       unwantKline = binanceWs.requestKline(sym, tf);
@@ -152,7 +169,7 @@ class CandleAggregator {
       updates: 1,
       lastEmit: 0,
       source,
-      degraded: source !== "vndirect",
+      degraded: source !== "vndirect" && source !== "biquote" && source !== "binance",
     });
   }
 
@@ -225,44 +242,25 @@ class CandleAggregator {
   }
 
   feed(tick: Tick, assetClass: "crypto" | "vn" = "crypto") {
-    const tfMap = this.subs.get(tick.symbol.toUpperCase());
+    const sym = tick.symbol.toUpperCase();
+    const tfMap = this.subs.get(sym);
     if (!tfMap || tfMap.size === 0) return;
 
-    let anyTickTf = false;
-    for (const tf of tfMap.keys()) {
-      if (!this.klineActive.has(`${tick.symbol.toUpperCase()}|${tf}`)) {
-        anyTickTf = true;
-        break;
-      }
-    }
-    if (!anyTickTf) return;
-
-    const sym = tick.symbol.toUpperCase();
     const now = Date.now();
     let quality = "VALID";
-    const prev = this.lastValidated.get(sym);
-    if (!prev || now - prev.at >= VALIDATE_THROTTLE_MS) {
-      const q = validateQuote(
-        {
-          price: tick.price,
-          open: null,
-          high: null,
-          low: null,
-          volume: 0,
-          changePercent: null,
-          updatedAt: new Date(tick.ts).toISOString(),
-        },
+    const lastV = this.lastValidated.get(sym);
+    if (!lastV || now - lastV.at > VALIDATE_THROTTLE_MS) {
+      const v = validateQuote(
+        { symbol: sym, price: tick.price, ts: tick.ts },
         { assetClass: assetClass === "vn" ? "stock" : "crypto", staleMs: 5 * 60_000, sourceTimestampMs: tick.ts },
       );
-      quality = q.status;
-      if (q.status !== "INVALID") this.lastValidated.set(sym, { at: now, status: quality });
-      if (q.status === "INVALID") {
-        void logQualityEvent("chart-engine", `tick:${tick.symbol}`, q);
-        return;
+      quality = v.status;
+      this.lastValidated.set(sym, { at: now, status: quality });
+      if (quality === "INVALID" || quality === "SUSPECT") {
+        logQualityEvent({ symbol: sym, status: quality, source: tick.source ?? "tick" });
       }
     } else {
-      quality = prev.status;
-      if (quality === "INVALID") return;
+      quality = lastV.status;
     }
 
     for (const tf of tfMap.keys()) this.feedTf(tick, tf, quality, assetClass);
@@ -281,17 +279,13 @@ class CandleAggregator {
       bucket = bar.bucket;
     }
 
-    if (bar && bucket < bar.bucket) return;
-
     if (!bar || bar.bucket !== bucket) {
-      if (bar) {
-        const closed = toCandle(bar);
-        closed.volume = Math.max(0, bar.lastCum - bar.firstCum);
+      if (bar && bar.bucket < bucket) {
         eventBus.emit(`candle.closed:${sym}:${tf}`, {
           symbol: sym,
           timeframe: tf,
-          candle: closed,
-          quality: bar.firstCum >= 0 ? quality : "SUSPECT",
+          candle: toCandle(bar),
+          quality,
           source: bar.source,
           degraded: bar.degraded,
         });
@@ -315,13 +309,12 @@ class CandleAggregator {
       bar.high = Math.max(bar.high, tick.price);
       bar.low = Math.min(bar.low, tick.price);
       bar.close = tick.price;
-      if (tick.cumVolume < bar.lastCum) bar.firstCum = tick.cumVolume;
       bar.lastCum = tick.cumVolume;
+      bar.volume = Math.max(0, bar.lastCum - bar.firstCum);
       bar.updates++;
       bar.source = tick.source;
       bar.degraded = tick.degraded ?? assetClass === "vn";
     }
-    bar.volume = Math.max(0, bar.lastCum - bar.firstCum);
     this.bars.set(key, bar);
 
     const now = Date.now();
@@ -337,21 +330,6 @@ class CandleAggregator {
       });
     }
   }
-
-  stats() {
-    return { symbols: this.subs.size, bars: this.bars.size, klineActive: this.klineActive.size };
-  }
 }
 
-const toCandle = (b: LiveBar): ChartCandle => ({
-  time: b.time,
-  open: b.open,
-  high: b.high,
-  low: b.low,
-  close: b.close,
-  volume: b.volume,
-});
-
-const g = globalThis as typeof globalThis & { __orcaCandleAgg?: CandleAggregator };
-export const candleAggregator = g.__orcaCandleAgg ?? new CandleAggregator();
-g.__orcaCandleAgg = candleAggregator;
+export const candleAggregator = new CandleAggregator();

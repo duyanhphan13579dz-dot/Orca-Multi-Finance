@@ -6,12 +6,12 @@
     "node": ">=20.9.0"
   },
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev -p 3000 -H 0.0.0.0",
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --import ./test/test-setup/register-stub.mjs --require ./test/test-setup/patch-server-only.cjs --test src/lib/__tests__/chart-engine.test.ts src/lib/__tests__/divergence.test.ts src/lib/__tests__/candlestick-patterns.test.ts",
+    "test": "node --import tsx --import ./test/test-setup/register-stub.mjs --require ./test/test-setup/patch-server-only.cjs --test src/lib/__tests__/chart-engine.test.ts src/lib/__tests__/divergence.test.ts src/lib/__tests__/candlestick-patterns.test.ts src/lib/__tests__/valuation-phase1.test.ts src/lib/__tests__/valuation-phase2.test.ts src/lib/__tests__/valuation-phase3.test.ts src/lib/__tests__/valuation-phase4.test.ts src/lib/__tests__/valuation-phase5.test.ts src/lib/__tests__/valuation-phase6.test.ts src/lib/__tests__/valuation-pipeline.test.ts",
     "test:divergence": "node --import tsx --import ./test/test-setup/register-stub.mjs --require ./test/test-setup/patch-server-only.cjs --test src/lib/__tests__/divergence.test.ts",
     "ssc:install-browser": "npx playwright install chromium",
     "ssc:crawl": "node --import tsx -e \"const { refreshSscListingIndex } = require('./src/lib/financial/official/ssc-listing-index.ts'); refreshSscListingIndex().then(i => console.log(JSON.stringify({ tickers: i.tickerCount, rows: i.rowCount, at: i.builtAt }, null, 2))).catch(e => { console.error(e); process.exit(1); })\""

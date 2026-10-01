@@ -1,6 +1,7 @@
 import "server-only";
 import type { FinancialHealthResult } from "./fundamental";
 import { getIndustryProfile } from "../financial/industry-profiles";
+import { vnPriceQuoteToVnd, vnPriceScale, vnVndPerShareToQuote } from "../financial/vn-units";
 import {
   buildPhase1Valuation,
   inputsFromHealthAnchors,
@@ -82,7 +83,7 @@ function mapLegacyDcf(results: DcfResult[]): DcfScenario[] {
       growthY1to5: d.assumptions.growthY1toN,
       terminalGrowth: d.assumptions.terminalGrowth,
       discountRate: d.assumptions.discountRate,
-      intrinsicPerShare: d.fairPrice ?? 0,
+      intrinsicPerShare: d.fairPriceQuote ?? 0,
       marginOfSafetyPct: d.upsidePct ?? 0,
     }));
 }
@@ -126,8 +127,15 @@ function blendWithPhase4(
 }
 
 export function computeValuation(input: {
+  /** Current market quote (normally in thousand-VND units for Vietnam stocks). */
   price: number;
+  /** Optional normalized full-VND price from the quote adapter. */
+  priceVnd?: number | null;
+  /** Current full-VND market cap supplied by the market-data adapter. */
+  marketCapOverride?: number | null;
   health: FinancialHealthResult;
+  /** Dividend yield as a ratio (0.025) or percent (2.5), normalized at the engine boundary. */
+  dividendYield?: number | null;
   dividendsAnnual?: number | null;
   ebitTtm?: number | null;
   taxRate?: number | null;
@@ -160,25 +168,29 @@ export function computeValuation(input: {
   const a = health.anchors;
   const notes: string[] = [];
   const level = input.level ?? "full";
+  const priceVnd = input.priceVnd ?? vnPriceQuoteToVnd(price) ?? 0;
+  const priceScale = vnPriceScale(price);
 
-  const phase1 = buildPhase1Valuation(
-    inputsFromHealthAnchors({
-      price,
-      anchors: {
-        revenue: a.revenue,
-        netProfit: a.netProfit,
-        equity: a.equity,
-        totalDebt: a.totalDebt,
-        ocfTtm: a.ocfTtm,
-        fcfTtm: a.fcfTtm,
-        shares: a.shares,
-        epsTtm: a.epsTtm,
-        ebitdaTtm: a.ebitdaTtm,
-        cash: a.cash ?? null,
-      },
-      source: "financial-health-anchors",
-    }),
-  );
+  const phase1Inputs = inputsFromHealthAnchors({
+    price: priceVnd,
+    anchors: {
+      revenue: a.revenue,
+      netProfit: a.netProfit,
+      equity: a.equity,
+      totalDebt: a.totalDebt,
+      ocfTtm: a.ocfTtm,
+      fcfTtm: a.fcfTtm,
+      shares: a.shares,
+      epsTtm: a.epsTtm,
+      ebitdaTtm: a.ebitdaTtm,
+      cash: a.cash ?? null,
+    },
+    source: "financial-health-anchors",
+  });
+  const phase1 = buildPhase1Valuation({
+    ...phase1Inputs,
+    marketCapOverride: input.marketCapOverride ?? null,
+  });
 
   const marketCap = phase1.multiples.marketCap.value;
   const ev = phase1.multiples.enterpriseValue.value;
@@ -189,6 +201,26 @@ export function computeValuation(input: {
   const evSales = phase1.multiples.evSales.value;
   const earningsYield = phase1.multiples.earningsYield.value;
   notes.push(...phase1.notes);
+
+  const dividendYieldFromCash =
+    input.dividendsAnnual != null &&
+    input.dividendsAnnual > 0 &&
+    marketCap != null &&
+    marketCap > 0
+      ? input.dividendsAnnual / marketCap
+      : null;
+  const suppliedYield = input.dividendYield;
+  const normalizedSuppliedYield =
+    suppliedYield != null && Number.isFinite(suppliedYield) && suppliedYield >= 0
+      ? suppliedYield > 1
+        ? suppliedYield / 100
+        : suppliedYield
+      : null;
+  const dividendYield =
+    dividendYieldFromCash ??
+    (normalizedSuppliedYield != null && normalizedSuppliedYield <= 0.8
+      ? normalizedSuppliedYield
+      : null);
 
   if (level === "basic") {
     notes.push("basic: multiples+yield");
@@ -212,7 +244,8 @@ export function computeValuation(input: {
         evSales: evSales != null ? Number(evSales.toFixed(2)) : null,
         evFcff: null,
         fcfYield: fcfY != null ? Number((fcfY * 100).toFixed(2)) : null,
-        dividendYield: null,
+        dividendYield:
+          dividendYield != null ? Number((dividendYield * 100).toFixed(2)) : null,
         earningsYield: earningsYield != null ? Number((earningsYield * 100).toFixed(2)) : null,
       },
       phase1,
@@ -253,14 +286,6 @@ export function computeValuation(input: {
       : a.fcfTtm != null && marketCap != null && marketCap > 0
         ? a.fcfTtm / marketCap
         : null;
-  const dividendYield =
-    input.dividendsAnnual != null &&
-    input.dividendsAnnual > 0 &&
-    marketCap != null &&
-    marketCap > 0
-      ? input.dividendsAnnual / marketCap
-      : null;
-
   const peerMed = phase2.peers?.industry;
   const hist = phase2.historical;
   const fairPe = input.fairPe ?? peerMed?.peMedian ?? hist?.pe.median3y ?? null;
@@ -269,18 +294,19 @@ export function computeValuation(input: {
     input.fairEvEbitda ?? peerMed?.evEbitdaMedian ?? hist?.evEbitda.median3y ?? null;
   const fairPfcf = input.fairPfcf ?? peerMed?.pfcfMedian ?? null;
 
-  const netDebt = a.totalDebt != null ? a.totalDebt - (a.cash ?? 0) : null;
+  const netDebt = a.totalDebt != null && a.cash != null ? a.totalDebt - a.cash : null;
   const bvps =
     a.equity != null && a.shares != null && a.shares > 0 ? a.equity / a.shares : null;
 
   const phase3 = buildPhase3Valuation({
     currentPrice: price > 0 ? price : null,
+    priceScale,
     shares: a.shares,
     baseFcf: a.fcfTtm,
     netDebt,
     marketCap,
     totalDebt: a.totalDebt,
-    riskFreeRate: input.riskFreeRate ?? 0.03,
+    riskFreeRate: input.riskFreeRate ?? 0.055,
     beta: input.beta ?? 1,
     equityRiskPremium: input.equityRiskPremium ?? 0.08,
     costOfDebt: input.costOfDebt ?? null,
@@ -302,7 +328,8 @@ export function computeValuation(input: {
     phase3.costOfCapital.costOfEquity.value ?? phase3.costOfCapital.wacc.value ?? 0.12;
 
   const phase4 = buildPhase4Valuation({
-    currentPrice: price > 0 ? price : null,
+    // Phase 4 works directly with statement values and outputs VND/share.
+    currentPrice: priceVnd > 0 ? priceVnd : null,
     shares: a.shares,
     bookEquity: a.equity,
     netIncomeTtm: a.netProfit,
@@ -317,14 +344,27 @@ export function computeValuation(input: {
   });
   notes.push(...phase4.notes);
 
-  let fairValue = blendWithPhase4(phase3.fairValue, phase4);
+  // Phase 4 component models remain in full VND/share for auditability; use
+  // quote-unit fair prices only at the shared blend/score boundary.
+  const phase4ForQuote: Phase4ValuationResult = {
+    ...phase4,
+    methodPriceUnit: "market_quote",
+    methodPrices: {
+      residualIncome: vnVndPerShareToQuote(phase4.methodPrices.residualIncome, priceScale),
+      ddm: vnVndPerShareToQuote(phase4.methodPrices.ddm, priceScale),
+      nav: vnVndPerShareToQuote(phase4.methodPrices.nav, priceScale),
+      sotp: vnVndPerShareToQuote(phase4.methodPrices.sotp, priceScale),
+    },
+  };
+
+  let fairValue = blendWithPhase4(phase3.fairValue, phase4ForQuote);
 
   const phase5 = buildPhase5Valuation({
     currentPrice: price > 0 ? price : null,
     dataQuality: phase1.dataQuality,
     profileId: industryProfileId,
     phase3Fair: fairValue,
-    phase4,
+    phase4: phase4ForQuote,
   });
   notes.push(...phase5.notes);
 
@@ -377,7 +417,7 @@ export function computeValuation(input: {
     phase1,
     phase2,
     phase3,
-    phase4,
+    phase4: phase4ForQuote,
     phase5,
     historical: phase2.historical,
     peers: phase2.peers,

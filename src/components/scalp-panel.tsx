@@ -54,6 +54,7 @@ export function ScalpPanel({ symbol }: { symbol: string }) {
 
   return (
     <Panel
+      className="h-full !flex !flex-col min-h-0 [&_.panel-body]:!flex-1 [&_.panel-body]:!min-h-0 [&_.panel-body]:!overflow-y-auto [&_.panel-body]:!py-2 [&_.panel-body]:!px-2.5"
       title={
         <span className="flex items-center gap-2">
           <Zap className="size-4 text-accent-primary" /> Scalping Intelligence
@@ -89,17 +90,17 @@ function ScalpView({ result, meta }: { result: ScalpResult; meta: Meta | null })
   const setup = s.primarySetup;
 
   return (
-    <div className="space-y-3">
-      <div className="flex flex-wrap items-center gap-3">
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-center gap-2">
         <Badge tone={dir.tone}>
           <span className="text-[12px] font-bold">{dir.label}</span>
         </Badge>
-        <span className="num text-[12px] text-text-secondary">
+        <span className="num text-[11px] text-text-secondary">
           strength <b className="text-text-primary">{s.strength}</b>/100 · score {s.score >= 0 ? "+" : ""}
           {s.score}
         </span>
-        <span className="flex items-center gap-1 text-[11px] text-text-muted">
-          <Timer className="size-3" /> khung {s.timeframe}
+        <span className="flex items-center gap-1 text-[10px] text-text-muted">
+          <Timer className="size-3" /> {s.timeframe}
         </span>
         {setup && (
           <Badge tone={setup.status === "TRIGGERED" ? "up" : "neutral"}>
@@ -110,11 +111,11 @@ function ScalpView({ result, meta }: { result: ScalpResult; meta: Meta | null })
         {s.filter && <Badge tone={s.filter.eligible ? "up" : "down"}>tier {s.filter.tier}</Badge>}
       </div>
 
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+      <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-4">
         <Metric label="Last" value={fmtNum(s.last, digits)} />
         <Metric
           label="Entry zone"
-          value={s.entryZone ? `${fmtNum(s.entryZone[1], digits)} -> ${fmtNum(s.entryZone[0], digits)}` : "-"}
+          value={s.entryZone ? `${fmtNum(s.entryZone[1], digits)} → ${fmtNum(s.entryZone[0], digits)}` : "-"}
           tone={dir.tone}
         />
         <Metric
@@ -126,7 +127,7 @@ function ScalpView({ result, meta }: { result: ScalpResult; meta: Meta | null })
       </div>
 
       {setup && (setup.entry != null || setup.stopLoss != null) && (
-        <div className="grid grid-cols-3 gap-2 text-[11px]">
+        <div className="grid grid-cols-3 gap-1.5 text-[11px]">
           <Metric label="Entry" value={setup.entry != null ? fmtNum(setup.entry, digits) : "-"} tone="up" />
           <Metric label="Stop" value={setup.stopLoss != null ? fmtNum(setup.stopLoss, digits) : "-"} tone="down" />
           <Metric
@@ -138,7 +139,7 @@ function ScalpView({ result, meta }: { result: ScalpResult; meta: Meta | null })
       )}
 
       {(s.micro?.support?.length ?? 0) + (s.micro?.resistance?.length ?? 0) > 0 && (
-        <div className="flex flex-wrap items-center gap-2 text-[11px]">
+        <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
           <Crosshair className="size-3.5 text-text-muted" />
           {(s.micro?.support ?? []).slice(0, 2).map((v) => (
             <span key={`s${v}`} className="num rounded bg-positive/10 px-1.5 py-0.5 text-positive">
@@ -154,27 +155,25 @@ function ScalpView({ result, meta }: { result: ScalpResult; meta: Meta | null })
         </div>
       )}
 
-      <ul className="space-y-1">
+      <ul className="space-y-0.5">
         {(s.evidence ?? []).map((e, i) => (
-          <li key={i} className="text-[12px] text-text-secondary">
+          <li key={i} className="text-[11px] text-text-secondary">
             ▸ {e}
           </li>
         ))}
       </ul>
 
       {(s.riskNotes ?? []).length > 0 && (
-        <div className="space-y-1 rounded-lg border border-warning/25 bg-warning/5 p-2.5">
+        <div className="space-y-0.5 rounded-md border border-warning/25 bg-warning/5 p-2">
           {s.riskNotes.map((r, i) => (
-            <div key={i} className="flex items-start gap-1.5 text-[11.5px] text-text-secondary">
+            <div key={i} className="flex items-start gap-1.5 text-[11px] text-text-secondary">
               <ShieldAlert className="mt-0.5 size-3.5 shrink-0 text-warning" /> {r}
             </div>
           ))}
         </div>
       )}
 
-      <p className="text-[10.5px] text-text-muted">
-        Signal quant tu nen Binance (REST poll). Khong phai khuyen nghi.
-      </p>
+      <p className="text-[10px] text-text-muted">Signal quant từ nến Binance (REST). Không phải khuyến nghị.</p>
       {meta && <MetaLine meta={meta} />}
     </div>
   );
@@ -192,10 +191,10 @@ function Metric({
   tone?: "up" | "down" | "neutral";
 }) {
   return (
-    <div className="panel-inset p-2.5">
-      <div className="text-[10px] uppercase tracking-wider text-text-muted">{label}</div>
+    <div className="panel-inset p-2">
+      <div className="text-[9.5px] uppercase tracking-wider text-text-muted">{label}</div>
       <div
-        className={`num mt-0.5 text-[13px] ${tone === "up" ? "text-positive" : tone === "down" ? "text-negative" : "text-text-primary"}`}
+        className={`num mt-0.5 text-[12px] ${tone === "up" ? "text-positive" : tone === "down" ? "text-negative" : "text-text-primary"}`}
       >
         {value}
       </div>

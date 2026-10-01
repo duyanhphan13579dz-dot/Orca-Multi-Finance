@@ -2,7 +2,8 @@ import "server-only";
 import { cached } from "../cache";
 import { buildMeta } from "../freshness";
 import * as binance from "../providers/binance";
-import { getYahooChart, yahooIntervalFor } from "../providers/yahoo";
+import { getYahooChart, yahooIntervalFor, yahooSymbolForPair } from "../providers/yahoo";
+import { getBiquotePublicOhlc, biquoteIntervalFor } from "../providers/forex";
 import { getVnOhlcv } from "./stocks";
 import { validateBars, detectGaps } from "../quality";
 import {
@@ -91,6 +92,47 @@ async function yahooCandles(symbol: string, tf: string, _limit: number): Promise
   return { candles, source: "yahoo" };
 }
 
+/**
+ * Forex / metals / oil chart candles.
+ * Primary: Biquote public OHLC (real-time MT5, no key).
+ * Fallback: Yahoo Finance (=X / GC=F / SI=F).
+ */
+async function forexCandles(symbol: string, tf: string, limit: number): Promise<CandleSeriesResult> {
+  const pair = symbol.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  if (biquoteIntervalFor(tf)) {
+    try {
+      const bars = await getBiquotePublicOhlc(pair, tf, Math.min(limit, 1000));
+      if (bars.length >= 10) {
+        const candles: ChartCandle[] = bars.map((b) => ({
+          time: b.time,
+          open: b.open,
+          high: b.high,
+          low: b.low,
+          close: b.close,
+          volume: b.volume ?? 0,
+        }));
+        return { candles, source: "biquote-public" };
+      }
+    } catch {
+      /* fall through to Yahoo */
+    }
+  }
+  const ySymbol = yahooSymbolForPair(pair);
+  try {
+    const cfg = yahooIntervalFor(tf);
+    if (!cfg) return { candles: [], source: "yahoo", note: `tf ${tf} unsupported` };
+    const raw = await getYahooChart(ySymbol, cfg.interval, cfg.range);
+    const candles = raw?.candles ?? [];
+    return { candles, source: "yahoo", note: candles.length ? undefined : "yahoo empty" };
+  } catch (e) {
+    return {
+      candles: [],
+      source: "none",
+      note: e instanceof Error ? e.message : "forex candles unavailable",
+    };
+  }
+}
+
 export async function getChartHistory(
   args: ChartArgs,
 ): Promise<{ data: ChartMarketData; meta: Meta } | null> {
@@ -101,9 +143,14 @@ export async function getChartHistory(
   if (!tfsFor(args.assetType).includes(tf)) return null;
 
   try {
-    const cacheKey = `chart:v3:${args.assetType}:${symbol}:${tf}:${limit}`;
+    const cacheKey = `chart:v4:${args.assetType}:${symbol}:${tf}:${limit}`;
     const res = await cached(cacheKey, {
-      ttlMs: args.assetType === "crypto" ? 30_000 : 60_000,
+      ttlMs:
+        args.assetType === "crypto"
+          ? 30_000
+          : args.assetType === "forex" || args.assetType === "commodity"
+            ? 45_000
+            : 60_000,
       staleMs: args.assetType === "crypto" ? 120_000 : 300_000,
       producer: async () => {
         let series: CandleSeriesResult;
@@ -111,6 +158,8 @@ export async function getChartHistory(
           series = await cryptoCandles(symbol, tf, limit);
         } else if (args.assetType === "stock") {
           series = await stockCandles(symbol, limit);
+        } else if (args.assetType === "forex" || args.assetType === "commodity") {
+          series = await forexCandles(symbol, tf, limit);
         } else {
           series = await yahooCandles(symbol, tf, limit);
         }
@@ -121,7 +170,11 @@ export async function getChartHistory(
         const quality = validateBars(candles as OhlcvBar[]);
         const cleaned = (quality.cleaned ?? candles) as ChartCandle[];
         const gapFlag = detectGaps(cleaned as OhlcvBar[], TF_MS[tf] ?? 86_400_000);
-        const gaps = gapFlag && typeof gapFlag.value === "number" ? gapFlag.value : gapFlag ? 1 : 0;
+        const gaps = gapFlag && typeof (gapFlag as { value?: number }).value === "number"
+          ? (gapFlag as { value: number }).value
+          : gapFlag
+            ? 1
+            : 0;
         const suspect = quality.status === "SUSPECT" || quality.status === "INVALID" ? 1 : 0;
 
         return {
@@ -135,6 +188,8 @@ export async function getChartHistory(
     });
 
     const { candles, source, note, gaps, suspect } = res.value;
+    if (!candles.length) return null;
+
     const last = candles[candles.length - 1];
     let indicators: ChartIndicators | null = null;
     let markers: ChartSignalMarker[] = [];
@@ -148,6 +203,7 @@ export async function getChartHistory(
     } catch {
       markers = [];
     }
+
     const meta = buildMeta({
       source,
       sourceTimestampMs: last?.time ?? Date.now(),

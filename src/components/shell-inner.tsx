@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
+  startTransition,
   useCallback,
   useEffect,
   useRef,
@@ -12,7 +13,6 @@ import {
   type MouseEvent,
 } from "react";
 import { markAppNavigating } from "@/lib/hooks";
-import { clientCacheWarm } from "@/lib/client-cache";
 import {
   Bot,
   Boxes,
@@ -131,7 +131,7 @@ export function ShellInner({ children }: { children: ReactNode }) {
       if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
       e.preventDefault();
       markAppNavigating();
-      router.push(href);
+      startTransition(() => router.push(href));
     },
     [router],
   );
@@ -140,7 +140,6 @@ export function ShellInner({ children }: { children: ReactNode }) {
     (href: string) => {
       try {
         router.prefetch(href);
-        clientCacheWarm(href);
       } catch {
         /* ignore */
       }

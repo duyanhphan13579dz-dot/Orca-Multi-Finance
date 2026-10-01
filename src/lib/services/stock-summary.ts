@@ -178,7 +178,7 @@ export function summarizeStock(c: StockContract): { lines: string[]; facts: Reco
   lines.push(`## Định giá`);
   if (val) {
     const m = val.multiples ?? {};
-    lines.push(`P/E ${num(m.pe, 1)}x · P/B ${num(m.pb, 1)}x · EV/EBITDA ${num(m.evEbitda, 1)}x · cổ tức ${m.dividendYield != null ? `${(m.dividendYield * 100).toFixed(1)}%` : "—"}.`);
+    lines.push(`P/E ${num(m.pe, 1)}x · P/B ${num(m.pb, 1)}x · EV/EBITDA ${num(m.evEbitda, 1)}x · cổ tức ${m.dividendYield != null ? `${m.dividendYield.toFixed(1)}%` : "—"}.`);
     if (val.notes?.length) lines.push(...val.notes.slice(0, 2).map((n) => `- ${n}`));
   } else {
     lines.push(`Chưa đủ dữ liệu để định giá (P/E, P/B).`);

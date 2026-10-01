@@ -7,7 +7,8 @@ Mọi provider phía sau **Provider Adapter Interface** và bị metadata health
 
 | Domain | Primary | Fallbacks |
 | --- | --- | --- |
-| stocks (VN) | VNStock (env: `VNSTOCK_BASE_URL`, `VNSTOCK_API_KEY`) | — (UNAVAILABLE nếu chưa cấu hình) |
+| Market data cổ phiếu VN | VNDirect | SSI FastConnect (nếu cấu hình), VPS/Vietcap/nguồn công khai theo từng API |
+| BCTC cổ phiếu VN | VNDirect DStock / api-finfo | VNStock API khi có cả `VNSTOCK_BASE_URL` và `VNSTOCK_API_KEY` |
 | crypto | Binance spot REST (`api.binance.com` → `api{1,2}.binance.com` → `data-api.binance.vision`) | Binance fapi cho futures (geo-dependent) |
 | forex | Biquote (env) | exchangerate-api open latest; Frankfurter/ECB daily history + previous fix |
 | commodities | Vietnambiz (SJC gold board) · Simplize (env key) | MSN Finance quotes (env instrument map) · Binance PAXGUSDT (vàng) |
@@ -26,9 +27,13 @@ interface MarketDataProvider {
 
 Adapter **không trả số suy diễn**. Parse schema linh hoạt (VNStock field aliases), sanity-check giá trị (giá phải hữu hạn, volume ≥ 0), ném `ProviderError` khi payload rỗng/không hợp lệ.
 
+### VNDirect financial adapters (`src/lib/financial/vndirect-http.ts`)
+
+BCTC, ratios, equity snapshot và company profile dùng chung một HTTP adapter có timeout/retry và luân phiên host `api-finfo.vndirect.com.vn` → `finfo-api.vndirect.com.vn`. Có thể cấu hình `VNDIRECT_FALLBACK_BASE_URLS` (phân tách bằng dấu phẩy/chấm phẩy); khi đặt `VNDIRECT_BASE_URL` riêng thì adapter tôn trọng base đó, không tự gửi request sang host công khai nếu chưa cấu hình fallback.
+
 ### VNStock (`src/lib/providers/vnstock.ts`)
 
-Endpoints thử lần lượt (graceful với biến thể base URL): `/v1/market/indices`, `/v1/market/quotes?symbols=`, `/v1/symbols/{sym}/ohlcv`, `/v1/symbols/{sym}/financials/{income|balance|cashflow|ratios}`, `/v1/symbols` (universe). Header: `Authorization: Bearer <key>` + `x-api-key`. Khi không có circuit/recoverable: service trả `null` → API `502 UPSTREAM_UNAVAILABLE` với ghi chú cấu hình.
+Endpoints hỗ trợ `/v1/market/indices`, `/v1/market/quotes?symbols=`, `/v1/symbols/{sym}/ohlcv`, `/v1/symbols/{sym}/financials/{income|balance|cashflow|ratios}`, `/v1/symbols` (universe). Header: `Authorization: Bearer <key>` + `x-api-key`. Financial provider thứ cấp chỉ bật khi có **cả** `VNSTOCK_BASE_URL` và `VNSTOCK_API_KEY`; dữ liệu được chuẩn hóa theo period/metric, không phát sinh fallback số khi thiếu field.
 
 ### Binance (`src/lib/providers/binance.ts`)
 

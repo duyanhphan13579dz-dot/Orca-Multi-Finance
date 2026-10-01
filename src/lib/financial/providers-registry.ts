@@ -1,6 +1,8 @@
 import "server-only";
 import type { FinancialProvider } from "./provider";
+import { env } from "../env";
 import { fetchVndirectFinancials } from "./vndirect-fs";
+import { fetchVnstockFinancials } from "./vnstock-provider";
 import { ssiFcConfigured } from "../providers/ssi-fcdata";
 
 /**
@@ -18,7 +20,7 @@ export interface VnProviderLayout {
   };
   financial: {
     primary: "vndirect";
-    fallback: "vndirect";
+    fallback: "vnstock-financial" | "vndirect";
   };
 }
 
@@ -34,7 +36,7 @@ export function vnProviderLayout(): VnProviderLayout {
     },
     financial: {
       primary: "vndirect",
-      fallback: "vndirect",
+      fallback: env.vnstockApiKey && env.vnstockBaseUrl ? "vnstock-financial" : "vndirect",
     },
   };
 }
@@ -53,12 +55,30 @@ const vndirectProvider: FinancialProvider = {
       sourceId: "vndirect-fs",
       role: "PRIMARY_SOURCE_OF_TRUTH",
       priority: 1,
-      note: "VNDIRECT DStock / api-finfo financial_statements — PRIMARY (market + financial)",
+      note: "VNDirect DStock / api-finfo financial_statements — nguồn chính",
+    };
+  },
+};
+
+const vnstockProvider: FinancialProvider = {
+  id: "vnstock-financial",
+  role: "SECONDARY_FALLBACK",
+  priority: 2,
+  enabled: () => Boolean(env.vnstockApiKey && env.vnstockBaseUrl),
+  fetch: async (symbol, opts) => {
+    const r = await fetchVnstockFinancials(symbol, opts);
+    if (!r) return null;
+    return {
+      periods: r.periods,
+      latencyMs: r.latencyMs,
+      sourceId: "vnstock-financial",
+      role: "SECONDARY_FALLBACK",
+      priority: 2,
+      note: "Fallback VNStock API (chỉ bật khi cấu hình cả base URL và API key)",
     };
   },
 };
 
 export function listFinancialProviders(): FinancialProvider[] {
-  // VNDIRECT là primaryMarket và primaryFinancial.
-  return [vndirectProvider];
+  return [vndirectProvider, vnstockProvider];
 }
