@@ -58,9 +58,10 @@ export function normalizeBalanceMetrics(m: NormalizedMetrics): NormalizedMetrics
  */
 export function normalizeCashflowMetrics(m: NormalizedMetrics): NormalizedMetrics {
   const out: NormalizedMetrics = { ...m };
-  if (out.operatingCashFlow != null) {
-    const cap = out.capex != null ? Math.abs(out.capex) : 0;
-    out.freeCashFlow = out.operatingCashFlow - cap;
+  // Missing CAPEX is not zero CAPEX. Keep FCF unavailable rather than silently
+  // overstating it as operating cash flow.
+  if (out.operatingCashFlow != null && out.capex != null) {
+    out.freeCashFlow = out.operatingCashFlow - Math.abs(out.capex);
   }
   return out;
 }

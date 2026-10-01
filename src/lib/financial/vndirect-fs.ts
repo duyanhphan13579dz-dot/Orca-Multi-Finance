@@ -1,11 +1,10 @@
 import "server-only";
-import { httpJson } from "../http";
 import type { NormalizedMetrics, NormalizedPeriod } from "./types";
+import { vndirectJson } from "./vndirect-http";
 import { normalizePeriodMetrics, periodsToStatementTables } from "./statements";
 import { metricKeyFromItemCode, metricProfileForSymbol, type MetricProfile } from "./metric-dictionary";
 
 const VND = "vndirect-fs";
-const BASE = (process.env.VNDIRECT_BASE_URL ?? "https://api-finfo.vndirect.com.vn").replace(/\/$/, "");
 
 const DSTOCK_HEADERS: Record<string, string> = {
   Accept: "application/json",
@@ -330,14 +329,15 @@ async function fetchStatementPage(
   const q = `code:${symbol}~reportType:${reportType}~modelType:${modelType}`;
   const path = `/v4/financial_statements?q=${encodeURIComponent(q)}&size=${size}&sort=${encodeURIComponent("fiscalDate:desc")}`;
   try {
-    const res = await httpJson<{ data?: RawRow[] }>(`${BASE}${path}`, {
+    const res = await vndirectJson<{ data?: RawRow[] }>(path, {
       provider: VND,
       timeoutMs,
-      retries: 1,
+      retries: 0,
       headers: DSTOCK_HEADERS,
+      accept: (payload) => Array.isArray(payload.data) && payload.data.length > 0,
     });
-    if (!res.ok || !res.data?.data?.length) return [];
-    return res.data.data.map((row) => ({
+    const rows = res.data.data ?? [];
+    return rows.map((row) => ({
       ...row,
       unit: row.unit ?? "VND",
       sourceUrl: sourceUrlForModel(Number(row.modelType), symbol),
@@ -359,20 +359,20 @@ export async function fetchVndirectFinancials(
 
   try {
     const { cached } = await import("../cache");
-    const hit = await cached<{ periods: NormalizedPeriod[]; profile: MetricProfile } | null>(
-      `vnd-fs:periods:${sym}:v5:${limit}`,
+    const hit = await cached<{ periods: NormalizedPeriod[]; profile: MetricProfile }>(
+      `vnd-fs:periods:${sym}:v6:${limit}`,
       {
         ttlMs: 12 * 3_600_000,
         staleMs: 21 * 24 * 3_600_000,
         softSwr: true,
         producer: async () => {
           const inner = await fetchVndirectFinancialsUncached(sym, profile, limit);
-          if (!inner) return null;
+          if (!inner?.periods.length) throw new Error(`vndirect-fs: no usable periods for ${sym}`);
           return { periods: inner.periods, profile: inner.profile };
         },
       },
     );
-    if (hit.value?.periods?.length) {
+    if (hit.value.periods.length) {
       return {
         periods: hit.value.periods,
         profile: hit.value.profile,
@@ -380,10 +380,11 @@ export async function fetchVndirectFinancials(
       };
     }
   } catch {
-    /* fall through */
+    // Do not issue a second six-request wave after a failed cache producer.
+    return null;
   }
 
-  return fetchVndirectFinancialsUncached(sym, profile, limit);
+  return null;
 }
 
 async function fetchVndirectFinancialsUncached(
@@ -394,12 +395,12 @@ async function fetchVndirectFinancialsUncached(
   const t0 = performance.now();
 
   const [q1, q2, q3, a1, a2, a3] = await Promise.all([
-    fetchStatementPage(sym, 1, "QUARTER", 800, 10_000),
-    fetchStatementPage(sym, 2, "QUARTER", 800, 10_000),
-    fetchStatementPage(sym, 3, "QUARTER", 800, 10_000),
-    fetchStatementPage(sym, 1, "ANNUAL", 500, 9_000),
-    fetchStatementPage(sym, 2, "ANNUAL", 500, 9_000),
-    fetchStatementPage(sym, 3, "ANNUAL", 500, 9_000),
+    fetchStatementPage(sym, 1, "QUARTER", 800, 7_000),
+    fetchStatementPage(sym, 2, "QUARTER", 800, 7_000),
+    fetchStatementPage(sym, 3, "QUARTER", 800, 7_000),
+    fetchStatementPage(sym, 1, "ANNUAL", 500, 6_000),
+    fetchStatementPage(sym, 2, "ANNUAL", 500, 6_000),
+    fetchStatementPage(sym, 3, "ANNUAL", 500, 6_000),
   ]);
   const all = [...q1, ...q2, ...q3, ...a1, ...a2, ...a3];
 

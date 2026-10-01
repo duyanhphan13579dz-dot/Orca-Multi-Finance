@@ -1,4 +1,5 @@
 import "server-only";
+import { env } from "../env";
 import { cached } from "../cache";
 import { buildMeta } from "../freshness";
 import { getFinancialsForSymbol, vnProviderLayout } from "../financial";
@@ -71,7 +72,7 @@ export function vnMarketConfigured(): boolean {
 }
 
 export function vnstockConfigured(): boolean {
-  return vnMarketConfigured();
+  return Boolean(env.vnstockApiKey && env.vnstockBaseUrl);
 }
 
 export function vnPrimaryProvider(): "ssi-fcdata" | "vndirect" {
@@ -92,13 +93,13 @@ export async function getVnIndices(): Promise<{ items: IndexQuote[]; meta: Meta 
     /* use public fallback */
   }
   try {
-    const items = await getPublicIndices();
-    if (items.length) {
+    const fallback = await getPublicIndices();
+    if (fallback.items.length) {
       return {
-        items: sortIndices(items),
+        items: sortIndices(fallback.items),
         meta: buildMeta({
           source: "public-vn",
-          sourceTimestampMs: Date.now(),
+          sourceTimestampMs: fallback.sourceTs ?? Date.now(),
           note: "Fallback public indices",
         }),
       };
@@ -390,7 +391,7 @@ async function produceVnStockDetail(
     foreignFlow,
     financials: fin?.financials ?? { income: null, balance: null, cashflow: null, ratios: null },
     financialHealth: fin?.health ?? null,
-    financialMeta: fin?.meta ?? null,
+    financialMeta: fin?.packageMeta ?? null,
     financialGrowth: fin?.growth ?? null,
     financialTtm: fin?.ttm ?? null,
     detailedRatios: metricsRes?.bundle?.ratios ?? null,

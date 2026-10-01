@@ -4,6 +4,7 @@ import { cached } from "@/lib/cache";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
+export const maxDuration = 60;
 
 /**
  * GET /api/v1/stocks/:symbol/valuation
@@ -11,7 +12,7 @@ export const runtime = "nodejs";
  * Hệ thống định giá + phân tích cơ bản ĐỘC LẬP với trang Báo cáo tài chính.
  * Kéo BCTC trực tiếp từ VNDirect api-finfo → tính health + valuation.
  *
- * Query: ?peers=0 | ?full=1
+ * Query: ?peers=1 (opt-in, higher latency) | ?full=1
  */
 export async function GET(
   req: Request,
@@ -25,8 +26,8 @@ export async function GET(
     }
 
     const url = new URL(req.url);
-    const wantPeers = url.searchParams.get("peers") !== "0";
     const wantFull = url.searchParams.get("full") === "1";
+    const wantPeers = url.searchParams.get("peers") === "1" || wantFull;
     const cacheKey = `val:direct:${symbol}:p${wantPeers ? 1 : 0}:f${wantFull ? 1 : 0}`;
 
     const cachedRes = await cached(cacheKey, {

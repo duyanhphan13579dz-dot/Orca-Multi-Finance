@@ -33,7 +33,7 @@ console.log("\n=== FCFF ===");
   const full = calcFCFF({ ebit: 100, taxRate: 0.2, da: 10, capex: 20, deltaNwc: 5 });
   assert(full.status === "ok" && approx(full.value, 65), "full FCFF=65");
   const noTax = calcFCFF({ ebit: 100, taxRate: null, da: 10, capex: 20, deltaNwc: 5 });
-  assert(noTax.status === "incomplete", "missing tax → incomplete");
+  assert(noTax.status === "incomplete" && noTax.value == null, "missing tax → no fabricated FCFF");
   assert(
     calcFCFF({ ebit: null, taxRate: 0.2, da: 0, capex: 0, deltaNwc: 0 }).status === "incomplete",
     "no ebit",
@@ -50,13 +50,22 @@ console.log("\n=== FCFE ===");
     netBorrowing: 8,
   });
   assert(f.status === "ok" && approx(f.value, 48), "full FCFE=48");
+  const incomplete = calcFCFE({
+    netIncome: 50,
+    da: 10,
+    capex: null,
+    deltaNwc: 5,
+    netBorrowing: 8,
+  });
+  assert(incomplete.status === "incomplete" && incomplete.value == null, "missing CAPEX does not assume zero");
 }
 
 console.log("\n=== FCF OCF-CAPEX ===");
 {
   const f = calcFcfFromOcf(100, 30);
   assert(f.status === "ok" && approx(f.value, 70), "OCF-CAPEX=70");
-  assert(calcFcfFromOcf(100, null).status === "incomplete", "missing capex incomplete");
+  const missingCapex = calcFcfFromOcf(100, null);
+  assert(missingCapex.status === "incomplete" && missingCapex.value == null, "missing capex leaves FCF unavailable");
 }
 
 console.log("\n=== P/FCF P/CF EV/FCFF ===");

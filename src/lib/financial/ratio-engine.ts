@@ -127,6 +127,7 @@ function saneYield(v: number | null | undefined): number | null {
 
 export function computeDetailedRatios(input: RatioEngineInput): RatioEngineResult {
   const m = input.metrics ?? {};
+  const extendedMetrics = m as unknown as Record<string, unknown>;
   const prior = input.prior ?? null;
   const priceVnd = priceToVnd(input.priceQuote);
   const shares = input.sharesOutstanding;
@@ -136,9 +137,9 @@ export function computeDetailedRatios(input: RatioEngineInput): RatioEngineResul
   const grossProfit =
     n(m.grossProfit) ?? (revenue != null && cogs != null ? revenue - cogs : null);
   const ebit = n(m.ebit) ?? n(m.operatingProfit);
-  const ebitda = n(m.ebitda) ?? (ebit != null ? ebit * 1.12 : null);
+  const ebitda = n(m.ebitda);
   const ni = n(m.netIncome) ?? n(m.netIncomeParent);
-  const interest = n(m.interestExpense) ?? n(m.financeExpense);
+  const interest = n(m.interestExpense);
 
   const assets = n(m.totalAssets);
   const equity = n(m.equity);
@@ -150,10 +151,8 @@ export function computeDetailedRatios(input: RatioEngineInput): RatioEngineResul
   const currentLiab = n(m.currentLiabilities);
   const std = n(m.shortTermDebt);
   const ltd = n(m.longTermDebt);
-  const totalLiab = n(m.totalLiabilities);
-  const totalDebt =
-    std != null || ltd != null ? (std ?? 0) + (ltd ?? 0) : totalLiab != null ? totalLiab : null;
-  const payables = n(m.payables) ?? n(m.accountsPayable);
+  const totalDebt = std != null || ltd != null ? (std ?? 0) + (ltd ?? 0) : null;
+  const payables = n(extendedMetrics.payables) ?? n(extendedMetrics.accountsPayable);
 
   const ocf = n(m.operatingCashFlow);
   const capexRaw = n(m.capex);
@@ -167,8 +166,11 @@ export function computeDetailedRatios(input: RatioEngineInput): RatioEngineResul
       : priceVnd != null && shares != null && shares > 0
         ? priceVnd * shares
         : null;
-  const netDebt = totalDebt != null ? totalDebt - (cash ?? 0) - (sti ?? 0) : null;
-  const enterpriseValue = marketCap != null ? marketCap + (netDebt ?? 0) : null;
+  const netDebt = totalDebt != null && cash != null ? totalDebt - cash - (sti ?? 0) : null;
+  const enterpriseValue =
+    marketCap != null && netDebt != null && marketCap + netDebt > 0
+      ? marketCap + netDebt
+      : null;
 
   const currentRatio = div(currentAssets, currentLiab);
   const quickAssets =
@@ -203,8 +205,8 @@ export function computeDetailedRatios(input: RatioEngineInput): RatioEngineResul
   const roa = div(ni, assets);
   const nopat = ebit != null ? ebit * 0.8 : null;
   const investedCapital =
-    equity != null || totalDebt != null
-      ? (equity ?? 0) + (totalDebt ?? 0) - (cash ?? 0)
+    equity != null && totalDebt != null && cash != null
+      ? equity + totalDebt - cash
       : null;
   const roic = div(nopat, investedCapital != null && investedCapital > 0 ? investedCapital : null);
   const roeB = bandRoe(roe);
@@ -261,9 +263,10 @@ export function computeDetailedRatios(input: RatioEngineInput): RatioEngineResul
   const fcfConversion = div(fcf, ni);
 
   const taxBurden = ebit != null && ni != null && ebit !== 0 ? ni / ebit : null;
+  const ebt = n(extendedMetrics.ebt);
   const interestBurden =
-    ebit != null && n(m.ebt) != null && ebit !== 0
-      ? (n(m.ebt) as number) / ebit
+    ebit != null && ebt != null && ebit !== 0
+      ? ebt / ebit
       : ebit != null && interest != null
         ? (ebit - Math.abs(interest)) / ebit
         : null;

@@ -48,9 +48,8 @@ function isQuarter(p: NormalizedPeriod): boolean {
 }
 
 function sumNullable(values: (number | null | undefined)[]): number | null {
-  const nums = values.filter((v): v is number => v != null && Number.isFinite(v));
-  if (!nums.length) return null;
-  return nums.reduce((a, b) => a + b, 0);
+  if (!values.length || values.some((value) => value == null || !Number.isFinite(value))) return null;
+  return (values as number[]).reduce((sum, value) => sum + value, 0);
 }
 
 /** Last 4 complete quarters → TTM period (does not fabricate missing quarters). */
@@ -72,6 +71,13 @@ export function buildTtmPeriod(periods: NormalizedPeriod[]): NormalizedPeriod | 
 
   if (unique.length < 4) return null;
   const window = unique.slice(0, 4);
+  const contiguous = window.every((period, index) => {
+    if (index === 0) return true;
+    const current = (period.year! * 4) + period.quarter!;
+    const previous = (window[index - 1]!.year! * 4) + window[index - 1]!.quarter!;
+    return previous - current === 1;
+  });
+  if (!contiguous) return null;
   const head = window[0];
   const metrics: NormalizedMetrics = {};
 

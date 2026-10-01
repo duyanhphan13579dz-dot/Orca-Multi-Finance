@@ -6,7 +6,7 @@
 import { getVnSession, sessionFreshnessHint, type VnSessionInfo } from "@/lib/vn/sessions";
 import { buildMeta } from "@/lib/freshness";
 import { cached } from "@/lib/cache";
-import type { Meta } from "@/lib/types";
+import type { Meta, NewsArticle } from "@/lib/types";
 
 export type SnapshotIndexRow = {
   code: string;
@@ -44,7 +44,7 @@ export type MarketSnapshot = {
     cryptoTip: GlobalPulseRow[];
     sources: string[];
   };
-  news?: unknown[];
+  news?: NewsArticle[];
   crypto?: {
     summary: {
       marketCount: number;

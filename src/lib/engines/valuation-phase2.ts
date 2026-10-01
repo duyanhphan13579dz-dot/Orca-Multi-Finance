@@ -50,15 +50,18 @@ export function calcFCFF(input: {
   if (!finite(capex)) missing.push("capex");
   if (!finite(deltaNwc)) missing.push("deltaNwc");
 
-  const tax = t ?? 0.2;
-  const nopat = ebit * (1 - tax);
-  const fcff = nopat + (da ?? 0) - (capex ?? 0) - (deltaNwc ?? 0);
-  const status: MetricStatus = missing.length ? "incomplete" : "ok";
-  const note =
-    missing.length > 0
-      ? `FCFF ước lượng — thiếu: ${missing.join(", ")}${t == null ? " (tax 20% mặc định VN)" : ""}`
-      : undefined;
-  return cell(round(fcff, 0), status, note, ["ebit", "taxRate", "da", "capex", "deltaNwc"]);
+  if (missing.length > 0) {
+    return cell(null, "incomplete", `Thiếu ${missing.join(", ")} — không giả định đầu vào bằng 0`, [
+      "ebit",
+      "taxRate",
+      "da",
+      "capex",
+      "deltaNwc",
+    ]);
+  }
+  const nopat = ebit * (1 - t!);
+  const fcff = nopat + da! - capex! - deltaNwc!;
+  return cell(round(fcff, 0), "ok", undefined, ["ebit", "taxRate", "da", "capex", "deltaNwc"]);
 }
 
 /** FCFE = Net Income + D&A − CAPEX − ΔNWC + Net Borrowing */
@@ -79,12 +82,17 @@ export function calcFCFE(input: {
   if (!finite(deltaNwc)) missing.push("deltaNwc");
   if (!finite(netBorrowing)) missing.push("netBorrowing");
 
-  const fcfe =
-    netIncome + (da ?? 0) - (capex ?? 0) - (deltaNwc ?? 0) + (netBorrowing ?? 0);
-  const status: MetricStatus = missing.length ? "incomplete" : "ok";
-  const note =
-    missing.length > 0 ? `FCFE ước lượng — thiếu: ${missing.join(", ")}` : undefined;
-  return cell(round(fcfe, 0), status, note, [
+  if (missing.length > 0) {
+    return cell(null, "incomplete", `Thiếu ${missing.join(", ")} — không giả định đầu vào bằng 0`, [
+      "netIncome",
+      "da",
+      "capex",
+      "deltaNwc",
+      "netBorrowing",
+    ]);
+  }
+  const fcfe = netIncome + da! - capex! - deltaNwc! + netBorrowing!;
+  return cell(round(fcfe, 0), "ok", undefined, [
     "netIncome",
     "da",
     "capex",
@@ -99,7 +107,7 @@ export function calcFcfFromOcf(ocf: number | null, capex: number | null): Metric
     return cell(null, "incomplete", "Thiếu Operating Cash Flow", ["ocf"]);
   }
   if (!finite(capex)) {
-    return cell(round(ocf, 0), "incomplete", "Thiếu CAPEX — FCF = OCF (CAPEX coi = 0)", [
+    return cell(null, "incomplete", "Thiếu CAPEX — không thể xác định FCF = OCF − |CAPEX|", [
       "ocf",
       "capex",
     ]);

@@ -121,7 +121,7 @@ console.log("\n=== Enterprise Value ===");
 
   const noCash = calcEnterpriseValue({ marketCap: 1_000, totalDebt: 200, cash: null });
   assert(noCash.cell.status === "incomplete", "missing cash → incomplete");
-  assert(noCash.cell.value === 1200, "still computes with cash=0 fallback");
+  assert(noCash.cell.value == null, "missing cash does not assume zero in EV");
   assert(noCash.components.missing.includes("cash"), "reports missing cash");
 
   const noMc = calcEnterpriseValue({ marketCap: null, totalDebt: 100, cash: 10 });
