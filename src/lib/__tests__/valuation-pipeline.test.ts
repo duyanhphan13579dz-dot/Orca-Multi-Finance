@@ -84,6 +84,28 @@ test("computeValuation calculates VND multiples and returns fair value in quote 
   assert.ok(result.fairValue?.blendedFairValue != null && result.fairValue.blendedFairValue < 1_000);
 });
 
+test("computeValuation uses statement-backed FCFF and FCFE when supplied", () => {
+  const result = computeValuation({
+    price: 50,
+    priceVnd: 50_000,
+    marketCapOverride: 50e12,
+    health,
+    symbol: "FPT",
+    ebitTtm: 6e12,
+    taxRate: 0.2,
+    daTtm: 1e12,
+    capexTtm: 1.5e12,
+    deltaNwc: 0.2e12,
+    netBorrowing: 0.4e12,
+  });
+
+  assert.equal(result.phase2?.cashFlow.fcff.status, "ok");
+  assert.equal(result.phase2?.cashFlow.fcfe.status, "ok");
+  assert.equal(result.phase2?.cashFlow.fcff.value, 4.1e12);
+  assert.equal(result.phase2?.cashFlow.fcfe.value, 4.7e12);
+  assert.equal(result.multiples.evFcff != null, true);
+});
+
 test("net-debt ratios do not treat missing cash as zero", () => {
   const missingCash = computeDetailedRatios({
     metrics: { shortTermDebt: 100, ebitda: 50 },

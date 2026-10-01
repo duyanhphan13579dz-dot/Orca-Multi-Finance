@@ -10,6 +10,7 @@ import { collectPeerMetrics } from "../engines/valuation-peers";
 import { fetchVndirectFinancials, periodsToLegacyRows } from "../financial/vndirect-fs";
 import { fetchVnstockFinancials } from "../financial/vnstock-provider";
 import { computeDetailedRatios, pickMetricsFromPeriods } from "../financial/ratio-engine";
+import { buildTtmPeriod } from "../financial/normalize";
 import {
   getVndEquitySnapshot,
   getVndValuationRatios,
@@ -18,6 +19,7 @@ import {
 import { getVnQuotes } from "./stocks";
 import { sectorOf } from "../vn/master";
 import type { Meta } from "../types";
+import type { NormalizedPeriod } from "../financial/types";
 
 export interface FundamentalValuationResult {
   symbol: string;
@@ -43,6 +45,80 @@ function yieldRatioToPct(v: number | null | undefined): number | null {
   if (v == null || !Number.isFinite(v) || v < 0) return null;
   const ratio = v > 1 ? v / 100 : v;
   return ratio <= 0.8 ? Number((ratio * 100).toFixed(2)) : null;
+}
+
+type ValuationCashFlowInputs = {
+  ebitTtm: number | null;
+  taxRate: number | null;
+  daTtm: number | null;
+  capexTtm: number | null;
+  deltaNwc: number | null;
+  netBorrowing: number | null;
+};
+
+function finitePositive(v: number | null | undefined): number | null {
+  return typeof v === "number" && Number.isFinite(v) && v > 0 ? v : null;
+}
+
+/**
+ * Derive only statement-backed FCFF/FCFE inputs. Missing fields stay null so
+ * valuation methods can report incomplete data instead of silently assuming 0.
+ */
+function deriveValuationCashFlowInputs(
+  periods: NormalizedPeriod[] | undefined,
+  ttm: NormalizedPeriod | null | undefined,
+): ValuationCashFlowInputs {
+  const m = ttm?.metrics;
+  const ebitTtm = m?.ebit ?? m?.operatingProfit ?? null;
+  const ebitdaTtm = m?.ebitda ?? null;
+  const daTtm =
+    ebitTtm != null && ebitdaTtm != null && ebitdaTtm >= ebitTtm
+      ? ebitdaTtm - ebitTtm
+      : null;
+  const capexTtm = m?.capex != null && Number.isFinite(m.capex) ? Math.abs(m.capex) : null;
+  const taxRate =
+    m?.taxExpense != null && m.profitBeforeTax != null && m.profitBeforeTax > 0
+      ? Math.min(0.5, Math.max(0, m.taxExpense / m.profitBeforeTax))
+      : null;
+
+  const snapshots = (periods ?? [])
+    .filter(
+      (p) =>
+        p.periodType === "quarter" &&
+        (p.metrics.currentAssets != null ||
+          p.metrics.currentLiabilities != null ||
+          p.metrics.shortTermDebt != null ||
+          p.metrics.longTermDebt != null),
+    )
+    .sort((a, b) => String(b.fiscalDate ?? b.period).localeCompare(String(a.fiscalDate ?? a.period)));
+  const latest = snapshots[0]?.metrics;
+  const prior = snapshots[1]?.metrics;
+  const debt = (x: typeof latest) =>
+    x && (x.shortTermDebt != null || x.longTermDebt != null)
+      ? (x.shortTermDebt ?? 0) + (x.longTermDebt ?? 0)
+      : null;
+  const operatingNwc = (x: typeof latest) => {
+    if (!x || x.currentAssets == null || x.currentLiabilities == null) return null;
+    return (
+      x.currentAssets -
+      (x.cash ?? 0) -
+      (x.shortTermInvestments ?? 0) -
+      (x.currentLiabilities - (x.shortTermDebt ?? 0))
+    );
+  };
+  const latestNwc = operatingNwc(latest);
+  const priorNwc = operatingNwc(prior);
+  const latestDebt = debt(latest);
+  const priorDebt = debt(prior);
+
+  return {
+    ebitTtm: finitePositive(ebitTtm) ?? (ebitTtm != null && ebitTtm < 0 ? ebitTtm : null),
+    taxRate,
+    daTtm: finitePositive(daTtm),
+    capexTtm: finitePositive(capexTtm),
+    deltaNwc: latestNwc != null && priorNwc != null ? latestNwc - priorNwc : null,
+    netBorrowing: latestDebt != null && priorDebt != null ? latestDebt - priorDebt : null,
+  };
 }
 
 export async function runFundamentalValuation(
@@ -164,6 +240,10 @@ export async function runFundamentalValuation(
   }
 
   const fcfTtm = health.anchors.fcfTtm;
+  const cashFlowInputs = deriveValuationCashFlowInputs(
+    fs?.periods,
+    fs?.periods?.length ? buildTtmPeriod(fs.periods) : null,
+  );
 
   const marketCapFromPrice =
     priceVnd > 0 && sharesOutstanding != null && sharesOutstanding > 0
@@ -260,6 +340,12 @@ export async function runFundamentalValuation(
     peerComparison,
     marketCapOverride: marketCapPreferred,
     dividendYield: dividendYieldRatio,
+    ebitTtm: cashFlowInputs.ebitTtm,
+    taxRate: cashFlowInputs.taxRate,
+    daTtm: cashFlowInputs.daTtm,
+    deltaNwc: cashFlowInputs.deltaNwc,
+    netBorrowing: cashFlowInputs.netBorrowing,
+    capexTtm: cashFlowInputs.capexTtm,
     symbol,
   });
 
