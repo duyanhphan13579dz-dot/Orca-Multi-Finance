@@ -228,32 +228,28 @@ export function CryptoDetailPage({ symbol }: { symbol: string }) {
         </div>
       </div>
 
-      {/* DESKTOP 3-COLUMN TRADING COCKPIT (Fixed height 540px, perfectly aligned) */}
-      <div className="hidden xl:grid xl:grid-cols-12 xl:gap-3 xl:items-stretch h-[540px]">
+      {/* DESKTOP 3-COLUMN TRADING COCKPIT (Clean natural flow, zero overlap) */}
+      <div className="hidden xl:grid xl:grid-cols-12 xl:gap-3 xl:items-start">
         {/* Column 1: Order Flow Desk (Left ~25%) */}
-        <div className="xl:col-span-3 h-full flex flex-col min-h-0">
+        <div className="xl:col-span-3 flex flex-col">
           <CryptoTradeDesk symbol={data.symbol} mode="orderflow" />
         </div>
 
         {/* Column 2: Main Candlestick Chart (Center ~50%) */}
-        <div className="xl:col-span-6 h-full flex flex-col min-h-0">
+        <div className="xl:col-span-6 flex flex-col overflow-hidden rounded-xl">
           <OrcaChart
             symbol={data.symbol}
             assetType="crypto"
             defaultTimeframe={interval}
-            height={480}
+            height={420}
             title={`${data.baseAsset}/USDT`}
           />
         </div>
 
         {/* Column 3: Scalping Radar & Leverage Simulator (Right ~25%) */}
-        <div className="xl:col-span-3 h-full flex flex-col gap-3 min-h-0">
-          <div className="h-[260px] min-h-0 flex flex-col">
-            <ScalpPanel symbol={data.symbol} />
-          </div>
-          <div className="flex-1 min-h-0 flex flex-col">
-            <CryptoTradeDesk symbol={data.symbol} mode="leverage" />
-          </div>
+        <div className="xl:col-span-3 flex flex-col gap-3">
+          <ScalpPanel symbol={data.symbol} />
+          <CryptoTradeDesk symbol={data.symbol} mode="leverage" />
         </div>
       </div>
 
@@ -291,25 +287,21 @@ export function CryptoDetailPage({ symbol }: { symbol: string }) {
       </div>
 
       {/* BOTTOM ANALYTICS DECK (Desktop 3 Columns, balanced height, 100% space filled) */}
-      <div className="hidden xl:grid xl:grid-cols-12 xl:gap-3 xl:items-stretch min-h-[460px]">
+      <div className="hidden xl:grid xl:grid-cols-12 xl:gap-3 xl:items-start">
         {/* Column 1: Core Technical Indicators (~33.3%) */}
-        <div className="xl:col-span-4 h-full flex flex-col min-h-0">
+        <div className="xl:col-span-4 flex flex-col">
           <TechnicalPanel tech={tech} patterns={data.patterns} variant="compact" />
         </div>
 
         {/* Column 2: Candlestick Patterns & Divergences (~33.3%) */}
-        <div className="xl:col-span-4 h-full flex flex-col min-h-0">
+        <div className="xl:col-span-4 flex flex-col">
           <PatternsAndDivergencePanel tech={tech} patterns={data.patterns} />
         </div>
 
         {/* Column 3: Market Sentiment & Crypto News (~33.3%) */}
-        <div className="xl:col-span-4 h-full flex flex-col gap-3 min-h-0">
-          <div className="min-h-0">
-            <SentimentPanelCompact symbol={data.symbol} ticker={t} tech={tech} />
-          </div>
-          <div className="flex-1 min-h-0 flex flex-col">
-            <CryptoNewsPanel symbol={data.symbol} baseAsset={data.baseAsset} ticker={t} dense />
-          </div>
+        <div className="xl:col-span-4 flex flex-col gap-3">
+          <SentimentPanelCompact symbol={data.symbol} ticker={t} tech={tech} />
+          <CryptoNewsPanel symbol={data.symbol} baseAsset={data.baseAsset} ticker={t} dense />
         </div>
       </div>
     </div>

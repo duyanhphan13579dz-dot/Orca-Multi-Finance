@@ -148,6 +148,7 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
       try {
         const { createChart, ColorType, CrosshairMode } = await import("lightweight-charts");
         if (cancelled || !hostRef.current) return;
+        hostRef.current.innerHTML = "";
 
         chart = createChart(hostRef.current, {
           height,
@@ -190,6 +191,7 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
       ro?.disconnect();
       try {
         chart?.remove();
+        if (hostRef.current) hostRef.current.innerHTML = "";
       } catch {
         /* */
       }
