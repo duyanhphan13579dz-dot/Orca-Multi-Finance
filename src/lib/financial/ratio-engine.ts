@@ -355,7 +355,7 @@ export function computeDetailedRatios(input: RatioEngineInput): RatioEngineResul
     item("divYield", "Tỷ suất cổ tức", "Dividend Yield", divYield, "pct", "valuation"),
   ];
 
-  const cash = [
+  const cashQuality = [
     item("ocf", "CFO (HĐKD)", "Operating CF", ocf, "money", "cash"),
     item("fcf", "FCF", "Free Cash Flow", fcf, "money", "cash", { formula: "CFO − |Capex|" }),
     item("capex", "Capex", "Capex", capex != null ? -Math.abs(capex) : null, "money", "cash"),
@@ -391,7 +391,7 @@ export function computeDetailedRatios(input: RatioEngineInput): RatioEngineResul
     profitability,
     efficiency,
     valuation,
-    cash,
+    cash: cashQuality,
     dupont,
     perShare,
   };
