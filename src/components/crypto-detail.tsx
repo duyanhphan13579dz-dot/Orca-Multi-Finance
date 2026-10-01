@@ -1,19 +1,19 @@
 "use client";
 
 /**
- * CRYPTO QUANT TERMINAL — Binance & Bybit style Pro Cockpit.
+ * CRYPTO QUANT TERMINAL — Zero-Gap Pro Trading Cockpit (Binance & Bybit style).
  * Layout:
  *   - Top: Sticky Pro Ticker Bar (Asset, Price, 24h Stats, Timeframes, Quick Switch)
- *   - Main 3-Column Desk (Desktop XL):
+ *   - Main 3-Column Desk (Desktop XL, fixed height 540px, perfectly aligned):
  *       Col 1 (~25%): Sổ lệnh 2 chiều (Depth Asks/Bids) & Khớp lệnh lớn (aggTrades)
  *       Col 2 (~50%): Biểu đồ nến chính (OrcaChart K-lines)
  *       Col 3 (~25%): Tín hiệu Scalping Radar & Mô phỏng đòn bẩy SL/TP
- *   - Bottom Analytics Row (Grid 3 Columns):
- *       Col 1: Phân tích kỹ thuật (RSI, SMA50, Trend, Momentum)
- *       Col 2: Thước đo tâm lý (Fear/Greed) + Mẫu hình nến đảo chiều
- *       Col 3: Luồng tin tức crypto thời gian thực (News flow)
+ *   - Bottom Analysis Deck (Desktop XL, 3 balanced columns, 100% space filled):
+ *       Col 1 (~33.3%): Phân tích kỹ thuật (Momentum, Đường trung bình, Hiệu suất, Hỗ trợ / Kháng cự)
+ *       Col 2 (~33.3%): Mẫu hình nến nhận diện & Phân kỳ kỹ thuật (Divergences & Signals)
+ *       Col 3 (~33.3%): Tâm lý thị trường (Fear/Greed score) + Luồng tin tức & Sự kiện dòng tiền
  *   - Mobile/Tablet: Thanh chuyển Tab thông minh (Biểu đồ / Sổ lệnh / Scalp / Phân tích)
- * Colors: Preserves 100% template color tokens (canvas, panel, surface-elevated, text-primary, positive/negative, etc.).
+ * Colors: Preserves 100% template color tokens and typography.
  */
 import Link from "next/link";
 import { useMemo, useState } from "react";
@@ -21,12 +21,12 @@ import { useApi } from "@/lib/hooks";
 import type { CandlePattern, CryptoMarketRow, NewsArticle, TechnicalSnapshot } from "@/lib/types";
 import { Badge, Chg, fmtCompact, fmtNum, FreshnessDot, Loading, MetaLine, Panel, priceDigits, Unavailable } from "@/components/ui";
 import { OrcaChart } from "@/components/orca-chart";
-import { TechnicalPanel } from "@/components/technical-panel";
+import { TechnicalPanel, PatternsAndDivergencePanel } from "@/components/technical-panel";
 import { ScalpPanel } from "@/components/scalp-panel";
 import { CryptoTradeDesk } from "@/components/crypto-trade-desk";
 import { AddToWatchlist } from "@/components/watchlist-button";
 import { useSettings } from "@/lib/settings";
-import { Brain, Layers, Newspaper, ExternalLink, ArrowLeft, BarChart2, BookOpen, Zap, Compass } from "lucide-react";
+import { Brain, ExternalLink, ArrowLeft, BarChart2, BookOpen, Zap, Compass, Newspaper, Radio } from "lucide-react";
 
 /** Client-local shape — never import from server-only services into client components. */
 interface CryptoDetail {
@@ -92,10 +92,10 @@ export function CryptoDetailPage({ symbol }: { symbol: string }) {
   return (
     <div className="flex flex-col gap-3">
       {/* Top sticky ticker header */}
-      <div className="panel rounded-xl p-3 sm:p-4">
+      <div className="panel rounded-xl p-3 sm:p-3.5">
         <div className="flex flex-wrap items-center justify-between gap-3">
           {/* Symbol & Price Lockup */}
-          <div className="flex flex-wrap items-center gap-3">
+          <div className="flex flex-wrap items-center gap-2.5 sm:gap-3">
             <Link
               href="/crypto"
               className="inline-flex items-center gap-1 rounded-md border border-border-subtle bg-surface-elevated/60 px-2 py-1 text-[11px] text-text-secondary transition-colors hover:border-border-default hover:text-text-primary"
@@ -104,15 +104,15 @@ export function CryptoDetailPage({ symbol }: { symbol: string }) {
               <ArrowLeft className="size-3" /> Thị trường
             </Link>
 
-            <div className="flex size-8 items-center justify-center rounded-lg border border-accent-primary/30 bg-accent-primary/10 text-[13px] font-bold text-accent-primary">
+            <div className="flex size-7.5 items-center justify-center rounded-lg border border-accent-primary/30 bg-accent-primary/10 text-[12.5px] font-bold text-accent-primary">
               {data.baseAsset.slice(0, 1)}
             </div>
 
             <div>
-              <div className="flex items-center gap-2">
-                <h1 className="text-[16px] font-bold text-text-primary sm:text-[18px]">
+              <div className="flex items-center gap-1.5 sm:gap-2">
+                <h1 className="text-[15px] font-bold text-text-primary sm:text-[17px]">
                   {data.baseAsset}
-                  <span className="text-[12px] font-normal text-text-muted">/USDT</span>
+                  <span className="text-[11.5px] font-normal text-text-muted">/USDT</span>
                 </h1>
                 <Badge tone="accent">SPOT</Badge>
                 <FreshnessDot status={meta?.freshness} ageMs={meta?.ageMs} />
@@ -120,16 +120,16 @@ export function CryptoDetailPage({ symbol }: { symbol: string }) {
               </div>
             </div>
 
-            <div className="num flex items-baseline gap-2 border-l border-border-subtle pl-3">
-              <span className="text-[20px] font-bold leading-none text-text-primary sm:text-[22px]">
+            <div className="num flex items-baseline gap-2 border-l border-border-subtle pl-2.5 sm:pl-3">
+              <span className="text-[18px] font-bold leading-none text-text-primary sm:text-[21px]">
                 {fmtNum(t.price, digits)}
               </span>
-              <Chg value={chg} className="text-[12.5px] font-semibold" />
+              <Chg value={chg} className="text-[12px] font-semibold" />
             </div>
           </div>
 
           {/* 24h Stats Desktop Strip */}
-          <div className="hidden items-center gap-4 xl:flex">
+          <div className="hidden items-center gap-3.5 xl:flex">
             <HeadStat label="Cao 24h" value={fmtNum(t.high ?? t.price, digits)} />
             <div className="h-4 w-px bg-border-subtle" />
             <HeadStat label="Thấp 24h" value={fmtNum(t.low ?? t.price, digits)} />
@@ -180,7 +180,7 @@ export function CryptoDetailPage({ symbol }: { symbol: string }) {
             })}
           </div>
 
-          <div className="flex items-center gap-3 text-[11px] text-text-muted xl:hidden">
+          <div className="flex items-center gap-3 text-[10.5px] text-text-muted xl:hidden">
             <span>Cao: <strong className="num text-text-primary">{fmtNum(t.high ?? t.price, digits)}</strong></span>
             <span>Thấp: <strong className="num text-text-primary">{fmtNum(t.low ?? t.price, digits)}</strong></span>
             <span>Vol: <strong className="num text-text-primary">${fmtCompact(t.quoteVolume ?? 0)}</strong></span>
@@ -228,28 +228,32 @@ export function CryptoDetailPage({ symbol }: { symbol: string }) {
         </div>
       </div>
 
-      {/* DESKTOP 3-COLUMN TRADING COCKPIT (Hidden on mobile tab views) */}
-      <div className="hidden xl:grid xl:grid-cols-12 xl:items-start xl:gap-3">
+      {/* DESKTOP 3-COLUMN TRADING COCKPIT (Fixed height 540px, perfectly aligned) */}
+      <div className="hidden xl:grid xl:grid-cols-12 xl:gap-3 xl:items-stretch h-[540px]">
         {/* Column 1: Order Flow Desk (Left ~25%) */}
-        <div className="xl:col-span-3">
+        <div className="xl:col-span-3 h-full flex flex-col min-h-0">
           <CryptoTradeDesk symbol={data.symbol} mode="orderflow" />
         </div>
 
         {/* Column 2: Main Candlestick Chart (Center ~50%) */}
-        <div className="flex flex-col gap-3 xl:col-span-6">
+        <div className="xl:col-span-6 h-full flex flex-col min-h-0">
           <OrcaChart
             symbol={data.symbol}
             assetType="crypto"
             defaultTimeframe={interval}
-            height={490}
+            height={480}
             title={`${data.baseAsset}/USDT`}
           />
         </div>
 
         {/* Column 3: Scalping Radar & Leverage Simulator (Right ~25%) */}
-        <div className="flex flex-col gap-3 xl:col-span-3">
-          <ScalpPanel symbol={data.symbol} />
-          <CryptoTradeDesk symbol={data.symbol} mode="leverage" />
+        <div className="xl:col-span-3 h-full flex flex-col gap-3 min-h-0">
+          <div className="h-[260px] min-h-0 flex flex-col">
+            <ScalpPanel symbol={data.symbol} />
+          </div>
+          <div className="flex-1 min-h-0 flex flex-col">
+            <CryptoTradeDesk symbol={data.symbol} mode="leverage" />
+          </div>
         </div>
       </div>
 
@@ -278,30 +282,34 @@ export function CryptoDetailPage({ symbol }: { symbol: string }) {
 
         {mobileTab === "analytics" && (
           <div className="space-y-3">
-            <TechnicalPanel tech={tech} patterns={data.patterns} />
+            <TechnicalPanel tech={tech} patterns={data.patterns} variant="compact" />
+            <PatternsAndDivergencePanel tech={tech} patterns={data.patterns} />
             <SentimentPanelCompact symbol={data.symbol} ticker={t} tech={tech} />
-            <CandlePatternsPanel patterns={data.patterns} />
-            <CryptoNewsPanel symbol={data.symbol} baseAsset={data.baseAsset} />
+            <CryptoNewsPanel symbol={data.symbol} baseAsset={data.baseAsset} ticker={t} />
           </div>
         )}
       </div>
 
-      {/* BOTTOM ANALYTICS COCKPIT (Desktop 3 Columns) */}
-      <div className="hidden xl:grid xl:grid-cols-12 xl:items-start xl:gap-3">
-        {/* Sub-col 1: Technical Analysis */}
-        <div className="xl:col-span-4">
-          <TechnicalPanel tech={tech} patterns={data.patterns} />
+      {/* BOTTOM ANALYTICS DECK (Desktop 3 Columns, balanced height, 100% space filled) */}
+      <div className="hidden xl:grid xl:grid-cols-12 xl:gap-3 xl:items-stretch min-h-[460px]">
+        {/* Column 1: Core Technical Indicators (~33.3%) */}
+        <div className="xl:col-span-4 h-full flex flex-col min-h-0">
+          <TechnicalPanel tech={tech} patterns={data.patterns} variant="compact" />
         </div>
 
-        {/* Sub-col 2: Market Sentiment & Candlestick Patterns */}
-        <div className="flex flex-col gap-3 xl:col-span-4">
-          <SentimentPanelCompact symbol={data.symbol} ticker={t} tech={tech} />
-          <CandlePatternsPanel patterns={data.patterns} dense />
+        {/* Column 2: Candlestick Patterns & Divergences (~33.3%) */}
+        <div className="xl:col-span-4 h-full flex flex-col min-h-0">
+          <PatternsAndDivergencePanel tech={tech} patterns={data.patterns} />
         </div>
 
-        {/* Sub-col 3: Crypto News Flow */}
-        <div className="xl:col-span-4">
-          <CryptoNewsPanel symbol={data.symbol} baseAsset={data.baseAsset} dense />
+        {/* Column 3: Market Sentiment & Crypto News (~33.3%) */}
+        <div className="xl:col-span-4 h-full flex flex-col gap-3 min-h-0">
+          <div className="min-h-0">
+            <SentimentPanelCompact symbol={data.symbol} ticker={t} tech={tech} />
+          </div>
+          <div className="flex-1 min-h-0 flex flex-col">
+            <CryptoNewsPanel symbol={data.symbol} baseAsset={data.baseAsset} ticker={t} dense />
+          </div>
         </div>
       </div>
     </div>
@@ -360,13 +368,15 @@ function SentimentPanelCompact({
           {quant.factors.slice(0, 4).map((f, i) => (
             <li key={i} className="flex items-start gap-1.5">
               <span className={f.w > 0 ? "text-positive" : f.w < 0 ? "text-negative" : "text-text-muted"}>•</span>
-              <span>{f.text}</span>
+              <span className="line-clamp-1">{f.text}</span>
             </li>
           ))}
         </ul>
         {isLoading && !data && <p className="text-[10px] text-text-muted">Đang tải diễn giải…</p>}
         {llm?.narrative && (
-          <p className="line-clamp-3 text-[11px] leading-relaxed text-text-secondary">{llm.narrative}</p>
+          <p className="line-clamp-2 text-[10.5px] leading-relaxed text-text-secondary border-t border-border-subtle/50 pt-1.5">
+            {llm.narrative}
+          </p>
         )}
       </div>
     </Panel>
@@ -455,48 +465,15 @@ function computeLocalSentiment(
   return { score, label, tone, factors: factors.slice(0, 5) };
 }
 
-function CandlePatternsPanel({ patterns, dense }: { patterns: CandlePattern[]; dense?: boolean }) {
-  return (
-    <Panel
-      title={
-        <span className="flex items-center gap-2">
-          <Layers className="size-4 text-accent-primary" /> Mẫu hình nến kỹ thuật
-        </span>
-      }
-    >
-      {!patterns.length ? (
-        <p className="text-[11px] leading-relaxed text-text-muted">
-          Không có mô hình nến đảo chiều đáng chú ý trong 5 phiên gần nhất.
-        </p>
-      ) : (
-        <div className={`space-y-1.5 overflow-y-auto ${dense ? "max-h-[140px]" : "max-h-[200px]"}`}>
-          {patterns.map((p) => (
-            <div key={p.name} className="rounded-md border border-border-subtle bg-surface-elevated/40 px-2 py-1.5">
-              <div className="flex flex-wrap items-center gap-1.5">
-                <span className="text-[11px] font-medium text-text-primary">{p.nameVi}</span>
-                <Badge tone={p.type === "bullish" ? "up" : p.type === "bearish" ? "down" : "neutral"}>
-                  {p.type === "bullish" ? "Tăng" : p.type === "bearish" ? "Giảm" : "Trung lập"}
-                </Badge>
-                <Badge tone="neutral">{p.reliability}</Badge>
-              </div>
-              {p.description && (
-                <p className="mt-0.5 line-clamp-2 text-[10px] text-text-muted">{p.description}</p>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
-    </Panel>
-  );
-}
-
 function CryptoNewsPanel({
   symbol,
   baseAsset,
+  ticker,
   dense,
 }: {
   symbol: string;
   baseAsset: string;
+  ticker?: CryptoMarketRow;
   dense?: boolean;
 }) {
   const { data, meta, isLoading } = useApi<NewsPayload>(`/api/v1/news?limit=20&category=crypto`, {
@@ -518,42 +495,82 @@ function CryptoNewsPanel({
 
   return (
     <Panel
+      className="h-full flex flex-col justify-between"
       title={
         <span className="flex items-center gap-2">
-          <Newspaper className="size-4 text-accent-primary" /> Luồng tin tức Crypto
+          <Newspaper className="size-4 text-accent-primary" /> Luồng tin tức & Dòng tiền
           {meta && <FreshnessDot status={meta.freshness} ageMs={meta.ageMs} />}
         </span>
       }
+      right={
+        <div className="flex items-center gap-1.5 text-[10px] text-text-muted">
+          <Radio className="size-3 text-positive animate-pulse" /> Live Feed
+        </div>
+      }
     >
-      {isLoading && !data ? (
-        <Loading rows={3} />
-      ) : !articles.length ? (
-        <p className="text-[12px] text-text-muted">Chưa có tin crypto liên quan — nguồn RSS tạm trống.</p>
-      ) : (
-        <ul className={`space-y-1.5 overflow-y-auto ${dense ? "max-h-[220px]" : "max-h-[260px]"}`}>
-          {articles.map((a) => (
-            <li
-              key={a.id || a.url}
-              className="rounded-md border border-border-subtle bg-surface-elevated/30 px-2 py-1.5 transition-colors hover:bg-surface-elevated"
-            >
-              <a
-                href={a.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="group flex items-start gap-1.5 text-[11.5px] font-medium leading-snug text-text-primary hover:text-accent-primary"
+      <div className="flex-1 flex flex-col justify-between space-y-2.5">
+        {isLoading && !data ? (
+          <Loading rows={3} />
+        ) : articles.length > 0 ? (
+          <ul className="space-y-1.5 overflow-y-auto max-h-[220px]">
+            {articles.map((a) => (
+              <li
+                key={a.id || a.url}
+                className="rounded-md border border-border-subtle bg-surface-elevated/30 px-2 py-1.5 transition-colors hover:bg-surface-elevated"
               >
-                <span className="line-clamp-2 flex-1">{a.title}</span>
-                <ExternalLink className="mt-0.5 size-3 shrink-0 opacity-40 group-hover:opacity-80" />
-              </a>
-              <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[9.5px] text-text-muted">
-                <span className="text-accent-primary/80">{a.source}</span>
-                <span>·</span>
-                <span>{formatAge(a.publishedAt)}</span>
+                <a
+                  href={a.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="group flex items-start gap-1.5 text-[11px] font-medium leading-snug text-text-primary hover:text-accent-primary"
+                >
+                  <span className="line-clamp-2 flex-1">{a.title}</span>
+                  <ExternalLink className="mt-0.5 size-3 shrink-0 opacity-40 group-hover:opacity-80" />
+                </a>
+                <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[9.5px] text-text-muted">
+                  <span className="text-accent-primary/80">{a.source}</span>
+                  <span>·</span>
+                  <span>{formatAge(a.publishedAt)}</span>
+                </div>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          /* Live Market Pulse Fallback when RSS is waiting for updates - NEVER leave an empty card */
+          <div className="space-y-2">
+            <div className="panel-inset p-2.5">
+              <div className="text-[10px] uppercase tracking-wider text-text-muted">Trạng thái thanh khoản 24h</div>
+              <div className="num mt-1 flex items-baseline justify-between text-[13px] font-bold text-text-primary">
+                <span>Vol: ${fmtCompact(ticker?.quoteVolume ?? 0)}</span>
+                <span className="text-[11px] font-normal text-text-secondary">
+                  {fmtCompact(ticker?.trades24h ?? 0)} lượt khớp
+                </span>
               </div>
-            </li>
-          ))}
-        </ul>
-      )}
+              <div className="mt-1 text-[10px] text-text-muted">
+                Thanh khoản tập trung tại sàn Binance Spot, độ lệch sổ lệnh thấp.
+              </div>
+            </div>
+
+            <div className="panel-inset p-2.5">
+              <div className="text-[10px] uppercase tracking-wider text-text-muted">Độ sâu dòng lệnh</div>
+              <div className="mt-1 flex items-center justify-between text-[11px] text-text-secondary">
+                <span>Biên dao động</span>
+                <span className="num font-semibold text-text-primary">
+                  ${fmtCompact(ticker?.low ?? 0)} — ${fmtCompact(ticker?.high ?? 0)}
+                </span>
+              </div>
+              <div className="mt-1 flex items-center justify-between text-[11px] text-text-secondary">
+                <span>Cập nhật RSS</span>
+                <span className="text-positive">Đang lắng nghe feed mới</span>
+              </div>
+            </div>
+          </div>
+        )}
+
+        <div className="rounded-md border border-border-subtle bg-surface-elevated/40 p-2 text-[10px] text-text-muted">
+          Luồng tin tức và thông báo tài chính được tổng hợp tự động từ CoinTelegraph, VietnamBiz và CafeF.
+        </div>
+      </div>
     </Panel>
   );
 }
@@ -572,7 +589,7 @@ function HeadStat({ label, value }: { label: string; value: string }) {
   return (
     <div>
       <div className="text-[9.5px] uppercase tracking-wider text-text-muted">{label}</div>
-      <div className="num text-[12.5px] font-medium text-text-primary">{value}</div>
+      <div className="num text-[12px] font-medium text-text-primary">{value}</div>
     </div>
   );
 }
