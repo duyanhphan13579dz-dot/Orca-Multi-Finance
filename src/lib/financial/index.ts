@@ -64,5 +64,16 @@ export {
   mapPool,
 } from "./snapshots";
 export type { FundamentalSnapshot, PackageBundle } from "./snapshots";
-export { persistFinancialPackage, persistFinancialPackageAsync } from "./persist";
-export type * from "./types";
+export { buildSnapshotMetrics, formatMetric } from "./fundamental-metrics";
+export type { MetricCell, SnapshotBundle, Band } from "./fundamental-metrics";
+
+export {
+  computeDetailedRatios,
+  pickMetricsFromPeriods,
+} from "./ratio-engine";
+export type {
+  RatioItem,
+  RatioEngineResult,
+  RatioCategory,
+  RatioEngineInput,
+} from "./ratio-engine";
