@@ -145,7 +145,12 @@ export async function getChartHistory(
   try {
     const cacheKey = `chart:v4:${args.assetType}:${symbol}:${tf}:${limit}`;
     const res = await cached(cacheKey, {
-      ttlMs: args.assetType === "crypto" ? 30_000 : args.assetType === "forex" || args.assetType === "commodity" ? 45_000 : 60_000,
+      ttlMs:
+        args.assetType === "crypto"
+          ? 30_000
+          : args.assetType === "forex" || args.assetType === "commodity"
+            ? 45_000
+            : 60_000,
       staleMs: args.assetType === "crypto" ? 120_000 : 300_000,
       producer: async () => {
         let series: CandleSeriesResult;
@@ -165,7 +170,11 @@ export async function getChartHistory(
         const quality = validateBars(candles as OhlcvBar[]);
         const cleaned = (quality.cleaned ?? candles) as ChartCandle[];
         const gapFlag = detectGaps(cleaned as OhlcvBar[], TF_MS[tf] ?? 86_400_000);
-        const gaps = gapFlag && typeof gapFlag.value === "number" ? gapFlag.value : gapFlag ? 1 : 0;
+        const gaps = gapFlag && typeof (gapFlag as { value?: number }).value === "number"
+          ? (gapFlag as { value: number }).value
+          : gapFlag
+            ? 1
+            : 0;
         const suspect = quality.status === "SUSPECT" || quality.status === "INVALID" ? 1 : 0;
 
         return {
@@ -174,34 +183,53 @@ export async function getChartHistory(
           note: series.note,
           gaps,
           suspect,
-          qualityStatus: quality.status,
         };
       },
     });
 
-    const series = res.value;
-    const candles = series.candles ?? [];
+    const { candles, source, note, gaps, suspect } = res.value;
     if (!candles.length) return null;
 
-    const indicators = computeIndicators(candles);
-    const markers = computeMarkers(candles);
-    const data: ChartMarketData = {
-      symbol,
-      assetType: args.assetType,
-      timeframe: tf,
-      candles,
-      indicators,
-      markers,
-      source: series.source,
-    };
+    const last = candles[candles.length - 1];
+    let indicators: ChartIndicators | null = null;
+    let markers: ChartSignalMarker[] = [];
+    try {
+      indicators = computeIndicators(candles as ChartCandle[]);
+    } catch {
+      indicators = null;
+    }
+    try {
+      markers = computeMarkers(candles as ChartCandle[]);
+    } catch {
+      markers = [];
+    }
+
     const meta = buildMeta({
-      source: series.source,
-      sourceTimestampMs: candles[candles.length - 1]?.time ?? null,
+      source,
+      sourceTimestampMs: last?.time ?? Date.now(),
       cached: res.cached,
       stale: res.stale,
-      note: series.note,
+      note:
+        [note, gaps ? `${gaps} khoảng trống` : null, suspect ? "quality: SUSPECT" : null]
+          .filter(Boolean)
+          .join(" · ") || undefined,
+      slas:
+        args.assetType === "crypto"
+          ? { liveSlaMs: TF_MS[tf] * 1.5, freshSlaMs: TF_MS[tf] * 4, delayedSlaMs: TF_MS[tf] * 12 }
+          : { liveSlaMs: 5 * 60_000, freshSlaMs: 30 * 60_000, delayedSlaMs: 6 * 3_600_000 },
     });
-    return { data, meta };
+
+    return {
+      data: {
+        candles: candles as ChartCandle[],
+        indicators,
+        markers,
+        intervalMs: TF_MS[tf] ?? 86_400_000,
+        gaps,
+        suspect,
+      },
+      meta,
+    };
   } catch (e) {
     console.warn("[getChartHistory]", args.assetType, symbol, tf, e instanceof Error ? e.message : e);
     return null;
