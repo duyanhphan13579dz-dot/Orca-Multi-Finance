@@ -18,6 +18,7 @@ export function MarketStructurePanel({
   patterns,
   cur,
   series,
+  assetType = "forex",
 }: {
   tab: StructureTab;
   onTab: (t: StructureTab) => void;
@@ -25,8 +26,9 @@ export function MarketStructurePanel({
   interval: string;
   tech: TechnicalSnapshot | null;
   patterns: CandlePattern[];
-  cur: ForexRow | null;
+  cur: ForexRow | { price?: number | null; changePercent?: number | null; high?: number | null; low?: number | null } | null;
   series: OhlcvBar[];
+  assetType?: "forex" | "crypto";
 }) {
   const structureNotes = useMemo(() => buildStructureNotes(series, tech), [series, tech]);
 
@@ -74,7 +76,7 @@ export function MarketStructurePanel({
 
         {tab === "ms" && (
           <div className="space-y-2">
-            <MtfBiasPanel symbol={pair} assetType="forex" chartTimeframe={interval} />
+            <MtfBiasPanel symbol={pair} assetType={assetType} chartTimeframe={interval} />
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
               <TechnicalPanel tech={tech} patterns={patterns} ticker={cur} variant="compact" />
               <PatternsAndDivergencePanel tech={tech} patterns={patterns} />
@@ -107,7 +109,7 @@ export function MarketStructurePanel({
                 </li>
               ))}
             </ul>
-            <MtfBiasPanel symbol={pair} assetType="forex" chartTimeframe={interval} />
+            <MtfBiasPanel symbol={pair} assetType={assetType} chartTimeframe={interval} />
           </div>
         )}
 
