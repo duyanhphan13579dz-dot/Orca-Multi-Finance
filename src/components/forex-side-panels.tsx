@@ -235,26 +235,27 @@ function computeLocalSentiment(
     score += w;
     factors.push({ w, text: `Biến động phiên ${chg >= 0 ? "+" : ""}${chg.toFixed(2)}%` });
   }
-  if (tech?.rsi != null) {
-    if (tech.rsi > 70) {
+  if (tech?.rsi14 != null) {
+    if (tech.rsi14 > 70) {
       score -= 12;
-      factors.push({ w: -12, text: `RSI cao (${tech.rsi.toFixed(0)}) — quá mua` });
-    } else if (tech.rsi < 30) {
+      factors.push({ w: -12, text: `RSI cao (${tech.rsi14.toFixed(0)}) — quá mua` });
+    } else if (tech.rsi14 < 30) {
       score += 12;
-      factors.push({ w: 12, text: `RSI thấp (${tech.rsi.toFixed(0)}) — quá bán` });
+      factors.push({ w: 12, text: `RSI thấp (${tech.rsi14.toFixed(0)}) — quá bán` });
     } else {
-      factors.push({ w: 0, text: `RSI trung tính (${tech.rsi.toFixed(0)})` });
+      factors.push({ w: 0, text: `RSI trung tính (${tech.rsi14.toFixed(0)})` });
     }
   }
-  if (tech?.trend) {
-    const bull = /up|bull/i.test(tech.trend);
-    const bear = /down|bear/i.test(tech.trend);
+  if (tech?.trend?.label) {
+    const label = tech.trend.label;
+    const bull = /up|bull/i.test(label);
+    const bear = /down|bear/i.test(label);
     if (bull) {
       score += 10;
-      factors.push({ w: 10, text: `Trend: ${tech.trend}` });
+      factors.push({ w: 10, text: `Trend: ${label}` });
     } else if (bear) {
       score -= 10;
-      factors.push({ w: -10, text: `Trend: ${tech.trend}` });
+      factors.push({ w: -10, text: `Trend: ${label}` });
     }
   }
   score = Math.max(-100, Math.min(100, Math.round(score)));
