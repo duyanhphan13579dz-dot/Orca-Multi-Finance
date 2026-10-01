@@ -27,7 +27,9 @@ export function ClientProviders({ children }: { children: ReactNode }) {
     <SWRConfig
       value={{
         provider: () => globalSwrCache,
-        revalidateOnFocus: true,
+        // Avoid a request burst every time users return from another tab.
+        // Page hooks still opt into focus refresh when their settings allow it.
+        revalidateOnFocus: false,
         revalidateOnReconnect: true,
         keepPreviousData: true,
         dedupingInterval: 4_000,
