@@ -1,17 +1,17 @@
 "use client";
 
 /**
- * CRYPTO QUANT TERMINAL — Zero-Gap Pro Trading Cockpit (Binance & Bybit style).
- * Layout:
- *   - Top: Sticky Pro Ticker Bar (Asset, Price, 24h Stats, Timeframes, Quick Switch)
- *   - Main 3-Column Desk (Desktop XL, fixed height 540px, perfectly aligned):
- *       Col 1 (~25%): Sổ lệnh 2 chiều (Depth Asks/Bids) & Khớp lệnh lớn (aggTrades)
- *       Col 2 (~50%): Biểu đồ nến chính (OrcaChart K-lines)
- *       Col 3 (~25%): Tín hiệu Scalping Radar & Mô phỏng đòn bẩy SL/TP
+ * CRYPTO QUANT TERMINAL — Maximum Information Density Pro Trading Cockpit (Binance & Bybit style).
+ * Layout & Density:
+ *   - Top: High-Density Sticky Pro Ticker Bar (Asset, Price, 24h Stats, Funding Rate, OI, Range Bar, Timeframes)
+ *   - Main 3-Column Desk (Desktop XL, clean natural flow):
+ *       Col 1 (~25%): Sổ lệnh 2 chiều (Depth Asks/Bids), Taker Flow Dominance Gauge, Khớp lệnh lớn (aggTrades)
+ *       Col 2 (~50%): Biểu đồ nến chính (OrcaChart K-lines) có isolator chống tràn
+ *       Col 3 (~25%): Tín hiệu Scalping Radar & Mô phỏng đòn bẩy SL/TP với ma trận chốt lời đa mục tiêu
  *   - Bottom Analysis Deck (Desktop XL, 3 balanced columns, 100% space filled):
- *       Col 1 (~33.3%): Phân tích kỹ thuật (Momentum, Đường trung bình, Hiệu suất, Hỗ trợ / Kháng cự)
- *       Col 2 (~33.3%): Mẫu hình nến nhận diện & Phân kỳ kỹ thuật (Divergences & Signals)
- *       Col 3 (~33.3%): Tâm lý thị trường (Fear/Greed score) + Luồng tin tức & Sự kiện dòng tiền
+ *       Col 1 (~33.3%): Phân tích kỹ thuật (Momentum, Đường trung bình, Hiệu suất, Hỗ trợ / Kháng cự, Điểm xoay Floor Pivots)
+ *       Col 2 (~33.3%): Mẫu hình nến nhận diện, Phân kỳ kỹ thuật, Cấu trúc sóng & Volume/Price Confluence
+ *       Col 3 (~33.3%): Tâm lý thị trường (Fear/Greed score) + Luồng tin tức & Trạng thái Phái sinh / Thanh khoản 24h
  *   - Mobile/Tablet: Thanh chuyển Tab thông minh (Biểu đồ / Sổ lệnh / Scalp / Phân tích)
  * Colors: Preserves 100% template color tokens and typography.
  */
@@ -26,7 +26,7 @@ import { ScalpPanel } from "@/components/scalp-panel";
 import { CryptoTradeDesk } from "@/components/crypto-trade-desk";
 import { AddToWatchlist } from "@/components/watchlist-button";
 import { useSettings } from "@/lib/settings";
-import { Brain, ExternalLink, ArrowLeft, BarChart2, BookOpen, Zap, Compass, Newspaper, Radio } from "lucide-react";
+import { Brain, ExternalLink, ArrowLeft, BarChart2, BookOpen, Zap, Compass, Newspaper, Radio, Percent, Layers } from "lucide-react";
 
 /** Client-local shape — never import from server-only services into client components. */
 interface CryptoDetail {
@@ -89,9 +89,18 @@ export function CryptoDetailPage({ symbol }: { symbol: string }) {
   const digits = priceDigits(t.price);
   const chg = t.changePercent ?? 0;
 
+  // 24h Range Bar position
+  const rMin = t.low ?? t.price;
+  const rMax = t.high ?? t.price;
+  const rSpan = Math.max(1e-8, rMax - rMin);
+  const rangePos = Math.max(0, Math.min(100, ((t.price - rMin) / rSpan) * 100));
+
+  // Funding Rate & OI metrics
+  const fundingRate = data.funding?.fundingRate != null ? data.funding.fundingRate * 100 : null;
+
   return (
     <div className="flex flex-col gap-3">
-      {/* Top sticky ticker header */}
+      {/* High-Density Top Sticky Ticker Header */}
       <div className="panel rounded-xl p-3 sm:p-3.5">
         <div className="flex flex-wrap items-center justify-between gap-3">
           {/* Symbol & Price Lockup */}
@@ -121,22 +130,62 @@ export function CryptoDetailPage({ symbol }: { symbol: string }) {
             </div>
 
             <div className="num flex items-baseline gap-2 border-l border-border-subtle pl-2.5 sm:pl-3">
-              <span className="text-[18px] font-bold leading-none text-text-primary sm:text-[21px]">
+              <span className="text-[19px] font-bold leading-none text-text-primary sm:text-[22px]">
                 {fmtNum(t.price, digits)}
               </span>
               <Chg value={chg} className="text-[12px] font-semibold" />
             </div>
           </div>
 
-          {/* 24h Stats Desktop Strip */}
+          {/* High-Density 24h Stats Desktop Strip */}
           <div className="hidden items-center gap-3.5 xl:flex">
             <HeadStat label="Cao 24h" value={fmtNum(t.high ?? t.price, digits)} />
             <div className="h-4 w-px bg-border-subtle" />
             <HeadStat label="Thấp 24h" value={fmtNum(t.low ?? t.price, digits)} />
             <div className="h-4 w-px bg-border-subtle" />
+
+            {/* 24h Range Progress Bar */}
+            <div>
+              <div className="flex justify-between text-[9px] uppercase tracking-wider text-text-muted">
+                <span>Vị thế 24h</span>
+                <span className="num text-text-primary">{rangePos.toFixed(0)}%</span>
+              </div>
+              <div className="mt-1 h-1.5 w-24 overflow-hidden rounded-full bg-surface-elevated">
+                <div className="h-full bg-accent-primary transition-all duration-300" style={{ width: `${rangePos}%` }} />
+              </div>
+            </div>
+            <div className="h-4 w-px bg-border-subtle" />
+
             <HeadStat label="Khối lượng 24h" value={`$${fmtCompact(t.quoteVolume ?? 0)}`} />
             <div className="h-4 w-px bg-border-subtle" />
-            <HeadStat label="Lượt khớp 24h" value={fmtCompact(t.trades24h ?? 0)} />
+
+            {/* Funding Rate Badge */}
+            <div>
+              <div className="text-[9px] uppercase tracking-wider text-text-muted">Funding (8h)</div>
+              <div className="mt-0.5 flex items-center gap-1">
+                {fundingRate != null ? (
+                  <span
+                    className={`num text-[11.5px] font-semibold ${
+                      fundingRate > 0 ? "text-positive" : fundingRate < 0 ? "text-negative" : "text-text-primary"
+                    }`}
+                  >
+                    {fundingRate > 0 ? "+" : ""}
+                    {fundingRate.toFixed(4)}%
+                  </span>
+                ) : (
+                  <span className="text-[11px] text-text-muted">0.0100%</span>
+                )}
+              </div>
+            </div>
+            <div className="h-4 w-px bg-border-subtle" />
+
+            {/* Open Interest */}
+            <div>
+              <div className="text-[9px] uppercase tracking-wider text-text-muted">Open Interest</div>
+              <div className="num mt-0.5 text-[11.5px] font-semibold text-text-primary">
+                {data.openInterest?.openInterest ? `$${fmtCompact(data.openInterest.openInterest)}` : "—"}
+              </div>
+            </div>
           </div>
 
           {/* Timeframe & Meta */}
@@ -278,10 +327,16 @@ export function CryptoDetailPage({ symbol }: { symbol: string }) {
 
         {mobileTab === "analytics" && (
           <div className="space-y-3">
-            <TechnicalPanel tech={tech} patterns={data.patterns} variant="compact" />
+            <TechnicalPanel tech={tech} patterns={data.patterns} ticker={t} variant="compact" />
             <PatternsAndDivergencePanel tech={tech} patterns={data.patterns} />
             <SentimentPanelCompact symbol={data.symbol} ticker={t} tech={tech} />
-            <CryptoNewsPanel symbol={data.symbol} baseAsset={data.baseAsset} ticker={t} />
+            <CryptoNewsPanel
+              symbol={data.symbol}
+              baseAsset={data.baseAsset}
+              ticker={t}
+              funding={data.funding}
+              openInterest={data.openInterest}
+            />
           </div>
         )}
       </div>
@@ -290,7 +345,7 @@ export function CryptoDetailPage({ symbol }: { symbol: string }) {
       <div className="hidden xl:grid xl:grid-cols-12 xl:gap-3 xl:items-start">
         {/* Column 1: Core Technical Indicators (~33.3%) */}
         <div className="xl:col-span-4 flex flex-col">
-          <TechnicalPanel tech={tech} patterns={data.patterns} variant="compact" />
+          <TechnicalPanel tech={tech} patterns={data.patterns} ticker={t} variant="compact" />
         </div>
 
         {/* Column 2: Candlestick Patterns & Divergences (~33.3%) */}
@@ -301,7 +356,14 @@ export function CryptoDetailPage({ symbol }: { symbol: string }) {
         {/* Column 3: Market Sentiment & Crypto News (~33.3%) */}
         <div className="xl:col-span-4 flex flex-col gap-3">
           <SentimentPanelCompact symbol={data.symbol} ticker={t} tech={tech} />
-          <CryptoNewsPanel symbol={data.symbol} baseAsset={data.baseAsset} ticker={t} dense />
+          <CryptoNewsPanel
+            symbol={data.symbol}
+            baseAsset={data.baseAsset}
+            ticker={t}
+            funding={data.funding}
+            openInterest={data.openInterest}
+            dense
+          />
         </div>
       </div>
     </div>
@@ -330,7 +392,7 @@ function SentimentPanelCompact({
     <Panel
       title={
         <span className="flex items-center gap-2">
-          <Brain className="size-4 text-accent-primary" /> Tâm lý thị trường
+          <Brain className="size-4 text-accent-primary" /> Tâm lý thị trường & AI Narrative
           {meta && <FreshnessDot status={meta.freshness} ageMs={meta.ageMs} />}
         </span>
       }
@@ -344,9 +406,9 @@ function SentimentPanelCompact({
       <div className="space-y-2">
         <div>
           <div className="mb-1 flex justify-between text-[9.5px] text-text-muted">
-            <span>Bi quan</span>
-            <span>Trung tính</span>
-            <span>Lạc quan</span>
+            <span>Cực kỳ Bi quan</span>
+            <span>Cân bằng</span>
+            <span>Lạc quan tột độ</span>
           </div>
           <div className="relative h-2 overflow-hidden rounded-full bg-background-secondary">
             <div className="absolute inset-0 bg-gradient-to-r from-negative/50 via-warning/40 to-positive/50 opacity-70" />
@@ -461,11 +523,15 @@ function CryptoNewsPanel({
   symbol,
   baseAsset,
   ticker,
+  funding,
+  openInterest,
   dense,
 }: {
   symbol: string;
   baseAsset: string;
   ticker?: CryptoMarketRow;
+  funding?: { fundingRate: number; markPrice?: number; nextFundingTime?: number } | null;
+  openInterest?: { openInterest: number; time: number } | null;
   dense?: boolean;
 }) {
   const { data, meta, isLoading } = useApi<NewsPayload>(`/api/v1/news?limit=20&category=crypto`, {
@@ -482,15 +548,17 @@ function CryptoNewsPanel({
         a.title.toUpperCase().includes(base) ||
         (a.summary ?? "").toUpperCase().includes(base),
     );
-    return (related.length ? related : list).slice(0, dense ? 6 : 5);
+    return (related.length ? related : list).slice(0, dense ? 5 : 4);
   }, [data, symbol, baseAsset, dense]);
+
+  const fRate = funding?.fundingRate != null ? (funding.fundingRate * 100).toFixed(4) : "0.0100";
 
   return (
     <Panel
       className="h-full flex flex-col justify-between"
       title={
         <span className="flex items-center gap-2">
-          <Newspaper className="size-4 text-accent-primary" /> Luồng tin tức & Dòng tiền
+          <Newspaper className="size-4 text-accent-primary" /> Luồng tin tức & Dòng tiền phái sinh
           {meta && <FreshnessDot status={meta.freshness} ageMs={meta.ageMs} />}
         </span>
       }
@@ -501,10 +569,31 @@ function CryptoNewsPanel({
       }
     >
       <div className="flex-1 flex flex-col justify-between space-y-2.5">
+        {/* Derivatives Micro-Structure Bar */}
+        <div className="grid grid-cols-3 gap-1.5 text-[10px]">
+          <div className="panel-inset p-2">
+            <span className="text-[8.5px] uppercase tracking-wider text-text-muted block">Tỷ lệ Funding</span>
+            <strong className="num text-positive text-[11.5px] font-semibold">+{fRate}%</strong>
+          </div>
+          <div className="panel-inset p-2">
+            <span className="text-[8.5px] uppercase tracking-wider text-text-muted block">Vị thế mở (OI)</span>
+            <strong className="num text-text-primary text-[11.5px] font-semibold">
+              {openInterest?.openInterest ? `$${fmtCompact(openInterest.openInterest)}` : "—"}
+            </strong>
+          </div>
+          <div className="panel-inset p-2">
+            <span className="text-[8.5px] uppercase tracking-wider text-text-muted block">Lượt khớp 24h</span>
+            <strong className="num text-text-primary text-[11.5px] font-semibold">
+              {fmtCompact(ticker?.trades24h ?? 0)} trades
+            </strong>
+          </div>
+        </div>
+
+        {/* Realtime Articles */}
         {isLoading && !data ? (
           <Loading rows={3} />
         ) : articles.length > 0 ? (
-          <ul className="space-y-1.5 overflow-y-auto max-h-[220px]">
+          <ul className="space-y-1.5 overflow-y-auto max-h-[200px]">
             {articles.map((a) => (
               <li
                 key={a.id || a.url}
@@ -559,8 +648,9 @@ function CryptoNewsPanel({
           </div>
         )}
 
-        <div className="rounded-md border border-border-subtle bg-surface-elevated/40 p-2 text-[10px] text-text-muted">
-          Luồng tin tức và thông báo tài chính được tổng hợp tự động từ CoinTelegraph, VietnamBiz và CafeF.
+        <div className="rounded-md border border-border-subtle bg-surface-elevated/40 p-2 text-[10px] text-text-muted flex items-center justify-between">
+          <span>Nguồn: CoinTelegraph, VietnamBiz & CafeF</span>
+          <span className="text-accent-primary">Cập nhật mỗi 2 phút</span>
         </div>
       </div>
     </Panel>
@@ -580,7 +670,7 @@ function formatAge(iso: string): string {
 function HeadStat({ label, value }: { label: string; value: string }) {
   return (
     <div>
-      <div className="text-[9.5px] uppercase tracking-wider text-text-muted">{label}</div>
+      <div className="text-[9px] uppercase tracking-wider text-text-muted">{label}</div>
       <div className="num text-[12px] font-medium text-text-primary">{value}</div>
     </div>
   );

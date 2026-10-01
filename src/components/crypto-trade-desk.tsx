@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { useApi } from "@/lib/hooks";
 import { Badge, fmtCompact, fmtNum, FreshnessDot, Loading, MetaLine, Panel, priceDigits, Unavailable } from "@/components/ui";
-import { BookOpen, Activity, Gauge, ArrowUpRight, ArrowDownRight } from "lucide-react";
+import { BookOpen, Activity, Gauge, ArrowUpRight, ArrowDownRight, Zap } from "lucide-react";
 import type { Meta } from "@/lib/types";
 
 interface Level {
@@ -108,7 +108,7 @@ export function CryptoTradeDesk({
   const title =
     mode === "orderflow" ? (
       <span className="flex items-center gap-2">
-        <BookOpen className="size-4 text-accent-primary" /> Sổ lệnh & Dòng tiền
+        <BookOpen className="size-4 text-accent-primary" /> Sổ lệnh & Dòng tiền trực tiếp
         {meta && <FreshnessDot status={meta.freshness} ageMs={meta.ageMs} />}
       </span>
     ) : mode === "leverage" ? (
@@ -123,7 +123,7 @@ export function CryptoTradeDesk({
     );
 
   return (
-    <Panel title={title} className="h-full">
+    <Panel title={title} className="h-full overflow-hidden">
       {isLoading && !data ? (
         <Loading rows={mode === "leverage" ? 4 : 8} />
       ) : !data ? (
@@ -162,121 +162,141 @@ function DeskBody({
   const sig = data.signal;
   const sigTone = sig.direction === "BUY" ? "up" : sig.direction === "SELL" ? "down" : "neutral";
 
+  const totalTaker = Math.max(1, data.buyVolumeQuote + data.sellVolumeQuote);
+  const buyTakerPct = Math.round((data.buyVolumeQuote / totalTaker) * 100);
+  const sellTakerPct = 100 - buyTakerPct;
+
   const showOrderFlow = mode === "all" || mode === "orderflow";
   const showLeverage = mode === "all" || mode === "leverage";
 
   return (
-    <div className="flex h-full flex-col justify-between space-y-3">
+    <div className="flex h-full flex-col justify-between space-y-2.5">
       {showOrderFlow && (
-        <div className="space-y-3">
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <div className="space-y-2.5">
+          {/* Signal & Core metrics grid */}
+          <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-4">
             <div className="panel-inset p-2">
-              <div className="text-[9.5px] uppercase tracking-wider text-text-muted">Tín hiệu</div>
+              <div className="text-[9px] uppercase tracking-wider text-text-muted">Tín hiệu Desk</div>
               <div className="mt-0.5 flex items-center gap-1.5">
                 <Badge tone={sigTone}>
                   <span className="font-bold">{sig.direction}</span>
                 </Badge>
-                <span className="num text-[13px] font-semibold text-text-primary">{sig.confidencePct}%</span>
+                <span className="num text-[12.5px] font-semibold text-text-primary">{sig.confidencePct}%</span>
               </div>
             </div>
             <div className="panel-inset p-2">
-              <div className="text-[9.5px] uppercase tracking-wider text-text-muted">Dòng tiền</div>
-              <div className={`num mt-0.5 text-[13px] font-semibold ${data.flowScore >= 0 ? "text-positive" : "text-negative"}`}>
+              <div className="text-[9px] uppercase tracking-wider text-text-muted">Điểm dòng tiền</div>
+              <div className={`num mt-0.5 text-[12.5px] font-semibold ${data.flowScore >= 0 ? "text-positive" : "text-negative"}`}>
                 {data.flowScore > 0 ? "+" : ""}
                 {data.flowScore}
               </div>
-              <div className="truncate text-[9.5px] text-text-muted">
+              <div className="truncate text-[9px] text-text-muted">
                 B ${fmtCompact(data.buyVolumeQuote)} / S ${fmtCompact(data.sellVolumeQuote)}
               </div>
             </div>
             <div className="panel-inset p-2">
-              <div className="text-[9.5px] uppercase tracking-wider text-text-muted">Imbalance</div>
-              <div className={`num mt-0.5 text-[13px] font-semibold ${data.imbalance >= 0 ? "text-positive" : "text-negative"}`}>
+              <div className="text-[9px] uppercase tracking-wider text-text-muted">Độ lệch Sổ lệnh</div>
+              <div className={`num mt-0.5 text-[12.5px] font-semibold ${data.imbalance >= 0 ? "text-positive" : "text-negative"}`}>
                 {(data.imbalance * 100).toFixed(0)}%
               </div>
-              <div className="text-[9.5px] text-text-muted">spread {data.spreadBps.toFixed(1)} bps</div>
+              <div className="text-[9px] text-text-muted">spread {data.spreadBps.toFixed(1)} bps</div>
             </div>
             <div className="panel-inset p-2">
-              <div className="text-[9.5px] uppercase tracking-wider text-text-muted">Giá Mid</div>
-              <div className="num mt-0.5 text-[13px] font-semibold">{fmtNum(data.mid, digits)}</div>
+              <div className="text-[9px] uppercase tracking-wider text-text-muted">Giá Mid Spot</div>
+              <div className="num mt-0.5 text-[12.5px] font-semibold text-text-primary">{fmtNum(data.mid, digits)}</div>
             </div>
           </div>
 
-          <div className="grid grid-cols-1 gap-2.5">
-            <div>
-              <div className="mb-1.5 flex items-center justify-between text-[11px] font-medium text-text-secondary">
-                <span className="flex items-center gap-1.5">
-                  <BookOpen className="size-3.5 text-accent-primary" /> Sổ lệnh trực tiếp
-                </span>
-                <span className="num text-[10px] text-text-muted">
-                  Bids {fmtCompact(data.bidTotal)} / Asks {fmtCompact(data.askTotal)}
-                </span>
-              </div>
-              <div className="grid grid-cols-2 gap-2 text-[11px]">
-                <div>
-                  <div className="mb-1 flex items-center justify-between text-[9.5px] uppercase tracking-wider text-negative">
-                    <span>Bên Bán (Asks)</span>
-                    <span>KL</span>
-                  </div>
-                  <div className="max-h-[170px] space-y-0.5 overflow-y-auto">
-                    {[...data.asks].reverse().map((a) => (
-                      <Row key={`a${a.price}`} price={a.price} qty={a.qty} max={maxQty} digits={digits} tone="ask" />
-                    ))}
-                  </div>
+          {/* Taker Flow Dominance Gauge */}
+          <div className="panel-inset px-2.5 py-1.5">
+            <div className="flex items-center justify-between text-[9px] uppercase tracking-wider text-text-muted">
+              <span>Lệnh khớp chủ động (Taker Flow)</span>
+              <span className="num font-semibold">
+                <strong className="text-positive">{buyTakerPct}% Mua</strong> · <strong className="text-negative">{sellTakerPct}% Bán</strong>
+              </span>
+            </div>
+            <div className="mt-1 flex h-1.5 overflow-hidden rounded-full bg-surface-elevated">
+              <div className="bg-positive transition-all duration-300" style={{ width: `${buyTakerPct}%` }} />
+              <div className="bg-negative transition-all duration-300" style={{ width: `${sellTakerPct}%` }} />
+            </div>
+          </div>
+
+          {/* Orderbook Bids/Asks */}
+          <div>
+            <div className="mb-1 flex items-center justify-between text-[10.5px] font-medium text-text-secondary">
+              <span className="flex items-center gap-1.5">
+                <BookOpen className="size-3 text-accent-primary" /> Độ sâu sổ lệnh (Depth)
+              </span>
+              <span className="num text-[9.5px] text-text-muted">
+                Bids ${fmtCompact(data.bidTotal)} / Asks ${fmtCompact(data.askTotal)}
+              </span>
+            </div>
+            <div className="grid grid-cols-2 gap-1.5 text-[11px]">
+              <div>
+                <div className="mb-0.5 flex items-center justify-between text-[9px] uppercase tracking-wider text-negative font-medium">
+                  <span>Bên Bán (Asks)</span>
+                  <span>Khối lượng</span>
                 </div>
-                <div>
-                  <div className="mb-1 flex items-center justify-between text-[9.5px] uppercase tracking-wider text-positive">
-                    <span>Bên Mua (Bids)</span>
-                    <span>KL</span>
-                  </div>
-                  <div className="max-h-[170px] space-y-0.5 overflow-y-auto">
-                    {data.bids.map((b) => (
-                      <Row key={`b${b.price}`} price={b.price} qty={b.qty} max={maxQty} digits={digits} tone="bid" />
-                    ))}
-                  </div>
+                <div className="space-y-0.5">
+                  {[...data.asks].slice(0, 7).reverse().map((a) => (
+                    <Row key={`a${a.price}`} price={a.price} qty={a.qty} max={maxQty} digits={digits} tone="ask" />
+                  ))}
+                </div>
+              </div>
+              <div>
+                <div className="mb-0.5 flex items-center justify-between text-[9px] uppercase tracking-wider text-positive font-medium">
+                  <span>Bên Mua (Bids)</span>
+                  <span>Khối lượng</span>
+                </div>
+                <div className="space-y-0.5">
+                  {data.bids.slice(0, 7).map((b) => (
+                    <Row key={`b${b.price}`} price={b.price} qty={b.qty} max={maxQty} digits={digits} tone="bid" />
+                  ))}
                 </div>
               </div>
             </div>
+          </div>
 
-            <div>
-              <div className="mb-1.5 flex items-center justify-between text-[11px] font-medium text-text-secondary">
-                <span className="flex items-center gap-1.5">
-                  <Activity className="size-3.5 text-accent-primary" /> Khớp lệnh lớn (Whale Prints)
-                </span>
-                <span className="text-[10px] text-text-muted">aggTrades</span>
-              </div>
-              <div className="max-h-[160px] space-y-0.5 overflow-y-auto">
-                {data.largePrints.slice(0, 8).map((p, i) => (
-                  <div
-                    key={`${p.time}-${i}`}
-                    className="flex items-center justify-between rounded px-1.5 py-0.5 text-[11px] hover:bg-surface-elevated"
-                  >
-                    <span className="flex items-center gap-1">
-                      {p.side === "buy" ? (
-                        <ArrowUpRight className="size-3 text-positive" />
-                      ) : (
-                        <ArrowDownRight className="size-3 text-negative" />
-                      )}
-                      <span className={`text-[10px] font-semibold ${p.side === "buy" ? "text-positive" : "text-negative"}`}>
-                        {p.side.toUpperCase()}
-                      </span>
+          {/* Whale Prints */}
+          <div>
+            <div className="mb-1 flex items-center justify-between text-[10.5px] font-medium text-text-secondary">
+              <span className="flex items-center gap-1.5">
+                <Activity className="size-3 text-accent-primary" /> Khớp lệnh lớn (Whale Prints)
+              </span>
+              <span className="text-[9.5px] text-text-muted">Binance aggTrades</span>
+            </div>
+            <div className="max-h-[140px] space-y-0.5 overflow-y-auto">
+              {data.largePrints.slice(0, 7).map((p, i) => (
+                <div
+                  key={`${p.time}-${i}`}
+                  className="flex items-center justify-between rounded px-2 py-0.5 text-[10.5px] hover:bg-surface-elevated transition-colors"
+                >
+                  <span className="flex items-center gap-1">
+                    {p.side === "buy" ? (
+                      <ArrowUpRight className="size-3 text-positive" />
+                    ) : (
+                      <ArrowDownRight className="size-3 text-negative" />
+                    )}
+                    <span className={`text-[9.5px] font-bold ${p.side === "buy" ? "text-positive" : "text-negative"}`}>
+                      {p.side.toUpperCase()}
                     </span>
-                    <span className="num text-text-primary">{fmtNum(p.price, digits)}</span>
-                    <span className="num text-[10.5px] text-text-muted">${fmtCompact(p.quoteQty)}</span>
-                  </div>
-                ))}
-              </div>
+                    <span className="text-[9px] text-text-muted ml-0.5">{formatTradeTime(p.time)}</span>
+                  </span>
+                  <span className="num text-text-primary">{fmtNum(p.price, digits)}</span>
+                  <span className="num text-[10px] text-text-muted font-medium">${fmtCompact(p.quoteQty)}</span>
+                </div>
+              ))}
             </div>
           </div>
         </div>
       )}
 
       {showLeverage && (
-        <div className="space-y-2.5">
+        <div className="space-y-2">
           <div className="rounded-lg border border-border-subtle bg-surface-elevated/40 p-2.5">
-            <div className="mb-2 flex items-center justify-between">
-              <span className="flex items-center gap-1.5 text-[11.5px] font-medium text-text-secondary">
-                <Gauge className="size-3.5 text-accent-primary" /> Mức đòn bẩy
+            <div className="mb-1.5 flex items-center justify-between">
+              <span className="flex items-center gap-1.5 text-[11px] font-medium text-text-secondary">
+                <Gauge className="size-3.5 text-accent-primary" /> Mức đòn bẩy giao dịch
               </span>
               <span className="num text-[15px] font-bold text-accent-primary">{leverage}x</span>
             </div>
@@ -303,38 +323,65 @@ function DeskBody({
             </div>
 
             {plan && (
-              <div className="mt-2.5 grid grid-cols-2 gap-1.5 sm:grid-cols-4">
-                <Metric label="Điểm Entry" value={fmtNum(plan.entry, digits)} tone="neutral" />
-                <Metric
-                  label="Stop Loss"
-                  value={fmtNum(plan.stopLoss, digits)}
-                  tone="down"
-                  hint={`${plan.stopDistancePct.toFixed(2)}%`}
-                />
-                <Metric
-                  label="Take Profit"
-                  value={fmtNum(plan.takeProfit, digits)}
-                  tone="up"
-                  hint={`RR 1:${plan.riskReward.toFixed(1)}`}
-                />
-                <Metric
-                  label="Giá thanh lý"
-                  value={plan.liquidationEst != null ? fmtNum(plan.liquidationEst, digits) : "—"}
-                  tone="down"
-                  hint={plan.note}
-                />
+              <div className="mt-2 space-y-1.5">
+                <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-4">
+                  <Metric label="Điểm Entry" value={fmtNum(plan.entry, digits)} tone="neutral" />
+                  <Metric
+                    label="Stop Loss"
+                    value={fmtNum(plan.stopLoss, digits)}
+                    tone="down"
+                    hint={`-${plan.stopDistancePct.toFixed(2)}%`}
+                  />
+                  <Metric
+                    label="Take Profit"
+                    value={fmtNum(plan.takeProfit, digits)}
+                    tone="up"
+                    hint={`+${plan.rewardDistancePct.toFixed(2)}%`}
+                  />
+                  <Metric
+                    label="Thanh lý ước tính"
+                    value={plan.liquidationEst != null ? fmtNum(plan.liquidationEst, digits) : "—"}
+                    tone="down"
+                    hint={`R:R 1:${plan.riskReward.toFixed(1)}`}
+                  />
+                </div>
+
+                {/* Multi-Target Matrix */}
+                <div className="grid grid-cols-3 gap-1 pt-1 border-t border-border-subtle/50 text-[9.5px]">
+                  <div className="panel-inset p-1.5 text-center">
+                    <span className="text-text-muted">TP1 (1:1.5): </span>
+                    <strong className="num text-positive">
+                      {fmtNum(plan.entry + (plan.takeProfit - plan.entry) * 0.6, digits)}
+                    </strong>
+                  </div>
+                  <div className="panel-inset p-1.5 text-center">
+                    <span className="text-text-muted">TP2 (1:2.5): </span>
+                    <strong className="num text-positive">{fmtNum(plan.takeProfit, digits)}</strong>
+                  </div>
+                  <div className="panel-inset p-1.5 text-center">
+                    <span className="text-text-muted">TP3 (1:4.0): </span>
+                    <strong className="num text-positive">
+                      {fmtNum(plan.entry + (plan.takeProfit - plan.entry) * 1.6, digits)}
+                    </strong>
+                  </div>
+                </div>
               </div>
             )}
           </div>
 
           {sig.evidence.length > 0 && (
-            <ul className="space-y-0.5 text-[10.5px] text-text-muted">
-              {sig.evidence.slice(0, 3).map((e, i) => (
-                <li key={i} className="line-clamp-1">
-                  ▸ {e}
-                </li>
-              ))}
-            </ul>
+            <div className="panel-inset p-2">
+              <div className="mb-1 flex items-center gap-1 text-[9.5px] font-semibold uppercase tracking-wider text-text-muted">
+                <Zap className="size-3 text-accent-primary" /> Cơ sở phân tích tín hiệu
+              </div>
+              <ul className="space-y-0.5 text-[10px] text-text-secondary">
+                {sig.evidence.slice(0, 3).map((e, i) => (
+                  <li key={i} className="line-clamp-1">
+                    ▸ {e}
+                  </li>
+                ))}
+              </ul>
+            </div>
           )}
         </div>
       )}
@@ -342,6 +389,12 @@ function DeskBody({
       {mode === "all" && meta && <MetaLine meta={meta} />}
     </div>
   );
+}
+
+function formatTradeTime(t: number): string {
+  if (!t) return "";
+  const d = new Date(t);
+  return d.toTimeString().slice(0, 8);
 }
 
 function Row({
@@ -361,9 +414,9 @@ function Row({
   const bg = tone === "bid" ? "rgba(34,197,94,0.12)" : "rgba(239,68,68,0.12)";
   const color = tone === "bid" ? "text-positive" : "text-negative";
   return (
-    <div className="relative flex items-center justify-between overflow-hidden rounded px-1 py-0.5">
+    <div className="relative flex items-center justify-between overflow-hidden rounded px-1.5 py-0.5">
       <div className="absolute inset-y-0 right-0" style={{ width: `${pct}%`, background: bg }} />
-      <span className={`num relative z-[1] text-[11px] ${color}`}>{fmtNum(price, digits)}</span>
+      <span className={`num relative z-[1] text-[11px] font-medium ${color}`}>{fmtNum(price, digits)}</span>
       <span className="num relative z-[1] text-[10px] text-text-muted">{fmtCompact(qty)}</span>
     </div>
   );
