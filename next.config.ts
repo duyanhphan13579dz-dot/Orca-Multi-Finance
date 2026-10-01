@@ -1,6 +1,7 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  output: "standalone",
   // TEMP: SWC panics ("failed to initiate panic, error 5") when printing TS
   // code frames that contain multi-byte Vietnamese text. Unblocks deploy;
   // remove once `tsc --noEmit` is clean on CI.

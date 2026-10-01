@@ -1,9 +1,21 @@
 "use client";
 
 /**
- * CRYPTO QUANT TERMINAL — dense layout (no wasted vertical whitespace).
- * Chart rail matches right stack height; bottom cockpit equal-height columns.
+ * CRYPTO QUANT TERMINAL — Binance & Bybit style Pro Cockpit.
+ * Layout:
+ *   - Top: Sticky Pro Ticker Bar (Asset, Price, 24h Stats, Timeframes, Quick Switch)
+ *   - Main 3-Column Desk (Desktop XL):
+ *       Col 1 (~25%): Sổ lệnh 2 chiều (Depth Asks/Bids) & Khớp lệnh lớn (aggTrades)
+ *       Col 2 (~50%): Biểu đồ nến chính (OrcaChart K-lines)
+ *       Col 3 (~25%): Tín hiệu Scalping Radar & Mô phỏng đòn bẩy SL/TP
+ *   - Bottom Analytics Row (Grid 3 Columns):
+ *       Col 1: Phân tích kỹ thuật (RSI, SMA50, Trend, Momentum)
+ *       Col 2: Thước đo tâm lý (Fear/Greed) + Mẫu hình nến đảo chiều
+ *       Col 3: Luồng tin tức crypto thời gian thực (News flow)
+ *   - Mobile/Tablet: Thanh chuyển Tab thông minh (Biểu đồ / Sổ lệnh / Scalp / Phân tích)
+ * Colors: Preserves 100% template color tokens (canvas, panel, surface-elevated, text-primary, positive/negative, etc.).
  */
+import Link from "next/link";
 import { useMemo, useState } from "react";
 import { useApi } from "@/lib/hooks";
 import type { CandlePattern, CryptoMarketRow, NewsArticle, TechnicalSnapshot } from "@/lib/types";
@@ -14,8 +26,9 @@ import { ScalpPanel } from "@/components/scalp-panel";
 import { CryptoTradeDesk } from "@/components/crypto-trade-desk";
 import { AddToWatchlist } from "@/components/watchlist-button";
 import { useSettings } from "@/lib/settings";
-import { Brain, Layers, Newspaper, ExternalLink } from "lucide-react";
+import { Brain, Layers, Newspaper, ExternalLink, ArrowLeft, BarChart2, BookOpen, Zap, Compass } from "lucide-react";
 
+/** Client-local shape — never import from server-only services into client components. */
 interface CryptoDetail {
   symbol: string;
   baseAsset: string;
@@ -43,10 +56,9 @@ interface SentimentApi {
 }
 
 const INTERVALS = ["15m", "1h", "4h", "1d"] as const;
+const QUICK_PAIRS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT", "DOGEUSDT"] as const;
 
-/** Make a Panel fill its grid cell and scroll body if content overflows. */
-const FILL =
-  "h-full !flex !flex-col min-h-0 [&_.panel-header]:shrink-0 [&_.panel-body]:!flex-1 [&_.panel-body]:!min-h-0 [&_.panel-body]:!overflow-y-auto [&_.panel-body]:!py-2 [&_.panel-body]:!px-2.5";
+type MobileTab = "chart" | "orderflow" | "scalp" | "analytics";
 
 export function CryptoDetailPage({ symbol }: { symbol: string }) {
   const { settings } = useSettings();
@@ -55,9 +67,12 @@ export function CryptoDetailPage({ symbol }: { symbol: string }) {
       ? (settings.dashboard.defaultTimeframe as (typeof INTERVALS)[number])
       : "1h",
   );
-  const { data, meta, isLoading } = useApi<CryptoDetail>(`/api/v1/crypto/${encodeURIComponent(symbol)}?interval=${interval}`, {
-    refreshInterval: 20_000,
-  });
+  const [mobileTab, setMobileTab] = useState<MobileTab>("chart");
+
+  const { data, meta, isLoading } = useApi<CryptoDetail>(
+    `/api/v1/crypto/${encodeURIComponent(symbol)}?interval=${interval}`,
+    { refreshInterval: 20_000 },
+  );
 
   if (isLoading && !data) return <Loading rows={10} />;
   if (!data)
@@ -75,37 +90,65 @@ export function CryptoDetailPage({ symbol }: { symbol: string }) {
   const chg = t.changePercent ?? 0;
 
   return (
-    <div className="flex flex-col gap-2">
-      {/* Ticker — single dense row */}
-      <div className="rounded-md border border-border-subtle bg-surface-primary px-2.5 py-1.5 md:px-3">
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-          <div className="flex flex-wrap items-center gap-1.5">
-            <div className="flex size-6 items-center justify-center rounded-full border border-accent/30 bg-accent/15 text-[11px] font-bold text-accent">
+    <div className="flex flex-col gap-3">
+      {/* Top sticky ticker header */}
+      <div className="panel rounded-xl p-3 sm:p-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          {/* Symbol & Price Lockup */}
+          <div className="flex flex-wrap items-center gap-3">
+            <Link
+              href="/crypto"
+              className="inline-flex items-center gap-1 rounded-md border border-border-subtle bg-surface-elevated/60 px-2 py-1 text-[11px] text-text-secondary transition-colors hover:border-border-default hover:text-text-primary"
+              title="Về bảng giá thị trường Crypto"
+            >
+              <ArrowLeft className="size-3" /> Thị trường
+            </Link>
+
+            <div className="flex size-8 items-center justify-center rounded-lg border border-accent-primary/30 bg-accent-primary/10 text-[13px] font-bold text-accent-primary">
               {data.baseAsset.slice(0, 1)}
             </div>
-            <h1 className="text-[13px] font-semibold text-text-primary">{data.baseAsset}/USDT</h1>
-            <Badge tone="accent">SPOT</Badge>
-            <span className="hidden text-[10px] text-text-muted sm:inline">Binance</span>
-            <FreshnessDot status={meta?.freshness} ageMs={meta?.ageMs} />
-            <AddToWatchlist assetType="crypto" symbol={data.symbol} />
+
+            <div>
+              <div className="flex items-center gap-2">
+                <h1 className="text-[16px] font-bold text-text-primary sm:text-[18px]">
+                  {data.baseAsset}
+                  <span className="text-[12px] font-normal text-text-muted">/USDT</span>
+                </h1>
+                <Badge tone="accent">SPOT</Badge>
+                <FreshnessDot status={meta?.freshness} ageMs={meta?.ageMs} />
+                <AddToWatchlist assetType="crypto" symbol={data.symbol} />
+              </div>
+            </div>
+
+            <div className="num flex items-baseline gap-2 border-l border-border-subtle pl-3">
+              <span className="text-[20px] font-bold leading-none text-text-primary sm:text-[22px]">
+                {fmtNum(t.price, digits)}
+              </span>
+              <Chg value={chg} className="text-[12.5px] font-semibold" />
+            </div>
           </div>
 
-          <div className="num flex items-baseline gap-1.5">
-            <span className="text-[16px] font-semibold text-text-primary">{fmtNum(t.price, digits)}</span>
-            <Chg value={chg} className="text-[11px]" />
+          {/* 24h Stats Desktop Strip */}
+          <div className="hidden items-center gap-4 xl:flex">
+            <HeadStat label="Cao 24h" value={fmtNum(t.high ?? t.price, digits)} />
+            <div className="h-4 w-px bg-border-subtle" />
+            <HeadStat label="Thấp 24h" value={fmtNum(t.low ?? t.price, digits)} />
+            <div className="h-4 w-px bg-border-subtle" />
+            <HeadStat label="Khối lượng 24h" value={`$${fmtCompact(t.quoteVolume ?? 0)}`} />
+            <div className="h-4 w-px bg-border-subtle" />
+            <HeadStat label="Lượt khớp 24h" value={fmtCompact(t.trades24h ?? 0)} />
           </div>
 
-          <div className="hidden items-center gap-3 md:flex">
-            <HeadStat label="Cao" value={fmtNum(t.high ?? t.price, digits)} />
-            <HeadStat label="Thấp" value={fmtNum(t.low ?? t.price, digits)} />
-            <HeadStat label="Vol" value={`$${fmtCompact(t.quoteVolume ?? 0)}`} />
-            <HeadStat label="GD" value={fmtCompact(t.trades24h ?? 0)} />
-          </div>
-
-          <div className="ml-auto flex items-center gap-1.5">
+          {/* Timeframe & Meta */}
+          <div className="flex items-center gap-2">
             <div className="seg">
               {INTERVALS.map((x) => (
-                <button key={x} type="button" data-active={interval === x} onClick={() => setInterval(x)}>
+                <button
+                  key={x}
+                  type="button"
+                  data-active={interval === x}
+                  onClick={() => setInterval(x)}
+                >
                   {x}
                 </button>
               ))}
@@ -113,51 +156,152 @@ export function CryptoDetailPage({ symbol }: { symbol: string }) {
             <MetaLine meta={meta} />
           </div>
         </div>
+
+        {/* Quick pair rail */}
+        <div className="mt-2.5 flex flex-wrap items-center justify-between gap-2 border-t border-border-subtle/70 pt-2 text-[11px]">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="text-[10px] uppercase tracking-wider text-text-muted">Cặp phổ biến:</span>
+            {QUICK_PAIRS.map((sym) => {
+              const base = sym.replace("USDT", "");
+              const isCurrent = sym === symbol;
+              return (
+                <Link
+                  key={sym}
+                  href={`/crypto/${sym}`}
+                  className={`rounded-md border px-2 py-0.5 text-[11px] transition-colors ${
+                    isCurrent
+                      ? "border-accent-primary/60 bg-accent-primary/15 font-semibold text-accent-primary"
+                      : "border-border-subtle bg-surface-elevated/40 text-text-secondary hover:border-border-default hover:text-text-primary"
+                  }`}
+                >
+                  {base}
+                </Link>
+              );
+            })}
+          </div>
+
+          <div className="flex items-center gap-3 text-[11px] text-text-muted xl:hidden">
+            <span>Cao: <strong className="num text-text-primary">{fmtNum(t.high ?? t.price, digits)}</strong></span>
+            <span>Thấp: <strong className="num text-text-primary">{fmtNum(t.low ?? t.price, digits)}</strong></span>
+            <span>Vol: <strong className="num text-text-primary">${fmtCompact(t.quoteVolume ?? 0)}</strong></span>
+          </div>
+        </div>
       </div>
 
-      {/* Chart + right rail — equal row height */}
-      <div className="grid grid-cols-1 gap-2 xl:grid-cols-12 xl:items-stretch">
-        <div className="min-h-0 xl:col-span-8">
+      {/* Mobile Tab Control for screens < 1280px */}
+      <div className="xl:hidden">
+        <div className="seg-scroll">
+          <div className="seg w-full justify-between" role="tablist">
+            <button
+              type="button"
+              data-active={mobileTab === "chart"}
+              onClick={() => setMobileTab("chart")}
+              className="flex-1 text-center"
+            >
+              <BarChart2 className="mr-1 inline size-3.5" /> Biểu đồ
+            </button>
+            <button
+              type="button"
+              data-active={mobileTab === "orderflow"}
+              onClick={() => setMobileTab("orderflow")}
+              className="flex-1 text-center"
+            >
+              <BookOpen className="mr-1 inline size-3.5" /> Sổ lệnh
+            </button>
+            <button
+              type="button"
+              data-active={mobileTab === "scalp"}
+              onClick={() => setMobileTab("scalp")}
+              className="flex-1 text-center"
+            >
+              <Zap className="mr-1 inline size-3.5" /> Scalp & Đòn bẩy
+            </button>
+            <button
+              type="button"
+              data-active={mobileTab === "analytics"}
+              onClick={() => setMobileTab("analytics")}
+              className="flex-1 text-center"
+            >
+              <Compass className="mr-1 inline size-3.5" /> Phân tích & Tin
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* DESKTOP 3-COLUMN TRADING COCKPIT (Hidden on mobile tab views) */}
+      <div className="hidden xl:grid xl:grid-cols-12 xl:items-start xl:gap-3">
+        {/* Column 1: Order Flow Desk (Left ~25%) */}
+        <div className="xl:col-span-3">
+          <CryptoTradeDesk symbol={data.symbol} mode="orderflow" />
+        </div>
+
+        {/* Column 2: Main Candlestick Chart (Center ~50%) */}
+        <div className="flex flex-col gap-3 xl:col-span-6">
           <OrcaChart
             symbol={data.symbol}
             assetType="crypto"
             defaultTimeframe={interval}
-            height={400}
+            height={490}
             title={`${data.baseAsset}/USDT`}
           />
         </div>
 
-        <div className="flex min-h-0 flex-col gap-2 xl:col-span-4 xl:h-full">
-          <div className="min-h-0 flex-1 [&>section]:h-full">
-            <ScalpPanel symbol={data.symbol} />
-          </div>
-          <div className="shrink-0">
-            <SentimentPanelCompact symbol={data.symbol} ticker={t} tech={tech} />
-          </div>
+        {/* Column 3: Scalping Radar & Leverage Simulator (Right ~25%) */}
+        <div className="flex flex-col gap-3 xl:col-span-3">
+          <ScalpPanel symbol={data.symbol} />
+          <CryptoTradeDesk symbol={data.symbol} mode="leverage" />
         </div>
       </div>
 
-      {/* Bottom cockpit — three equal columns */}
-      <div className="grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-12 xl:items-stretch">
-        <div className="min-h-0 xl:col-span-4 xl:min-h-[320px]">
-          <div className="h-full [&>section]:h-full">
-            <CryptoTradeDesk symbol={data.symbol} />
+      {/* MOBILE / TABLET VIEW CONTENT */}
+      <div className="space-y-3 xl:hidden">
+        {mobileTab === "chart" && (
+          <OrcaChart
+            symbol={data.symbol}
+            assetType="crypto"
+            defaultTimeframe={interval}
+            height={420}
+            title={`${data.baseAsset}/USDT`}
+          />
+        )}
+
+        {mobileTab === "orderflow" && (
+          <CryptoTradeDesk symbol={data.symbol} mode="orderflow" />
+        )}
+
+        {mobileTab === "scalp" && (
+          <div className="space-y-3">
+            <ScalpPanel symbol={data.symbol} />
+            <CryptoTradeDesk symbol={data.symbol} mode="leverage" />
           </div>
-        </div>
-        <div className="min-h-0 xl:col-span-4 xl:min-h-[320px]">
-          <div className="h-full [&>section]:h-full">
+        )}
+
+        {mobileTab === "analytics" && (
+          <div className="space-y-3">
             <TechnicalPanel tech={tech} patterns={data.patterns} />
+            <SentimentPanelCompact symbol={data.symbol} ticker={t} tech={tech} />
+            <CandlePatternsPanel patterns={data.patterns} />
+            <CryptoNewsPanel symbol={data.symbol} baseAsset={data.baseAsset} />
           </div>
+        )}
+      </div>
+
+      {/* BOTTOM ANALYTICS COCKPIT (Desktop 3 Columns) */}
+      <div className="hidden xl:grid xl:grid-cols-12 xl:items-start xl:gap-3">
+        {/* Sub-col 1: Technical Analysis */}
+        <div className="xl:col-span-4">
+          <TechnicalPanel tech={tech} patterns={data.patterns} />
         </div>
-        <div className="min-h-0 md:col-span-2 xl:col-span-4 xl:min-h-[320px]">
-          <div className="flex h-full min-h-0 flex-col gap-2">
-            <div className="min-h-0 flex-[1.4] [&>section]:h-full">
-              <CryptoNewsPanel symbol={data.symbol} baseAsset={data.baseAsset} className={FILL} />
-            </div>
-            <div className="min-h-0 flex-1 [&>section]:h-full">
-              <CandlePatternsPanel patterns={data.patterns} className={FILL} />
-            </div>
-          </div>
+
+        {/* Sub-col 2: Market Sentiment & Candlestick Patterns */}
+        <div className="flex flex-col gap-3 xl:col-span-4">
+          <SentimentPanelCompact symbol={data.symbol} ticker={t} tech={tech} />
+          <CandlePatternsPanel patterns={data.patterns} dense />
+        </div>
+
+        {/* Sub-col 3: Crypto News Flow */}
+        <div className="xl:col-span-4">
+          <CryptoNewsPanel symbol={data.symbol} baseAsset={data.baseAsset} dense />
         </div>
       </div>
     </div>
@@ -184,38 +328,46 @@ function SentimentPanelCompact({
 
   return (
     <Panel
-      className="[&_.panel-body]:!py-2 [&_.panel-body]:!px-2.5"
       title={
-        <span className="flex items-center gap-1.5">
-          <Brain className="size-3.5 text-accent" /> Tâm lý
+        <span className="flex items-center gap-2">
+          <Brain className="size-4 text-accent-primary" /> Tâm lý thị trường
           {meta && <FreshnessDot status={meta.freshness} ageMs={meta.ageMs} />}
         </span>
       }
       right={
         <Badge tone={quant.tone}>
-          {quant.label} {quant.score > 0 ? "+" : ""}
-          {quant.score}
+          {quant.label} ({quant.score > 0 ? "+" : ""}
+          {quant.score})
         </Badge>
       }
     >
-      <div className="space-y-1.5">
-        <div className="relative h-1.5 overflow-hidden rounded-full bg-background-secondary">
-          <div className="absolute inset-0 bg-gradient-to-r from-negative/50 via-warning/40 to-positive/50 opacity-70" />
-          <div
-            className="absolute top-0 bottom-0 w-1 rounded-full bg-text-primary"
-            style={{ left: `${Math.max(2, Math.min(98, 50 + quant.score / 2))}%`, transform: "translateX(-50%)" }}
-          />
+      <div className="space-y-2">
+        <div>
+          <div className="mb-1 flex justify-between text-[9.5px] text-text-muted">
+            <span>Bi quan</span>
+            <span>Trung tính</span>
+            <span>Lạc quan</span>
+          </div>
+          <div className="relative h-2 overflow-hidden rounded-full bg-background-secondary">
+            <div className="absolute inset-0 bg-gradient-to-r from-negative/50 via-warning/40 to-positive/50 opacity-70" />
+            <div
+              className="absolute top-0 bottom-0 w-1.5 rounded-full bg-text-primary shadow"
+              style={{ left: `${Math.max(2, Math.min(98, 50 + quant.score / 2))}%`, transform: "translateX(-50%)" }}
+            />
+          </div>
         </div>
-        <ul className="space-y-0.5 text-[10.5px] leading-snug text-text-secondary">
-          {quant.factors.slice(0, 3).map((f, i) => (
-            <li key={i} className="flex items-start gap-1">
+        <ul className="space-y-0.5 text-[11px] leading-snug text-text-secondary">
+          {quant.factors.slice(0, 4).map((f, i) => (
+            <li key={i} className="flex items-start gap-1.5">
               <span className={f.w > 0 ? "text-positive" : f.w < 0 ? "text-negative" : "text-text-muted"}>•</span>
-              <span className="line-clamp-1">{f.text}</span>
+              <span>{f.text}</span>
             </li>
           ))}
         </ul>
-        {isLoading && !data && <p className="text-[10px] text-text-muted">Đang tải…</p>}
-        {llm?.narrative && <p className="line-clamp-2 text-[10.5px] leading-snug text-text-muted">{llm.narrative}</p>}
+        {isLoading && !data && <p className="text-[10px] text-text-muted">Đang tải diễn giải…</p>}
+        {llm?.narrative && (
+          <p className="line-clamp-3 text-[11px] leading-relaxed text-text-secondary">{llm.narrative}</p>
+        )}
       </div>
     </Panel>
   );
@@ -260,7 +412,7 @@ function computeLocalSentiment(
       score -= 8;
       factors.push({ w: -1, text: `RSI ${tech.rsi14.toFixed(0)} — nghiêng bán` });
     } else {
-      factors.push({ w: 0, text: `RSI ${tech.rsi14.toFixed(0)} — cân bằng` });
+      factors.push({ w: 0, text: `RSI ${tech.rsi14.toFixed(0)} — vùng cân bằng` });
     }
   }
   if (tech?.trend) {
@@ -273,15 +425,15 @@ function computeLocalSentiment(
     };
     const w = map[tech.trend.label] ?? 0;
     score += w;
-    factors.push({ w, text: `Trend: ${tech.trend.label}` });
+    factors.push({ w, text: `Trend: ${tech.trend.label} (${tech.trend.score})` });
   }
   if (tech?.sma?.sma50 != null && t.price != null && t.price > 0) {
     if (t.price < (tech.sma?.sma50 ?? 0)) {
       score -= 10;
-      factors.push({ w: -1, text: "Giá dưới SMA50" });
+      factors.push({ w: -1, text: "Giá dưới SMA50 — cấu trúc trung hạn suy yếu" });
     } else {
       score += 8;
-      factors.push({ w: 1, text: "Giá trên SMA50" });
+      factors.push({ w: 1, text: "Giá trên SMA50 — cấu trúc trung hạn hỗ trợ" });
     }
   }
   score = Math.max(-100, Math.min(100, Math.round(score)));
@@ -303,28 +455,33 @@ function computeLocalSentiment(
   return { score, label, tone, factors: factors.slice(0, 5) };
 }
 
-function CandlePatternsPanel({ patterns, className }: { patterns: CandlePattern[]; className?: string }) {
+function CandlePatternsPanel({ patterns, dense }: { patterns: CandlePattern[]; dense?: boolean }) {
   return (
     <Panel
-      className={className}
       title={
-        <span className="flex items-center gap-1.5">
-          <Layers className="size-3.5 text-accent" /> Mẫu hình nến
+        <span className="flex items-center gap-2">
+          <Layers className="size-4 text-accent-primary" /> Mẫu hình nến kỹ thuật
         </span>
       }
     >
       {!patterns.length ? (
-        <p className="text-[11px] text-text-muted">Không có mô hình đáng chú ý gần đây.</p>
+        <p className="text-[11px] leading-relaxed text-text-muted">
+          Không có mô hình nến đảo chiều đáng chú ý trong 5 phiên gần nhất.
+        </p>
       ) : (
-        <div className="space-y-1">
+        <div className={`space-y-1.5 overflow-y-auto ${dense ? "max-h-[140px]" : "max-h-[200px]"}`}>
           {patterns.map((p) => (
-            <div key={p.name} className="rounded border border-border-subtle/70 bg-background-secondary/40 px-2 py-1">
-              <div className="flex flex-wrap items-center gap-1">
+            <div key={p.name} className="rounded-md border border-border-subtle bg-surface-elevated/40 px-2 py-1.5">
+              <div className="flex flex-wrap items-center gap-1.5">
                 <span className="text-[11px] font-medium text-text-primary">{p.nameVi}</span>
                 <Badge tone={p.type === "bullish" ? "up" : p.type === "bearish" ? "down" : "neutral"}>
-                  {p.type === "bullish" ? "Tăng" : p.type === "bearish" ? "Giảm" : "—"}
+                  {p.type === "bullish" ? "Tăng" : p.type === "bearish" ? "Giảm" : "Trung lập"}
                 </Badge>
+                <Badge tone="neutral">{p.reliability}</Badge>
               </div>
+              {p.description && (
+                <p className="mt-0.5 line-clamp-2 text-[10px] text-text-muted">{p.description}</p>
+              )}
             </div>
           ))}
         </div>
@@ -336,11 +493,11 @@ function CandlePatternsPanel({ patterns, className }: { patterns: CandlePattern[
 function CryptoNewsPanel({
   symbol,
   baseAsset,
-  className,
+  dense,
 }: {
   symbol: string;
   baseAsset: string;
-  className?: string;
+  dense?: boolean;
 }) {
   const { data, meta, isLoading } = useApi<NewsPayload>(`/api/v1/news?limit=20&category=crypto`, {
     refreshInterval: 120_000,
@@ -356,38 +513,40 @@ function CryptoNewsPanel({
         a.title.toUpperCase().includes(base) ||
         (a.summary ?? "").toUpperCase().includes(base),
     );
-    return (related.length ? related : list).slice(0, 8);
-  }, [data, symbol, baseAsset]);
+    return (related.length ? related : list).slice(0, dense ? 6 : 5);
+  }, [data, symbol, baseAsset, dense]);
 
   return (
     <Panel
-      className={className}
       title={
-        <span className="flex items-center gap-1.5">
-          <Newspaper className="size-3.5 text-accent" /> News Flow
+        <span className="flex items-center gap-2">
+          <Newspaper className="size-4 text-accent-primary" /> Luồng tin tức Crypto
           {meta && <FreshnessDot status={meta.freshness} ageMs={meta.ageMs} />}
         </span>
       }
     >
       {isLoading && !data ? (
-        <Loading rows={2} />
+        <Loading rows={3} />
       ) : !articles.length ? (
-        <p className="text-[11px] text-text-muted">Chưa có tin liên quan.</p>
+        <p className="text-[12px] text-text-muted">Chưa có tin crypto liên quan — nguồn RSS tạm trống.</p>
       ) : (
-        <ul className="space-y-1">
+        <ul className={`space-y-1.5 overflow-y-auto ${dense ? "max-h-[220px]" : "max-h-[260px]"}`}>
           {articles.map((a) => (
-            <li key={a.id || a.url} className="rounded border border-border-subtle/60 bg-background-secondary/25 px-2 py-1 hover:bg-surface-elevated/50">
+            <li
+              key={a.id || a.url}
+              className="rounded-md border border-border-subtle bg-surface-elevated/30 px-2 py-1.5 transition-colors hover:bg-surface-elevated"
+            >
               <a
                 href={a.url}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="group flex items-start gap-1 text-[11px] font-medium leading-snug text-text-primary hover:text-accent"
+                className="group flex items-start gap-1.5 text-[11.5px] font-medium leading-snug text-text-primary hover:text-accent-primary"
               >
                 <span className="line-clamp-2 flex-1">{a.title}</span>
-                <ExternalLink className="mt-0.5 size-2.5 shrink-0 opacity-40 group-hover:opacity-80" />
+                <ExternalLink className="mt-0.5 size-3 shrink-0 opacity-40 group-hover:opacity-80" />
               </a>
-              <div className="mt-0.5 flex gap-1 text-[9.5px] text-text-muted">
-                <span className="text-accent/80">{a.source}</span>
+              <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[9.5px] text-text-muted">
+                <span className="text-accent-primary/80">{a.source}</span>
                 <span>·</span>
                 <span>{formatAge(a.publishedAt)}</span>
               </div>
@@ -403,17 +562,17 @@ function formatAge(iso: string): string {
   const t = Date.parse(iso);
   if (!Number.isFinite(t)) return "";
   const mins = Math.max(0, Math.round((Date.now() - t) / 60_000));
-  if (mins < 60) return `${mins}p`;
+  if (mins < 60) return `${mins}p trước`;
   const h = Math.round(mins / 60);
-  if (h < 48) return `${h}h`;
-  return `${Math.round(h / 24)}d`;
+  if (h < 48) return `${h}h trước`;
+  return `${Math.round(h / 24)}d trước`;
 }
 
 function HeadStat({ label, value }: { label: string; value: string }) {
   return (
-    <div className="leading-tight">
-      <div className="text-[9px] uppercase tracking-wide text-text-muted">{label}</div>
-      <div className="num text-[11.5px] font-medium text-text-primary">{value}</div>
+    <div>
+      <div className="text-[9.5px] uppercase tracking-wider text-text-muted">{label}</div>
+      <div className="num text-[12.5px] font-medium text-text-primary">{value}</div>
     </div>
   );
 }
