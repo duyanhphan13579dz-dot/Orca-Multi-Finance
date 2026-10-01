@@ -119,8 +119,8 @@ export default function StockOverviewPage({ params }: { params: Promise<{ symbol
     <div className="stock-workspace">
       <DecisionSnapshot symbol={data.symbol} quote={q} technical={data.technical} meta={meta ?? null} />
 
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(280px,360px)] xl:items-start">
-        <div className="min-w-0">
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(280px,360px)] xl:items-start 2xl:grid-cols-12">
+        <div className="min-w-0 2xl:col-span-9">
           {q || data.bars.length > 0 ? (
             <OrcaChart
               symbol={data.symbol}
@@ -146,14 +146,14 @@ export default function StockOverviewPage({ params }: { params: Promise<{ symbol
             </Panel>
           )}
         </div>
-        <div className="min-w-0">
+        <div className="min-w-0 2xl:col-span-3">
           <OrderBookPanel symbol={data.symbol} compact />
         </div>
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-2 lg:items-start">
-        <TechRecoPanel symbol={data.symbol} />
-        <StockStructurePanel symbol={data.symbol} />
+      <div className="grid gap-4 lg:grid-cols-2 lg:items-start 2xl:grid-cols-12">
+        <div className="min-w-0 2xl:col-span-6"><TechRecoPanel symbol={data.symbol} /></div>
+        <div className="min-w-0 2xl:col-span-6"><StockStructurePanel symbol={data.symbol} /></div>
       </div>
 
       {data.technical ? <TechnicalPanel tech={data.technical} patterns={data.patterns} /> : null}
