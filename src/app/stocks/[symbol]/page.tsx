@@ -4,7 +4,9 @@ import { useEffect, useState } from "react";
 import dynamic from "next/dynamic";
 import { useApi } from "@/lib/hooks";
 import type { VnStockDetail } from "@/lib/services/stocks";
-import { Loading, Panel, Unavailable } from "@/components/ui";
+import type { Meta } from "@/lib/types";
+import { Badge, FreshnessDot, Loading, Panel, Unavailable } from "@/components/ui";
+import { Activity, AlertTriangle, ArrowDownRight, ArrowUpRight, Clock3, ShieldCheck } from "lucide-react";
 import { OrcaChart } from "@/components/orca-chart";
 import { StockNewsSentiment } from "@/components/stocks/news-sentiment-chip";
 import { OrderBookPanel } from "@/components/stocks/order-book-panel";
@@ -30,6 +32,49 @@ const StockStructurePanel = dynamic(
   { ssr: false, loading: () => <Panel title="Cấu trúc"><Loading rows={2} /></Panel> },
 );
 
+function DecisionSnapshot({
+  symbol,
+  quote,
+  technical,
+  meta,
+}: {
+  symbol: string;
+  quote: VnStockDetail["quote"];
+  technical: VnStockDetail["technical"];
+  meta: Meta | null;
+}) {
+  const trend = technical?.trend;
+  const trendLabel = typeof trend === "object" && trend ? trend.label : String(trend ?? "Chưa rõ");
+  const isUp = trendLabel.includes("up");
+  const isDown = trendLabel.includes("down");
+  const tone = isUp ? "up" : isDown ? "down" : "neutral";
+  const action = isUp ? "Theo dõi tăng" : isDown ? "Thận trọng" : "Quan sát";
+  const Icon = isUp ? ArrowUpRight : isDown ? ArrowDownRight : Activity;
+
+  return (
+    <Panel
+      title={<span className="flex items-center gap-2"><ShieldCheck className="size-4 text-accent-primary" /> Decision Snapshot</span>}
+      right={<span className="flex items-center gap-2"><FreshnessDot status={meta?.freshness} ageMs={meta?.ageMs} /><Badge tone={tone}>{action}</Badge></span>}
+    >
+      <div className="grid gap-3 md:grid-cols-[1.2fr_repeat(3,minmax(0,1fr))]">
+        <div className="rounded-lg border border-border-subtle bg-surface-elevated/60 p-3">
+          <div className="flex items-center gap-2 text-[10px] uppercase tracking-wider text-text-muted"><Icon className="size-3.5" /> Luận điểm hiện tại</div>
+          <p className="mt-1 text-[13px] font-semibold text-text-primary">{symbol}: {action.toLowerCase()} theo xu hướng {trendLabel}.</p>
+          <p className="mt-1 text-[11px] leading-relaxed text-text-muted">Snapshot chỉ tóm tắt dữ liệu hiện có; không thay thế kế hoạch giao dịch hoặc thẩm định cơ bản.</p>
+        </div>
+        <SnapshotMetric label="Giá gần nhất" value={quote?.price != null ? quote.price.toLocaleString("vi-VN") : "—"} />
+        <SnapshotMetric label="RSI(14)" value={technical?.rsi14 != null ? technical.rsi14.toFixed(1) : "—"} />
+        <SnapshotMetric label="Biến động 30d" value={technical?.volatility30d != null ? `${(technical.volatility30d * 100).toFixed(1)}%` : "—"} />
+      </div>
+      <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-[10.5px] text-text-muted"><Clock3 className="size-3.5" /> Dữ liệu thị trường được làm mới theo provider; kiểm tra dấu chấm freshness trước khi ra quyết định.</div>
+    </Panel>
+  );
+}
+
+function SnapshotMetric({ label, value }: { label: string; value: string }) {
+  return <div className="rounded-lg border border-border-subtle px-3 py-2"><div className="text-[10px] uppercase tracking-wider text-text-muted">{label}</div><div className="num mt-1 text-[18px] font-semibold text-text-primary">{value}</div></div>;
+}
+
 function useChartHeight() {
   const [h, setH] = useState(320);
   useEffect(() => {
@@ -53,7 +98,7 @@ export default function StockOverviewPage({ params }: { params: Promise<{ symbol
     params.then((p) => setSymbol(p.symbol.toUpperCase()));
   }, [params]);
 
-  const { res, data, isLoading } = useApi<VnStockDetail>(symbol ? `/api/v1/stocks/${symbol}` : null, {
+  const { res, data, meta, isLoading } = useApi<VnStockDetail>(symbol ? `/api/v1/stocks/${symbol}` : null, {
     refreshInterval: 20_000,
     timeoutMs: 14_000,
   });
@@ -72,6 +117,8 @@ export default function StockOverviewPage({ params }: { params: Promise<{ symbol
 
   return (
     <div className="stock-workspace">
+      <DecisionSnapshot symbol={data.symbol} quote={q} technical={data.technical} meta={meta ?? null} />
+
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(280px,360px)] xl:items-start">
         <div className="min-w-0">
           {q || data.bars.length > 0 ? (
