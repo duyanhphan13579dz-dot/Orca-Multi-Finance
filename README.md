@@ -1,181 +1,350 @@
 # ORCA Financial
 
-> **A Vietnamese-Stock-Market-First Real-Time Financial Intelligence Platform.**
->
-> VIETNAM SECURITIES FIRST — Market → Sector → Stock → Fundamentals → Valuation → Technical → News → AI Equity Research.
-> Crypto, Forex và Commodities là các supporting asset classes dùng chung data/chart engine chất lượng cao, nhưng không phải nhân diện sản phẩm.
+> **Vietnamese-market-first financial intelligence platform for real market data, deterministic quantitative analysis, and explainable research.**
 
-ORCA Financial được thiết kế xoay quanh thị trường chứng khoán Việt Nam: **Vietnam Security Master** (HOSE/HNX/UPCoM + taxonomy ngành Việt), **Market Session Engine** (ATO → khớp liên tục → nghỉ trưa → ATC với lịch lễ), **reconciliation VNStock⇄VNDirect**, **sector/macro/breadth engines** và **AI Equity Research analyst** — nhận dữ liệu đã calculate từ quant trước khi reasoning.
+ORCA Financial là nền tảng phân tích tài chính lấy **thị trường chứng khoán Việt Nam** làm trung tâm. Sản phẩm kết hợp dữ liệu thị trường, BCTC, định giá, kỹ thuật, dòng tiền, tin tức và AI research trong một pipeline có provenance, freshness và trạng thái suy giảm minh bạch.
 
-ORCA Financial kết nối dữ liệu thị trường thật vào một **Centralized Real-Time Data Engine**, xử lý theo hướng event-driven, rồi phân phối tới Market Dashboard, Stock/Crypto/Forex/Commodity modules, News Engine, Reports, Alerts và AI Research Agent — với nguyên tắc tuyệt đối: **không mock data**, mọi dữ liệu đều gắn nguồn + timestamp + trạng thái độ mới.
+Crypto, Forex và Commodities là các asset class hỗ trợ dùng chung provider, cache, chart và quantitative engines; chúng không thay thế trọng tâm Vietnam equities của sản phẩm.
 
-## Data Sources
+## Current main
 
-| Asset          | Primary Source                    | Fallback (real data)                          |
-| -------------- | --------------------------------- | --------------------------------------------- |
-| Vietnam Stocks | **VNStock** (API key, env)        | — (UNAVAILABLE state until configured)        |
-| Crypto         | **Binance** REST/WS, host failover| Official Binance public data hosts            |
-| Forex          | **Biquote** (API key, env)        | exchangerate-api latest + ECB/Frankfurter     |
-| Commodities    | **Vietnambiz** + **Simplize.vn**  | MSN Finance (env map) + Binance PAXG (gold)   |
-| News           | RSS multi-feed (CafeF, VnExpress, VietnamBiz, CoinTelegraph) | per-feed failover |
+- Package: `orca-financial@1.0.0`
+- Framework: Next.js 16 App Router · React 19 · TypeScript strict
+- Main snapshot: `45c9c0b` (sau khi hợp nhất các thay đổi ICT/SMC/VSA, reliability và valuation)
+- Các thay đổi gần đây trên `main`: PR #41 (money-flow engine), PR #45 (financial/data reliability), PR #46 (statement-backed valuation inputs)
+- Trạng thái: **active development**; chưa phải bản phát hành ổn định có semantic release tag
 
-Không có module nào dùng số liệu giả. Khi provider lỗi: **retry → exponential backoff → circuit breaker → cache STALE gần nhất → trạng thái DEGRADED/UNAVAILABLE hiển thị công khai**.
+## What is implemented
 
-## Features
+### Vietnam equities — product center
 
-| Module | Status | Notes |
+- VN stock market dashboard, indices và market snapshot.
+- Security/universe search cho HOSE, HNX và UPCoM.
+- Quote, OHLCV, reference/ceiling/floor, order book và foreign flow khi nguồn cung cấp.
+- Stock detail gồm profile, technical analysis, financial statements, fundamentals, ratios, valuation và AI/company research.
+- Screener: fundamental, valuation, CANSLIM, Minervini, candlestick, divergence, Elliott và Wyckoff.
+- Sector views, heatmap, breadth, market state và market intelligence.
+- Watchlist, portfolio marks, trade journal, alerts, reports và morning brief.
+
+### Valuation và financial intelligence
+
+Pipeline định giá hiện tại gồm:
+
+1. **Phase 1 — market multiples:** P/E, P/B, P/S, EV/EBITDA và các market anchors.
+2. **Phase 2 — cash flow, historical và peers:** FCF, FCFF, FCFE, P/FCF, P/CF, EV/FCFF, historical multiples và peer comparison.
+3. **Phase 3 — DCF:** Bear/Base/Bull, WACC/Ke, terminal value và sensitivity matrix.
+4. **Phase 4 — complementary methods:** residual income, DDM, NAV/SOTP theo mức độ phù hợp của doanh nghiệp.
+5. **Phase 5/6 — aggregation và decision layer:** chuẩn hóa fair value, confidence, data quality, risk flags và output phục vụ UI/API.
+
+Các đầu vào dòng tiền được lấy từ dữ liệu báo cáo khi có đủ bằng chứng:
+
+- EBIT và EBITDA TTM.
+- Thuế suất từ Tax/PBT.
+- D&A từ EBITDA − EBIT khi hợp lệ.
+- CAPEX từ cash-flow statement.
+- ΔNWC và net borrowing từ các kỳ quý liên tiếp.
+
+Nếu thiếu dữ liệu, phương pháp liên quan trả về `null`/`incomplete`; engine **không tự coi dữ liệu thiếu là zero** và không dựng TTM từ các quý không liên tiếp.
+
+Đơn vị định giá được tách rõ:
+
+- Quote cổ phiếu Việt Nam thường là **nghìn VND**.
+- Market cap, enterprise value và financial statement là **VND đầy đủ**.
+- Per-share fundamentals là **VND/share**.
+- Fair value trả về quote unit để UI hiển thị nhất quán; payload vẫn có `valuationUnits` và `sourceDetails` để audit.
+
+### Technical, flow và multi-asset analysis
+
+- Technical indicators: RSI, MACD, Bollinger Bands, ATR, support/resistance, trend và candlestick patterns.
+- Market-state engine: trend, range, accumulation/distribution, breakout/breakdown và evidence.
+- ICT/SMC/VSA money-flow engine v2: market structure, BOS/CHOCH, FVG lifecycle, order-block mitigation, OTE, volume/effort-result và CLV/order-flow signals.
+- Crypto spot: markets, movers, klines, order book, order flow, funding và open interest khi futures endpoint khả dụng.
+- Forex: live quote, OHLC, ECB/Frankfurter reference history và scalp modules.
+- Commodities: VietnamBiz goods catalog, normalized units/currency và mapping tác động tham chiếu tới ngành/cổ phiếu Việt Nam.
+- News: RSS ingestion, timestamp validation, deduplication, ticker/sector tagging và sentiment.
+
+## Data providers
+
+| Domain | Primary | Fallback / điều kiện |
 | --- | --- | --- |
-| **Vietnam Security Master** (HOSE/HNX/UPCoM, taxonomy) | Implemented | Symbol→exchange→sector→industry canonical registry + search index |
-| **VN Market Session Engine** | Implemented | ATO/liên tục/nghỉ trưa/ATC/post-trading + holidays; freshness theo session |
-| **VN Market Center** (dashboard ưu tiên 1) | Implemented | VN indices hero, sector taxonomy, tin VN doanh nghiệp ưu tiên |
-| VN Screener (universe tab đầu tiên) | Implemented | Filter theo ngành ±% · GT GD; chiến lược nâng cao roadmap |
-| Search VN-first (tên công ty không dấu) | Implemented | Security Master index, VN ticker rank trên mọi asset |
-| VN chart reference/ceiling/floor overlays | Implemented | ExtraLevels từ provider khi có dữ liệu |
-| Market Dashboard + ORCA Market Pulse | Implemented | Analyst-style narrative từ dữ liệu realtime, gauge risk-appetite |
-| Data Quality Engine | Implemented | VALID/SUSPECT/INVALID/STALE, deviation/timestamp/dup checks, anomaly log |
-| Reconciliation Engine (VNStock⇄VNDirect) | Implemented | Priority rules + tolerance + discrepancy log, không trung bình provider |
-| Centralized Binance WebSocket Engine | Implemented | `!ticker@arr` + `!markPrice@arr` dùng chung; backoff + REST fallback minh bạch |
-| LLM Gateway (role-based) | Implemented | reasoning/analysis/classification, env-swappable, không hardcode model |
-| Output Validation (anti-hallucination) | Implemented | Numeric-claim tracing → repair/regenerate → deterministic recovery |
-| Crypto Scalping Intelligence | Implemented | VWAP/EMA/RSI7/momentum/vol-spike/entry-invalidation, realtime 15s |
-| Market-State Engine | Implemented | uptrend/downtrend/sideways/accumulation/distribution/breakout/breakdown + evidence |
-| Financial Health Engine | Implemented | profitability/liquidity/leverage/cashflow/efficiency — deterministic |
-| Valuation Engine | Implemented | P/E·P/B·EV-based multiples + DCF bear/base/bull với confidence |
-| Stock/Forex Analysis Contracts | Implemented | `/stocks/{sym}/analysis`, `/forex/{sym}/analysis` |
-| Settings system (8 tabs) | Implemented | Profile→System, persistent local+DB sync |
-| Market Ticker realtime | Implemented | CSS marquee, crypto + FX + VN index khi có |
-| Crypto (spot, klines, movers, screener) | Implemented | Binance live, multi-host failover |
-| Crypto futures (funding, open interest) | Implemented (geo-dependent) | fapi bị chặn theo vùng → trạng thái hiển thị rõ |
-| Forex dashboard + pair detail | Implemented | Biquote-ready; fallback rates thật + ECB history |
-| Commodities + VN impact mapping | Implemented | Đa nguồn, hiển thị provenance từng record |
-| News Engine (RSS, dedupe, tagging) | Implemented | Timestamp validation, symbol/sector tagging |
-| Morning Brief (reports) | Implemented | Freshness gate, analyst narrative, lưu DB |
-| AI Agent (fetch-data-first) | Implemented | Deterministic engine; LLM optional (bounded context) |
-| Technical engine (RSI/MACD/BB/ATR/S-R/patterns) | Implemented | Pure quantitative, deterministic |
-| Watchlist + Trade Journal | Implemented | Local-first; server tables sẵn sàng để sync |
-| Auth (email/password, scrypt, JWT cookie) | Implemented | `/api/v1/auth/*` |
-| Ops/Observability (`/system`) | Implemented | Provider health, latency, circuit, cache stats |
-| VN Stocks: universe/quotes/OHLCV/financials | VNDirect primary; SSI/VPS/public fallbacks; optional VNStock BCTC fallback | VNStock BCTC chỉ bật khi có cả `VNSTOCK_BASE_URL` và `VNSTOCK_API_KEY` |
-| VN Screener / CANSLIM / Minervini / heatmap VN | Planned | Phụ thuộc VNStock reachability |
-| WebSocket gateway + Binance WS relay | Planned | REST hiện tại đã realtime ≤15–20s; WS relay nằm trong roadmap `/docs/architecture.md` |
-| Google OAuth, 2FA/TOTP | Planned | |
-| Valuation engines (DCF/DDM/Graham) VN | Planned | Cần financial statements từ VNStock |
+| VN quotes, indices, universe, OHLCV | **VNDirect** | SSI FastConnect nếu có credentials; VPS/Vietcap/Yahoo/Entrade/public feeds tùy endpoint |
+| VN financial statements, ratios, equity snapshot | **VNDirect DStock / api-finfo** | VNStock API chỉ bật khi có đồng thời `VNSTOCK_BASE_URL` và `VNSTOCK_API_KEY` |
+| Crypto spot | **Binance REST** với host failover | Binance futures cho funding/OI; có thể bị geo-block |
+| Forex | Biquote public/configured | exchangerate-api; Frankfurter/ECB cho daily reference history |
+| Commodities | **Vietnambiz data portal** | Các adapter/provider phụ trợ tùy symbol và cấu hình |
+| News | CafeF, VnExpress, VietnamBiz, Tuổi Trẻ, BBC, CoinTelegraph, Google News, FRED, Fed, ECB, SEC RSS | Từng feed hoạt động độc lập; partial success vẫn được trả kèm metadata |
 
-## Architecture
+Provider adapters nằm trong `src/lib/providers/` và financial adapters trong `src/lib/financial/`. Không có mock market data trong request path. Khi upstream lỗi, pipeline thực hiện timeout/retry/backoff, circuit handling, cache và stale-while-revalidate trước khi trả trạng thái `DEGRADED` hoặc `UNAVAILABLE`.
 
-```text
-External Providers (VNStock · Binance · Biquote · Vietnambiz · Simplize · RSS)
-        │  timeout / retry / backoff / circuit breaker / health registry
-        ▼
-Provider Adapter Layer            src/lib/providers/*
-        ▼
-Domain Services + Engines         src/lib/services/*, src/lib/technical.ts
-        │  TTL cache (memory + Redis mirror) · request dedup · stale-while-revalidate
-        ▼
-Internal REST API  /api/v1/*      standardized envelope { success, data, meta }
-        ▼
-Frontend (Next.js App Router, client islands, SWR refresh)
-        ▼
-Reports · AI Agent (structured context) · Ops dashboard
-```
+## Reliability và data provenance
 
-Mọi API trả về **standard envelope** với provenance metadata:
+Mọi response market-facing mang metadata tương tự:
 
 ```json
 {
   "success": true,
   "data": {},
   "meta": {
-    "source": "binance",
-    "sourceTimestamp": "2026-09-05T02:41:10.000Z",
-    "ingestedAt": "…",
-    "freshness": "LIVE",
-    "ageMs": 830,
+    "source": "vndirect",
+    "sourceTimestamp": "2026-10-01T15:00:00.000Z",
+    "ingestedAt": "2026-10-01T15:00:02.000Z",
+    "freshness": "FRESH",
+    "ageMs": 2000,
     "cached": false,
     "stale": false
   }
 }
 ```
 
-### Data Freshness states
+Freshness states:
 
-`LIVE` (streaming/near-realtime) · `FRESH` (trong SLA) · `DELAYED` (chậm hơn mục tiêu) · `STALE` (cache hợp lệ cuối cùng) · `DEGRADED` (một phần pipeline lỗi) · `UNAVAILABLE` (không có dữ liệu hợp lệ). UI hiển thị dot + tuổi dữ liệu ở mọi module market-facing; không bao giờ hiển thị LIVE giả.
+- `LIVE`: dữ liệu streaming/near-real-time trong live SLA.
+- `FRESH`: dữ liệu trong freshness SLA.
+- `DELAYED`: chậm hơn mục tiêu nhưng còn sử dụng được.
+- `STALE`: bản cache gần nhất, được đánh dấu rõ.
+- `DEGRADED`: một phần pipeline/provider lỗi.
+- `UNAVAILABLE`: không có dữ liệu hợp lệ.
 
-## Tech Stack
+Reliability pipeline dùng HTTP adapter chung (`src/lib/http.ts`), timeout, retry có backoff/jitter, health registry, circuit breaker, TTL cache, request deduplication và stale-while-revalidate. Data quality/reconciliation không trung bình mù các provider; mỗi nguồn được giữ lại trong provenance và discrepancy metadata.
 
-Next.js 16 (App Router) · React 19 · TypeScript strict · Tailwind CSS v4 · PostgreSQL + Drizzle ORM · Redis (optional mirror) · lightweight-charts · SWR · jose (JWT) · ioredis.
+## Architecture
 
-## Getting Started
-
-```bash
-git clone <repository-url>
-cd orca-financial
-npm install
-cp .env.example .env        # điền DATABASE_URL + provider keys
-npx drizzle-kit push        # tạo database schema
-npm run dev                 # http://localhost:3000
+```text
+External providers
+  ├─ VNDirect / SSI / public VN feeds / VNStock optional
+  ├─ Binance
+  ├─ Biquote / ECB / exchangerate-api
+  ├─ Vietnambiz commodities
+  └─ RSS news feeds
+          │
+          ▼
+src/lib/providers + src/lib/financial
+  HTTP resilience · normalization · provider health
+          │
+          ▼
+src/lib/cache + src/lib/realtime + src/lib/quality + src/lib/reconcile
+  freshness · dedup · stale-SWR · validation · cross-source checks
+          │
+          ▼
+src/lib/engines + src/lib/services
+  technical · money-flow · fundamentals · valuation · reports · AI context
+          │
+          ▼
+src/app/api/v1/*
+  standardized success/error envelope
+          │
+          ▼
+Next.js App Router UI
+  dashboards · stock detail · screeners · reports · portfolio · ops
 ```
 
-Production:
+Nguyên tắc kiến trúc:
 
-```bash
-npm run build
-npm run start
+- React components chỉ gọi internal API; không gọi trực tiếp provider bên ngoài.
+- Business logic không gọi `fetch` trực tiếp; dùng HTTP/provider adapters.
+- Quant engines tính toán số liệu bằng code; LLM chỉ nhận context đã chuẩn hóa và đã tính.
+- API keys chỉ được đọc ở server-side; không đưa secrets xuống browser.
+- DB writes là best-effort và không được chặn request path market-critical.
+
+## Main application routes
+
+| Route | Nội dung |
+| --- | --- |
+| `/` | Market center và snapshot đa tài sản |
+| `/stocks` | VN stock universe, search và market board |
+| `/stocks/[symbol]` | Stock cockpit: quote, chart, structure, technical, company và flows |
+| `/stocks/[symbol]/financials` | BCTC theo kỳ và normalized metrics |
+| `/stocks/[symbol]/fundamentals` | Financial health, ratios, growth và risk flags |
+| `/stocks/[symbol]/valuation` | Multiples, DCF, sensitivity, fair value và source details |
+| `/screener` | Rule-based và quantitative screeners |
+| `/market`, `/market/index/[code]`, `/heatmap` | Market breadth, indices, sectors và heatmap |
+| `/crypto`, `/crypto/[symbol]` | Crypto markets, charts, flow và scalp analysis |
+| `/forex`, `/forex/[symbol]` | FX dashboard, pair detail và scalp analysis |
+| `/commodities` | Commodity catalog và Vietnam impact mapping |
+| `/news`, `/reports` | News, morning brief và stored research reports |
+| `/portfolio`, `/watchlist`, `/journal` | Portfolio marks, watchlist và trade journal |
+| `/agent` | Data-first AI research agent |
+| `/system`, `/settings` | Provider health, data engine, account và system settings |
+
+## Internal API
+
+Có **99 API route handlers dưới `/api/v1`**. Các endpoint thường dùng:
+
+```text
+GET  /api/health
+GET  /api/v1/market/snapshot
+GET  /api/v1/stocks?symbols=VCB,HPG
+GET  /api/v1/stocks/{symbol}
+GET  /api/v1/stocks/{symbol}/financials
+GET  /api/v1/stocks/{symbol}/fundamentals
+GET  /api/v1/stocks/{symbol}/metrics
+GET  /api/v1/stocks/{symbol}/ratios
+GET  /api/v1/stocks/{symbol}/valuation
+GET  /api/v1/stocks/{symbol}/valuation/analyst
+GET  /api/v1/crypto/markets
+GET  /api/v1/crypto/{symbol}
+GET  /api/v1/forex/markets
+GET  /api/v1/forex/{PAIR}
+GET  /api/v1/commodities
+GET  /api/v1/news
+GET  /api/v1/reports/morning-brief
+POST /api/v1/agent
+GET  /api/v1/system/providers
+POST /api/v1/auth/register
+POST /api/v1/auth/login
+POST /api/v1/auth/logout
+GET  /api/v1/auth/me
 ```
 
-Checks (chạy trước khi push):
+Chi tiết đầy đủ: [`docs/api.md`](docs/api.md).
+
+## Tech stack
+
+- **Runtime:** Node.js `>=20.9.0`
+- **Web:** Next.js `16.2.6`, React `19.2.6`, TypeScript `5.9.3`
+- **UI:** Tailwind CSS v4, Lucide, lightweight-charts, SWR
+- **Data:** PostgreSQL + Drizzle ORM, optional Redis mirror/cache
+- **Auth:** scrypt password hashing, JWT HS256 httpOnly cookie, sessions và audit logs
+- **AI:** OpenAI-compatible gateway, role-based model cascade, optional local vLLM/LoRA deployment
+- **Deployment:** standalone Next build; Vercel config có sẵn, Netlify config có sẵn, container/VPS phù hợp hơn cho process dài hạn/WebSocket
+
+## Getting started
+
+### 1. Requirements
+
+- Node.js `>=20.9.0`
+- pnpm
+- PostgreSQL cho auth, reports, watchlist và persistence
+- Redis là optional; chỉ cần khi bật các flow cần shared cache/pub-sub
+
+### 2. Install
 
 ```bash
-npm run typecheck   # tsc --noEmit
-npm run lint        # eslint .
-npm test            # chart/quality/freshness + valuation formula/pipeline suite (node:test)
+git clone https://github.com/duyanhphan13579dz-dot/Orca-Multi-Finance.git
+cd Orca-Multi-Finance
+pnpm install --frozen-lockfile
+cp .env.example .env
 ```
 
-### Deployment (Netlify)
+Điền tối thiểu:
 
-`netlify.toml` giữ build command/publish dir và các biến môi trường cần thiết. Hai quy tắc bắt buộc:
+```dotenv
+DATABASE_URL=postgresql://user:password@localhost:5432/orca
+JWT_SECRET=replace-with-a-long-random-secret
+```
 
-1. **Gói cần cho `next build` phải nằm trong `dependencies`** — không phải `devDependencies`. Netlify cài đặt với `NODE_ENV=production`, npm sẽ bỏ qua toàn bộ devDependencies và build chết với `Cannot find module '@tailwindcss/postcss'` (import trace: `src/app/globals.css` → `src/app/layout.tsx`). Vì vậy `tailwindcss`, `@tailwindcss/postcss`, `postcss`, `typescript` và `@types/*` đều nằm trong `dependencies`; `netlify.toml` còn đặt thêm `NPM_FLAGS=--include=dev` làm lớp dự phòng.
-2. **`package-lock.json` được commit** để Netlify dùng `npm ci` (tái lập được).
+Các provider keys và base URLs tùy module được liệt kê trong [`.env.example`](.env.example). Secrets chỉ dùng server-side.
 
-`DATABASE_URL` không còn bắt buộc ở *build time* — client DB khởi tạo lười (`src/db/index.ts`), nên bước "Collecting page data" của `next build` không còn fail khi host không inject DB URL vào môi trường build. Runtime vẫn cần nó cho auth/watchlist/reports.
+### 3. Database
 
-Trên host serverless (Netlify/Vercel Functions), đặt `BINANCE_WS_DISABLED=true`: instance ngắn hạn không giữ được WebSocket sống, engine sẽ tự chuyển sang REST polling với nhãn freshness trung thực (xem ghi chú trong `netlify.toml`).
+```bash
+pnpm exec drizzle-kit push
+```
 
-Health & diagnostics:
+Schema hiện có **23 bảng PostgreSQL** trong [`src/db/schema.ts`](src/db/schema.ts), gồm auth/session, watchlist, stock market/BCTC, crypto, forex, commodities, news, reports, provider health/logs, journal, preferences, alerts và RAG chunks.
 
-- `GET /api/health` — liveness (DB check)
-- `GET /api/v1/system/providers` — provider health, latency, circuit, cache stats
-- Trang `/system` — ops dashboard realtime
+### 4. Run locally
 
-### Minimum env để chạy (sanity)
+```bash
+pnpm dev
+```
 
-Chỉ cần `DATABASE_URL` + `JWT_SECRET`: crypto (Binance, không cần key), forex (fallback thật), gold (PAXG), tin tức RSS sẽ hoạt động ngay. Thêm key để mở đầy đủ module tương ứng (xem bảng Data Sources). API keys **không bao giờ** được đưa xuống browser.
+Mở <http://localhost:3000>.
 
-## API Overview
+### 5. Production
 
-`GET /api/v1/market/snapshot` · `GET /api/v1/stocks?symbols=…` · `GET /api/v1/stocks/{sym}` · `/technical` · `/financials` · `GET /api/v1/crypto/markets` · `GET /api/v1/crypto/{sym}?interval=1h` · `GET /api/v1/forex/markets` · `GET /api/v1/forex/{PAIR}` · `GET /api/v1/commodities` · `GET /api/v1/news?category=&symbol=` · `GET /api/v1/screener?universe=crypto&minChange=&minQuoteVolume=` · `GET /api/v1/reports/morning-brief` · `POST /api/v1/agent {question}` · `GET /api/v1/system/providers` · `POST /api/v1/auth/{register,login,logout}` · `GET /api/v1/auth/me`.
+```bash
+pnpm build
+pnpm start
+```
 
-Chi tiết: [`/docs/api.md`](docs/api.md) · Kiến trúc: [`/docs/architecture.md`](docs/architecture.md) · Data providers: [`/docs/data-providers.md`](docs/data-providers.md)
+`next.config.ts` dùng standalone output và giới hạn worker build để phù hợp môi trường memory-constrained. TypeScript build errors hiện được host config bỏ qua để unblock deployment; nên chạy `pnpm typecheck` riêng trong CI/development và xử lý lỗi trước khi phát hành.
+
+## Scripts
+
+```bash
+pnpm dev          # Next dev server trên 0.0.0.0:3000
+pnpm build        # production build
+pnpm start        # start production server
+pnpm lint         # ESLint
+pnpm typecheck    # tsc --noEmit
+pnpm test         # node:test suite cho chart, technical, valuation và pipeline
+```
+
+Các test định giá quan trọng:
+
+- `src/lib/__tests__/valuation-pipeline.test.ts`
+- `src/lib/__tests__/valuation-phase1.test.ts` đến `valuation-phase6.test.ts`
+- `src/lib/__tests__/money-flow.test.ts`
+
+## Deployment notes
+
+### Vercel / serverless
+
+`vercel.json` đã cấu hình framework Next.js và region `sin1`. Các process WebSocket/SSE dài hạn không nên được coi là persistent trên serverless; dùng cache/polling và freshness metadata thay thế.
+
+### Netlify
+
+`netlify.toml` có sẵn. Khi chạy trên Netlify Functions, nên đặt:
+
+```dotenv
+BINANCE_WS_DISABLED=true
+VNDIRECT_WS_DISABLED=true
+SSI_WS_DISABLED=true
+```
+
+Serverless instance có vòng đời ngắn; realtime engine sẽ tự fallback về REST/polling. Chỉ bật WebSocket/SSE persistent trên VPS, container hoặc host Node dài hạn.
+
+### Local vLLM / LoRA
+
+Tài liệu deployment AI nằm trong [`deploy/README.md`](deploy/README.md), với script:
+
+```bash
+./deploy/vllm_serve.sh
+./deploy/test_vllm.sh http://127.0.0.1:8000/v1 orca-analyst-v1
+```
+
+AI gateway hỗ trợ `AI_BASE_URL` theo chuẩn OpenAI-compatible và có thể cascade sang backend/model fallback.
 
 ## Repository layout
 
 ```text
-src/
-  app/                    routes (pages) + api/v1 route handlers
-  components/             terminal-grade UI (charts, panels, technical views)
-  lib/
-    providers/            vnstock · binance · biquote/forex · commodities · news
-    services/             domain engines (crypto, forex, stocks, commodities, news, market, agent, reports)
-    cache.ts health.ts http.ts freshness.ts technical.ts auth.ts env.ts
-  db/                     drizzle schema (24 tables) + client
-docs/                     architecture · data-providers · api
+src/app/                 App Router pages và API route handlers
+src/components/          UI panels, charts, dashboards và domain components
+src/lib/providers/       External provider adapters
+src/lib/financial/       Financial normalization, statements, ratios và sources
+src/lib/engines/         Technical, money-flow, fundamentals, valuation, screeners
+src/lib/services/        Domain orchestration, reports, agents, cache consumers
+src/lib/realtime/        WS/SSE, live market pipelines và schedulers
+src/db/                  Drizzle schema và database client
+docs/                    Architecture, API, providers và feature design notes
+deploy/                  vLLM/LoRA deployment helpers
+configs/                 AI fine-tuning configuration
+public/                  Static assets và service worker
+test/                    Test setup và smoke utilities
 ```
+
+Tài liệu liên quan:
+
+- [`docs/architecture.md`](docs/architecture.md) — layered architecture và reliability pipeline
+- [`docs/data-providers.md`](docs/data-providers.md) — provider registry, fallback và conventions
+- [`docs/api.md`](docs/api.md) — internal API contracts
+- [`docs/smart-portfolio.md`](docs/smart-portfolio.md) — portfolio intelligence
+- [`deploy/README.md`](deploy/README.md) — local vLLM/LoRA
+
+## Security và operational rules
+
+- Không commit `.env`, API keys, JWT secret hoặc credentials.
+- Không dùng `NEXT_PUBLIC_*` cho provider secrets.
+- Validate symbol, pair, limit và query input tại route boundary.
+- Không trả internal stack trace ra public API.
+- Kiểm tra `GET /api/v1/system/providers`, `/system` và `GET /api/health` khi chẩn đoán upstream/caching.
+- Với dữ liệu tài chính, luôn kiểm tra source, report date, freshness, unit và warning trước khi sử dụng.
 
 ## Disclaimer
 
-Dữ liệu và phân tích trong nền tảng chỉ phục vụ mục đích **thông tin và nghiên cứu** — **không phải khuyến nghị đầu tư**. Mọi quyết định giao dịch thuộc trách nhiệm của ngườ dùng.
+Dữ liệu, tín hiệu và phân tích của ORCA Financial chỉ phục vụ **thông tin, nghiên cứu và giáo dục**, không phải khuyến nghị đầu tư, tư vấn tài chính hay lời mời giao dịch. Người dùng tự chịu trách nhiệm cho mọi quyết định đầu tư.
 
 ## License
 
-Proprietary — see [LICENSE](LICENSE). Copyright (c) 2025 Orca Financial. All rights reserved.
+Proprietary — xem [`LICENSE`](LICENSE). Copyright (c) 2025 Orca Financial. All rights reserved.
