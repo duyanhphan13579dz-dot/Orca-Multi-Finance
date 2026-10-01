@@ -483,6 +483,8 @@ export interface Phase4ValuationResult {
     nav: number | null;
     sotp: number | null;
   };
+  /** Unit for methodPrices; direct Phase 4 returns full VND/share. */
+  methodPriceUnit?: "vnd_per_share" | "market_quote";
   notes: string[];
   valuationEngineVersion: string;
 }
@@ -583,6 +585,7 @@ export function buildPhase4Valuation(input: {
       nav: nav.adjustedNavPerShare ?? nav.navPerShare,
       sotp: sotp.fairPrice,
     },
+    methodPriceUnit: "vnd_per_share",
     notes,
     valuationEngineVersion: VALUATION_ENGINE_VERSION_PHASE4,
   };

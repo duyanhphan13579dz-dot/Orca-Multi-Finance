@@ -3,16 +3,21 @@
  *
  * - Market data (indices, board, quotes, OHLCV, universe): VNDIRECT primary,
  *   SSI Flashconnect fallback when SSI_API_KEY / SSI_API_SECRET (or SSI_FC_CONSUMER_*) is configured.
- * - Financial statements (BCTC / analysis): VNDirect stays primary and only — SSI is never a
- *   financial provider here (see src/lib/financial/providers-registry.ts).
+ * - Financial statements (BCTC / analysis): VNDirect primary; optional VNStock API fallback
+ *   is enabled only when both VNSTOCK_BASE_URL and VNSTOCK_API_KEY are configured. SSI is
+ *   market-only and never used for financial statements.
  */
+import { env } from "../env";
 import { ssiFcConfigured } from "../providers/ssi-fcdata";
 
 export function vnProviderLayout() {
   const ssiLive = ssiFcConfigured();
   return {
     market: { primary: "vndirect", fallback: ssiLive ? "ssi-fcdata" : "vndirect" },
-    financial: { primary: "vndirect", fallback: "vndirect" },
+    financial: {
+      primary: "vndirect",
+      fallback: env.vnstockApiKey && env.vnstockBaseUrl ? "vnstock-financial" : "vndirect",
+    },
   } as const;
 }
 

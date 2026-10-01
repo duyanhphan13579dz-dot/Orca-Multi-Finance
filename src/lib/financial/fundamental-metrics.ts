@@ -130,7 +130,7 @@ export function buildSnapshotMetrics(b: SnapshotBundle) {
   const gp = n(i0.grossProfit);
   const op = n(i0.operatingProfit) ?? n(i0.ebit);
   const ebit = n(i0.ebit) ?? op;
-  const ebitda = n(i0.ebitda) ?? (ebit != null ? ebit * 1.15 : null);
+  const ebitda = n(i0.ebitda);
   const ni = rowNi(i0);
   const niPrev = rowNi(i1);
   const interest = n(i0.interestExpense) ?? n(i0.financeExpense);
@@ -145,8 +145,8 @@ export function buildSnapshotMetrics(b: SnapshotBundle) {
   const std = n(b0.shortTermDebt);
   const ltd = n(b0.longTermDebt);
   const totalLiab = n(b0.totalLiabilities);
-  const debt =
-    std != null || ltd != null ? (std ?? 0) + (ltd ?? 0) : totalLiab;
+  // Do not treat the entire balance-sheet liability total as interest-bearing debt.
+  const debt = std != null || ltd != null ? (std ?? 0) + (ltd ?? 0) : null;
 
   const ocf = n(c0.operatingCashFlow);
   const capexRaw = n(c0.capex);
@@ -175,9 +175,9 @@ export function buildSnapshotMetrics(b: SnapshotBundle) {
   const roa = div(ni, assets);
   const nopat = ebit != null ? ebit * 0.8 : null;
   const invested =
-    equity != null && debt != null
-      ? equity + debt - (cash ?? 0)
-      : equity;
+    equity != null && debt != null && cash != null
+      ? equity + debt - cash
+      : null;
   const roic = div(nopat, invested);
   const assetTurnover = div(rev, assets);
   const invTurnover = div(rev, inventory);
@@ -233,7 +233,9 @@ export function buildSnapshotMetrics(b: SnapshotBundle) {
     b.overrides?.ps ??
     (mcap != null && rev != null && rev > 0 ? mcap / rev : null);
   const ev =
-    mcap != null && debt != null ? mcap + debt - (cash ?? 0) : null;
+    mcap != null && debt != null && cash != null && mcap + debt - cash > 0
+      ? mcap + debt - cash
+      : null;
   const evEbitda =
     b.overrides?.evEbitda ?? (ev != null && ebitda != null && ebitda > 0 ? ev / ebitda : null);
   const peg =

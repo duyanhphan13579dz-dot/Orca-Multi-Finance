@@ -55,7 +55,7 @@ Không có module nào dùng số liệu giả. Khi provider lỗi: **retry → 
 | Watchlist + Trade Journal | Implemented | Local-first; server tables sẵn sàng để sync |
 | Auth (email/password, scrypt, JWT cookie) | Implemented | `/api/v1/auth/*` |
 | Ops/Observability (`/system`) | Implemented | Provider health, latency, circuit, cache stats |
-| VN Stocks: universe/quotes/OHLCV/financials | Implemented (needs key) | Tự kích hoạt khi `VNSTOCK_API_KEY` được cấu hình |
+| VN Stocks: universe/quotes/OHLCV/financials | VNDirect primary; SSI/VPS/public fallbacks; optional VNStock BCTC fallback | VNStock BCTC chỉ bật khi có cả `VNSTOCK_BASE_URL` và `VNSTOCK_API_KEY` |
 | VN Screener / CANSLIM / Minervini / heatmap VN | Planned | Phụ thuộc VNStock reachability |
 | WebSocket gateway + Binance WS relay | Planned | REST hiện tại đã realtime ≤15–20s; WS relay nằm trong roadmap `/docs/architecture.md` |
 | Google OAuth, 2FA/TOTP | Planned | |
@@ -128,7 +128,7 @@ Checks (chạy trước khi push):
 ```bash
 npm run typecheck   # tsc --noEmit
 npm run lint        # eslint .
-npm test            # chart/quality/freshness engine suite (node:test)
+npm test            # chart/quality/freshness + valuation formula/pipeline suite (node:test)
 ```
 
 ### Deployment (Netlify)

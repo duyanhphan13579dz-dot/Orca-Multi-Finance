@@ -8,6 +8,7 @@ import {
 } from "@/lib/engines/valuation-phase6";
 import { collectPeerMetrics } from "@/lib/engines/valuation-peers";
 import { sectorOf } from "@/lib/vn/master";
+import { priceQuoteToVnd } from "@/lib/providers/vndirect-company";
 import { llmConfigured } from "@/lib/ai/gateway";
 
 export const dynamic = "force-dynamic";
@@ -17,7 +18,7 @@ export const maxDuration = 60;
 /**
  * GET /api/v1/stocks/:symbol/valuation/analyst
  * Phase 6 — explain Phase 1–5 results only (no recalculation).
- * Query: ?llm=1 · ?peers=0
+ * Query: ?llm=1 · ?peers=1 (opt-in, higher latency)
  */
 export async function GET(
   req: Request,
@@ -32,7 +33,7 @@ export async function GET(
 
     const url = new URL(req.url);
     const useLlm = url.searchParams.get("llm") === "1";
-    const wantPeers = url.searchParams.get("peers") !== "0";
+    const wantPeers = url.searchParams.get("peers") === "1";
 
     const pack = await getVnStockDetail(symbol);
     if (!pack) {
@@ -43,31 +44,54 @@ export async function GET(
     const income = (detail.financials?.income ?? []) as Record<string, unknown>[];
     const balance = (detail.financials?.balance ?? []) as Record<string, unknown>[];
     const cashflow = (detail.financials?.cashflow ?? []) as Record<string, unknown>[];
-    const health =
+    const rawHealth =
       detail.financialHealth ??
       computeFinancialHealth({ income, balance, cashflow }, { symbol });
+    const shares =
+      detail.sharesOutstanding ?? detail.equity?.sharesOutstanding ?? rawHealth.anchors.shares;
+    const health = {
+      ...rawHealth,
+      anchors: {
+        ...rawHealth.anchors,
+        shares: shares ?? null,
+        epsTtm:
+          rawHealth.anchors.epsTtm ??
+          (rawHealth.anchors.netProfit != null && shares != null && shares > 0
+            ? rawHealth.anchors.netProfit / shares
+            : null),
+      },
+    };
+    const priceVnd = priceQuoteToVnd(price);
+    const marketCapOverride =
+      (priceVnd > 0 && shares != null && shares > 0 ? priceVnd * shares : null) ??
+      detail.detailedRatios?.marketCap ??
+      detail.equity?.marketCapReported ??
+      null;
+    const dividendYield =
+      detail.detailedRatios?.flat.find((item) => item.key === "divYield")?.value ?? null;
 
     const capexFromGroup =
-      typeof health?.groups?.cashflow?.ocfTtm === "number" &&
-      typeof health?.groups?.cashflow?.fcfTtm === "number"
-        ? (health.groups!.cashflow!.ocfTtm as number) - (health.groups!.cashflow!.fcfTtm as number)
+      typeof health.groups.cashflow.ocfTtm === "number" &&
+      typeof health.groups.cashflow.fcfTtm === "number"
+        ? health.groups.cashflow.ocfTtm - health.groups.cashflow.fcfTtm
         : null;
-
-    let valuation = computeValuation({
+    const valuationInputs = {
       price,
+      priceVnd,
+      marketCapOverride,
+      dividendYield,
       health,
       capexTtm: capexFromGroup,
       symbol,
-    });
+    };
+
+    let valuation = computeValuation(valuationInputs);
 
     if (wantPeers) {
       try {
         const { sector, peers } = await collectPeerMetrics(symbol, 6);
         valuation = computeValuation({
-          price,
-          health,
-          capexTtm: capexFromGroup,
-          symbol,
+          ...valuationInputs,
           peerComparison: {
             symbol,
             sector: sector || sectorOf(symbol),

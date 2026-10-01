@@ -6,6 +6,7 @@
  */
 
 import type { MetricCell } from "./valuation-phase1";
+import { vnPriceScale, vnVndPerShareToQuote, type VnPriceScale } from "../financial/vn-units";
 
 export const VALUATION_ENGINE_VERSION_PHASE3 = "2.3.0-phase3-dcf-detail";
 
@@ -147,6 +148,8 @@ export function runDcf(input: {
   baseFcf: number | null;
   shares: number | null;
   currentPrice: number | null;
+  /** Number of VND represented by one quote-price unit (usually 1,000 or 1). */
+  priceScale?: VnPriceScale;
   netDebt?: number | null;
   assumptions: DcfAssumptions;
 }): DcfResult {
@@ -260,26 +263,15 @@ export function runDcf(input: {
   const fairPrice =
     equityValue != null && shares != null && shares > 0 ? equityValue / shares : null;
 
-  // Giá quote VN thường là nghìn đồng: fairPrice (VND) → quote
-  let fairPriceQuote: number | null = null;
-  if (fairPrice != null) {
-    if (fairPrice >= 500) {
-      fairPriceQuote = Math.round((fairPrice / 1000) * 100) / 100;
-    } else {
-      fairPriceQuote = Math.round(fairPrice * 100) / 100;
-    }
-  }
+  const quoteScale = input.priceScale ?? vnPriceScale(input.currentPrice);
+  const fairPriceQuote = vnVndPerShareToQuote(fairPrice, quoteScale);
 
   const priceForUpside =
     finite(input.currentPrice) && input.currentPrice! > 0 ? input.currentPrice! : null;
-  let upsidePct: number | null = null;
-  if (fairPriceQuote != null && priceForUpside != null) {
-    upsidePct = (fairPriceQuote / priceForUpside - 1) * 100;
-  } else if (fairPrice != null && priceForUpside != null) {
-    // Cùng đơn vị nếu giá đã là VND
-    const px = priceForUpside < 500 ? priceForUpside * 1000 : priceForUpside;
-    upsidePct = (fairPrice / px - 1) * 100;
-  }
+  const upsidePct =
+    fairPriceQuote != null && priceForUpside != null
+      ? (fairPriceQuote / priceForUpside - 1) * 100
+      : null;
 
   if (fairPrice == null) notes.push("Thiếu shares — không quy đổi fair price/cổ phiếu");
 
@@ -369,6 +361,7 @@ export function buildSensitivityMatrix(input: {
   baseFcf: number | null;
   shares: number | null;
   currentPrice: number | null;
+  priceScale?: VnPriceScale;
   netDebt?: number | null;
   baseWacc: number;
   baseGrowth: number;
@@ -410,6 +403,7 @@ export function buildSensitivityMatrix(input: {
         baseFcf: input.baseFcf,
         shares: input.shares,
         currentPrice: input.currentPrice,
+        priceScale: input.priceScale,
         netDebt: input.netDebt,
         assumptions: {
           label: "Custom",
@@ -663,6 +657,7 @@ export interface Phase3ValuationResult {
 
 export function buildPhase3Valuation(input: {
   currentPrice: number | null;
+  priceScale?: VnPriceScale;
   shares: number | null;
   baseFcf: number | null;
   netDebt?: number | null;
@@ -686,7 +681,11 @@ export function buildPhase3Valuation(input: {
   weights?: Partial<FairValueWeights>;
 }): Phase3ValuationResult {
   const notes: string[] = [];
-  // Mặc định VN: Rf 5.5%, beta 1, ERP 8% → Ke ~13.5%
+  const quoteScale = input.priceScale ?? vnPriceScale(input.currentPrice);
+  // Mặc định VN: Rf 5.5%, beta 1, ERP 8% → Ke ~13.5%.
+  if (input.riskFreeRate == null || input.beta == null || input.equityRiskPremium == null) {
+    notes.push("CAPM dùng giả định mặc định khi thiếu input: Rf 5.5%, beta 1.0, ERP 8%; đây không phải dữ liệu thị trường riêng của mã.");
+  }
   const fallbackR = input.fallbackDiscountRate ?? 0.13;
 
   const ke = calcCostOfEquity({
@@ -703,11 +702,12 @@ export function buildPhase3Valuation(input: {
   });
 
   const discountRate = wacc.value ?? ke.value ?? fallbackR;
+  if (wacc.status === "incomplete" && wacc.note) notes.push(wacc.note);
   if (wacc.value == null && ke.value == null) {
     notes.push(`Dùng discount rate mặc định ${(fallbackR * 100).toFixed(1)}% — thiếu WACC/Ke`);
   }
 
-  // FCF proxy: ưu tiên FCF; nếu thiếu dùng 70% LN ròng (ước lượng bảo thủ)
+  // Only use a statement-backed free-cash-flow figure; no earnings-to-FCF proxy.
   let baseFcf = input.baseFcf;
   if ((!finite(baseFcf) || baseFcf! <= 0) && finite(input.fcfTtm) && input.fcfTtm! > 0) {
     baseFcf = input.fcfTtm;
@@ -722,6 +722,7 @@ export function buildPhase3Valuation(input: {
       baseFcf,
       shares: input.shares,
       currentPrice: input.currentPrice,
+      priceScale: quoteScale,
       netDebt: input.netDebt,
       assumptions,
     }),
@@ -735,6 +736,7 @@ export function buildPhase3Valuation(input: {
           baseFcf,
           shares: input.shares,
           currentPrice: input.currentPrice,
+          priceScale: quoteScale,
           netDebt: input.netDebt,
           baseWacc: discountRate,
           baseGrowth: baseScenario?.assumptions.terminalGrowth ?? 0.03,
@@ -750,7 +752,7 @@ export function buildPhase3Valuation(input: {
   const fcfPerShare =
     finite(input.fcfTtm) && finite(shares) && shares! > 0 ? input.fcfTtm! / shares! : null;
 
-  const multipleFairs: MultipleFairValue[] = [
+  const multipleFairsVnd: MultipleFairValue[] = [
     fairFromMultiple({ method: "pe", fairMultiple: input.fairPe ?? null, eps: input.epsTtm }),
     fairFromMultiple({ method: "pb", fairMultiple: input.fairPb ?? null, bvps: input.bvps }),
     fairFromMultiple({
@@ -764,6 +766,15 @@ export function buildPhase3Valuation(input: {
       fcfPerShare,
     }),
   ];
+  // EPS/BVPS/FCF-per-share are sourced in full VND. Convert calculated fair
+  // prices to the market quote unit before blending with DCF/current quote.
+  const multipleFairs = multipleFairsVnd.map((method) => ({
+    ...method,
+    fairPrice:
+      method.fairPrice == null
+        ? null
+        : vnVndPerShareToQuote(method.fairPrice, quoteScale),
+  }));
 
   const fairValue = aggregateFairValue({
     currentPrice: input.currentPrice,

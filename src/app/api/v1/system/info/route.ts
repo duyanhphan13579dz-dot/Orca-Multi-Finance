@@ -74,7 +74,7 @@ export async function GET() {
         cache: cacheStats(),
       },
       features: {
-        vnstockConfigured: Boolean(process.env.VNSTOCK_API_KEY?.trim()),
+        vnstockConfigured: Boolean(process.env.VNSTOCK_API_KEY?.trim() && process.env.VNSTOCK_BASE_URL?.trim()),
         biquoteConfigured: Boolean(process.env.BIQUOTE_API_KEY?.trim()),
         simplizeConfigured: Boolean(process.env.SIMPLIZE_API_KEY?.trim()),
         llmConfigured: llmConfigured(),

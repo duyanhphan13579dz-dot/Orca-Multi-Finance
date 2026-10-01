@@ -7,6 +7,7 @@ import { buildPhase1Valuation, inputsFromHealthAnchors } from "./valuation-phase
 import { calcPFCF } from "./valuation-phase2";
 import type { PeerMetricRow } from "./valuation-phase2";
 import { cached } from "../cache";
+import { vnPriceQuoteToVnd } from "../financial/vn-units";
 
 const MAX_PEERS = 4; // latency budget: 4 peers enough for median
 
@@ -30,6 +31,8 @@ async function metricForSymbol(
       price = quotes?.quotes?.[0]?.price ?? 0;
     }
     if (!price || price <= 0) return null;
+    const priceVnd = vnPriceQuoteToVnd(price);
+    if (priceVnd == null) return null;
 
     const fin = await getFinancialsForSymbol(symbol).catch(() => null);
     const income = (fin?.financials?.income ?? []) as Record<string, unknown>[];
@@ -40,7 +43,7 @@ async function metricForSymbol(
     const a = health.anchors;
     const phase1 = buildPhase1Valuation(
       inputsFromHealthAnchors({
-        price,
+        price: priceVnd,
         anchors: {
           revenue: a.revenue,
           netProfit: a.netProfit,

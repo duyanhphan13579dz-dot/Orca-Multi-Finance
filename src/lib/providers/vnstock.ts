@@ -22,6 +22,7 @@ function headers(): Record<string, string> {
 
 function ensureConfigured() {
   if (!env.vnstockApiKey) throw new ProviderError("VNSTOCK_API_KEY not configured", VNSTOCK);
+  if (!env.vnstockBaseUrl) throw new ProviderError("VNSTOCK_BASE_URL not configured", VNSTOCK);
 }
 
 /* --------------------------------- helpers -------------------------------- */
@@ -49,9 +50,10 @@ function asArray(payload: unknown): Record<string, unknown>[] {
 
 async function vnGet<T>(paths: string[]): Promise<T> {
   ensureConfigured();
+  const baseUrl = env.vnstockBaseUrl!.replace(/\/$/, "");
   let lastErr = "unreachable";
   for (const p of paths) {
-    const res = await httpJson<T>(`${env.vnstockBaseUrl}${p}`, { provider: VNSTOCK, headers: headers(), timeoutMs: 8_000, retries: 1 });
+    const res = await httpJson<T>(`${baseUrl}${p}`, { provider: VNSTOCK, headers: headers(), timeoutMs: 8_000, retries: 1 });
     if (res.ok && res.data != null) return res.data;
     lastErr = res.error ?? "unreachable";
   }
@@ -89,7 +91,7 @@ export async function getVnIndices(): Promise<{ items: IndexQuote[]; sourceTs: n
 /* ---------------------------------- quotes --------------------------------- */
 
 export async function getVnQuotes(symbols: string[]): Promise<Quote[]> {
-  const joined = symbols.join(",");
+  const joined = encodeURIComponent(symbols.map((symbol) => symbol.toUpperCase()).join(","));
   const payload = await vnGet<unknown>([
     `/v1/market/quotes?symbols=${joined}`,
     `/v1/quotes?symbols=${joined}`,

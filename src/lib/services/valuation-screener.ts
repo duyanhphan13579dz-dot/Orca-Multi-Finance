@@ -89,8 +89,15 @@ function mergeValuation(
       ps = positive(mcap / snap.revenue, 200);
       if (ps != null) notes.push("ps@bctc");
     }
-    if (evEbitda == null && mcap != null && snap.ebitdaTtm != null && snap.ebitdaTtm > 0) {
-      const ev = mcap + (snap.totalDebt ?? 0) - (snap.cash ?? 0);
+    if (
+      evEbitda == null &&
+      mcap != null &&
+      snap.totalDebt != null &&
+      snap.cash != null &&
+      snap.ebitdaTtm != null &&
+      snap.ebitdaTtm > 0
+    ) {
+      const ev = mcap + snap.totalDebt - snap.cash;
       if (ev > 0) {
         evEbitda = positive(ev / snap.ebitdaTtm, 200);
         if (evEbitda != null) notes.push("eve@bctc");

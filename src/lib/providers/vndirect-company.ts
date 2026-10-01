@@ -1,9 +1,14 @@
 import "server-only";
-import { httpJson } from "../http";
+import { vndirectJson } from "../financial/vndirect-http";
+import { vnPriceQuoteToVnd } from "../financial/vn-units";
 
-const VND = "vndirect";
-const base = () =>
-  (process.env.VNDIRECT_BASE_URL ?? "https://api-finfo.vndirect.com.vn").replace(/\/$/, "");
+const VND = "vndirect-company";
+
+function normalizeYieldRatio(value: number | null | undefined): number | null {
+  if (value == null || !Number.isFinite(value) || value < 0) return null;
+  const ratio = value > 1 ? value / 100 : value;
+  return ratio <= 0.8 ? ratio : null;
+}
 
 export interface VndCompanyProfile {
   code: string;
@@ -59,11 +64,23 @@ export interface VndValuationRatios {
 
 export async function getVndCompanyProfile(symbol: string): Promise<VndCompanyProfile | null> {
   const sym = symbol.toUpperCase();
-  const res = await httpJson<{ data?: Record<string, unknown>[] }>(
-    `${base()}/v4/company_profiles?q=code:${sym}&size=1`,
-    { provider: VND, timeoutMs: 10_000, retries: 1 },
-  );
-  const row = res.ok ? res.data?.data?.[0] : null;
+  let payload: { data?: Record<string, unknown>[] };
+  try {
+    payload = (
+      await vndirectJson<{ data?: Record<string, unknown>[] }>(
+        `/v4/company_profiles?q=code:${encodeURIComponent(sym)}&size=1`,
+        {
+          provider: VND,
+          timeoutMs: 10_000,
+          retries: 1,
+          accept: (value) => Array.isArray(value.data) && value.data.length > 0,
+        },
+      )
+    ).data;
+  } catch {
+    return null;
+  }
+  const row = payload.data?.[0] ?? null;
   if (!row) return null;
   const n = (v: unknown) => {
     const x = Number(v);
@@ -91,11 +108,23 @@ export async function getVndCompanyProfile(symbol: string): Promise<VndCompanyPr
 
 export async function getVndShareholders(symbol: string, size = 30): Promise<VndShareholder[]> {
   const sym = symbol.toUpperCase();
-  const res = await httpJson<{ data?: Record<string, unknown>[] }>(
-    `${base()}/v4/shareholders?q=code:${sym}&size=${size}`,
-    { provider: VND, timeoutMs: 12_000, retries: 1 },
-  );
-  const rows = res.ok ? res.data?.data ?? [] : [];
+  let payload: { data?: Record<string, unknown>[] };
+  try {
+    payload = (
+      await vndirectJson<{ data?: Record<string, unknown>[] }>(
+        `/v4/shareholders?q=code:${encodeURIComponent(sym)}&size=${Math.max(1, Math.min(100, size))}`,
+        {
+          provider: VND,
+          timeoutMs: 6_000,
+          retries: 0,
+          accept: (value) => Array.isArray(value.data) && value.data.length > 0,
+        },
+      )
+    ).data;
+  } catch {
+    return [];
+  }
+  const rows = payload.data ?? [];
   return rows
     .map((r) => {
       const shares = Number(r.numberOfShares);
@@ -131,18 +160,18 @@ export async function getVndEquitySnapshot(symbol: string): Promise<VndEquitySna
   ];
   const q = `code:${sym}~ratioCode:${ratioCodes.join(",")}`;
 
-  const attempts: { url: string; label: string }[] = [
+  const attempts: { path: string; label: string }[] = [
     {
       label: "ratios-desc",
-      url: `${base()}/v4/ratios?q=${encodeURIComponent(q)}&size=30&sort=reportDate:desc`,
+      path: `/v4/ratios?q=${encodeURIComponent(q)}&size=30&sort=reportDate:desc`,
     },
     {
       label: "ratios-out",
-      url: `${base()}/v4/ratios?q=code:${sym}~ratioCode:OUTSTANDING_SHARES&size=5&sort=reportDate:desc`,
+      path: `/v4/ratios?q=${encodeURIComponent(`code:${sym}~ratioCode:OUTSTANDING_SHARES`)}&size=5&sort=reportDate:desc`,
     },
     {
       label: "ratios-mcap",
-      url: `${base()}/v4/ratios?q=code:${sym}~ratioCode:MARKETCAP&size=5&sort=reportDate:desc`,
+      path: `/v4/ratios?q=${encodeURIComponent(`code:${sym}~ratioCode:MARKETCAP`)}&size=5&sort=reportDate:desc`,
     },
   ];
 
@@ -153,12 +182,20 @@ export async function getVndEquitySnapshot(symbol: string): Promise<VndEquitySna
   let source = "vndirect-ratios";
 
   for (const att of attempts) {
+    if (att.label === "ratios-out" && (outstanding != null || total != null)) continue;
+    if (att.label === "ratios-mcap" && marketCapReported != null) continue;
     try {
-      const res = await httpJson<{
+      const res = await vndirectJson<{
         data?: { ratioCode?: string; value?: number; reportDate?: string; itemName?: string }[];
-      }>(att.url, { provider: VND, timeoutMs: 10_000, retries: 1 });
-      if (!res.ok || !res.data?.data?.length) continue;
-      for (const r of res.data.data) {
+      }>(att.path, {
+        provider: VND,
+        timeoutMs: 6_000,
+        retries: 0,
+        accept: (value) => Array.isArray(value.data) && value.data.length > 0,
+      });
+      const rows = res.data.data ?? [];
+      if (!rows.length) continue;
+      for (const r of rows) {
         const code = String(r.ratioCode ?? "").toUpperCase();
         const v = Number(r.value);
         if (!Number.isFinite(v) || v <= 0) continue;
@@ -168,12 +205,14 @@ export async function getVndEquitySnapshot(symbol: string): Promise<VndEquitySna
         }
         if (code === "TOTAL_SHARES" && total == null) total = v;
         if ((code === "MARKET_CAP" || code === "MARKETCAP") && marketCapReported == null) {
-          // VNDirect MARKETCAP luôn là VND đầy đủ (~1e11–1e15)
+          // VNDirect MARKETCAP is in full VND, unlike the usual market quote.
           marketCapReported = v;
         }
       }
       source = `vndirect-ratios:${att.label}`;
-      if (outstanding != null || total != null || marketCapReported != null) break;
+      // The combined query may contain only market cap or only shares. Continue
+      // to the focused query until we have a share count and a reported cap.
+      if ((outstanding != null || total != null) && marketCapReported != null) break;
     } catch {
       /* next */
     }
@@ -230,15 +269,24 @@ export async function getVndValuationRatios(symbol: string): Promise<VndValuatio
     "MARKETCAP",
     "MARKET_CAP",
   ];
-  const url = `${base()}/v4/ratios?q=code:${sym}~ratioCode:${codes.join(",")}&size=40&sort=reportDate:desc`;
+  const query = `code:${sym}~ratioCode:${codes.join(",")}`;
   try {
-    const res = await httpJson<{
+    const res = await vndirectJson<{
       data?: { ratioCode?: string; value?: number; reportDate?: string }[];
-    }>(url, { provider: VND, timeoutMs: 10_000, retries: 1 });
-    if (!res.ok || !res.data?.data?.length) return null;
+    }>(
+      `/v4/ratios?q=${encodeURIComponent(query)}&size=40&sort=reportDate:desc`,
+      {
+        provider: VND,
+        timeoutMs: 6_000,
+        retries: 0,
+        accept: (value) => Array.isArray(value.data) && value.data.length > 0,
+      },
+    );
+    const rows = res.data.data ?? [];
+    if (!rows.length) return null;
 
     const pick = (want: string): { v: number; d: string | null } | null => {
-      for (const r of res.data!.data!) {
+      for (const r of rows) {
         if (String(r.ratioCode ?? "").toUpperCase() !== want) continue;
         const v = Number(r.value);
         if (!Number.isFinite(v)) continue;
@@ -272,7 +320,7 @@ export async function getVndValuationRatios(symbol: string): Promise<VndValuatio
       bvps: bvps && bvps.v > 0 ? bvps.v : null,
       roe: roe ? roe.v : null,
       roa: roa ? roa.v : null,
-      dividendYield: dy && dy.v >= 0 ? dy.v : null,
+      dividendYield: normalizeYieldRatio(dy?.v),
       marketCap: mcap && mcap.v > 0 ? mcap.v : null,
       reportDate,
       source: "vndirect-ratios",
@@ -307,8 +355,5 @@ export async function getVndOutstandingShares(
  * Trả về giá VND để nhân với số CP lưu hành.
  */
 export function priceQuoteToVnd(priceQuote: number): number {
-  if (!Number.isFinite(priceQuote) || priceQuote <= 0) return 0;
-  // Giá cổ phiếu VN hiếm khi < 1.000 VND trên sàn chính; quote < 500 gần như chắc là nghìn đồng
-  if (priceQuote > 0 && priceQuote < 500) return priceQuote * 1000;
-  return priceQuote;
+  return vnPriceQuoteToVnd(priceQuote) ?? 0;
 }

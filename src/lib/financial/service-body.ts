@@ -134,12 +134,12 @@ export async function getFinancialPackageCore(symbol: string): Promise<{
     return null;
   });
 
-  const cachedRes = await cached(`fin:pkg:${sym}:router:v4:${metricProfile}`, {
+  const cachedRes = await cached(`fin:pkg:${sym}:router:v5:${metricProfile}`, {
     ttlMs: 6 * 3_600_000,
     staleMs: 90 * 24 * 3_600_000,
     producer: async () => {
       const routed = await runSourceRouter(sym, listFinancialProviders(), { limitPeriods: 12 });
-      if (!routed) return null;
+      if (!routed) throw new Error(`financial sources unavailable: ${sym}`);
 
       const basePeriods = sortPeriodsNewestFirst(routed.periods.filter((p) => p.periodType !== "ttm"));
       const ttm = buildTtmPeriod(basePeriods);

@@ -10,6 +10,7 @@ import { detectMarketState, STATE_VI, type MarketStateResult } from "../engines/
 import { analyzeScalp, analyzeScalpMulti, type ScalpSignal } from "../engines/scalp";
 import { computeFinancialHealth, type FinancialHealthResult } from "../engines/fundamental";
 import { computeValuation, type ValuationResult } from "../engines/valuation";
+import { priceQuoteToVnd } from "../providers/vndirect-company";
 import { validateBars, logQualityEvent, qualityToLabel } from "../quality";
 import { llmChat, llmConfigured, modelFor } from "../ai/gateway";
 import { collectFactNumbers, validateOutput } from "../ai/validate";
@@ -55,13 +56,49 @@ export async function buildStockAnalysis(symbol: string): Promise<{
   const { detail } = r;
 
   const marketState = detectMarketState(detail.bars);
-  const health = computeFinancialHealth({
-    income: detail.financials.income ?? [],
-    balance: detail.financials.balance ?? [],
-    cashflow: detail.financials.cashflow ?? [],
-  });
+  const baseHealth =
+    detail.financialHealth ??
+    computeFinancialHealth(
+      {
+        income: detail.financials.income ?? [],
+        balance: detail.financials.balance ?? [],
+        cashflow: detail.financials.cashflow ?? [],
+      },
+      { symbol: sym },
+    );
   const price = detail.quote?.price ?? detail.technical?.last ?? detail.bars[detail.bars.length - 1]?.close ?? 0;
-  const valuation = price > 0 ? computeValuation({ price, health }) : null;
+  const priceVnd = priceQuoteToVnd(price);
+  const shares = detail.sharesOutstanding ?? detail.equity?.sharesOutstanding ?? baseHealth.anchors.shares;
+  const health = {
+    ...baseHealth,
+    anchors: {
+      ...baseHealth.anchors,
+      shares: shares ?? null,
+      epsTtm:
+        baseHealth.anchors.epsTtm ??
+        (baseHealth.anchors.netProfit != null && shares != null && shares > 0
+          ? baseHealth.anchors.netProfit / shares
+          : null),
+    },
+  };
+  const marketCapOverride =
+    (priceVnd > 0 && shares != null && shares > 0 ? priceVnd * shares : null) ??
+    detail.equity?.marketCapReported ??
+    detail.detailedRatios?.marketCap ??
+    null;
+  const dividendYield =
+    detail.detailedRatios?.flat.find((item) => item.key === "divYield")?.value ?? null;
+  const valuation =
+    price > 0
+      ? computeValuation({
+          price,
+          priceVnd,
+          marketCapOverride,
+          dividendYield,
+          health,
+          symbol: sym,
+        })
+      : null;
   const news = await getNews({ symbol: sym, limit: 5 });
 
   const contract: StockAnalysisContract = {
