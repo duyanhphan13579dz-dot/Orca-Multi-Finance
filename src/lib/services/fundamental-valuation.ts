@@ -8,6 +8,7 @@ import { computeFinancialHealth, type FinancialHealthResult } from "../engines/f
 import { computeValuation } from "../engines/valuation";
 import { collectPeerMetrics } from "../engines/valuation-peers";
 import { fetchVndirectFinancials, periodsToLegacyRows } from "../financial/vndirect-fs";
+import { computeDetailedRatios, pickMetricsFromPeriods } from "../financial/ratio-engine";
 import {
   getVndEquitySnapshot,
   getVndValuationRatios,
@@ -149,34 +150,37 @@ export async function runFundamentalValuation(
 
   if (equity?.sharesOutstanding && equity.sharesOutstanding > 0) {
     sharesOutstanding = equity.sharesOutstanding;
-    sharesSource = equity.source;
-    sharesReportDate = equity.reportDate;
-    marketCapReported = equity.marketCapReported;
-  }
-  if (vndRatios?.marketCap && vndRatios.marketCap > 0) {
-    marketCapReported = vndRatios.marketCap;
+    sharesSource = equity.source ?? "vndirect-equity";
+    sharesReportDate = equity.reportDate ?? null;
+    marketCapReported = equity.marketCapReported ?? null;
   }
 
-  let epsTtm = health.anchors.epsTtm;
-  if ((epsTtm == null || !Number.isFinite(epsTtm)) && vndRatios?.eps != null) {
+  let epsTtm: number | null = health.anchors?.eps ?? null;
+  if (vndRatios?.eps && vndRatios.eps > 0) {
     epsTtm = vndRatios.eps;
     notes.push(`EPS từ VNDirect ratios: ${epsTtm}`);
-  }
-  if (
-    (epsTtm == null || !Number.isFinite(epsTtm)) &&
-    vndRatios?.pe &&
-    vndRatios.pe > 0 &&
-    priceQuote > 0
-  ) {
+  } else if (vndRatios?.pe && vndRatios.pe > 0 && priceQuote > 0) {
     epsTtm = priceQuote / vndRatios.pe;
     notes.push(`EPS suy từ giá quote / PE ratios`);
   }
 
-  let fcfProxy = health.anchors.fcfTtm;
-  if ((fcfProxy == null || fcfProxy <= 0) && health.anchors.netProfit != null && health.anchors.netProfit > 0) {
+  let fcfProxy: number | null = health.anchors?.fcf ?? null;
+  if (fcfProxy == null && health.anchors?.netProfit != null && health.anchors.netProfit > 0) {
     fcfProxy = health.anchors.netProfit * 0.7;
     notes.push("FCF proxy = 70% LN ròng (thiếu OCF−CAPEX dương)");
-    health = { ...health, anchors: { ...health.anchors, fcfTtm: fcfProxy } };
+  }
+
+  const marketCapFromPrice =
+    priceVnd > 0 && sharesOutstanding != null && sharesOutstanding > 0
+      ? priceVnd * sharesOutstanding
+      : null;
+  const marketCapPreferred =
+    marketCapReported && marketCapReported > 0
+      ? marketCapReported
+      : marketCapFromPrice ?? vndRatios?.marketCap ?? null;
+
+  if (marketCapPreferred) {
+    notes.push(`Vốn hóa: ${Math.round(marketCapPreferred).toLocaleString("vi-VN")} VND`);
   }
 
   health = {
@@ -184,167 +188,121 @@ export async function runFundamentalValuation(
     anchors: {
       ...health.anchors,
       shares: sharesOutstanding ?? health.anchors.shares,
-      epsTtm:
+      eps:
         epsTtm ??
         (health.anchors.netProfit != null && sharesOutstanding && sharesOutstanding > 0
           ? health.anchors.netProfit / sharesOutstanding
-          : health.anchors.epsTtm),
+          : health.anchors.eps),
+      fcf: fcfProxy ?? health.anchors.fcf,
     },
   };
 
-  const marketCapFromPrice =
-    priceVnd > 0 && sharesOutstanding != null && sharesOutstanding > 0
-      ? priceVnd * sharesOutstanding
-      : null;
-  const marketCapPreferred =
-    marketCapReported && marketCapReported > 1e9
-      ? marketCapReported
-      : marketCapFromPrice ?? marketCapReported;
-
-  if (marketCapPreferred) {
-    notes.push(`Vốn hóa: ${Math.round(marketCapPreferred).toLocaleString("vi-VN")} VND`);
+  const peerComparison = peerPack?.peers ?? null;
+  if (peerComparison?.length) {
+    notes.push(`Peers: ${peerComparison.map((p: { symbol: string }) => p.symbol).join(", ")}`);
   }
-
-  const peerComparison =
-    peerPack && peerPack.peers && peerPack.peers.length > 0
-      ? {
-          symbol,
-          sector: peerPack.sector ?? sectorOf(symbol),
-          subject: {
-            symbol,
-            pe: vndRatios?.pe ?? null,
-            pb: vndRatios?.pb ?? null,
-            ps: vndRatios?.ps ?? null,
-            evEbitda: null as number | null,
-          },
-          peers: peerPack.peers,
-        }
-      : undefined;
 
   const valuation = computeValuation({
     price: priceQuote > 0 ? priceQuote : 0,
     health,
-    symbol,
+    sector: sectorOf(symbol),
     peerComparison: peerComparison as Parameters<typeof computeValuation>[0]["peerComparison"],
-    level: wantFull ? "full" : "basic",
+    marketCapOverride: marketCapPreferred,
+    historical: null,
   });
-
-  const fv = valuation.fairValue ?? null;
-  const p4 = valuation.phase4 ?? null;
-  const p5 = valuation.phase5 ?? null;
-  const p3 = valuation.phase3 ?? null;
 
   const eng = valuation.multiples;
   const multiples = {
-    pe: saneMultiple(eng.pe) ?? saneMultiple(vndRatios?.pe ?? null) ?? null,
-    pb: saneMultiple(eng.pb, 50) ?? saneMultiple(vndRatios?.pb ?? null, 50) ?? null,
-    ps: saneMultiple(eng.ps, 100) ?? saneMultiple(vndRatios?.ps ?? null, 100) ?? null,
-    peg: eng.peg,
-    pcf: saneMultiple(eng.pcf) ?? null,
-    pfcf: saneMultiple(eng.pfcf) ?? null,
-    evEbitda: saneMultiple(eng.evEbitda) ?? null,
-    evEbit: eng.evEbit,
-    evSales: saneMultiple(eng.evSales) ?? null,
-    evFcff: saneMultiple(eng.evFcff) ?? null,
+    pe: saneMultiple(vndRatios?.pe) ?? saneMultiple(eng.pe),
+    pb: saneMultiple(vndRatios?.pb) ?? saneMultiple(eng.pb),
+    ps: saneMultiple(vndRatios?.ps) ?? saneMultiple(eng.ps),
+    peg: saneMultiple(eng.peg),
+    pcf: saneMultiple(eng.pcf),
+    pfcf: saneMultiple(eng.pfcf),
+    evEbitda: saneMultiple(vndRatios?.evEbitda) ?? saneMultiple(eng.evEbitda),
+    evEbit: saneMultiple(eng.evEbit),
+    evSales: saneMultiple(eng.evSales),
+    evFcff: saneMultiple(eng.evFcff),
     fcfYield: saneYieldPct(eng.fcfYield),
-    dividendYield:
-      saneYieldPct(eng.dividendYield) ??
-      (vndRatios?.dividendYield != null
-        ? Number((vndRatios.dividendYield * 100).toFixed(2))
-        : null),
+    dividendYield: saneYieldPct(vndRatios?.dividendYield) ?? saneYieldPct(eng.dividendYield),
     earningsYield: saneYieldPct(eng.earningsYield),
   };
 
-  if (vndRatios?.pe || vndRatios?.pb || vndRatios?.ps) {
-    notes.push(
-      `Ratios VNDirect: PE ${vndRatios.pe?.toFixed(1) ?? "—"} · PB ${vndRatios.pb?.toFixed(2) ?? "—"} · PS ${vndRatios.ps?.toFixed(2) ?? "—"}`,
-    );
-  }
-
-  let blended = p5?.finalFairValue ?? fv?.blendedFairValue ?? null;
+  const p3 = valuation.phase3;
+  const p4 = valuation.phase4;
+  const p5 = valuation.phase5;
+  const blended = p5?.confidenceBands?.base ?? valuation.fairValue?.blended ?? null;
   if (blended == null && priceQuote > 0) {
-    const estimates: number[] = [];
-    if (vndRatios?.eps && vndRatios.eps > 0 && multiples.pe && multiples.pe > 0) {
-      estimates.push(vndRatios.eps * multiples.pe);
-    }
-    if (vndRatios?.bvps && vndRatios.bvps > 0 && multiples.pb && multiples.pb > 0) {
-      estimates.push(vndRatios.bvps * multiples.pb);
-    }
-    if (estimates.length) {
-      blended = estimates.reduce((a, b) => a + b, 0) / estimates.length;
-      notes.push(`FV ước lượng từ EPS/BVPS × multiple (ratios)`);
-    }
+    notes.push("Chưa đủ dữ liệu DCF/fair value đầy đủ — dựa multiples thị trường.");
   }
 
   const upside =
-    p5?.score?.upsidePct ??
-    fv?.upsidePct ??
-    (blended != null && priceQuote > 0
-      ? Number((((blended / priceQuote) - 1) * 100).toFixed(1))
+    blended != null && priceQuote > 0
+      ? {
+          fairValue: blended,
+          price: priceQuote,
+          upsidePct: ((blended - priceQuote) / priceQuote) * 100,
+        }
+      : null;
+
+  const enterpriseValue =
+    valuation.enterpriseValue ??
+    (marketCapPreferred != null
+      ? marketCapPreferred + (health.anchors?.netDebt ?? 0)
       : null);
 
-  const resolvedMarketCap =
-    marketCapPreferred ?? valuation.marketCap ?? marketCapFromPrice;
-
-  let enterpriseValue = valuation.enterpriseValue;
-  if (
-    resolvedMarketCap &&
-    enterpriseValue != null &&
-    resolvedMarketCap > 1e12 &&
-    enterpriseValue < resolvedMarketCap / 50
-  ) {
-    enterpriseValue = resolvedMarketCap;
-    notes.push("EV căn theo MARKETCAP (điều chỉnh lệch đơn vị).");
-  }
-
-  const dcfScenarios = (p3?.dcf ?? valuation.dcf ?? []).map((d) => {
-    const row = d as Record<string, unknown>;
-    if (row.assumptions) {
-      return {
-        label: row.label,
-        status: row.status,
-        baseFcf: row.baseFcf,
-        fairPrice: row.fairPrice,
-        fairPriceQuote: row.fairPriceQuote,
-        upsidePct: row.upsidePct,
-        equityValue: row.equityValue,
-        terminalValue: row.terminalValue,
-        pvTerminal: row.pvTerminal,
-        pvExplicit: row.pvExplicit,
-        terminalShareOfValue: row.terminalShareOfValue,
-        assumptions: row.assumptions,
-        explicitYears: (row.explicitYears as unknown[]) ?? [],
-        notes: (row.notes as string[]) ?? [],
-      };
-    }
+  const dcfScenarios = (valuation.dcf ?? []).map((row) => {
     return {
       label: row.label,
-      status: "ok",
-      fairPriceQuote: (row.intrinsicPerShare as number) ?? null,
-      fairPrice:
-        row.intrinsicPerShare != null ? (row.intrinsicPerShare as number) * 1000 : null,
-      upsidePct: (row.marginOfSafetyPct as number) ?? null,
-      assumptions: {
-        forecastYears: 5,
-        highGrowthYears: 3,
-        growthY1toN: row.growthY1to5,
-        terminalGrowth: row.terminalGrowth,
-        discountRate: row.discountRate,
-        terminalMethod: "gordon",
-        cashFlowType: "fcf_proxy",
-      },
+      growthY1to5: row.growthY1to5,
+      terminalGrowth: row.terminalGrowth,
+      discountRate: row.discountRate,
+      intrinsicPerShare: row.intrinsicPerShare,
+      marginOfSafetyPct: row.marginOfSafetyPct,
+      terminalMethod: "gordon",
+      cashFlowType: "fcf_proxy",
       explicitYears: [],
       notes: [],
     };
   });
 
+  // Detailed ratio suite (liquidity · leverage · profitability · efficiency · valuation · DuPont)
+  let detailedRatios = null as ReturnType<typeof computeDetailedRatios> | null;
+  try {
+    const picked = pickMetricsFromPeriods(fs?.periods ?? []);
+    detailedRatios = computeDetailedRatios({
+      metrics: picked.metrics,
+      prior: picked.prior,
+      priceQuote: priceQuote > 0 ? priceQuote : null,
+      sharesOutstanding,
+      marketMultiples: vndRatios
+        ? {
+            pe: vndRatios.pe,
+            pb: vndRatios.pb,
+            ps: vndRatios.ps,
+            evEbitda: vndRatios.evEbitda,
+            dividendYield: vndRatios.dividendYield,
+            marketCap: vndRatios.marketCap ?? marketCapPreferred ?? null,
+          }
+        : { marketCap: marketCapPreferred ?? null },
+      periodLabel: picked.label,
+    });
+    if (detailedRatios.quality.filled > 0) {
+      notes.push(
+        `Chỉ số TC chi tiết: ${detailedRatios.quality.filled}/${detailedRatios.quality.total} · score ${detailedRatios.quality.score}/100`,
+      );
+    }
+  } catch {
+    /* non-fatal */
+  }
+
   const allNotes = [...notes, ...(valuation.notes ?? [])].slice(0, 40);
+
+  const resolvedMarketCap =
+    marketCapPreferred ?? valuation.marketCap ?? marketCapFromPrice;
 
   const data: Record<string, unknown> = {
     symbol,
-    currentPrice: priceQuote > 0 ? priceQuote : valuation.price,
-    priceVnd: priceVnd > 0 ? priceVnd : null,
-    priceSource,
     sharesOutstanding,
     sharesSource,
     sharesReportDate,
@@ -363,6 +321,7 @@ export async function runFundamentalValuation(
     },
     enterpriseValue,
     multiples,
+    detailedRatios,
     vndirectRatios: vndRatios
       ? {
           pe: vndRatios.pe,
@@ -405,7 +364,7 @@ export async function runFundamentalValuation(
       industry: health.industry,
     },
     notes: allNotes,
-    pipeline: "fundamental-valuation-direct-v3",
+    pipeline: "fundamental-valuation-direct-v4-ratios",
     calculatedAt: new Date().toISOString(),
     valuationEngineVersion: valuation.valuationEngineVersion,
   };
