@@ -70,9 +70,11 @@ export async function GET(req: Request) {
         scanned: r.scanned,
         hit: r.hit,
         sourcesUsed: r.sourcesUsed,
+        quoteSources: r.quoteSources ?? [],
+        conflicts: r.conflicts ?? 0,
       },
       {
-        source: r.sourcesUsed.join("+") || "stock-metrics",
+        source: (r.quoteSources?.length ? r.quoteSources : r.sourcesUsed).join("+") || "stock-metrics",
         freshness: "FRESH",
         ageMs: 0,
       },
