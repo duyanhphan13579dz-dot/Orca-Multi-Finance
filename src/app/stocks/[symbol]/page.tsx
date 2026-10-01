@@ -8,6 +8,7 @@ import { Loading, Panel, Unavailable } from "@/components/ui";
 import { OrcaChart } from "@/components/orca-chart";
 import { StockNewsSentiment } from "@/components/stocks/news-sentiment-chip";
 import { OrderBookPanel } from "@/components/stocks/order-book-panel";
+import { StockInsightRail } from "@/components/stocks/stock-insight-rail";
 
 const TechnicalPanel = dynamic(
   () => import("@/components/technical-panel").then((m) => m.TechnicalPanel),
@@ -109,7 +110,17 @@ export default function StockOverviewPage({ params }: { params: Promise<{ symbol
         <StockStructurePanel symbol={data.symbol} />
       </div>
 
-      {data.technical ? <TechnicalPanel tech={data.technical} patterns={data.patterns} /> : null}
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(280px,360px)] xl:items-start">
+        <div className="min-w-0">
+          {data.technical ? <TechnicalPanel tech={data.technical} patterns={data.patterns} /> : null}
+        </div>
+        <StockInsightRail
+          symbol={data.symbol}
+          quote={q}
+          technical={data.technical}
+          foreignFlow={data.foreignFlow as Record<string, unknown> | null | undefined}
+        />
+      </div>
 
       <ValuationPanel symbol={data.symbol} compact showAnalyst={false} />
 
