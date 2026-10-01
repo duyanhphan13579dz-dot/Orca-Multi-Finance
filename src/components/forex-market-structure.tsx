@@ -69,7 +69,7 @@ export function MarketStructurePanel({
           <KeyLevel label="Trend" value={structureNotes.trend} tone={structureNotes.trendTone} />
           <KeyLevel label="BOS / CHoCH" value={structureNotes.bos} tone={structureNotes.bosTone} />
           <KeyLevel label="Liquidity" value={structureNotes.liquidity} tone="neutral" />
-          <KeyLevel label="Regime" value={tech?.trend ?? "—"} tone="neutral" />
+          <KeyLevel label="Regime" value={tech?.trend?.label ?? "—"} tone="neutral" />
         </div>
 
         {tab === "ms" && (
@@ -215,16 +215,18 @@ function buildStructureNotes(series: OhlcvBar[], tech: TechnicalSnapshot | null)
         ? "DISCOUNT"
         : "EQUILIBRIUM";
 
-  const trendRaw = tech?.trend ?? "";
-  const bull = /up|bull/i.test(trendRaw);
-  const bear = /down|bear/i.test(trendRaw);
-  const trend = bull ? "Uptrend" : bear ? "Downtrend" : trendRaw || "Range / Neutral";
+  const trendLabel = tech?.trend?.label ?? "";
+  const bull = /up|bull/i.test(trendLabel);
+  const bear = /down|bear/i.test(trendLabel);
+  const trend = bull ? "Uptrend" : bear ? "Downtrend" : trendLabel || "Range / Neutral";
   const trendTone = bull ? ("up" as const) : bear ? ("down" as const) : ("neutral" as const);
 
   let bos = "No clear BOS";
   let bosTone: "up" | "down" | "neutral" = "neutral";
-  const prevHigh = Math.max(...highs.slice(-12, -1));
-  const prevLow = Math.min(...lows.slice(-12, -1));
+  const prevSliceH = highs.slice(-12, -1);
+  const prevSliceL = lows.slice(-12, -1);
+  const prevHigh = prevSliceH.length ? Math.max(...prevSliceH) : close;
+  const prevLow = prevSliceL.length ? Math.min(...prevSliceL) : close;
   if (close > prevHigh) {
     bos = "BOS ▲ Bullish";
     bosTone = "up";
@@ -259,7 +261,7 @@ function buildStructureNotes(series: OhlcvBar[], tech: TechnicalSnapshot | null)
     `${trend}. Giá đang ở vùng ${pd}.`,
     bos !== "No clear BOS" ? bos + "." : null,
     rvol > 1.4 ? `RVOL ${rvol.toFixed(2)}x — volume bất thường.` : null,
-    tech?.rsi != null ? `RSI ${tech.rsi.toFixed(0)}.` : null,
+    tech?.rsi14 != null ? `RSI ${tech.rsi14.toFixed(0)}.` : null,
   ]
     .filter(Boolean)
     .join(" ");
