@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, type ReactNode } from "react";
-import { useApi } from "@/lib/hooks";
+import { prefetchApi, useApi } from "@/lib/hooks";
 import type { VnStockDetail } from "@/lib/services/stocks";
 import { AddToWatchlist } from "@/components/watchlist-button";
 import { StockTabs } from "@/components/stocks/stock-tabs";
@@ -37,12 +37,25 @@ export default function StockSymbolLayout({
       `/api/v1/stocks/${symbol}/style-fit`,
     ];
     const run = () => {
+      const priority = [
+        `/api/v1/stocks/${symbol}/style-fit`,
+        `/api/v1/stocks/${symbol}/structure`,
+        `/api/v1/stocks/${symbol}/tech-reco`,
+      ];
+      for (const url of priority) prefetchApi(url);
       for (const url of paths) {
-        void fetch(url, { headers: { Accept: "application/json" } }).catch(() => undefined);
+        if (priority.includes(url)) continue;
+        prefetchApi(url);
       }
     };
-    if (typeof requestIdleCallback !== "undefined") requestIdleCallback(run, { timeout: 2_500 });
-    else setTimeout(run, 400);
+    if (typeof requestIdleCallback !== "undefined") requestIdleCallback(run, { timeout: 800 });
+    else setTimeout(run, 120);
+    for (const url of [
+      `/api/v1/stocks/${symbol}/style-fit`,
+      `/api/v1/stocks/${symbol}/structure`,
+    ]) {
+      prefetchApi(url);
+    }
   }, [symbol]);
 
   if (!symbol || (isLoading && !res)) {
@@ -90,7 +103,6 @@ export default function StockSymbolLayout({
                     {fmtNum(q.change, 2)}
                   </span>
                 )}
-                {/* Band chips always by price — avoids duplicating large stat cells */}
                 {(q.referencePrice != null ||
                   q.ceilingPrice != null ||
                   q.floorPrice != null) && (
