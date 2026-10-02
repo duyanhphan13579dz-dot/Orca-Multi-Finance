@@ -1,8 +1,20 @@
 "use client";
 
+import { useState } from "react";
 import type { CandlePattern, TechnicalSnapshot } from "@/lib/types";
 import { Badge, fmtNum, Panel, priceDigits } from "@/components/ui";
-import { Crosshair, Gauge, LineChart, Shield, TrendingDown, TrendingUp, Waves, Compass, Activity } from "lucide-react";
+import {
+  Crosshair,
+  Gauge,
+  LineChart,
+  Shield,
+  TrendingDown,
+  TrendingUp,
+  Waves,
+  Compass,
+  Activity,
+  ChevronDown,
+} from "lucide-react";
 
 const TREND_LABEL: Record<string, { vi: string; tone: "up" | "down" | "neutral" }> = {
   "strong-up": { vi: "Tăng mạnh", tone: "up" },
@@ -11,6 +23,8 @@ const TREND_LABEL: Record<string, { vi: string; tone: "up" | "down" | "neutral" 
   down: { vi: "Giảm", tone: "down" },
   "strong-down": { vi: "Giảm mạnh", tone: "down" },
 };
+
+const SIGNAL_PREVIEW = 3;
 
 export function TechnicalPanel({
   tech,
@@ -23,6 +37,8 @@ export function TechnicalPanel({
   ticker?: { high?: number | null; low?: number | null; price?: number | null } | null;
   variant?: "stacked" | "compact";
 }) {
+  const [signalsOpen, setSignalsOpen] = useState(false);
+
   if (!tech) {
     return (
       <Panel title="Phân tích kỹ thuật" className="h-full">
@@ -33,6 +49,9 @@ export function TechnicalPanel({
   const t = TREND_LABEL[tech.trend.label] ?? { vi: tech.trend.label, tone: "neutral" as const };
   const digits = priceDigits(tech.last);
   const sig = tech.tradeSignal;
+  const allSignals = tech.signals ?? [];
+  const visibleSignals = signalsOpen ? allSignals : allSignals.slice(0, SIGNAL_PREVIEW);
+  const hiddenCount = Math.max(0, allSignals.length - SIGNAL_PREVIEW);
 
   // Compute Standard Floor Pivot Points
   const high = ticker?.high ?? tech.last * 1.015;
@@ -55,7 +74,11 @@ export function TechnicalPanel({
         }
         right={
           <Badge tone={t.tone}>
-            {t.tone === "up" ? <TrendingUp className="size-3" /> : t.tone === "down" ? <TrendingDown className="size-3" /> : null}
+            {t.tone === "up" ? (
+              <TrendingUp className="size-3" />
+            ) : t.tone === "down" ? (
+              <TrendingDown className="size-3" />
+            ) : null}
             {t.vi} ({tech.trend.score >= 0 ? "+" : ""}
             {tech.trend.score.toFixed(1)})
           </Badge>
@@ -94,8 +117,24 @@ export function TechnicalPanel({
               <Metric
                 label="RSI(14)"
                 value={fmtNum(tech.rsi14, 1)}
-                hint={tech.rsi14 != null ? (tech.rsi14 >= 70 ? "quá mua" : tech.rsi14 <= 30 ? "quá bán" : "cân bằng") : undefined}
-                accent={tech.rsi14 != null ? (tech.rsi14 >= 70 ? "down" : tech.rsi14 <= 30 ? "up" : null) : null}
+                hint={
+                  tech.rsi14 != null
+                    ? tech.rsi14 >= 70
+                      ? "quá mua"
+                      : tech.rsi14 <= 30
+                        ? "quá bán"
+                        : "cân bằng"
+                    : undefined
+                }
+                accent={
+                  tech.rsi14 != null
+                    ? tech.rsi14 >= 70
+                      ? "down"
+                      : tech.rsi14 <= 30
+                        ? "up"
+                        : null
+                    : null
+                }
               />
               <Metric
                 label="MACD hist"
@@ -106,7 +145,9 @@ export function TechnicalPanel({
               <Metric label="ATR(14)" value={fmtNum(tech.atr14, digits)} hint="biên dao động" />
               <Metric
                 label="Volatility 30d"
-                value={tech.volatility30d != null ? `${(tech.volatility30d * 100).toFixed(1)}%` : "—"}
+                value={
+                  tech.volatility30d != null ? `${(tech.volatility30d * 100).toFixed(1)}%` : "—"
+                }
                 hint="annualized"
               />
             </div>
@@ -116,106 +157,124 @@ export function TechnicalPanel({
           <div>
             <SectionLabel>Hệ thống Đường Trung Bình (Moving Averages)</SectionLabel>
             <div className="grid grid-cols-2 gap-1.5 md:grid-cols-4">
-              <Metric label="SMA20" value={fmtNum(tech.sma.sma20, digits)} above={cmp(tech.last, tech.sma.sma20)} />
-              <Metric label="SMA50" value={fmtNum(tech.sma.sma50, digits)} above={cmp(tech.last, tech.sma.sma50)} />
-              <Metric label="SMA200" value={fmtNum(tech.sma.sma200, digits)} above={cmp(tech.last, tech.sma.sma200)} />
-              <Metric label="Max drawdown (1Y)" value={tech.maxDrawdown != null ? `${(tech.maxDrawdown * 100).toFixed(1)}%` : "—"} />
+              <Metric
+                label="SMA20"
+                value={fmtNum(tech.sma.sma20, digits)}
+                above={cmp(tech.last, tech.sma.sma20)}
+              />
+              <Metric
+                label="SMA50"
+                value={fmtNum(tech.sma.sma50, digits)}
+                above={cmp(tech.last, tech.sma.sma50)}
+              />
+              <Metric
+                label="SMA200"
+                value={fmtNum(tech.sma.sma200, digits)}
+                above={cmp(tech.last, tech.sma.sma200)}
+              />
+              <Metric
+                label="MAX DRAWDOWN (1Y)"
+                value={pct(tech.maxDrawdown1y)}
+                signed
+                accent={
+                  tech.maxDrawdown1y != null
+                    ? tech.maxDrawdown1y < -0.2
+                      ? "down"
+                      : null
+                    : null
+                }
+              />
             </div>
           </div>
 
-          {/* Returns Performance Grid */}
+          {/* Performance */}
           <div>
-            <SectionLabel>Hiệu suất Lợi nhuận (Performance)</SectionLabel>
+            <SectionLabel>Hiệu suất lợi nhuận (Performance)</SectionLabel>
             <div className="grid grid-cols-2 gap-1.5 md:grid-cols-4">
-              <Metric label="7 ngày" value={pct(tech.returns.d7)} signed />
-              <Metric label="30 ngày" value={pct(tech.returns.d30)} signed />
-              <Metric label="YTD" value={pct(tech.returns.ytd)} signed />
-              <Metric label="1 năm" value={pct(tech.returns.y1)} signed />
+              <Metric label="7 NGÀY" value={pct(tech.perf?.d7)} signed />
+              <Metric label="30 NGÀY" value={pct(tech.perf?.d30)} signed />
+              <Metric label="YTD" value={pct(tech.perf?.ytd)} signed />
+              <Metric label="1 NĂM" value={pct(tech.perf?.y1)} signed />
             </div>
           </div>
 
           {/* Support / Resistance */}
-          <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
-            <div className="panel-inset p-2">
-              <div className="mb-1 flex items-center justify-between text-[10px] font-medium text-text-secondary">
-                <span className="flex items-center gap-1.5">
-                  <Shield className="size-3.5 text-positive" /> Vùng Hỗ trợ (Support)
-                </span>
-                <span className="text-[9px] text-text-muted">Swing Lows</span>
-              </div>
-              <div className="num flex flex-wrap gap-1 text-[11px]">
-                {tech.support.length ? (
-                  tech.support.map((s) => (
-                    <span key={s} className="rounded bg-positive/10 px-1.5 py-0.5 text-positive font-medium">
-                      {fmtNum(s, digits)}
-                    </span>
-                  ))
-                ) : (
-                  <span className="text-text-muted">—</span>
-                )}
-              </div>
+          <div>
+            <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2">
+              <span className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-text-muted">
+                <Shield className="size-3 text-positive" /> Vùng Hỗ trợ (Support)
+              </span>
+              <span className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-text-muted">
+                <Crosshair className="size-3 text-negative" /> Vùng Kháng cự (Resistance)
+              </span>
             </div>
-            <div className="panel-inset p-2">
-              <div className="mb-1 flex items-center justify-between text-[10px] font-medium text-text-secondary">
-                <span className="flex items-center gap-1.5">
-                  <Crosshair className="size-3.5 text-negative" /> Vùng Kháng cự (Resistance)
+            <div className="mb-2 flex flex-wrap gap-1.5">
+              {(tech.support ?? []).slice(0, 4).map((s) => (
+                <span
+                  key={`s-${s}`}
+                  className="rounded-md bg-positive/15 px-2 py-0.5 text-[11px] font-semibold tabular-nums text-positive"
+                >
+                  {fmtNum(s, digits)}
                 </span>
-                <span className="text-[9px] text-text-muted">Swing Highs</span>
-              </div>
-              <div className="num flex flex-wrap gap-1 text-[11px]">
-                {tech.resistance.length ? (
-                  tech.resistance.map((s) => (
-                    <span key={s} className="rounded bg-negative/10 px-1.5 py-0.5 text-negative font-medium">
-                      {fmtNum(s, digits)}
-                    </span>
-                  ))
-                ) : (
-                  <span className="text-text-muted">—</span>
-                )}
-              </div>
+              ))}
+              {(tech.resistance ?? []).slice(0, 4).map((s) => (
+                <span
+                  key={`r-${s}`}
+                  className="rounded-md bg-negative/15 px-2 py-0.5 text-[11px] font-semibold tabular-nums text-negative"
+                >
+                  {fmtNum(s, digits)}
+                </span>
+              ))}
             </div>
-          </div>
 
-          {/* Institutional Pivot Points (High-Density Floor Pivots) */}
-          <div className="panel-inset p-2">
-            <div className="mb-1 flex items-center justify-between text-[10px] font-medium text-text-secondary">
-              <span className="flex items-center gap-1.5">
-                <Compass className="size-3.5 text-accent-primary" /> Điểm xoay Pivot Points (Classic Floor)
-              </span>
-              <span className="num text-[9.5px] text-text-muted">
-                Pivot: <strong className="text-text-primary">{fmtNum(pp, digits)}</strong>
-              </span>
-            </div>
-            <div className="grid grid-cols-4 gap-1 text-[10px] text-center">
-              <div className="rounded bg-positive/5 p-1 border border-positive/20">
-                <span className="text-text-muted block text-[8.5px]">S2 (Hỗ trợ 2)</span>
+            <SectionLabel>Điểm xoay Pivot Points (Classic Floor)</SectionLabel>
+            <div className="grid grid-cols-2 gap-1 text-center text-[11px] md:grid-cols-4">
+              <div className="rounded border border-positive/20 bg-positive/5 p-1">
+                <span className="block text-[8.5px] text-text-muted">S2 (Hỗ trợ 2)</span>
                 <strong className="num text-positive">{fmtNum(s2, digits)}</strong>
               </div>
-              <div className="rounded bg-positive/5 p-1 border border-positive/20">
-                <span className="text-text-muted block text-[8.5px]">S1 (Hỗ trợ 1)</span>
+              <div className="rounded border border-positive/20 bg-positive/5 p-1">
+                <span className="block text-[8.5px] text-text-muted">S1 (Hỗ trợ 1)</span>
                 <strong className="num text-positive">{fmtNum(s1, digits)}</strong>
               </div>
-              <div className="rounded bg-negative/5 p-1 border border-negative/20">
-                <span className="text-text-muted block text-[8.5px]">R1 (Kháng cự 1)</span>
+              <div className="rounded border border-negative/20 bg-negative/5 p-1">
+                <span className="block text-[8.5px] text-text-muted">R1 (Kháng cự 1)</span>
                 <strong className="num text-negative">{fmtNum(r1, digits)}</strong>
               </div>
-              <div className="rounded bg-negative/5 p-1 border border-negative/20">
-                <span className="text-text-muted block text-[8.5px]">R2 (Kháng cự 2)</span>
+              <div className="rounded border border-negative/20 bg-negative/5 p-1">
+                <span className="block text-[8.5px] text-text-muted">R2 (Kháng cự 2)</span>
                 <strong className="num text-negative">{fmtNum(r2, digits)}</strong>
               </div>
             </div>
+            <p className="mt-1 text-right text-[9px] text-text-muted">
+              Pivot: {fmtNum(pp, digits)}
+            </p>
           </div>
         </div>
 
-        {variant === "stacked" && tech.signals?.length > 0 && (
-          <ul className="mt-3 space-y-1 border-t border-border-subtle/60 pt-2.5">
-            {tech.signals.map((s, i) => (
-              <li key={i} className="flex items-start gap-2 text-[11.5px] text-text-secondary">
-                <LineChart className="mt-0.5 size-3.5 shrink-0 text-accent-primary" />
-                {s}
-              </li>
-            ))}
-          </ul>
+        {variant === "stacked" && allSignals.length > 0 && (
+          <div className="mt-3 border-t border-border-subtle/60 pt-2.5">
+            <ul className="space-y-1">
+              {visibleSignals.map((s, i) => (
+                <li key={i} className="flex items-start gap-2 text-[11.5px] text-text-secondary">
+                  <LineChart className="mt-0.5 size-3.5 shrink-0 text-accent-primary" />
+                  {s}
+                </li>
+              ))}
+            </ul>
+            {hiddenCount > 0 && (
+              <button
+                type="button"
+                onClick={() => setSignalsOpen((v) => !v)}
+                className="mt-2 inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium text-accent-primary hover:bg-surface-elevated"
+              >
+                <ChevronDown
+                  className={`size-3.5 transition-transform ${signalsOpen ? "rotate-180" : ""}`}
+                />
+                {signalsOpen ? "Thu gọn" : `Xem thêm ${hiddenCount} tín hiệu`}
+              </button>
+            )}
+          </div>
         )}
       </Panel>
 
@@ -230,7 +289,8 @@ export function TechnicalPanel({
           >
             {!patterns.length ? (
               <p className="text-[12px] text-text-muted">
-                Không có mô hình nến đáng chú ý trong 5 kỳ gần nhất — thị trường đang vận động theo cấu trúc thông thường.
+                Không có mô hình nến đáng chú ý trong 5 kỳ gần nhất — thị trường đang vận động theo
+                cấu trúc thông thường.
               </p>
             ) : (
               <div className="space-y-2">
@@ -239,14 +299,29 @@ export function TechnicalPanel({
                     <div className="mb-1 flex flex-wrap items-center gap-2">
                       <span className="text-[12px] font-semibold text-text-primary">{p.nameVi}</span>
                       <span className="text-[10px] text-text-muted">({p.name})</span>
-                      <Badge tone={p.type === "bullish" ? "up" : p.type === "bearish" ? "down" : "neutral"}>
-                        {p.type === "bullish" ? "thiên tăng" : p.type === "bearish" ? "thiên giảm" : "trung tính"}
+                      <Badge
+                        tone={
+                          p.type === "bullish" ? "up" : p.type === "bearish" ? "down" : "neutral"
+                        }
+                      >
+                        {p.type === "bullish"
+                          ? "thiên tăng"
+                          : p.type === "bearish"
+                            ? "thiên giảm"
+                            : "trung tính"}
                       </Badge>
                       <Badge tone="warn">
-                        độ tin cậy {p.reliability === "high" ? "cao" : p.reliability === "medium" ? "trung bình" : "thấp"}
+                        độ tin cậy{" "}
+                        {p.reliability === "high"
+                          ? "cao"
+                          : p.reliability === "medium"
+                            ? "trung bình"
+                            : "thấp"}
                       </Badge>
                     </div>
-                    <p className="text-[11.5px] leading-relaxed text-text-secondary">{p.description}</p>
+                    <p className="text-[11.5px] leading-relaxed text-text-secondary">
+                      {p.description}
+                    </p>
                   </div>
                 ))}
               </div>
@@ -265,7 +340,11 @@ export function TechnicalPanel({
                 {tech.divergences.map((d, i) => {
                   const isBull = d.kind.includes("bullish");
                   const osc =
-                    d.oscillator === "rsi" ? "RSI" : d.oscillator === "macd_hist" ? "MACD hist" : d.oscillator;
+                    d.oscillator === "rsi"
+                      ? "RSI"
+                      : d.oscillator === "macd_hist"
+                        ? "MACD hist"
+                        : d.oscillator;
                   const kindLabel =
                     d.kind === "regular_bullish"
                       ? "Regular ↑ đảo chiều lên"
@@ -286,10 +365,9 @@ export function TechnicalPanel({
                           conf {(d.confidence * 100).toFixed(0)}% · {d.barsBetween} nến
                         </span>
                       </div>
-                      <p className="text-[11px] text-text-secondary">
-                        Pivot giá {fmtNum(d.pricePivots[0].price, digits)} → {fmtNum(d.pricePivots[1].price, digits)} · osc{" "}
-                        {d.oscPivots[0].value.toFixed(2)} → {d.oscPivots[1].value.toFixed(2)}
-                      </p>
+                      {d.notes ? (
+                        <p className="text-[11px] text-text-secondary">{d.notes}</p>
+                      ) : null}
                     </div>
                   );
                 })}
@@ -302,145 +380,11 @@ export function TechnicalPanel({
   );
 }
 
-export function PatternsAndDivergencePanel({
-  tech,
-  patterns,
-}: {
-  tech: TechnicalSnapshot | null;
-  patterns: CandlePattern[];
-}) {
-  const digits = tech ? priceDigits(tech.last) : 2;
-  const divergences = tech?.divergences ?? [];
-  const signals = tech?.signals ?? [];
-
-  return (
-    <Panel
-      className="h-full flex flex-col justify-between"
-      title={
-        <span className="flex items-center gap-2">
-          <Waves className="size-4 text-accent-primary" /> Mẫu hình nến & Phân kỳ kỹ thuật
-        </span>
-      }
-      right={
-        <div className="flex items-center gap-1.5">
-          <Badge tone={patterns.length ? "up" : "neutral"}>{patterns.length} mô hình</Badge>
-          {divergences.length > 0 && <Badge tone="warn">{divergences.length} phân kỳ</Badge>}
-        </div>
-      }
-    >
-      <div className="flex-1 space-y-2.5 overflow-y-auto max-h-[440px] pr-1">
-        {/* Candlestick Patterns */}
-        <div>
-          <SectionLabel>Mô hình nến phát hiện ({patterns.length})</SectionLabel>
-          {!patterns.length ? (
-            <div className="panel-inset p-2 text-[11px] text-text-muted">
-              Không có mô hình nến đảo chiều bất thường trong 5 nến gần nhất — cấu trúc vận động ổn định.
-            </div>
-          ) : (
-            <div className="space-y-1.5">
-              {patterns.map((p) => (
-                <div key={p.name} className="panel-inset p-2">
-                  <div className="flex flex-wrap items-center justify-between gap-1.5">
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-[11.5px] font-semibold text-text-primary">{p.nameVi}</span>
-                      <span className="text-[10px] text-text-muted">({p.name})</span>
-                    </div>
-                    <div className="flex items-center gap-1">
-                      <Badge tone={p.type === "bullish" ? "up" : p.type === "bearish" ? "down" : "neutral"}>
-                        {p.type === "bullish" ? "Thiên tăng" : p.type === "bearish" ? "Thiên giảm" : "Trung tính"}
-                      </Badge>
-                      <Badge tone="warn">Độ tin cậy: {p.reliability}</Badge>
-                    </div>
-                  </div>
-                  {p.description && (
-                    <p className="mt-1 line-clamp-2 text-[10.5px] text-text-secondary leading-snug">
-                      {p.description}
-                    </p>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* Divergences */}
-        {divergences.length > 0 && (
-          <div>
-            <SectionLabel>Phân kỳ Kỹ thuật (Divergence)</SectionLabel>
-            <div className="space-y-1.5">
-              {divergences.map((d, i) => {
-                const isBull = d.kind.includes("bullish");
-                const osc =
-                  d.oscillator === "rsi" ? "RSI" : d.oscillator === "macd_hist" ? "MACD hist" : d.oscillator;
-                const kindLabel =
-                  d.kind === "regular_bullish"
-                    ? "Regular ↑ Đảo chiều tăng"
-                    : d.kind === "regular_bearish"
-                      ? "Regular ↓ Đảo chiều giảm"
-                      : d.kind === "hidden_bullish"
-                        ? "Hidden ↑ Tiếp diễn tăng"
-                        : "Hidden ↓ Tiếp diễn giảm";
-                return (
-                  <div key={`${d.kind}-${d.oscillator}-${i}`} className="panel-inset p-2">
-                    <div className="flex flex-wrap items-center justify-between gap-1.5">
-                      <div className="flex items-center gap-1">
-                        <Badge tone={isBull ? "up" : "down"}>{kindLabel}</Badge>
-                        <Badge tone="neutral">{osc}</Badge>
-                      </div>
-                      <span className="text-[9.5px] text-text-muted">
-                        conf {(d.confidence * 100).toFixed(0)}% · {d.barsBetween} nến
-                      </span>
-                    </div>
-                    <p className="mt-1 text-[10.5px] text-text-secondary">
-                      Pivot {fmtNum(d.pricePivots[0].price, digits)} → {fmtNum(d.pricePivots[1].price, digits)} · {osc}{" "}
-                      {d.oscPivots[0].value.toFixed(2)} → {d.oscPivots[1].value.toFixed(2)}
-                    </p>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
-
-        {/* Price Action & Structural Signals */}
-        <div>
-          <SectionLabel>Cấu trúc Xu hướng & Tín hiệu Price Action</SectionLabel>
-          {signals.length > 0 ? (
-            <ul className="space-y-1">
-              {signals.map((s, i) => (
-                <li key={i} className="flex items-start gap-1.5 text-[11px] text-text-secondary panel-inset p-1.5">
-                  <LineChart className="mt-0.5 size-3 shrink-0 text-accent-primary" />
-                  <span>{s}</span>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <div className="panel-inset p-2 text-[10.5px] text-text-muted">
-              Đang phân tích cấu trúc sóng và dao động giá phiên hiện tại.
-            </div>
-          )}
-        </div>
-
-        {/* Volume-Price Confluence Meter */}
-        <div className="panel-inset p-2">
-          <div className="flex items-center justify-between text-[9.5px] uppercase tracking-wider text-text-muted">
-            <span className="flex items-center gap-1">
-              <Activity className="size-3 text-accent-primary" /> Xác nhận Khối lượng (Volume / Price Alignment)
-            </span>
-            <span className="text-positive font-semibold">Tương quan chuẩn</span>
-          </div>
-          <p className="mt-1 text-[10px] text-text-muted">
-            Biến động giá và khối lượng giao dịch đồng pha, cấu trúc nến không có hiện tượng cạn kiệt thanh khoản giả.
-          </p>
-        </div>
-      </div>
-    </Panel>
-  );
-}
-
 function SectionLabel({ children, className = "" }: { children: React.ReactNode; className?: string }) {
   return (
-    <div className={`mb-1 text-[9px] font-semibold uppercase tracking-[0.12em] text-text-muted ${className}`}>
+    <div
+      className={`mb-1 text-[9px] font-semibold uppercase tracking-[0.12em] text-text-muted ${className}`}
+    >
       {children}
     </div>
   );
@@ -494,6 +438,12 @@ function Metric({
 function cmp(last: number, ma: number | null): boolean | null {
   return ma == null ? null : last >= ma;
 }
-function pct(v: number | null): string {
-  return v == null ? "—" : `${v >= 0 ? "+" : ""}${v.toFixed(1)}%`;
+function pct(v: number | null | undefined): string {
+  return v == null ? "—" : `${v >= 0 ? "+" : ""}${(v * (Math.abs(v) <= 2 ? 100 : 1)).toFixed?.(1) ?? v}%`.replace(
+    /(\d+\.\d)%/,
+    (_, n) => {
+      // if already percent-like (>2) don't *100 twice — handle both 0.12 and 12 styles
+      return `${n}%`;
+    },
+  );
 }
