@@ -38,28 +38,6 @@ const TechRecoPanel = dynamic(
     ),
   },
 );
-const ValuationPanel = dynamic(
-  () => import("@/components/stocks/valuation-panel").then((m) => m.ValuationPanel),
-  {
-    ssr: false,
-    loading: () => (
-      <Panel title="Định giá">
-        <Loading rows={3} />
-      </Panel>
-    ),
-  },
-);
-const ForecastPanel = dynamic(
-  () => import("@/components/stocks/forecast-panel").then((m) => m.ForecastPanel),
-  {
-    ssr: false,
-    loading: () => (
-      <Panel title="Dự báo">
-        <Loading rows={2} />
-      </Panel>
-    ),
-  },
-);
 const StockStructurePanel = dynamic(
   () => import("@/components/stocks/structure-panel").then((m) => m.StockStructurePanel),
   {
@@ -77,7 +55,6 @@ const SECTION_NAV = [
   { id: "sec-signals", label: "Tín hiệu" },
   { id: "sec-structure", label: "Cấu trúc" },
   { id: "sec-deep", label: "Chuyên sâu" },
-  { id: "sec-valuation", label: "Định giá" },
 ] as const;
 
 function scrollToSection(id: string) {
@@ -176,13 +153,13 @@ function SectionNav() {
 }
 
 function useChartHeight() {
-  const [h, setH] = useState(360);
+  const [h, setH] = useState(320);
   useEffect(() => {
     const apply = () => {
       const w = window.innerWidth;
-      if (w >= 1280) setH(440);
-      else if (w >= 640) setH(400);
-      else setH(320);
+      if (w >= 1280) setH(420);
+      else if (w >= 640) setH(380);
+      else setH(300);
     };
     apply();
     window.addEventListener("resize", apply);
@@ -288,11 +265,6 @@ export default function StockOverviewPage({ params }: { params: Promise<{ symbol
         {data.technical ? (
           <TechnicalPanel tech={data.technical} patterns={data.patterns} />
         ) : null}
-      </div>
-
-      <div id="sec-valuation" className="scroll-mt-28 space-y-3">
-        <ValuationPanel symbol={data.symbol} compact showAnalyst={false} />
-        <ForecastPanel symbol={data.symbol} compact />
       </div>
 
       <StockNewsSentiment symbol={data.symbol} />
