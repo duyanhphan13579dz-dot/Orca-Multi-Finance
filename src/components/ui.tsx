@@ -67,11 +67,12 @@ export function Badge({
   className,
 }: {
   children: React.ReactNode;
-  tone?: "up" | "down" | "neutral" | "warn" | "accent";
+  tone?: "up" | "down" | "neutral" | "warn" | "accent" | "bull";
   className?: string;
 }) {
   const map: Record<string, string> = {
     up: "bg-up/15 text-up border-up/30",
+    bull: "bg-up/15 text-up border-up/30",
     down: "bg-down/15 text-down border-down/30",
     neutral: "bg-surface-elevated text-text-muted border-border-subtle",
     warn: "bg-warn/15 text-warn border-warn/30",
@@ -140,7 +141,13 @@ export function FreshnessDot({
 }
 
 /** Hidden — source chains clutter the UI; keep export for callers. */
-export function MetaLine(_props: { meta: Meta | null | undefined }) {
+type MetaLineValue =
+  | Meta
+  | { freshness?: string; ageMs?: number | null; note?: string }
+  | null
+  | undefined;
+
+export function MetaLine(_props: { meta: MetaLineValue }) {
   return null;
 }
 

@@ -10,8 +10,8 @@ import { useApi } from "@/lib/hooks";
 import { useSettings } from "@/lib/settings";
 import { tfsFor, TF_LABEL, type ChartAssetType, type ChartCandle, type ChartMarketData } from "@/lib/chart-const";
 import { SeriesManager } from "./series-manager";
-import { ChartLiveManager } from "./live-manager";
-import { ORCA_CHART_THEME as T, type ChartKind, type LiveState } from "./theme";
+import { ChartLiveManager, type LiveState } from "./live-manager";
+import { ORCA_CHART_THEME as T, type ChartKind } from "./theme";
 import { Loading } from "@/components/ui";
 import { analyzeMoneyFlow } from "@/lib/engines/money-flow";
 import { buildSmcOverlay } from "@/chart/smc-overlay";
@@ -436,7 +436,7 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
           {title ? <span className="truncate text-[12px] font-semibold text-text-primary">{title}</span> : null}
           {liveState ? (
             <span className="text-[10px] text-text-muted">
-              {liveState.connected ? "● live" : "○ offline"}
+              {liveState.state === "live" ? "● live" : `○ ${liveState.state}`}
             </span>
           ) : null}
         </div>

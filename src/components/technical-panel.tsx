@@ -20,7 +20,7 @@ export function TechnicalPanel({
 }: {
   tech: TechnicalSnapshot | null;
   patterns: CandlePattern[];
-  ticker?: { high?: number | null; low?: number | null; price?: number } | null;
+  ticker?: { high?: number | null; low?: number | null; price?: number | null } | null;
   variant?: "stacked" | "compact";
 }) {
   if (!tech) {

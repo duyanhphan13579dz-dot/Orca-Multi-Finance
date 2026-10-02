@@ -29,6 +29,7 @@ export type LiveState = {
 export type LiveHandlers = {
   onCandle: (c: LiveCandle, closed: boolean) => void;
   onLiveState: (s: LiveState) => void;
+  onResyncNeeded?: () => void;
 };
 
 const BINANCE_KLINE_TF = new Set([

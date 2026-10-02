@@ -206,6 +206,12 @@ export interface ForexRow extends Quote {
   group: "major" | "minor" | "exotic";
 }
 
+/** Shared payload returned by GET /api/v1/forex/markets. */
+export interface ForexMarket {
+  rows: ForexRow[];
+  usdStrengthNote: string;
+}
+
 /* ------------------------------- Commodities ------------------------------- */
 
 export interface CommodityRow extends Quote {

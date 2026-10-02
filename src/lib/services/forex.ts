@@ -10,7 +10,8 @@ import {
 } from "../providers/forex";
 import { getYahooQuotes, getYahooChart, yahooSymbolForPair, yahooIntervalFor } from "../providers/yahoo";
 import { analyzeSeries, detectPatterns } from "../technical";
-import type { CandlePattern, ForexRow, Meta, OhlcvBar, TechnicalSnapshot } from "../types";
+import type { CandlePattern, ForexMarket, ForexRow, Meta, OhlcvBar, TechnicalSnapshot } from "../types";
+export type { ForexMarket } from "../types";
 
 interface PairDef {
   pair: string;
@@ -83,11 +84,6 @@ export function fmtRate(v: number): string {
     : v >= 100
       ? v.toFixed(2)
       : v.toFixed(4);
-}
-
-interface ForexMarket {
-  rows: ForexRow[];
-  usdStrengthNote: string;
 }
 
 async function prevEcbRates(): Promise<FxLatest | null> {
