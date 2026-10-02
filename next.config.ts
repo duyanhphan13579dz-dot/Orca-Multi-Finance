@@ -8,16 +8,8 @@ const nextConfig: NextConfig = {
   typescript: {
     ignoreBuildErrors: true,
   },
-  // Packages that must not be bundled into the Cloudflare Worker:
-  // - playwright*: CLI-only (ssc:crawl); chromium-bidi has no workerd build.
-  // - pg / pg-cloudflare: resolved at runtime under nodejs_compat + workerd.
-  serverExternalPackages: [
-    "pg",
-    "pg-cloudflare",
-    "playwright",
-    "playwright-core",
-    "chromium-bidi",
-  ],
+  // Keep heavy Node-only packages out of the Next server bundle.
+  serverExternalPackages: ["pg", "playwright", "playwright-core"],
   experimental: {
     optimizePackageImports: ["lucide-react", "lightweight-charts"],
     // Giới hạn worker khi "Collecting page data" — môi trường build bị giới hạn ~2GB RAM
@@ -49,13 +41,3 @@ const nextConfig: NextConfig = {
 };
 
 export default nextConfig;
-
-// Enables Cloudflare bindings during `next dev` when @opennextjs/cloudflare is installed.
-// Safe no-op if the package is missing in non-CF environments.
-try {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { initOpenNextCloudflareForDev } = require("@opennextjs/cloudflare");
-  initOpenNextCloudflareForDev();
-} catch {
-  // Package not installed yet (e.g. Netlify/Vercel-only clone) — ignore.
-}
