@@ -1,14 +1,12 @@
-import { defineCloudflareConfig } from "@opennextjs/cloudflare";
-
 /**
  * OpenNext Cloudflare adapter config.
+ * Loaded only by `opennextjs-cloudflare` CLI (not by `next build`).
  *
- * Caching (R2/KV) can be enabled later — see:
- * https://opennext.js.org/cloudflare/caching
- *
- * Note: playwright is CLI-only (ssc:crawl). pg uses pg-cloudflare under
- * workerd when nodejs_compat is enabled in wrangler.jsonc.
+ * Caching (R2/KV): https://opennext.js.org/cloudflare/caching
  */
+// Use dynamic import style compatible when package is npm --no-save installed.
+import { defineCloudflareConfig } from "@opennextjs/cloudflare";
+
 export default defineCloudflareConfig({
-  // No incremental cache binding yet — app still works; add R2/KV when ready.
+  // No incremental cache binding yet — add R2/KV when ready.
 });
