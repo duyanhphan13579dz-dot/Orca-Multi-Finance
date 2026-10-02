@@ -10,7 +10,6 @@ import {
   Activity,
   ArrowDownRight,
   ArrowUpRight,
-  ChevronDown,
   ShieldCheck,
 } from "lucide-react";
 import { OrcaChart } from "@/components/orca-chart";
