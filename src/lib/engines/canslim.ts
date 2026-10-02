@@ -52,7 +52,7 @@ export interface CanslimSnapshot {
 }
 
 const LETTER_VI: Record<CanslimLetter, string> = {
-  C: "Current EPS/LN quý",
+  C: "Current EPS/LN quý (proxy)",
   A: "Annual growth / ROE",
   N: "New high / gần đỉnh",
   S: "Supply & Demand (volume)",
@@ -362,15 +362,17 @@ export function analyzeCanslim(input: {
   }
 
   // —— M ——
-  let mScore = 50;
-  let mPass = input.marketBullish !== false;
-  let mDetail = input.marketDetail ?? (
-    input.marketBullish === true
+  let mScore = 30;
+  // Không được coi thị trường là thuận lợi khi provider/index chưa trả dữ liệu.
+  // Trạng thái unknown phải là fail để bộ lọc không tạo false positive ở chữ M.
+  let mPass = input.marketBullish === true;
+  let mDetail =
+    input.marketDetail ??
+    (input.marketBullish === true
       ? "Thị trường nghiêng tăng"
       : input.marketBullish === false
         ? "Thị trường yếu / điều chỉnh"
-        : "Chưa xác định chiều thị trường"
-  );
+        : "Chưa xác định chiều thị trường — M chưa đạt");
   if (input.marketBullish === true) {
     mScore = 85;
     mPass = true;
@@ -378,6 +380,8 @@ export function analyzeCanslim(input: {
     mScore = 30;
     mPass = false;
     flags.push("M: thị trường không thuận");
+  } else {
+    flags.push("M: chưa có dữ liệu VNINDEX");
   }
 
   const letters: CanslimLetterScore[] = [

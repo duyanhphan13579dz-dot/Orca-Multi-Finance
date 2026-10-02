@@ -19,6 +19,7 @@ Envelope chuẩn cho mọi endpoint:
 | `GET /api/v1/stocks/{symbol}/valuation` | Market multiples, multi-method fair value, DCF + sensitivity | quote + VNDirect statements/ratios |
 | `GET /api/v1/stocks/{symbol}/valuation?peers=1` | Above plus same-sector peer comparison (higher latency) | multi-source |
 | `GET /api/v1/stocks/{symbol}/valuation/analyst` | Deterministic valuation narrative; `?llm=1` optional | valuation engine (+LLM optional) |
+| `GET /api/v1/stocks/{symbol}/style-fit` | Điều kiện pass/fail chi tiết của Minervini Trend Template và CANSLIM | OHLCV + market direction + BCTC best-effort |
 | `GET /api/v1/crypto/markets?limit=&sort=gainers|losers|volume` | Toàn thị trường USDT spot + summary/breadth | Binance |
 | `GET /api/v1/crypto/{symbol}?interval=15m|1h|4h|1d` | Ticker + klines + technical + patterns + funding/OI | Binance |
 | `GET /api/v1/forex/markets` | 12 cặp major/minor/exotic + note sức mạnh USD | Biquote/fallback |

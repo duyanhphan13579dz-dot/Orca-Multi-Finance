@@ -3,8 +3,9 @@
 import { memo } from "react";
 import { useApi } from "@/lib/hooks";
 import type { StockTechRecoResult } from "@/lib/services/stock-tech-reco";
+import type { StockStyleFitResult, StyleCriterionExplanation } from "@/lib/services/stock-style-fit";
 import { Badge, FreshnessDot, Loading, Panel } from "@/components/ui";
-import { Brain, Compass, ShieldAlert } from "lucide-react";
+import { Brain, CheckCircle2, Compass, ListChecks, ShieldAlert, XCircle } from "lucide-react";
 
 const CONF_VI: Record<string, string> = {
   HIGH: "Cao",
@@ -21,6 +22,10 @@ const REL_VI: Record<string, string> = {
 export const TechRecoPanel = memo(function TechRecoPanel({ symbol }: { symbol: string }) {
   const { data, meta, isLoading } = useApi<StockTechRecoResult>(
     symbol ? `/api/v1/stocks/${encodeURIComponent(symbol)}/tech-reco` : null,
+    { refreshInterval: 120_000 },
+  );
+  const { data: styleFit, isLoading: styleFitLoading } = useApi<StockStyleFitResult>(
+    symbol ? `/api/v1/stocks/${encodeURIComponent(symbol)}/style-fit` : null,
     { refreshInterval: 120_000 },
   );
 
@@ -167,6 +172,14 @@ export const TechRecoPanel = memo(function TechRecoPanel({ symbol }: { symbol: s
           ))}
         </div>
 
+        {styleFitLoading && !styleFit ? (
+          <div className="rounded-lg border border-border-subtle bg-surface-elevated/40 px-3 py-2 text-[11px] text-text-muted">
+            Đang đối chiếu điều kiện Minervini và CANSLIM…
+          </div>
+        ) : styleFit ? (
+          <StyleFitBlock fit={styleFit} />
+        ) : null}
+
         {llm?.narrative && (
           <div className="panel-inset space-y-2 p-3">
             <div className="flex flex-wrap items-center gap-1.5 text-[10px] uppercase tracking-wider text-text-muted">
@@ -220,3 +233,96 @@ export const TechRecoPanel = memo(function TechRecoPanel({ symbol }: { symbol: s
     </Panel>
   );
 });
+
+function StyleFitBlock({ fit }: { fit: StockStyleFitResult }) {
+  return (
+    <div className="space-y-2 rounded-lg border border-border-subtle bg-surface-elevated/35 p-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <ListChecks className="size-3.5 text-accent-primary" />
+        <span className="text-[10px] font-semibold uppercase tracking-wider text-text-muted">
+          Điều kiện bộ lọc
+        </span>
+        <span className="text-[10px] text-text-muted">đối chiếu theo dữ liệu hiện có</span>
+      </div>
+
+      <div className="grid gap-2 md:grid-cols-2">
+        <StyleFitCard
+          title="Mark Minervini"
+          summary={
+            fit.minervini
+              ? `${fit.minervini.passCount}/${fit.minervini.total} · ${fit.minervini.passCount >= 6 ? "lọc mặc định" : "chưa đạt min 6"}${fit.minervini.stage2 ? " · Stage 2" : ""}`
+              : "Chưa đủ dữ liệu"
+          }
+          pass={fit.minervini != null && fit.minervini.passCount >= 6}
+          criteria={fit.minervini?.criteria ?? []}
+          note={fit.minervini?.note}
+        />
+        <StyleFitCard
+          title="CANSLIM"
+          summary={
+            fit.canslim
+              ? `${fit.canslim.passCount}/${fit.canslim.total} chữ · ${fit.canslim.score}/100 · Grade ${fit.canslim.grade} · ${fit.canslim.score >= 40 ? "lọc mặc định" : "dưới score 40"}`
+              : "Chưa đủ dữ liệu"
+          }
+          pass={fit.canslim != null && fit.canslim.score >= 40}
+          criteria={fit.canslim?.letters ?? []}
+          note={
+            fit.canslim
+              ? `${fit.canslim.note}${fit.canslim.phase ? ` · phase ${fit.canslim.phase}` : ""}`
+              : undefined
+          }
+        />
+      </div>
+      {fit.notes.length > 0 && <p className="text-[10px] text-warning">{fit.notes.join(" · ")}</p>}
+    </div>
+  );
+}
+
+function StyleFitCard({
+  title,
+  summary,
+  pass,
+  criteria,
+  note,
+}: {
+  title: string;
+  summary: string;
+  pass: boolean;
+  criteria: StyleCriterionExplanation[];
+  note?: string;
+}) {
+  return (
+    <div className="rounded-md border border-border-subtle/80 bg-surface-modal/35 p-2.5">
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-[11.5px] font-semibold text-text-primary">{title}</span>
+        <Badge tone={pass ? "up" : "neutral"}>{summary}</Badge>
+      </div>
+      {criteria.length > 0 ? (
+        <div className="mt-2 space-y-1">
+          {criteria.map((criterion) => (
+            <div key={criterion.key} className="flex items-start gap-1.5 text-[10.5px]">
+              {criterion.pass ? (
+                <CheckCircle2 className="mt-0.5 size-3 shrink-0 text-positive" />
+              ) : (
+                <XCircle className="mt-0.5 size-3 shrink-0 text-negative" />
+              )}
+              <div className="min-w-0">
+                <div className={criterion.pass ? "text-text-primary" : "text-text-secondary"}>
+                  {criterion.label}
+                </div>
+                <div className="text-[9.5px] leading-snug text-text-muted">{criterion.detail}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="mt-2 text-[10.5px] text-text-muted">Chưa có bản ghi điều kiện.</p>
+      )}
+      {note && (
+        <p className="mt-2 border-t border-border-subtle/60 pt-1.5 text-[9.5px] leading-snug text-text-muted">
+          {note}
+        </p>
+      )}
+    </div>
+  );
+}

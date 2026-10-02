@@ -32,6 +32,7 @@ export default function StockSymbolLayout({
       `/api/v1/stocks/${symbol}/financials`,
       `/api/v1/stocks/${symbol}/structure`,
       `/api/v1/stocks/${symbol}/tech-reco`,
+      `/api/v1/stocks/${symbol}/style-fit`,
     ];
     const run = () => {
       for (const url of paths) {
