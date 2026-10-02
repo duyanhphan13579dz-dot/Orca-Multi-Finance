@@ -3,7 +3,7 @@
 import { useMemo } from "react";
 import type { CandlePattern, ForexRow, OhlcvBar, TechnicalSnapshot } from "@/lib/types";
 import { fmtNum, Panel, priceDigits } from "@/components/ui";
-import { TechnicalPanel, PatternsAndDivergencePanel } from "@/components/technical-panel";
+import { TechnicalPanel } from "@/components/technical-panel";
 import { MtfBiasPanel } from "@/components/mtf-bias-panel";
 import { Layers } from "lucide-react";
 
@@ -77,10 +77,7 @@ export function MarketStructurePanel({
         {tab === "ms" && (
           <div className="space-y-2">
             <MtfBiasPanel symbol={pair} assetType={assetType} chartTimeframe={interval} />
-            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-              <TechnicalPanel tech={tech} patterns={patterns} ticker={cur} variant="compact" />
-              <PatternsAndDivergencePanel tech={tech} patterns={patterns} />
-            </div>
+            <TechnicalPanel tech={tech} patterns={patterns} ticker={cur} variant="stacked" />
             {structureNotes.narrative && (
               <p className="rounded-md border border-border-subtle/60 bg-surface-elevated/30 px-2.5 py-1.5 text-[11px] leading-relaxed text-text-secondary">
                 {structureNotes.narrative}
@@ -123,30 +120,24 @@ export function MarketStructurePanel({
                 </li>
               ))}
             </ul>
-            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-              <TechnicalPanel tech={tech} patterns={patterns} ticker={cur} variant="compact" />
-              <PatternsAndDivergencePanel tech={tech} patterns={patterns} />
-            </div>
-            <p className="text-[9.5px] text-text-muted">
-              FVG / OB / BOS / Sweep hiển thị trên chart qua SMC overlay (client-side từ series).
-            </p>
+            <TechnicalPanel tech={tech} patterns={patterns} ticker={cur} variant="stacked" />
           </div>
         )}
 
         {tab === "vsa" && (
           <div className="space-y-2 text-[11px]">
-            <div className="grid grid-cols-3 gap-1.5">
-              <div className="rounded-md border border-border-subtle/60 bg-surface-elevated/30 px-2 py-1.5 text-center">
-                <div className="text-[8.5px] uppercase text-text-muted">RVOL</div>
-                <div className="num font-semibold text-text-primary">{structureNotes.rvol}</div>
+            <div className="grid grid-cols-3 gap-2">
+              <div className="rounded-md border border-border-subtle/60 bg-surface-elevated/30 px-2.5 py-2">
+                <div className="text-[9px] uppercase tracking-wider text-text-muted">RVOL</div>
+                <div className="mt-0.5 font-semibold text-text-primary">{structureNotes.rvol}</div>
               </div>
-              <div className="rounded-md border border-border-subtle/60 bg-surface-elevated/30 px-2 py-1.5 text-center">
-                <div className="text-[8.5px] uppercase text-text-muted">CLV</div>
-                <div className="num font-semibold text-text-primary">{structureNotes.clv}</div>
+              <div className="rounded-md border border-border-subtle/60 bg-surface-elevated/30 px-2.5 py-2">
+                <div className="text-[9px] uppercase tracking-wider text-text-muted">CLV</div>
+                <div className="mt-0.5 font-semibold text-text-primary">{structureNotes.clv}</div>
               </div>
-              <div className="rounded-md border border-border-subtle/60 bg-surface-elevated/30 px-2 py-1.5 text-center">
-                <div className="text-[8.5px] uppercase text-text-muted">Effort</div>
-                <div className="font-semibold text-text-primary">{structureNotes.effort}</div>
+              <div className="rounded-md border border-border-subtle/60 bg-surface-elevated/30 px-2.5 py-2">
+                <div className="text-[9px] uppercase tracking-wider text-text-muted">Effort</div>
+                <div className="mt-0.5 font-semibold text-text-primary">{structureNotes.effort}</div>
               </div>
             </div>
             <ul className="space-y-1 text-text-secondary">
@@ -173,73 +164,99 @@ function KeyLevel({
   value: string;
   tone: "up" | "down" | "neutral";
 }) {
-  const c =
+  const toneCls =
     tone === "up" ? "text-positive" : tone === "down" ? "text-negative" : "text-text-primary";
   return (
-    <div className="rounded-md border border-border-subtle/50 bg-surface-elevated/25 px-2 py-1.5">
-      <div className="text-[8.5px] uppercase tracking-wider text-text-muted">{label}</div>
-      <div className={`mt-0.5 text-[11px] font-semibold ${c}`}>{value}</div>
+    <div className="rounded-md border border-border-subtle/60 bg-surface-elevated/30 px-2 py-1.5">
+      <div className="text-[9px] uppercase tracking-wider text-text-muted">{label}</div>
+      <div className={`mt-0.5 text-[11px] font-semibold ${toneCls}`}>{value}</div>
     </div>
   );
 }
 
-function buildStructureNotes(series: OhlcvBar[], tech: TechnicalSnapshot | null) {
-  const bars = series.slice(-60);
-  const last = bars[bars.length - 1];
+function buildStructureNotes(
+  series: OhlcvBar[],
+  tech: TechnicalSnapshot | null,
+): {
+  trend: string;
+  trendTone: "up" | "down" | "neutral";
+  bos: string;
+  bosTone: "up" | "down" | "neutral";
+  liquidity: string;
+  pd: string;
+  range: string;
+  rvol: string;
+  clv: string;
+  effort: string;
+  narrative: string;
+  ictPoints: string[];
+  smcPoints: string[];
+  vsaPoints: string[];
+} {
   const empty = {
     trend: "—",
     trendTone: "neutral" as const,
-    bos: "—",
+    bos: "No clear BOS",
     bosTone: "neutral" as const,
-    liquidity: "—",
-    pd: "UNKNOWN",
+    liquidity: "Chưa đủ level",
+    pd: "—",
     range: "—",
     rvol: "—",
     clv: "—",
     effort: "—",
     narrative: "",
-    ictPoints: [] as string[],
-    smcPoints: [] as string[],
-    vsaPoints: [] as string[],
+    ictPoints: ["Chưa đủ dữ liệu series."],
+    smcPoints: ["Chưa đủ dữ liệu series."],
+    vsaPoints: ["Chưa đủ dữ liệu series."],
   };
-  if (!last || bars.length < 10) return empty;
+  if (!series?.length) return empty;
 
-  const highs = bars.map((b) => b.high);
-  const lows = bars.map((b) => b.low);
-  const swingHigh = Math.max(...highs.slice(-20));
-  const swingLow = Math.min(...lows.slice(-20));
-  const mid = (swingHigh + swingLow) / 2;
+  const last = series[series.length - 1];
   const close = last.close;
+  const window = series.slice(-40);
+  const highs = window.map((b) => b.high);
+  const lows = window.map((b) => b.low);
+  const swingHigh = Math.max(...highs);
+  const swingLow = Math.min(...lows);
+  const mid = (swingHigh + swingLow) / 2;
   const pd =
-    close > mid + (swingHigh - swingLow) * 0.1
-      ? "PREMIUM"
-      : close < mid - (swingHigh - swingLow) * 0.1
-        ? "DISCOUNT"
-        : "EQUILIBRIUM";
+    close > mid * 1.002 ? "PREMIUM" : close < mid * 0.998 ? "DISCOUNT" : "EQUILIBRIUM";
 
-  const trendLabel = tech?.trend?.label ?? "";
-  const bull = /up|bull/i.test(trendLabel);
-  const bear = /down|bear/i.test(trendLabel);
-  const trend = bull ? "Uptrend" : bear ? "Downtrend" : trendLabel || "Range / Neutral";
-  const trendTone = bull ? ("up" as const) : bear ? ("down" as const) : ("neutral" as const);
+  const trendLabel = tech?.trend?.label ?? "sideways";
+  const trend =
+    trendLabel.includes("up")
+      ? "Bullish structure"
+      : trendLabel.includes("down")
+        ? "Bearish structure"
+        : "Range / sideways";
+  const trendTone: "up" | "down" | "neutral" = trendLabel.includes("up")
+    ? "up"
+    : trendLabel.includes("down")
+      ? "down"
+      : "neutral";
 
   let bos = "No clear BOS";
   let bosTone: "up" | "down" | "neutral" = "neutral";
-  const prevSliceH = highs.slice(-12, -1);
-  const prevSliceL = lows.slice(-12, -1);
-  const prevHigh = prevSliceH.length ? Math.max(...prevSliceH) : close;
-  const prevLow = prevSliceL.length ? Math.min(...prevSliceL) : close;
-  if (close > prevHigh) {
-    bos = "BOS ▲ Bullish";
-    bosTone = "up";
-  } else if (close < prevLow) {
-    bos = "BOS ▼ Bearish";
-    bosTone = "down";
+  if (window.length >= 10) {
+    const prev = window.slice(0, -3);
+    const prevHigh = Math.max(...prev.map((b) => b.high));
+    const prevLow = Math.min(...prev.map((b) => b.low));
+    if (close > prevHigh) {
+      bos = "BOS up (break prior high)";
+      bosTone = "up";
+    } else if (close < prevLow) {
+      bos = "BOS down (break prior low)";
+      bosTone = "down";
+    } else if (last.high > prevHigh && last.close < prevHigh) {
+      bos = "Failed breakout / CHoCH watch";
+      bosTone = "neutral";
+    }
   }
 
-  const vols = bars.map((b) => b.volume ?? 0);
-  const avgVol = vols.reduce((a, b) => a + b, 0) / (vols.length || 1) || 1;
-  const rvol = (last.volume ?? 0) / avgVol;
+  const vols = window.map((b) => b.volume ?? 0).filter((v) => v > 0);
+  const avgVol = vols.length ? vols.reduce((a, b) => a + b, 0) / vols.length : 0;
+  const lastVol = last.volume ?? 0;
+  const rvol = avgVol > 0 ? lastVol / avgVol : 0;
   const range = Math.max(1e-12, last.high - last.low);
   const clv = ((last.close - last.low) - (last.high - last.close)) / range;
   const effort =
