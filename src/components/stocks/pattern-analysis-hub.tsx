@@ -5,7 +5,7 @@ import { useApi } from "@/lib/hooks";
 import type { StockStyleFitResult, StyleCriterionExplanation } from "@/lib/services/stock-style-fit";
 import type { StructureAnalysis } from "@/lib/engines/wyckoff-elliott";
 import type { CandlePattern, TechnicalSnapshot } from "@/lib/types";
-import { Badge, FreshnessDot, Loading, Panel } from "@/components/ui";
+import { Badge, FreshnessDot, Panel } from "@/components/ui";
 import {
   CheckCircle2,
   ChevronRight,
@@ -48,11 +48,11 @@ export function PatternAnalysisHub({
   const [open, setOpen] = useState<ItemKey | null>(null);
 
   const { data: styleFit, isLoading: styleLoading, meta: styleMeta } = useApi<StockStyleFitResult>(
-    symbol ? `/api/v1/stocks/${encodeURIComponent(symbol)}/style-fit` : null,
+    symbol ? `/api/v1/stocks/${symbol}/style-fit` : null,
     { refreshInterval: 120_000 },
   );
   const { data: structure, isLoading: structLoading, meta: structMeta } = useApi<StructureData>(
-    symbol ? `/api/v1/stocks/${encodeURIComponent(symbol)}/structure` : null,
+    symbol ? `/api/v1/stocks/${symbol}/structure` : null,
     { refreshInterval: 120_000 },
   );
 
@@ -118,7 +118,7 @@ export function PatternAnalysisHub({
     ];
   }, [styleFit, structure, patterns, divergences.length]);
 
-  const loading = (styleLoading && !styleFit) || (structLoading && !structure);
+  const warming = (styleLoading && !styleFit) || (structLoading && !structure);
 
   return (
     <>
@@ -134,39 +134,39 @@ export function PatternAnalysisHub({
             )}
           </span>
         }
-        right={<span className="text-[10px] text-text-muted">Chọn mục để xem chi tiết</span>}
+        right={
+          <span className="text-[10px] text-text-muted">
+            {warming ? "Đang làm nóng…" : "Chọn mục để xem chi tiết"}
+          </span>
+        }
       >
-        {loading ? (
-          <Loading rows={5} />
-        ) : (
-          <ul className="divide-y divide-border-subtle/80">
-            {items.map((item) => (
-              <li key={item.key}>
-                <button
-                  type="button"
-                  onClick={() => setOpen(item.key)}
-                  className="flex w-full items-center justify-between gap-3 px-0.5 py-2.5 text-left transition-colors hover:bg-surface-elevated/40"
-                >
-                  <span className="text-[13px] font-medium text-text-primary">{item.label}</span>
-                  <span className="flex items-center gap-2">
-                    <span
-                      className={`inline-flex min-w-[2.25rem] items-center justify-center rounded-md border border-border-subtle bg-surface-elevated/70 px-2 py-0.5 text-[11px] font-semibold tabular-nums ${
-                        item.tone === "up"
-                          ? "text-positive"
-                          : item.tone === "down"
-                            ? "text-negative"
-                            : "text-text-muted"
-                      }`}
-                    >
-                      {item.score}
-                    </span>
-                    <ChevronRight className="size-3.5 text-text-muted" />
+        <ul className="divide-y divide-border-subtle/80">
+          {items.map((item) => (
+            <li key={item.key}>
+              <button
+                type="button"
+                onClick={() => setOpen(item.key)}
+                className="flex w-full items-center justify-between gap-3 px-0.5 py-2.5 text-left transition-colors hover:bg-surface-elevated/40"
+              >
+                <span className="text-[13px] font-medium text-text-primary">{item.label}</span>
+                <span className="flex items-center gap-2">
+                  <span
+                    className={`inline-flex min-w-[2.25rem] items-center justify-center rounded-md border border-border-subtle bg-surface-elevated/70 px-2 py-0.5 text-[11px] font-semibold tabular-nums ${
+                      item.tone === "up"
+                        ? "text-positive"
+                        : item.tone === "down"
+                          ? "text-negative"
+                          : "text-text-muted"
+                    }`}
+                  >
+                    {item.score}
                   </span>
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
+                  <ChevronRight className="size-3.5 text-text-muted" />
+                </span>
+              </button>
+            </li>
+          ))}
+        </ul>
       </Panel>
 
       {open && (
@@ -186,7 +186,8 @@ export function PatternAnalysisHub({
         >
           {open === "canslim" && (
             <CriteriaDetail
-              empty={!styleFit?.canslim}
+              empty={!styleFit?.canslim && !styleLoading}
+              loading={styleLoading && !styleFit}
               summary={
                 styleFit?.canslim
                   ? `Score ${styleFit.canslim.score}/100 · Grade ${styleFit.canslim.grade} · ${styleFit.canslim.passCount}/${styleFit.canslim.total} chữ`
@@ -202,7 +203,8 @@ export function PatternAnalysisHub({
           )}
           {open === "minervini" && (
             <CriteriaDetail
-              empty={!styleFit?.minervini}
+              empty={!styleFit?.minervini && !styleLoading}
+              loading={styleLoading && !styleFit}
               summary={
                 styleFit?.minervini
                   ? `${styleFit.minervini.passCount}/${styleFit.minervini.total} điều kiện${styleFit.minervini.stage2 ? " · Stage 2" : ""}`
@@ -216,11 +218,15 @@ export function PatternAnalysisHub({
             <WyckoffDetail w={structure.wyckoff} summary={structure.summary} />
           )}
           {open === "wyckoff" && !structure && (
-            <p className="text-[12px] text-text-muted">Chưa đủ chuỗi giá để đọc Wyckoff.</p>
+            <p className="text-[12px] text-text-muted">
+              {structLoading ? "Đang tải cấu trúc Wyckoff…" : "Chưa đủ chuỗi giá để đọc Wyckoff."}
+            </p>
           )}
           {open === "elliott" && structure && <ElliottDetail e={structure.elliott} />}
           {open === "elliott" && !structure && (
-            <p className="text-[12px] text-text-muted">Chưa đủ chuỗi giá để đọc Elliott.</p>
+            <p className="text-[12px] text-text-muted">
+              {structLoading ? "Đang tải cấu trúc Elliott…" : "Chưa đủ chuỗi giá để đọc Elliott."}
+            </p>
           )}
           {open === "patterns" && (
             <PatternsDetail patterns={patterns} divergences={divergences} />
@@ -286,15 +292,20 @@ function DetailModal({
 
 function CriteriaDetail({
   empty,
+  loading,
   summary,
   criteria,
   note,
 }: {
   empty: boolean;
+  loading?: boolean;
   summary?: string;
   criteria: StyleCriterionExplanation[];
   note?: string;
 }) {
+  if (loading) {
+    return <p className="text-[12px] text-text-muted">Đang tải điều kiện bộ lọc…</p>;
+  }
   if (empty) {
     return (
       <p className="text-[12px] text-text-muted">
