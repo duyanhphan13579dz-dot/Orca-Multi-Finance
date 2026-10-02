@@ -11,12 +11,16 @@
     "start": "next start",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
+    "preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
+    "deploy": "opennextjs-cloudflare build && opennextjs-cloudflare deploy",
+    "cf-typegen": "wrangler types --env-interface CloudflareEnv cloudflare-env.d.ts",
     "test": "node --import tsx --import ./test/test-setup/register-stub.mjs --require ./test/test-setup/patch-server-only.cjs --test src/lib/__tests__/chart-engine.test.ts src/lib/__tests__/divergence.test.ts src/lib/__tests__/candlestick-patterns.test.ts src/lib/__tests__/valuation-phase1.test.ts src/lib/__tests__/valuation-phase2.test.ts src/lib/__tests__/valuation-phase3.test.ts src/lib/__tests__/valuation-phase4.test.ts src/lib/__tests__/valuation-phase5.test.ts src/lib/__tests__/valuation-phase6.test.ts src/lib/__tests__/valuation-pipeline.test.ts",
     "test:divergence": "node --import tsx --import ./test/test-setup/register-stub.mjs --require ./test/test-setup/patch-server-only.cjs --test src/lib/__tests__/divergence.test.ts",
     "ssc:install-browser": "npx playwright install chromium",
     "ssc:crawl": "node --import tsx -e \"const { refreshSscListingIndex } = require('./src/lib/financial/official/ssc-listing-index.ts'); refreshSscListingIndex().then(i => console.log(JSON.stringify({ tickers: i.tickerCount, rows: i.rowCount, at: i.builtAt }, null, 2))).catch(e => { console.error(e); process.exit(1); })\""
   },
   "dependencies": {
+    "@opennextjs/cloudflare": "^1.20.7",
     "@tailwindcss/postcss": "4.1.17",
     "@types/node": "22.19.15",
     "@types/pg": "8.18.0",
@@ -31,6 +35,7 @@
     "lucide-react": "^0.545.0",
     "next": "16.2.6",
     "pg": "8.20.0",
+    "pg-cloudflare": "^1.2.7",
     "postcss": "8.5.8",
     "react": "19.2.6",
     "react-dom": "19.2.6",
@@ -43,7 +48,8 @@
   "devDependencies": {
     "drizzle-kit": "0.31.10",
     "eslint": "9.39.4",
-    "eslint-config-next": "16.2.6"
+    "eslint-config-next": "16.2.6",
+    "wrangler": "^4.145.0"
   },
   "optionalDependencies": {
     "playwright": "^1.49.0"

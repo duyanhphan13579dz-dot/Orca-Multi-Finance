@@ -15,6 +15,11 @@ out/
 build/
 dist/
 
+# --- OpenNext / Cloudflare Workers ---
+.open-next/
+.wrangler/
+.dev.vars
+
 # --- Production ---
 *.tsbuildinfo
 next-env.d.ts
