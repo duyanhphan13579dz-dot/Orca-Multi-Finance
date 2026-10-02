@@ -86,7 +86,6 @@ function scrollToSection(id: string) {
   el.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
-/** Compact decision strip — replaces tall 4-card snapshot panel. */
 function DecisionStrip({
   symbol,
   quote,
@@ -109,8 +108,7 @@ function DecisionStrip({
 
   const price =
     quote?.price != null ? quote.price.toLocaleString("vi-VN") : "—";
-  const rsi =
-    technical?.rsi14 != null ? technical.rsi14.toFixed(1) : "—";
+  const rsi = technical?.rsi14 != null ? technical.rsi14.toFixed(1) : "—";
   const vol30 =
     technical?.volatility30d != null
       ? `${(technical.volatility30d * 100).toFixed(1)}%`
@@ -119,22 +117,28 @@ function DecisionStrip({
   return (
     <div
       id="sec-decision"
-      className="flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-lg border border-border-subtle bg-surface-elevated/50 px-3 py-2"
+      className={`stock-decision-strip stock-decision-strip--${tone}`}
     >
-      <span className="flex items-center gap-1.5 text-[12px] font-semibold text-text-primary">
+      <div className="stock-decision-left">
         <ShieldCheck className="size-3.5 shrink-0 text-accent-primary" />
         <Icon className="size-3.5 shrink-0" />
-        {symbol}
-        <span className="font-normal text-text-muted">·</span>
-        <span className={tone === "up" ? "text-positive" : tone === "down" ? "text-negative" : ""}>
+        <span className="font-semibold text-text-primary">{symbol}</span>
+        <span className="text-text-muted">·</span>
+        <span
+          className={
+            tone === "up"
+              ? "font-semibold text-positive"
+              : tone === "down"
+                ? "font-semibold text-negative"
+                : "font-semibold text-text-secondary"
+          }
+        >
           {action}
         </span>
-      </span>
-      <span className="hidden text-[11px] text-text-muted sm:inline">
-        xu hướng {trendLabel}
-      </span>
+        <span className="hidden text-text-muted sm:inline">· {trendLabel}</span>
+      </div>
 
-      <div className="ml-auto flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px]">
+      <div className="stock-decision-metrics">
         <MetricChip label="Giá" value={price} />
         <MetricChip label="RSI" value={rsi} />
         <MetricChip label="Vol 30D" value={vol30} />
@@ -147,25 +151,22 @@ function DecisionStrip({
 
 function MetricChip({ label, value }: { label: string; value: string }) {
   return (
-    <span className="inline-flex items-baseline gap-1">
-      <span className="text-[9.5px] uppercase tracking-wider text-text-muted">{label}</span>
-      <strong className="num text-[12.5px] font-semibold text-text-primary">{value}</strong>
+    <span className="stock-metric-chip">
+      <span className="stock-metric-chip-label">{label}</span>
+      <strong className="num stock-metric-chip-value">{value}</strong>
     </span>
   );
 }
 
 function SectionNav() {
   return (
-    <nav
-      aria-label="Mục trong trang"
-      className="sticky top-[4.5rem] z-10 -mx-0.5 flex gap-1 overflow-x-auto border-b border-border-subtle/80 bg-[var(--color-bg,transparent)] py-1.5 backdrop-blur-sm"
-    >
+    <nav aria-label="Mục trong trang" className="stock-section-nav">
       {SECTION_NAV.map((s) => (
         <button
           key={s.id}
           type="button"
           onClick={() => scrollToSection(s.id)}
-          className="shrink-0 rounded-md px-2.5 py-1 text-[11px] font-medium text-text-muted transition-colors hover:bg-surface-elevated hover:text-text-primary"
+          className="stock-section-nav-item"
         >
           {s.label}
         </button>
@@ -218,7 +219,7 @@ export default function StockOverviewPage({ params }: { params: Promise<{ symbol
   const q = data.quote;
 
   return (
-    <div className="stock-workspace space-y-3">
+    <div className="stock-workspace stock-overview">
       <DecisionStrip
         symbol={data.symbol}
         quote={q}
@@ -228,14 +229,13 @@ export default function StockOverviewPage({ params }: { params: Promise<{ symbol
 
       <SectionNav />
 
-      {/* Trading zone: chart + sticky order book */}
       <div
         id="sec-chart"
-        className="grid scroll-mt-28 gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(280px,340px)] xl:items-start 2xl:grid-cols-12"
+        className="stock-trading-zone scroll-mt-28 grid gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(280px,340px)] xl:items-start 2xl:grid-cols-12"
       >
         <div className="min-w-0 2xl:col-span-9">
           {q || data.bars.length > 0 ? (
-            <div className="min-h-[320px]">
+            <div className="stock-chart-frame min-h-[320px]">
               <OrcaChart
                 symbol={data.symbol}
                 assetType="stock"
@@ -267,7 +267,7 @@ export default function StockOverviewPage({ params }: { params: Promise<{ symbol
             </Panel>
           )}
         </div>
-        <div className="min-w-0 xl:sticky xl:top-[7.5rem] xl:self-start 2xl:col-span-3">
+        <div className="min-w-0 xl:sticky xl:top-[7.25rem] xl:self-start 2xl:col-span-3">
           <OrderBookPanel symbol={data.symbol} compact />
         </div>
       </div>

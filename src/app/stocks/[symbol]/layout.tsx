@@ -19,11 +19,13 @@ export default function StockSymbolLayout({
     params.then((p) => setSymbol(p.symbol.toUpperCase()));
   }, [params]);
 
-  const { res, data, meta, isLoading } = useApi<VnStockDetail>(symbol ? `/api/v1/stocks/${symbol}` : null, {
-    refreshInterval: 20_000,
-  });
+  const { res, data, meta, isLoading } = useApi<VnStockDetail>(
+    symbol ? `/api/v1/stocks/${symbol}` : null,
+    {
+      refreshInterval: 20_000,
+    },
+  );
 
-  // Prefetch tab APIs when idle — warm cache for financials / valuation / tech
   useEffect(() => {
     if (!symbol) return;
     const paths = [
@@ -53,32 +55,64 @@ export default function StockSymbolLayout({
   }
 
   const q = data?.quote;
+  const ff = data?.foreignFlow?.latest as
+    | { buyVal?: number; sellVal?: number; netVal?: number; currentRoom?: number }
+    | undefined;
+  const hasForeign =
+    ff != null &&
+    [ff.buyVal, ff.sellVal, ff.netVal].some((v) => v != null && Number(v) !== 0);
 
   return (
     <div className="stock-workspace stock-page-body">
-      <Panel pad={false} className="sticky top-0 z-20 overflow-visible shadow-sm shadow-black/20">
-        <div className="stock-hero flex flex-col gap-3.5 md:flex-row md:items-end md:justify-between md:gap-6">
-          <div className="min-w-0 flex-1">
+      <Panel pad={false} className="stock-hero-panel sticky top-0 z-20 overflow-visible">
+        <div className="stock-hero">
+          <div className="stock-hero-main">
             <div className="stock-hero-title-row">
-              <h1 className="text-[1.25rem] font-semibold tracking-tight sm:text-[1.35rem]">{symbol}</h1>
+              <h1 className="stock-hero-symbol">{symbol}</h1>
               {(data?.name || q?.name) ? (
-                <span className="max-w-[14rem] truncate text-[12px] leading-snug text-text-muted sm:max-w-[22rem] sm:text-[13px]">
-                  {data?.name || q?.name}
-                </span>
+                <span className="stock-hero-name">{data?.name || q?.name}</span>
               ) : null}
               <FreshnessDot status={meta?.freshness} ageMs={meta?.ageMs} />
               <AddToWatchlist assetType="stock" symbol={symbol} />
             </div>
+
             {q ? (
               <div className="stock-hero-price-row num">
-                <span className="text-[1.65rem] font-semibold leading-none tracking-tight sm:text-[1.85rem]">
-                  {fmtNum(q.price, 2)}
-                </span>
+                <span className="stock-hero-price">{fmtNum(q.price, 2)}</span>
                 <Chg value={q.changePercent} className="text-[13px] sm:text-[14px]" />
                 {q.change != null && (
-                  <span className={`text-[12px] leading-none ${q.change >= 0 ? "text-up" : "text-down"}`}>
+                  <span
+                    className={`text-[12px] leading-none ${
+                      q.change >= 0 ? "text-up" : "text-down"
+                    }`}
+                  >
                     {q.change >= 0 ? "+" : ""}
                     {fmtNum(q.change, 2)}
+                  </span>
+                )}
+                {/* Band chips always by price — avoids duplicating large stat cells */}
+                {(q.referencePrice != null ||
+                  q.ceilingPrice != null ||
+                  q.floorPrice != null) && (
+                  <span className="stock-band-group" aria-label="Biên độ giá">
+                    {q.referencePrice != null && (
+                      <span className="stock-band-chip">
+                        <span className="stock-band-label">TC</span>
+                        <span className="num">{fmtNum(q.referencePrice, 2)}</span>
+                      </span>
+                    )}
+                    {q.ceilingPrice != null && (
+                      <span className="stock-band-chip stock-band-ceil">
+                        <span className="stock-band-label">Trần</span>
+                        <span className="num">{fmtNum(q.ceilingPrice, 2)}</span>
+                      </span>
+                    )}
+                    {q.floorPrice != null && (
+                      <span className="stock-band-chip stock-band-floor">
+                        <span className="stock-band-label">Sàn</span>
+                        <span className="num">{fmtNum(q.floorPrice, 2)}</span>
+                      </span>
+                    )}
                   </span>
                 )}
               </div>
@@ -89,26 +123,20 @@ export default function StockSymbolLayout({
             )}
           </div>
 
-          <div className="stock-hero-stats shrink-0 md:max-w-[min(100%,42rem)]">
+          <div className="stock-hero-stats">
             <Stat label="Khối lượng" value={fmtCompact(q?.volume)} />
             <Stat label="Giá trị" value={fmtCompact(q?.quoteVolume)} />
             <Stat
               label="CP lưu hành"
-              value={data?.sharesOutstanding != null ? fmtCompact(data.sharesOutstanding) : "—"}
+              value={
+                data?.sharesOutstanding != null ? fmtCompact(data.sharesOutstanding) : "—"
+              }
             />
             <Stat
               label="NN ròng"
-              value={
-                data?.foreignFlow?.latest != null
-                  ? fmtCompact((data.foreignFlow.latest as { netVal?: number }).netVal)
-                  : "—"
-              }
+              value={ff?.netVal != null ? fmtCompact(ff.netVal) : "—"}
               tone={
-                data?.foreignFlow?.latest != null
-                  ? ((data.foreignFlow.latest as { netVal?: number }).netVal ?? 0) >= 0
-                    ? "up"
-                    : "down"
-                  : undefined
+                ff?.netVal != null ? (ff.netVal >= 0 ? "up" : "down") : undefined
               }
             />
             <Stat
@@ -129,77 +157,37 @@ export default function StockSymbolLayout({
                   : "—"
               }
             />
-            <Stat
-              label="TC"
-              value={q?.referencePrice != null ? fmtNum(q.referencePrice, 2) : "—"}
-              className="hidden lg:block"
-            />
-            <Stat
-              label="Trần"
-              value={q?.ceilingPrice != null ? fmtNum(q.ceilingPrice, 2) : "—"}
-              className="hidden lg:block"
-            />
-            <Stat
-              label="Sàn"
-              value={q?.floorPrice != null ? fmtNum(q.floorPrice, 2) : "—"}
-              className="hidden lg:block"
-            />
           </div>
         </div>
 
-        {(q?.referencePrice != null || q?.ceilingPrice != null || q?.floorPrice != null) && (
-          <div className="stock-meta-strip lg:hidden" aria-label="Biên độ giá">
-            {q?.referencePrice != null && (
-              <span className="stock-meta-chip">
-                <span className="stock-meta-chip-label">TC</span>
-                <span className="num stock-meta-chip-value">{fmtNum(q.referencePrice, 2)}</span>
-              </span>
-            )}
-            {q?.ceilingPrice != null && (
-              <span className="stock-meta-chip">
-                <span className="stock-meta-chip-label">Trần</span>
-                <span className="num stock-meta-chip-value text-violet-300">{fmtNum(q.ceilingPrice, 2)}</span>
-              </span>
-            )}
-            {q?.floorPrice != null && (
-              <span className="stock-meta-chip">
-                <span className="stock-meta-chip-label">Sàn</span>
-                <span className="num stock-meta-chip-value text-sky-300">{fmtNum(q.floorPrice, 2)}</span>
-              </span>
-            )}
-          </div>
-        )}
-
-        {data?.foreignFlow?.latest ? (
+        {hasForeign && ff ? (
           <div className="stock-meta-strip" aria-label="Dòng vốn nước ngoài">
             <span className="stock-meta-chip">
               <span className="stock-meta-chip-label">NN mua</span>
               <span className="num stock-meta-chip-value text-up">
-                {fmtCompact((data.foreignFlow.latest as { buyVal?: number }).buyVal)}
+                {fmtCompact(ff.buyVal)}
               </span>
             </span>
             <span className="stock-meta-chip">
               <span className="stock-meta-chip-label">NN bán</span>
               <span className="num stock-meta-chip-value text-down">
-                {fmtCompact((data.foreignFlow.latest as { sellVal?: number }).sellVal)}
+                {fmtCompact(ff.sellVal)}
               </span>
             </span>
             <span className="stock-meta-chip">
               <span className="stock-meta-chip-label">Ròng</span>
               <span
                 className={`num stock-meta-chip-value ${
-                  ((data.foreignFlow.latest as { netVal?: number }).netVal ?? 0) >= 0 ? "text-up" : "text-down"
+                  (ff.netVal ?? 0) >= 0 ? "text-up" : "text-down"
                 }`}
               >
-                {fmtCompact((data.foreignFlow.latest as { netVal?: number }).netVal)}
+                {fmtCompact(ff.netVal)}
               </span>
             </span>
-            {(data.foreignFlow.latest as { currentRoom?: number }).currentRoom != null && (
+            {ff.currentRoom != null && Number(ff.currentRoom) !== 0 && (
               <span className="stock-meta-chip">
                 <span className="stock-meta-chip-label">Room còn</span>
-                <span className="num stock-meta-chip-value">
-                  {fmtCompact((data.foreignFlow.latest as { currentRoom?: number }).currentRoom)}
-                </span>
+                <span className="num stock-meta-chip-value">{fmtCompact(ff.currentRoom)}</span>
               </span>
             )}
           </div>
