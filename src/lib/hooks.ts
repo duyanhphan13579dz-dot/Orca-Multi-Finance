@@ -175,3 +175,10 @@ export function useApi<T>(url: string | null, opts?: { refreshInterval?: number;
     mutate,
   };
 }
+
+/** Warm client cache (and dedupe in-flight) so useApi shows data immediately. */
+export function prefetchApi(url: string | null | undefined, timeoutMs = FETCH_TIMEOUT_MS): void {
+  if (!url || typeof window === "undefined") return;
+  if (clientCacheHas(url, 45_000)) return;
+  void fetcher(url, timeoutMs).catch(() => undefined);
+}
