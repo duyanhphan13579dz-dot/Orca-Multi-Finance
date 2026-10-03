@@ -147,7 +147,7 @@ export function PatternAnalysisHub({
               <button
                 type="button"
                 onClick={() => setOpen(item.key)}
-                className="flex w-full items-center justify-between gap-3 px-0.5 py-2.5 text-left transition-colors hover:bg-surface-elevated/40"
+                className="orca-interactive flex w-full items-center justify-between gap-3 rounded-md px-0.5 py-2.5 text-left hover:bg-surface-elevated/40"
               >
                 <span className="text-[13px] font-medium text-text-primary">{item.label}</span>
                 <span className="flex items-center gap-2">
@@ -248,11 +248,26 @@ function DetailModal({
   children: React.ReactNode;
 }) {
   const [mounted, setMounted] = useState(false);
+  const [leaving, setLeaving] = useState(false);
+
+  const requestClose = () => {
+    setLeaving((prev) => {
+      if (prev) return prev;
+      window.setTimeout(() => onClose(), 180);
+      return true;
+    });
+  };
 
   useEffect(() => {
     setMounted(true);
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") {
+        setLeaving((prev) => {
+          if (prev) return prev;
+          window.setTimeout(() => onClose(), 180);
+          return true;
+        });
+      }
     };
     document.addEventListener("keydown", onKey);
     const prevOverflow = document.body.style.overflow;
@@ -271,29 +286,27 @@ function DetailModal({
 
   return createPortal(
     <div
-      className="fixed inset-0 z-[200] flex items-center justify-center p-4"
+      className="orca-modal-root fixed inset-0 z-[200] flex items-center justify-center p-4"
       role="dialog"
       aria-modal="true"
       aria-label={title}
     >
-      {/* Full-page dim overlay */}
       <button
         type="button"
-        className="absolute inset-0 cursor-default border-0 bg-black/70 backdrop-blur-[3px]"
+        className={`orca-modal-overlay absolute inset-0 cursor-default border-0 bg-black/70 backdrop-blur-[3px]${leaving ? " is-leaving" : ""}`}
         aria-label="Đóng"
-        onClick={onClose}
+        onClick={requestClose}
       />
-      {/* Centered panel */}
       <div
-        className="relative z-[1] flex max-h-[min(86vh,720px)] w-full max-w-lg flex-col overflow-hidden rounded-xl border border-border-subtle bg-surface-primary shadow-2xl shadow-black/50"
+        className={`orca-modal-panel relative z-[1] flex max-h-[min(86vh,720px)] w-full max-w-lg flex-col overflow-hidden rounded-xl border border-border-subtle bg-surface-primary shadow-2xl shadow-black/50${leaving ? " is-leaving" : ""}`}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border-subtle px-4 py-3">
           <h2 className="text-[15px] font-semibold text-text-primary">{title}</h2>
           <button
             type="button"
-            onClick={onClose}
-            className="rounded-md p-1.5 text-text-muted hover:bg-surface-elevated hover:text-text-primary"
+            onClick={requestClose}
+            className="rounded-md p-1.5 text-text-muted transition-colors hover:bg-surface-elevated hover:text-text-primary"
             aria-label="Đóng chi tiết"
           >
             <X className="size-4" />
