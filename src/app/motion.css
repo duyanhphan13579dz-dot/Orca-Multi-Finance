@@ -242,6 +242,93 @@ html {
   animation: orca-page-in 180ms var(--ease-out-soft) both;
 }
 
+/* ——— Spinner & button loading ——— */
+@keyframes orca-spin {
+  to { transform: rotate(360deg); }
+}
+.orca-spinner {
+  display: inline-block;
+  border-radius: 999px;
+  border-style: solid;
+  border-color: currentColor;
+  border-right-color: transparent;
+  animation: orca-spin 0.65s linear infinite;
+  vertical-align: -0.125em;
+  flex-shrink: 0;
+}
+.orca-spinner-sm { width: 0.875rem; height: 0.875rem; border-width: 2px; }
+.orca-spinner-md { width: 1.125rem; height: 1.125rem; border-width: 2px; }
+.orca-spinner-lg { width: 1.5rem; height: 1.5rem; border-width: 2.5px; }
+
+.orca-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  border-radius: 0.5rem;
+  font-weight: 500;
+  transition: background-color var(--dur-fast) var(--ease-out-soft),
+              border-color var(--dur-fast) var(--ease-out-soft),
+              color var(--dur-fast) var(--ease-out-soft),
+              opacity var(--dur-fast) var(--ease-out-soft),
+              transform var(--dur-fast) var(--ease-out-soft);
+}
+.orca-btn:active:not(:disabled) { transform: scale(0.98); }
+.orca-btn:disabled { opacity: 0.65; cursor: not-allowed; }
+.orca-btn-primary {
+  background: var(--color-accent-primary);
+  color: #fff;
+  border: 1px solid color-mix(in srgb, var(--color-accent-primary) 80%, #000);
+}
+.orca-btn-primary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--color-accent-primary) 88%, #000);
+}
+.orca-btn-secondary {
+  background: var(--color-surface-elevated);
+  color: var(--color-text-primary);
+  border: 1px solid var(--color-border-subtle);
+}
+.orca-btn-secondary:hover:not(:disabled) {
+  border-color: var(--color-border-default);
+}
+.orca-btn-ghost {
+  background: transparent;
+  color: var(--color-text-secondary);
+  border: 1px solid transparent;
+}
+.orca-btn-ghost:hover:not(:disabled) {
+  background: var(--color-surface-elevated);
+  color: var(--color-text-primary);
+}
+.orca-btn-sm { min-height: 1.85rem; padding: 0.25rem 0.65rem; font-size: 11.5px; }
+.orca-btn-md { min-height: 2.25rem; padding: 0.4rem 0.9rem; font-size: 13px; }
+.orca-btn-lg { min-height: 2.6rem; padding: 0.55rem 1.15rem; font-size: 14px; }
+
+.orca-tab-loading {
+  position: relative;
+  min-height: 8rem;
+}
+.orca-tab-loading::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: color-mix(in srgb, var(--color-canvas) 55%, transparent);
+  backdrop-filter: blur(1px);
+  border-radius: inherit;
+  pointer-events: none;
+}
+.orca-tab-loading-inner {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.6rem;
+  pointer-events: none;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .orca-page-enter,
   .orca-modal-overlay,
@@ -260,4 +347,5 @@ html {
     animation: none !important;
     background: var(--color-surface-elevated);
   }
+  .orca-spinner { animation: none; border-right-color: currentColor; opacity: 0.5; }
 }
