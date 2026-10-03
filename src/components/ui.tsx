@@ -209,7 +209,7 @@ export function Button({
 
 /**
  * Shared ORCA brand loader — logo + name + subtitle + blinking dots.
- * Used by pages (full) and sections/panels (compact).
+ * Centered in the page frame (full) or in the section box (compact).
  */
 export function BrandLoading({
   title,
@@ -218,7 +218,7 @@ export function BrandLoading({
 }: {
   title?: string;
   size?: "sm" | "md" | "lg";
-  /** Fill near-viewport height and center in the content frame */
+  /** Fill content viewport and center brand in the frame */
   full?: boolean;
 }) {
   const mark = size === "lg" ? 64 : size === "sm" ? 36 : 48;
@@ -230,14 +230,22 @@ export function BrandLoading({
         : "text-[15px] sm:text-[16px]";
   const subCls = size === "sm" ? "text-[9px]" : "text-[10px] sm:text-[10.5px]";
 
+  const shell = full
+    ? "orca-page-loading relative -mx-3 flex w-[calc(100%+1.5rem)] flex-col items-center justify-center px-4 sm:-mx-4 sm:w-[calc(100%+2rem)]"
+    : "orca-page-loading flex w-full flex-col items-center justify-center px-3 py-8";
+
+  const minH = full
+    ? "calc(100dvh - 7rem)"
+    : size === "sm"
+      ? "9rem"
+      : size === "lg"
+        ? "14rem"
+        : "11rem";
+
   return (
     <div
-      className={
-        full
-          ? "orca-page-loading relative -m-3 flex w-[calc(100%+1.5rem)] items-center justify-center sm:-m-4 sm:w-[calc(100%+2rem)]"
-          : "orca-page-loading flex w-full flex-col items-center justify-center px-3 py-8"
-      }
-      style={full ? { minHeight: "calc(100dvh - 3.5rem)" } : { minHeight: size === "sm" ? "8rem" : "12rem" }}
+      className={shell}
+      style={{ minHeight: minH }}
       aria-busy="true"
       aria-label={title ? `Đang tải ${title}` : "Đang tải"}
     >
@@ -282,19 +290,20 @@ export function TabLoading({ label = "Đang tải…" }: { label?: string }) {
 
 /**
  * Default loading used across pages & panels.
- * `rows` kept for API compatibility (maps to size).
+ * `rows` kept for API compatibility (maps to size / full-frame).
  */
 export function Loading({
   rows = 6,
   label,
-  full = false,
+  full,
 }: {
   rows?: number;
   label?: string;
   full?: boolean;
 }) {
-  const size = full || rows >= 8 ? "lg" : rows >= 5 ? "md" : "sm";
-  return <BrandLoading size={size as "sm" | "md" | "lg"} title={label} full={full} />;
+  const isFull = full ?? rows >= 6;
+  const size = isFull || rows >= 8 ? "lg" : rows >= 4 ? "md" : "sm";
+  return <BrandLoading size={size as "sm" | "md" | "lg"} title={label} full={isFull} />;
 }
 
 export function Unavailable({
