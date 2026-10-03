@@ -199,6 +199,41 @@ body {
   background: var(--color-accent-primary);
 }
 
+/* ——— Market ticker (horizontal marquee) ——— */
+@keyframes ticker-marquee {
+  from { transform: translate3d(0, 0, 0); }
+  to { transform: translate3d(-50%, 0, 0); }
+}
+.ticker-bar {
+  position: relative;
+  height: 1.75rem;
+  overflow: hidden;
+  width: 100%;
+  border-top: 1px solid var(--color-border-subtle);
+  background: color-mix(in srgb, var(--color-canvas) 88%, var(--color-surface-primary));
+}
+@media (min-width: 640px) {
+  .ticker-bar { height: 2rem; }
+}
+.ticker-track {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  width: max-content;
+  min-width: 200%;
+  height: 100%;
+  will-change: transform;
+  animation: ticker-marquee 48s linear infinite;
+  animation-play-state: running;
+}
+.ticker-track.is-paused,
+.ticker-track:hover {
+  animation-play-state: paused;
+}
+html[data-reduced-motion="true"] .ticker-track {
+  animation: none;
+}
+
 /* Stock section nav */
 .stock-section-nav {
   position: sticky; top: 4.75rem; z-index: 15;
@@ -241,7 +276,7 @@ body {
 .text-positive, .text-up { color: var(--color-up); }
 .text-negative, .text-down { color: var(--color-down); }
 
-/* ——— Form controls ——— */
+/* Form controls */
 .input {
   display: block;
   width: 100%;
@@ -256,25 +291,29 @@ body {
   outline: none;
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
-.input::placeholder {
-  color: var(--color-text-muted);
-}
-.input:hover {
-  border-color: var(--color-border-default);
-}
+.input::placeholder { color: var(--color-text-muted); }
+.input:hover { border-color: var(--color-border-default); }
 .input:focus {
   border-color: color-mix(in srgb, var(--color-accent-primary) 65%, var(--color-border-default));
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent-primary) 18%, transparent);
 }
-.input:disabled {
-  opacity: 0.55;
-  cursor: not-allowed;
-}
-textarea.input {
-  min-height: 4rem;
-  resize: vertical;
-}
-select.input {
-  cursor: pointer;
-  padding-right: 1.75rem;
+.input:disabled { opacity: 0.55; cursor: not-allowed; }
+textarea.input { min-height: 4rem; resize: vertical; }
+select.input { cursor: pointer; padding-right: 1.75rem; }
+
+/* Mobile shell polish */
+@media (max-width: 767px) {
+  .ticker-bar { height: 1.85rem; }
+  .ticker-track a {
+    font-size: 10.5px !important;
+    margin-left: 0.55rem !important;
+    margin-right: 0.55rem !important;
+  }
+  .orca-main-scroll {
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-y: contain;
+  }
+  .orca-main-scroll > div {
+    padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
+  }
 }
