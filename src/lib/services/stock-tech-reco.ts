@@ -4,6 +4,7 @@ import { llmChat, llmConfigured } from "../ai/gateway";
 import { collectFactNumbers, validateOutput } from "../ai/validate";
 import { getVnStockDetail } from "./stocks";
 import type { CandlePattern, Meta, TechnicalSnapshot, DivergenceSignal } from "../types";
+import { buildStockTradePlan, type StockTradePlan } from "../engines/stock-trade-plan";
 
 export type RecoStance = "watch-long" | "watch-short" | "neutral";
 export type RecoTone = "up" | "down" | "neutral";
@@ -36,6 +37,8 @@ export interface QuantTechReco {
   factors: TechFactor[];
   patterns: PatternHit[];
   summary: string;
+  /** Entry / SL / TP when signal is MUA or BÁN; null for QUAN SÁT. */
+  plan: StockTradePlan | null;
 }
 
 export interface LlmTechReco {
@@ -88,9 +91,8 @@ function confidencePctFrom(factorCount: number, absScore: number, patternBoost: 
   return Math.max(12, Math.min(92, Math.round(base)));
 }
 
-/** Phase 7: map top divergence into a signed quant weight (confidence-scaled). */
 function divergenceFactorWeight(d: DivergenceSignal): number {
-  const multi = d.structure === "double" || d.structure === "triple";
+  const conf = d.confidence ?? 0.5;
   let base = 0;
   switch (d.kind) {
     case "regular_bullish":
@@ -100,36 +102,33 @@ function divergenceFactorWeight(d: DivergenceSignal): number {
       base = d.strength === "A" ? -18 : -14;
       break;
     case "hidden_bullish":
-      base = d.strength === "A" ? 10 : 8;
+      base = 10;
       break;
     case "hidden_bearish":
-      base = d.strength === "A" ? -10 : -8;
+      base = -10;
       break;
   }
-  if (multi && (d.kind === "regular_bullish" || d.kind === "regular_bearish")) {
-    base = Math.round(base * 1.25);
-  }
-  return Math.round(base * Math.max(0.3, Math.min(1, d.confidence)));
+  return Math.round(base * conf);
 }
+
+const KIND_VI: Record<string, string> = {
+  regular_bullish: "Phân kỳ tăng",
+  regular_bearish: "Phân kỳ giảm",
+  hidden_bullish: "Phân kỳ ẩn tăng",
+  hidden_bearish: "Phân kỳ ẩn giảm",
+};
 
 const OSC_SHORT: Record<string, string> = {
   rsi: "RSI",
   macd_hist: "MACD hist",
-  macd_line: "MACD line",
+  macd_line: "MACD",
   stoch: "Stoch",
 };
 
-const KIND_VI: Record<string, string> = {
-  regular_bullish: "PK tăng cổ điển",
-  regular_bearish: "PK giảm cổ điển",
-  hidden_bullish: "PK ẩn tăng",
-  hidden_bearish: "PK ẩn giảm",
-};
-
 export function computeStockTechReco(
-  tech: TechnicalSnapshot | null,
+  tech: TechnicalSnapshot | null | undefined,
   patterns: CandlePattern[],
-  changePercent?: number | null,
+  changePercent: number | null,
 ): QuantTechReco {
   const factors: TechFactor[] = [];
   let score = 0;
@@ -140,201 +139,168 @@ export function computeStockTechReco(
       score: 0,
       stance: "neutral",
       signal: "QUAN_SÁT",
-      label: "Thiếu dữ liệu kỹ thuật",
+      label: "QUAN SÁT — thiếu dữ liệu kỹ thuật",
       tone: "neutral",
       confidence: "LOW",
       confidencePct: 12,
       factors: [],
       patterns: [],
-      summary: "Chưa đủ chuỗi giá để tổng hợp khuyến nghị kỹ thuật.",
+      summary: "Chưa đủ dữ liệu kỹ thuật.",
+      plan: null,
     };
   }
 
-  const trendMap: Record<string, { w: number; vi: string }> = {
-    "strong-up": { w: 26, vi: "Tăng mạnh" },
-    up: { w: 14, vi: "Tăng" },
-    sideways: { w: 0, vi: "Đi ngang" },
-    down: { w: -14, vi: "Giảm" },
-    "strong-down": { w: -26, vi: "Giảm mạnh" },
-  };
-  const tr = trendMap[tech.trend.label] ?? { w: 0, vi: tech.trend.label };
-  score += tr.w;
-  factors.push({
-    key: "trend",
-    label: "Xu hướng",
-    value: `${tr.vi} (${tech.trend.score >= 0 ? "+" : ""}${tech.trend.score.toFixed(1)})`,
-    bias: tr.w > 0 ? "up" : tr.w < 0 ? "down" : "neutral",
-    weight: tr.w,
-    note: "Cấu trúc xu hướng từ SMA + độ dốc",
-  });
+  if (tech.trend) {
+    const w = Math.round(tech.trend.score * 0.35);
+    score += w;
+    factors.push({
+      key: "trend",
+      label: "Xu hướng",
+      value: tech.trend.label,
+      bias: w > 0 ? "up" : w < 0 ? "down" : "neutral",
+      weight: w,
+      note: `Điểm xu hướng ${tech.trend.score}`,
+    });
+  }
 
   if (tech.rsi14 != null) {
     let w = 0;
-    let note = "Trung tính";
-    if (tech.rsi14 >= 70) {
-      w = -16;
-      note = "Vùng quá mua — rủi ro điều chỉnh";
-    } else if (tech.rsi14 <= 30) {
-      w = 16;
-      note = "Vùng quá bán — tiềm năng hồi";
-    } else if (tech.rsi14 >= 55) {
-      w = 8;
-      note = "Đà mua chiếm ưu thế";
-    } else if (tech.rsi14 <= 45) {
-      w = -8;
-      note = "Đà bán chiếm ưu thế";
-    }
+    if (tech.rsi14 >= 70) w = -12;
+    else if (tech.rsi14 <= 30) w = 12;
+    else if (tech.rsi14 >= 55) w = 6;
+    else if (tech.rsi14 <= 45) w = -6;
     score += w;
     factors.push({
       key: "rsi",
-      label: "RSI(14)",
+      label: "RSI 14",
       value: tech.rsi14.toFixed(1),
       bias: w > 0 ? "up" : w < 0 ? "down" : "neutral",
       weight: w,
-      note,
+      note: w > 0 ? "Vùng hỗ trợ / quá bán" : w < 0 ? "Vùng kháng cự / quá mua" : "Trung tính",
     });
   }
 
   if (tech.macd) {
     const h = tech.macd.histogram;
-    const w =
-      h > 0
-        ? h > Math.abs(tech.last) * 0.001
-          ? 12
-          : 6
-        : h < 0
-          ? Math.abs(h) > Math.abs(tech.last) * 0.001
-            ? -12
-            : -6
-          : 0;
+    const w = h > 0 ? 10 : h < 0 ? -10 : 0;
     score += w;
     factors.push({
       key: "macd",
       label: "MACD hist",
-      value: h.toPrecision(3),
+      value: h.toFixed(3),
       bias: w > 0 ? "up" : w < 0 ? "down" : "neutral",
       weight: w,
-      note: w > 0 ? "Histogram dương — đà tăng" : w < 0 ? "Histogram âm — đà giảm" : "Histogram quanh 0",
+      note: h > 0 ? "Momentum tăng" : h < 0 ? "Momentum giảm" : "Phẳng",
     });
   }
 
-  for (const m of [
-    { key: "sma20", label: "Giá / SMA20", v: tech.sma.sma20, w: 8 },
-    { key: "sma50", label: "Giá / SMA50", v: tech.sma.sma50, w: 10 },
-    { key: "sma200", label: "Giá / SMA200", v: tech.sma.sma200, w: 8 },
-  ] as const) {
-    if (m.v == null) continue;
-    const above = tech.last >= m.v;
-    const w = above ? m.w : -m.w;
+  if (tech.sma?.sma20 != null && tech.last > 0) {
+    const above = tech.last > tech.sma.sma20;
+    const w = above ? 8 : -8;
     score += w;
     factors.push({
-      key: m.key,
-      label: m.label,
-      value: above ? "Trên MA" : "Dưới MA",
+      key: "sma20",
+      label: "Giá vs SMA20",
+      value: above ? "Trên" : "Dưới",
       bias: above ? "up" : "down",
       weight: w,
-      note: above ? "Cấu trúc ủng hộ phía mua" : "Cấu trúc nghiêng phía bán",
+      note: `SMA20 ${tech.sma.sma20.toFixed(2)}`,
     });
   }
 
-  if (tech.returns.d30 != null) {
-    const r = tech.returns.d30;
-    const w = r > 8 ? 10 : r > 2 ? 5 : r < -8 ? -10 : r < -2 ? -5 : 0;
+  if (tech.sma?.sma50 != null && tech.last > 0) {
+    const above = tech.last > tech.sma.sma50;
+    const w = above ? 10 : -10;
     score += w;
     factors.push({
-      key: "ret30",
-      label: "Hiệu suất 30 ngày",
-      value: `${r >= 0 ? "+" : ""}${r.toFixed(1)}%`,
-      bias: w > 0 ? "up" : w < 0 ? "down" : "neutral",
+      key: "sma50",
+      label: "Giá vs SMA50",
+      value: above ? "Trên" : "Dưới",
+      bias: above ? "up" : "down",
       weight: w,
-      note: "Đà giá trung hạn",
-    });
-  } else if (changePercent != null) {
-    const w = changePercent > 2 ? 6 : changePercent < -2 ? -6 : 0;
-    score += w;
-    factors.push({
-      key: "chg",
-      label: "% phiên",
-      value: `${changePercent >= 0 ? "+" : ""}${changePercent.toFixed(2)}%`,
-      bias: w > 0 ? "up" : w < 0 ? "down" : "neutral",
-      weight: w,
-      note: "Biến động gần nhất",
+      note: `SMA50 ${tech.sma.sma50.toFixed(2)}`,
     });
   }
 
-  if (patterns.length) {
-    let bull = 0;
-    let bear = 0;
-    for (const p of patterns) {
-      const mult = p.reliability === "high" ? 3 : p.reliability === "medium" ? 2 : 1;
-      if (p.type === "bullish") bull += mult;
-      if (p.type === "bearish") bear += mult;
-    }
-    const w = bull > bear ? Math.min(16, 6 + bull * 2) : bear > bull ? -Math.min(16, 6 + bear * 2) : 0;
-    score += w;
-    patternBoost = Math.min(12, (bull + bear) * 2);
-    factors.push({
-      key: "pattern",
-      label: "Mẫu hình nến",
-      value: patterns.slice(0, 3).map((p) => p.nameVi).join(", ") || `${bull}↑/${bear}↓`,
-      bias: w > 0 ? "up" : w < 0 ? "down" : "neutral",
-      weight: w,
-      note: `Tăng ${bull} · Giảm ${bear} (đã trọng số độ tin cậy)`,
-    });
-  }
-
-  if (tech.support[0] != null && tech.last > 0) {
+  if (tech.support?.[0] != null && tech.last > 0) {
     const dist = ((tech.last - tech.support[0]) / tech.last) * 100;
-    if (dist >= 0 && dist < 2) {
-      score += 4;
+    if (dist >= 0 && dist < 3) {
+      score += 6;
       factors.push({
         key: "support",
         label: "Gần hỗ trợ",
         value: `${dist.toFixed(1)}%`,
         bias: "up",
-        weight: 4,
-        note: "Giá sát vùng hỗ trợ gần nhất",
-      });
-    }
-  }
-  if (tech.resistance[0] != null && tech.last > 0) {
-    const dist = ((tech.resistance[0] - tech.last) / tech.last) * 100;
-    if (dist >= 0 && dist < 2) {
-      score -= 4;
-      factors.push({
-        key: "resist",
-        label: "Gần kháng cự",
-        value: `${dist.toFixed(1)}%`,
-        bias: "down",
-        weight: -4,
-        note: "Giá sát vùng kháng cự gần nhất",
+        weight: 6,
+        note: `Hỗ trợ ${tech.support[0].toFixed(2)}`,
       });
     }
   }
 
-  // Phase 7 — divergence quant factor (top signal only)
-  const divs = tech.divergences ?? [];
-  if (divs.length > 0) {
-    const top = [...divs].sort((a, b) => b.confidence - a.confidence)[0]!;
+  if (tech.resistance?.[0] != null && tech.last > 0) {
+    const dist = ((tech.resistance[0] - tech.last) / tech.last) * 100;
+    if (dist >= 0 && dist < 3) {
+      score -= 6;
+      factors.push({
+        key: "resistance",
+        label: "Gần kháng cự",
+        value: `${dist.toFixed(1)}%`,
+        bias: "down",
+        weight: -6,
+        note: `Kháng cự ${tech.resistance[0].toFixed(2)}`,
+      });
+    }
+  }
+
+  if (changePercent != null) {
+    const w = changePercent > 2 ? 5 : changePercent < -2 ? -5 : 0;
+    if (w !== 0) {
+      score += w;
+      factors.push({
+        key: "session",
+        label: "% phiên",
+        value: `${changePercent >= 0 ? "+" : ""}${changePercent.toFixed(2)}%`,
+        bias: w > 0 ? "up" : "down",
+        weight: w,
+        note: "Biến động phiên hiện tại",
+      });
+    }
+  }
+
+  for (const p of patterns.slice(0, 4)) {
+    if (p.type === "neutral") continue;
+    const rel = p.reliability === "high" ? 8 : p.reliability === "medium" ? 5 : 3;
+    const w = p.type === "bullish" ? rel : -rel;
+    score += w;
+    patternBoost += Math.abs(w) * 0.4;
+    factors.push({
+      key: `pat-${p.name}`,
+      label: p.nameVi || p.name,
+      value: p.type,
+      bias: p.type === "bullish" ? "up" : "down",
+      weight: w,
+      note: `Độ tin cậy ${p.reliability}`,
+    });
+  }
+
+  if (tech.divergences?.length) {
+    const top = [...tech.divergences].sort((a, b) => b.confidence - a.confidence)[0]!;
     const w = divergenceFactorWeight(top);
     if (w !== 0) {
       score += w;
-      const osc = OSC_SHORT[top.oscillator] ?? top.oscillator;
-      const struct =
-        top.structure && top.structure !== "single" ? ` · ${top.structure}` : "";
       factors.push({
         key: "divergence",
         label: "Phân kỳ",
-        value: `${KIND_VI[top.kind] ?? top.kind} · ${osc} class ${top.strength}${struct}`,
+        value: `${KIND_VI[top.kind] ?? top.kind} · ${OSC_SHORT[top.oscillator] ?? top.oscillator}`,
         bias: w > 0 ? "up" : "down",
         weight: w,
-        note: `conf ${(top.confidence * 100).toFixed(0)}% · ${top.barsBetween} nến · quant-only`,
+        note: `conf ${(top.confidence * 100).toFixed(0)}%`,
       });
     }
   }
 
   score = clamp(score);
-  const { stance, signal, label, tone } = stanceFromScore(score);
+  let { stance, signal, label, tone } = stanceFromScore(score);
   const confidence = confFromCoverage(factors.length, Math.abs(score));
   const confidencePct = confidencePctFrom(factors.length, Math.abs(score), patternBoost);
   const patternHits: PatternHit[] = patterns.slice(0, 6).map((p) => ({
@@ -349,6 +315,53 @@ export function computeStockTechReco(
       ? "Chưa đủ tín hiệu kỹ thuật nổi bật."
       : `${signal === "QUAN_SÁT" ? "QUAN SÁT" : signal} (${confidencePct}%): điểm ${score >= 0 ? "+" : ""}${score} · ${top.map((f) => f.label).join(" · ")}.`;
 
+  let plan: StockTradePlan | null = null;
+  if ((signal === "MUA" || signal === "BÁN") && tech.last > 0) {
+    plan = buildStockTradePlan(signal === "MUA" ? "buy" : "sell", {
+      last: tech.last,
+      atr14: tech.atr14,
+      support: tech.support,
+      resistance: tech.resistance,
+      volatility30d: tech.volatility30d,
+    });
+  }
+
+  // Align with composite engine tradeSignal when present
+  if (tech.tradeSignal) {
+    const ts = tech.tradeSignal;
+    if ((ts.action === "buy" || ts.action === "sell") && ts.plan && (ts.confidence ?? 0) >= 58) {
+      signal = ts.action === "buy" ? "MUA" : "BÁN";
+      stance = ts.action === "buy" ? "watch-long" : "watch-short";
+      tone = ts.action === "buy" ? "up" : "down";
+      label = signal === "MUA" ? "Tín hiệu MUA (kỹ thuật)" : "Tín hiệu BÁN (kỹ thuật)";
+      plan = {
+        side: ts.action,
+        sideVi: ts.action === "buy" ? "MUA" : "BÁN",
+        entry: ts.plan.entry,
+        stopLoss: ts.plan.stopLoss,
+        takeProfit: ts.plan.takeProfit,
+        takeProfit1: ts.plan.takeProfit1,
+        takeProfit2: ts.plan.takeProfit2,
+        takeProfit3: ts.plan.takeProfit3,
+        riskReward: ts.plan.riskReward,
+        riskPct: ts.plan.riskPct,
+        rewardPct: ts.plan.rewardPct,
+        riskPerShare: Math.abs(ts.plan.entry - ts.plan.stopLoss),
+        invalidation: ts.plan.invalidation,
+        basis: ts.plan.basis,
+        notes: ts.plan.notes,
+      };
+    } else if (ts.action === "watch" && (ts.confidence ?? 0) >= 45) {
+      signal = "QUAN_SÁT";
+      stance = "neutral";
+      tone = "neutral";
+      label = "QUAN SÁT — chờ xác nhận";
+      plan = null;
+    }
+  }
+
+  if (signal === "QUAN_SÁT") plan = null;
+
   return {
     score,
     stance,
@@ -360,19 +373,13 @@ export function computeStockTechReco(
     factors,
     patterns: patternHits,
     summary,
+    plan,
   };
 }
 
 const SYS = `Bạn là chuyên gia phân tích kỹ thuật chứng khoán Việt Nam của Orca Financial.
-Nhiệm vụ: tổng hợp CÁC YẾU TỐ KỸ THUẬT đã cho (quant factors) thành khuyến nghị nghiên cứu ngắn bằng tiếng Việt.
-
-Quy tắc cứng:
-- Chỉ dùng số liệu / factor trong STRUCTURED CONTEXT — không invent giá, %, RSI, volume.
-- Khuyến nghị thuộc nhóm nghiên cứu: watch-long | watch-short | neutral — KHÔNG viết "nên mua/bán ngay", không đặt lệnh.
-- Trả lời ĐÚNG JSON, không markdown:
-{"narrative":"3-5 câu tiếng Việt","stance":"watch-long|watch-short|neutral","keyDrivers":["ý 1","ý 2"],"risks":["rủi ro 1"],"invalidation":"điều kiện vô hiệu hóa tín hiệu hoặc null"}
-- stance nên khớp quant trừ khi factors mâu thuẫn rõ (ghi trong narrative).
-- keyDrivers 2-4 ý; risks 1-3 ý; invalidation 1 câu hoặc null.`;
+Nhiệm vụ: tổng hợp CÁC YẾU TỐ KỸ THUẬT đã cho thành khuyến nghị nghiên cứu ngắn bằng tiếng Việt.
+Quy tắc: Chỉ dùng số liệu trong context — không invent. Trả JSON: {"narrative":"...","stance":"watch-long|watch-short|neutral","keyDrivers":[],"risks":[],"invalidation":null}`;
 
 async function enrichLlm(
   quant: QuantTechReco,
@@ -381,37 +388,16 @@ async function enrichLlm(
   if (!llmConfigured()) return { llm: null, status: "skipped" };
   const started = Date.now();
   try {
-    const user = JSON.stringify(
-      {
-        quant: {
-          score: quant.score,
-          signal: quant.signal,
-          stance: quant.stance,
-          confidencePct: quant.confidencePct,
-          summary: quant.summary,
-          factors: quant.factors.map((f) => ({
-            label: f.label,
-            value: f.value,
-            bias: f.bias,
-            weight: f.weight,
-          })),
-          patterns: quant.patterns,
-        },
-        market: contract,
-      },
-      null,
-      0,
-    );
-    const res = await llmChat("analysis", {
+    const res = await llmChat({
       system: SYS,
-      user: `STRUCTURED CONTEXT:\n${user}`,
+      user: JSON.stringify({ quant, contract }),
       temperature: 0.2,
-      maxTokens: 700,
+      maxTokens: 800,
     });
-    if (!res?.text) return { llm: null, status: "unavailable" };
-    const parsed = parseLlmJson(res.text);
+    const text = res.text ?? "";
+    const parsed = parseLlmJson(text);
     if (!parsed) return { llm: null, status: "failed" };
-    const facts = collectFactNumbers(contract);
+    const facts = collectFactNumbers(JSON.stringify(contract));
     const check = validateOutput(parsed.narrative, facts);
     if (!check.ok) return { llm: null, status: "failed" };
     return {
