@@ -430,8 +430,12 @@ export class SeriesManager {
     for (const key of ["ma10", "ma20", "ma50", "ma100", "ma200"] as const) {
       const pts = ind[key];
       if (pts?.length) {
-        push(key, add(key, 0, maColors[key]), pts);
-        this.indicators.get(key)?.applyOptions({ visible: visible[key] });
+        push(key, add(key, 0, maColors[key], { width: 2 }), pts);
+        this.indicators.get(key)?.applyOptions({
+          visible: visible[key],
+          lastValueVisible: true,
+          title: key.toUpperCase(),
+        });
       }
     }
 
@@ -445,7 +449,7 @@ export class SeriesManager {
       push("vwap", add("vwap", 0, T.info, { width: 2 }), ind.vwap);
       this.indicators.get("vwap")?.applyOptions({ visible: visible.vwap });
     }
-    if (ind.rsi.length) {
+    if (ind.rsi?.length) {
       const s = add("rsi", 1, T.purple);
       push("rsi", s, ind.rsi);
       s.applyOptions({ visible: visible.rsi });
