@@ -157,9 +157,9 @@ function useChartHeight() {
   useEffect(() => {
     const apply = () => {
       const w = window.innerWidth;
-      if (w >= 1280) setH(420);
-      else if (w >= 640) setH(380);
-      else setH(300);
+      if (w >= 1280) setH(360);
+      else if (w >= 640) setH(320);
+      else setH(260);
     };
     apply();
     window.addEventListener("resize", apply);
@@ -211,7 +211,7 @@ export default function StockOverviewPage({ params }: { params: Promise<{ symbol
         className="stock-section-card stock-trading-zone scroll-mt-28 grid gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(280px,340px)] xl:items-start 2xl:grid-cols-12"
         aria-labelledby="sec-chart-title"
       >
-        <div className="stock-section-heading" id="sec-chart-title">
+        <div className="stock-section-heading xl:col-span-2 2xl:col-span-12" id="sec-chart-title">
           <div>
             <p className="stock-section-kicker">Thị trường</p>
             <h2>Biểu đồ &amp; sổ lệnh</h2>
