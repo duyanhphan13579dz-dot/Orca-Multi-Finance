@@ -13,6 +13,7 @@ import {
   type MouseEvent,
 } from "react";
 import { markAppNavigating } from "@/lib/hooks";
+import { RouteProgress, signalNavStart } from "@/components/route-progress";
 import {
   Bot,
   Boxes,
@@ -130,7 +131,8 @@ export function ShellInner({ children }: { children: ReactNode }) {
     (href: string, e: MouseEvent<HTMLAnchorElement>) => {
       if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
       e.preventDefault();
-      markAppNavigating();
+      markAppNavigating(320);
+      signalNavStart();
       startTransition(() => router.push(href));
     },
     [router],
@@ -292,6 +294,7 @@ export function ShellInner({ children }: { children: ReactNode }) {
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-background-primary text-text-primary">
+      <RouteProgress />
       <PriceAlertEngine />
       <div className="sticky top-0 z-30 shrink-0 border-b border-border-subtle bg-surface-base">
         <TickerTape />
