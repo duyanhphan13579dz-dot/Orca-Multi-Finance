@@ -435,10 +435,29 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
     const offByDefault = key === "bollinger" || key.startsWith("ma");
     const cur = offByDefault ? !!ind[key as keyof typeof ind] : ind[key as keyof typeof ind] !== false;
     const next = !cur;
-    if (key !== "srLevels" && mgr) {
-      mgr.setIndicatorVisible(key as Parameters<SeriesManager["setIndicatorVisible"]>[0], next);
-    }
     const nextInd = { ...ind, [key]: next };
+
+    // Rebuild immediately so MA/BB series are created on first enable (not only visibility flip).
+    if (mgr && key !== "srLevels") {
+      const vis = {
+        ema: nextInd.ema !== false,
+        ma10: !!nextInd.ma10,
+        ma20: !!nextInd.ma20,
+        ma50: !!nextInd.ma50,
+        ma100: !!nextInd.ma100,
+        ma200: !!nextInd.ma200,
+        bollinger: !!nextInd.bollinger,
+        vwap: nextInd.vwap !== false,
+        rsi: nextInd.rsi !== false,
+        macd: nextInd.macd !== false,
+        srLevels: nextInd.srLevels !== false,
+      };
+      try {
+        mgr.rebuildIndicators(dataRef.current?.indicators ?? null, vis);
+      } catch {
+        mgr.setIndicatorVisible(key as Parameters<SeriesManager["setIndicatorVisible"]>[0], next);
+      }
+    }
     if (key === "srLevels") {
       mgr?.rebuildSrLines(dataRef.current?.indicators ?? null, !!nextInd.srLevels);
     }
