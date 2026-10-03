@@ -73,7 +73,6 @@ const MONEY_FLOW_VI: Record<string, string> = {
   "strong-outflow": "Ra mạnh",
 };
 
-/** Sticky-offset helpers: hero bar → section nav → content. */
 const ANCHOR_OFFSET =
   "calc(var(--stock-sticky-h, 6.35rem) + var(--stock-nav-h, 2.55rem) + 0.45rem)";
 
@@ -97,15 +96,13 @@ function DecisionStrip({
     typeof trend === "object" && trend
       ? TREND_VI[trend.label] ?? trend.label
       : String(trend ?? "Chưa rõ");
-  const isUp = typeof trend === "object" && trend
-    ? trend.label === "up" || trend.label === "strong-up"
-    : String(trend ?? "").includes("up");
-  const isDown = typeof trend === "object" && trend
-    ? trend.label === "down" || trend.label === "strong-down"
-    : String(trend ?? "").includes("down");
-  const tone = isUp ? "up" : isDown ? "down" : "neutral";
-  const action = isUp ? "Theo dõi tăng" : isDown ? "Thận trọng" : "Quan sát";
-  const Icon = isUp ? ArrowUpRight : isDown ? ArrowDownRight : Activity;
+
+  const ts = technical?.tradeSignal;
+  const signal =
+    ts?.action === "buy" ? "MUA" : ts?.action === "sell" ? "BÁN" : "QUAN SÁT";
+  const tone = signal === "MUA" ? "up" : signal === "BÁN" ? "down" : "neutral";
+  const Icon = signal === "MUA" ? ArrowUpRight : signal === "BÁN" ? ArrowDownRight : Activity;
+  const plan = ts?.plan ?? null;
 
   const rsi = technical?.rsi14 != null ? technical.rsi14.toFixed(1) : "—";
   const vol30 =
@@ -115,12 +112,13 @@ function DecisionStrip({
   const flow = technical?.moneyFlow?.label;
   const flowLabel = flow ? MONEY_FLOW_VI[flow] ?? flow : null;
 
+  const fmt = (n: number) => n.toLocaleString("vi-VN", { maximumFractionDigits: 2 });
+
   return (
     <div
       id="sec-decision"
       className={`stock-decision-strip stock-decision-strip--${tone}`}
     >
-      {/* Identity stays in sticky hero only — strip is action + signal metrics. */}
       <div className="stock-decision-left">
         <ShieldCheck className="size-3.5 shrink-0 text-accent-primary" aria-hidden />
         <Icon className="size-3.5 shrink-0" aria-hidden />
@@ -133,8 +131,14 @@ function DecisionStrip({
                 : "font-semibold text-text-secondary"
           }
         >
-          {action}
+          {signal}
         </span>
+        {ts?.confidence != null && (
+          <>
+            <span className="text-text-muted">·</span>
+            <span className="text-text-muted">{Math.round(ts.confidence)}%</span>
+          </>
+        )}
         <span className="text-text-muted">·</span>
         <span className="text-text-secondary">{trendLabel}</span>
       </div>
@@ -152,6 +156,14 @@ function DecisionStrip({
                 : undefined
             }
           />
+        )}
+        {plan && signal !== "QUAN SÁT" && (
+          <>
+            <MetricChip label="Entry" value={fmt(plan.entry)} />
+            <MetricChip label="SL" value={fmt(plan.stopLoss)} tone="down" />
+            <MetricChip label="TP" value={fmt(plan.takeProfit)} tone="up" />
+            <MetricChip label="R:R" value={`1:${plan.riskReward.toFixed(1)}`} />
+          </>
         )}
         <MetricChip label="RSI" value={rsi} />
         {flowLabel && (
@@ -186,217 +198,119 @@ function MetricChip({
   return (
     <span className="stock-metric-chip">
       <span className="stock-metric-chip-label">{label}</span>
-      <strong
-        className={`num stock-metric-chip-value ${
-          tone === "up" ? "text-up" : tone === "down" ? "text-down" : "text-text-primary"
+      <span
+        className={`stock-metric-chip-value num ${
+          tone === "up" ? "text-positive" : tone === "down" ? "text-negative" : ""
         }`}
       >
         {value}
-      </strong>
+      </span>
     </span>
   );
 }
 
-/** In-page nav with scroll-spy: highlights the section currently in view. */
-function SectionNav() {
-  const [active, setActive] = useState<string>("");
-
-  useEffect(() => {
-    const els = SECTION_NAV.map((s) => document.getElementById(s.id)).filter(
-      (el): el is HTMLElement => el != null,
-    );
-    if (!els.length) return;
-    const visible = new Set<Element>();
-    const pick = () => {
-      const first = els.find((el) => visible.has(el));
-      if (first) setActive(first.id);
-    };
-    const io = new IntersectionObserver(
-      (entries) => {
-        for (const entry of entries) {
-          if (entry.isIntersecting) visible.add(entry.target);
-          else visible.delete(entry.target);
-        }
-        pick();
-      },
-      { rootMargin: "-25% 0px -65% 0px", threshold: 0 },
-    );
-    for (const el of els) io.observe(el);
-    return () => io.disconnect();
-  }, []);
-
-  return (
-    <nav aria-label="Mục trong trang" className="stock-section-nav">
-      {SECTION_NAV.map((s) => (
-        <button
-          key={s.id}
-          type="button"
-          onClick={() => {
-            setActive(s.id);
-            scrollToSection(s.id);
-          }}
-          data-active={active === s.id ? "true" : undefined}
-          aria-current={active === s.id ? "true" : undefined}
-          className="stock-section-nav-item"
-        >
-          {s.label}
-        </button>
-      ))}
-    </nav>
-  );
-}
-
-function useChartHeight() {
-  const [h, setH] = useState(320);
-  useEffect(() => {
-    const apply = () => {
-      const w = window.innerWidth;
-      if (w >= 1280) setH(420);
-      else if (w >= 640) setH(380);
-      else setH(300);
-    };
-    apply();
-    window.addEventListener("resize", apply);
-    return () => window.removeEventListener("resize", apply);
-  }, []);
-  return h;
-}
-
-export default function StockOverviewPage({ params }: { params: Promise<{ symbol: string }> }) {
+export default function StockDetailPage({ params }: { params: Promise<{ symbol: string }> }) {
   const [symbol, setSymbol] = useState("");
-  const chartH = useChartHeight();
   useEffect(() => {
     params.then((p) => setSymbol(p.symbol.toUpperCase()));
   }, [params]);
 
   const { res, data, meta, isLoading } = useApi<VnStockDetail>(
-    symbol ? `/api/v1/stocks/${symbol}` : null,
-    {
-      refreshInterval: 20_000,
-      timeoutMs: 14_000,
-    },
+    symbol ? `/api/v1/stocks/${encodeURIComponent(symbol)}` : null,
+    { refreshInterval: 30_000 },
   );
 
-  if (!symbol || (isLoading && !res)) return <Loading rows={3} label="Đang tải tổng quan" />;
+  if (!symbol || (isLoading && !res)) {
+    return (
+      <div className="stock-workspace">
+        <Loading rows={3} />
+      </div>
+    );
+  }
+
   if (!res?.success || !data) {
     return (
-      <Unavailable
-        title={`Không lấy được tổng quan ${symbol}`}
-        note={res && !res.success ? res.error.message : "Nguồn thị trường đang gián đoạn."}
-      />
+      <div className="stock-workspace">
+        <Unavailable
+          title={`Không tải được ${symbol}`}
+          note={res && !res.success ? res.error.message : "Nguồn dữ liệu đang gián đoạn."}
+        />
+      </div>
     );
   }
 
   return (
-    <div className="stock-workspace">
+    <div className="stock-workspace stock-page-body">
+      <nav className="stock-section-nav" aria-label="Mục trang">
+        {SECTION_NAV.map((s) => (
+          <button
+            key={s.id}
+            type="button"
+            className="stock-section-nav-item"
+            onClick={() => scrollToSection(s.id)}
+          >
+            {s.label}
+          </button>
+        ))}
+      </nav>
+
       <DecisionStrip quote={data.quote} technical={data.technical} meta={meta ?? null} />
 
-      <SectionNav />
-
-      <section
-        id="sec-chart"
-        className="stock-section-card stock-trading-zone grid gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(280px,340px)] xl:items-start 2xl:grid-cols-12"
-        aria-labelledby="sec-chart-title"
-      >
-        <div className="stock-section-heading" id="sec-chart-title">
+      <section id="sec-chart" className="stock-section-card" style={{ scrollMarginTop: ANCHOR_OFFSET }}>
+        <div className="stock-section-heading">
           <div>
-            <p className="stock-section-kicker">Thị trường</p>
-            <h2>Biểu đồ & sổ lệnh</h2>
+            <p className="stock-section-kicker">Chart</p>
+            <h2>Biểu đồ kỹ thuật</h2>
           </div>
           <span className="stock-section-index">01</span>
         </div>
-        <div className="min-w-0 2xl:col-span-9">
-          {data.quote || data.bars.length > 0 ? (
-            <div className="stock-chart-frame min-h-[320px]">
-              <OrcaChart
-                symbol={data.symbol}
-                assetType="stock"
-                defaultTimeframe="1d"
-                height={chartH}
-                title={data.symbol}
-                extraLevels={[
-                  ...(data.quote?.ceilingPrice != null
-                    ? [{ label: "Trần", price: data.quote.ceilingPrice, color: "rgba(181,140,255,0.7)" }]
-                    : []),
-                  ...(data.quote?.referencePrice != null
-                    ? [
-                        {
-                          label: "Tham chiếu",
-                          price: data.quote.referencePrice,
-                          color: "rgba(245,165,36,0.7)",
-                        },
-                      ]
-                    : []),
-                  ...(data.quote?.floorPrice != null
-                    ? [{ label: "Sàn", price: data.quote.floorPrice, color: "rgba(56,189,248,0.7)" }]
-                    : []),
-                ]}
-              />
-            </div>
-          ) : (
-            <Panel title="Biểu đồ">
-              <p className="stock-copy">Chưa có chuỗi giá để vẽ biểu đồ.</p>
-            </Panel>
-          )}
-        </div>
-        <div
-          className="min-w-0 xl:sticky xl:self-start 2xl:col-span-3"
-          style={{ top: ANCHOR_OFFSET }}
-        >
-          <OrderBookPanel symbol={data.symbol} compact />
+        <div className="stock-chart-frame">
+          <OrcaChart symbol={data.symbol} assetType="stock" title={data.symbol} height={420} />
         </div>
       </section>
 
       <section
         id="sec-signals"
-        className="stock-section-card grid gap-3 lg:grid-cols-2 lg:items-start 2xl:grid-cols-12"
+        className="stock-section-card"
+        style={{ scrollMarginTop: ANCHOR_OFFSET }}
         aria-labelledby="sec-signals-title"
       >
         <div className="stock-section-heading" id="sec-signals-title">
           <div>
-            <p className="stock-section-kicker">Tín hiệu</p>
-            <h2>Động lượng & mẫu hình</h2>
+            <p className="stock-section-kicker">Signals</p>
+            <h2>Tín hiệu kỹ thuật</h2>
           </div>
           <span className="stock-section-index">02</span>
         </div>
-        <div className="min-w-0 2xl:col-span-6">
+        <div className="grid gap-3 lg:grid-cols-2">
           <TechRecoPanel symbol={data.symbol} />
-        </div>
-        <div
-          id="sec-structure"
-          className="min-w-0 2xl:col-span-6"
-          style={{ scrollMarginTop: ANCHOR_OFFSET }}
-        >
-          <PatternAnalysisHub
-            symbol={data.symbol}
-            patterns={data.patterns ?? []}
-            technical={data.technical}
-          />
+          <TechnicalPanel technical={data.technical} patterns={data.patterns} />
         </div>
       </section>
 
-      <section id="sec-deep" className="stock-section-card" aria-labelledby="sec-deep-title">
-        <div className="stock-section-heading" id="sec-deep-title">
+      <section id="sec-structure" className="stock-section-card" style={{ scrollMarginTop: ANCHOR_OFFSET }}>
+        <div className="stock-section-heading">
           <div>
-            <p className="stock-section-kicker">Phân tích</p>
-            <h2>Chuyên sâu kỹ thuật</h2>
+            <p className="stock-section-kicker">Structure</p>
+            <h2>Mẫu hình & cấu trúc</h2>
           </div>
           <span className="stock-section-index">03</span>
         </div>
-        {data.technical ? (
-          <TechnicalPanel tech={data.technical} patterns={data.patterns} />
-        ) : null}
+        <PatternAnalysisHub symbol={data.symbol} technical={data.technical} patterns={data.patterns} />
       </section>
 
-      <section className="stock-section-card stock-news-section" aria-labelledby="stock-news-title">
-        <div className="stock-section-heading" id="stock-news-title">
+      <section id="sec-deep" className="stock-section-card" style={{ scrollMarginTop: ANCHOR_OFFSET }}>
+        <div className="stock-section-heading">
           <div>
-            <p className="stock-section-kicker">Thông tin</p>
-            <h2>Tin tức & cảm xúc thị trường</h2>
+            <p className="stock-section-kicker">Depth</p>
+            <h2>Sổ lệnh & tin</h2>
           </div>
           <span className="stock-section-index">04</span>
         </div>
-        <StockNewsSentiment symbol={data.symbol} />
+        <div className="grid gap-3 lg:grid-cols-2">
+          <OrderBookPanel symbol={data.symbol} />
+          <StockNewsSentiment symbol={data.symbol} />
+        </div>
       </section>
     </div>
   );
