@@ -499,8 +499,7 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
         <div className="chart-control-group min-w-0">
           {title ? <span className="truncate text-[12px] font-semibold text-text-primary">{title}</span> : null}
           {liveState ? (
-            <span className={`chart-live-pill chart-live-pill--${liveState.state}`}>
-              <span className="chart-live-dot" aria-hidden="true" />
+            <span className="text-[10px] text-text-muted">
               {liveState.state === "live" ? "● live" : `○ ${liveState.state}`}
             </span>
           ) : null}
@@ -520,7 +519,7 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
       <div className="chart-toolbar-row">
         <div className="chart-control-group min-w-0 flex-1">
           <span className="chart-control-label">Chỉ báo</span>
-          <div className="chart-ind-row" aria-label="Bộ chỉ báo biểu đồ">
+          <div className="chart-ind-row">
             <span className="text-[9px] font-semibold tracking-wide text-text-muted opacity-80">Overlay</span>
             {OVERLAY_INDS.map(renderChip)}
             <button

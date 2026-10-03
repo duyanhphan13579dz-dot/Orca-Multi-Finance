@@ -238,7 +238,6 @@ html[data-reduced-motion="true"] .ticker-track {
 .stock-section-nav {
   position: sticky; top: 4.75rem; z-index: 15;
   display: flex; flex-wrap: nowrap; gap: 0.35rem; padding: 0.35rem 0;
-  width: 100%; align-self: stretch;
   overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none;
   background: linear-gradient(
     to bottom,
@@ -407,31 +406,6 @@ select.input { cursor: pointer; padding-right: 1.75rem; }
 .stock-copy { margin: 0; color: var(--color-text-muted); font-size: 0.8rem; }
 .stock-trading-zone { min-width: 0; }
 .stock-chart-frame { min-height: 0; overflow: hidden; border: 1px solid color-mix(in srgb, var(--color-border-subtle) 80%, transparent); border-radius: 0.55rem; background: color-mix(in srgb, var(--color-surface-elevated) 35%, transparent); }
-.chart-toolbar-row {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.7rem;
-  padding: 0.45rem 0.65rem;
-  background: color-mix(in srgb, var(--color-surface-primary) 92%, var(--color-surface-elevated));
-}
-.chart-toolbar-row + .chart-toolbar-row { align-items: flex-start; }
-.chart-control-group { display: flex; min-width: 0; align-items: center; gap: 0.45rem; }
-.chart-control-label { flex: 0 0 auto; color: var(--color-text-muted); font-size: 0.58rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
-.chart-ind-row { display: flex; min-width: 0; align-items: center; gap: 0.25rem; overflow-x: auto; padding: 0.05rem 0.1rem 0.15rem; scrollbar-width: thin; scrollbar-color: var(--color-border-default) transparent; }
-.chart-ind-row button { flex: 0 0 auto; min-height: 1.65rem; }
-.chart-toolbar-row .seg { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
-.chart-toolbar-row .seg::-webkit-scrollbar { display: none; }
-.chart-toolbar-row .seg > button { flex: 0 0 auto; min-height: 1.65rem; white-space: nowrap; }
-.chart-live-pill { display: inline-flex; align-items: center; gap: 0.28rem; border: 1px solid color-mix(in srgb, var(--color-positive) 35%, var(--color-border-subtle)); border-radius: 999px; padding: 0.17rem 0.4rem; color: var(--color-positive); font-size: 0.58rem; font-weight: 700; letter-spacing: 0.03em; text-transform: uppercase; }
-.chart-live-pill--connecting, .chart-live-pill--reconnecting, .chart-live-pill--delayed { border-color: color-mix(in srgb, var(--color-warning) 35%, var(--color-border-subtle)); color: var(--color-warning); }
-.chart-live-pill--closed { border-color: color-mix(in srgb, var(--color-negative) 35%, var(--color-border-subtle)); color: var(--color-negative); }
-.chart-live-dot { width: 0.35rem; height: 0.35rem; border-radius: 999px; background: currentColor; box-shadow: 0 0 0 2px color-mix(in srgb, currentColor 16%, transparent); }
-.chart-live-pill--live .chart-live-dot { animation: chart-live-pulse 1.8s ease-in-out infinite; }
-@keyframes chart-live-pulse { 0%, 100% { opacity: 0.55; } 50% { opacity: 1; } }
-.chart-toolbar-row + .chart-toolbar-row .chart-control-group:first-child { flex: 1 1 auto; }
-.chart-toolbar-row + .chart-toolbar-row .chart-control-group:last-child { flex: 0 0 auto; }
 .scroll-mt-28 { scroll-margin-top: 1rem; }
 .text-positive, .text-up { color: var(--color-up); }
 .text-negative, .text-down { color: var(--color-down); }
@@ -455,9 +429,4 @@ select.input { cursor: pointer; padding-right: 1.75rem; }
   .stock-stat { padding: 0.45rem; }
   .stock-decision-left, .stock-decision-metrics { justify-content: flex-start; }
   .stock-decision-metrics { width: 100%; }
-  .chart-toolbar-row { flex-wrap: wrap; gap: 0.35rem; padding: 0.4rem 0.5rem; }
-  .chart-toolbar-row > .chart-control-group { width: 100%; }
-  .chart-toolbar-row > .chart-control-group:last-child { justify-content: space-between; }
-  .chart-toolbar-row + .chart-toolbar-row .chart-control-group:last-child { width: auto; }
-  .chart-control-label { font-size: 0.55rem; }
 }
