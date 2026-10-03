@@ -19,6 +19,16 @@ export interface UserSettings {
     language: "vi" | "en";
     timezone: string; // IANA
     region: "vn" | "global";
+    /** Giới thiệu ngắn (≤160 ký tự) */
+    bio: string;
+    /** Kinh nghiệm đầu tư */
+    experience: "beginner" | "intermediate" | "advanced";
+    /** Khẩu vị rủi ro */
+    riskAppetite: "conservative" | "balanced" | "aggressive";
+    /** Phong cách giao dịch chủ đạo */
+    tradingStyle: "long_term" | "swing" | "day" | "mixed";
+    /** Thị trường ưu tiên — ảnh hưởng gợi ý & thứ tự dashboard */
+    preferredMarkets: ("stocks" | "crypto" | "forex" | "commodities")[];
   };
   appearance: {
     mode: "navy" | "light" | "system";
@@ -46,7 +56,19 @@ export interface UserSettings {
     grid: boolean;
     crosshairMagnet: boolean;
     logScale: boolean;
-    indicators: { ema: boolean; ma10: boolean; ma20: boolean; ma50: boolean; ma100: boolean; ma200: boolean; bollinger: boolean; vwap: boolean; rsi: boolean; macd: boolean; srLevels: boolean };
+    indicators: {
+      ema: boolean;
+      ma10: boolean;
+      ma20: boolean;
+      ma50: boolean;
+      ma100: boolean;
+      ma200: boolean;
+      bollinger: boolean;
+      vwap: boolean;
+      rsi: boolean;
+      macd: boolean;
+      srLevels: boolean;
+    };
     /** Tham số chỉ báo tùy chỉnh (chuẩn TradingView-style per-indicator settings) */
     indicatorParams: {
       emaPeriods: [number, number]; // fast/slow, mặc định 20/50
@@ -61,7 +83,6 @@ export interface UserSettings {
     drawingHorizontals: Record<string, number[]>;
   };
   reports: {
-    /** Server-controlled schedule (REPORT_MORNING_TIME env) — chỉ đọc để hiển thị; chỉnh trên server */
     serverScheduleVisible: boolean;
   };
   notifications: {
@@ -69,11 +90,9 @@ export interface UserSettings {
     priceAlerts: boolean;
     reportReady: boolean;
     digestMorning: boolean;
-    /** Quiet hours — tắt push/webhook trong khung này (chuẩn trading platform) */
     quietHoursEnabled: boolean;
-    quietStart: string; // HH:mm
-    quietEnd: string; // HH:mm
-    /** Chỉ khi tab nền cũng được phép đẩy Notification */
+    quietStart: string;
+    quietEnd: string;
     backgroundPush: boolean;
   };
   ai: {
@@ -114,6 +133,11 @@ export const DEFAULT_SETTINGS: UserSettings = {
     language: "vi",
     timezone: "Asia/Ho_Chi_Minh",
     region: "vn",
+    bio: "",
+    experience: "intermediate",
+    riskAppetite: "balanced",
+    tradingStyle: "swing",
+    preferredMarkets: ["stocks", "crypto"],
   },
   appearance: { mode: "navy", density: "normal", fontSize: "md", numberFormat: "en-US", currency: "USD" },
   dashboard: {
@@ -131,7 +155,19 @@ export const DEFAULT_SETTINGS: UserSettings = {
     grid: true,
     crosshairMagnet: false,
     logScale: false,
-    indicators: { ema: true, ma10: false, ma20: false, ma50: false, ma100: false, ma200: false, bollinger: false, vwap: true, rsi: true, macd: true, srLevels: true },
+    indicators: {
+      ema: true,
+      ma10: false,
+      ma20: false,
+      ma50: false,
+      ma100: false,
+      ma200: false,
+      bollinger: false,
+      vwap: true,
+      rsi: true,
+      macd: true,
+      srLevels: true,
+    },
     indicatorParams: {
       emaPeriods: [20, 50],
       rsiPeriod: 14,
@@ -254,142 +290,49 @@ export function updateSettings(patch: Partial<UserSettings>) {
   notify();
 }
 
-export function setLoggedInFlag(v: boolean) {
-  loggedIn = v;
-}
-
-type SettingsCtxValue = {
-  settings: UserSettings;
-  update: (patch: Partial<UserSettings>) => void;
-  reset: () => void;
-};
-
-const SettingsCtx = createContext<SettingsCtxValue | null>(null);
-
-export function SettingsProvider({ children }: { children: ReactNode }) {
-  const value = useSettings();
-  return <SettingsCtx.Provider value={value}>{children}</SettingsCtx.Provider>;
-}
-
-export function useSettings(): SettingsCtxValue {
+export function useSettings() {
   const [, setTick] = useState(0);
-  const hydrated = useRef(false);
-
   useEffect(() => {
-    if (!hydrated.current) {
-      hydrateFromLocal();
-      applyHtmlAttrs(snapshot);
-      hydrated.current = true;
-      setTick((t) => t + 1);
-    }
-    const l = () => setTick((t) => t + 1);
+    const l = () => setTick((n) => n + 1);
     listeners.add(l);
     return () => {
       listeners.delete(l);
     };
   }, []);
+  return {
+    settings: snapshot,
+    update: updateSettings,
+    loggedIn,
+  };
+}
 
+export function SettingsProvider({ children }: { children: ReactNode }) {
+  const boot = useRef(false);
   useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      try {
-        const res = await fetch("/api/v1/auth/me");
-        if (!res.ok) {
-          setLoggedInFlag(false);
-          return;
-        }
-        setLoggedInFlag(true);
-        const setRes = await fetch("/api/v1/settings");
-        if (!setRes.ok || cancelled) return;
-        const json = (await setRes.json()) as { data?: { settings?: Partial<UserSettings> | null } };
-        const remote = json?.data?.settings;
-        if (remote && !cancelled) {
-          snapshot = mergeDeep(snapshot, remote);
-          persistLocal();
-          applyHtmlAttrs(snapshot);
-          notify();
-        }
-      } catch {
-        /* offline */
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  const update = (patch: Partial<UserSettings>) => {
-    updateSettings(patch);
-  };
-
-  const reset = () => {
-    snapshot = { ...DEFAULT_SETTINGS, updatedAt: Date.now() };
-    persistLocal();
+    if (boot.current) return;
+    boot.current = true;
+    hydrateFromLocal();
     applyHtmlAttrs(snapshot);
-    scheduleServerSync();
     notify();
-  };
-
-  return { settings: snapshot, update, reset };
-}
-
-export function resolveRefresh(baseMs: number | undefined): number {
-  const s = snapshot.realtime;
-  if (!s.liveUpdates) return Math.max(baseMs ?? 60_000, 60_000);
-  if (s.lowDataMode) return Math.max(baseMs ?? 30_000, 30_000);
-  const sec = s.refreshSeconds || 15;
-  return Math.max(sec * 1000, baseMs ?? 0);
-}
-
-/** Quiet hours check — dùng cho mọi monitor đẩy Notification/Webhook phía client. */
-export function isQuietHoursNow(): boolean {
-  const n = snapshot.notifications;
-  if (!n.quietHoursEnabled) return false;
-  const parse = (hhmm: string): number => {
-    const [h, m] = hhmm.split(":").map((x) => Number(x) || 0);
-    return h * 60 + m;
-  };
-  const now = new Date();
-  const cur = now.getHours() * 60 + now.getMinutes();
-  const start = parse(n.quietStart);
-  const end = parse(n.quietEnd);
-  // Khung qua nửa đêm (22:00 → 07:00)
-  return start <= end ? cur >= start && cur < end : cur >= start || cur < end;
-}
-
-/**
- * Phí giao dịch tổng cho một lệnh — dùng chung Journal/Portfolio.
- * feePct truyền vào là phần trăm (0.15 = 0.15%).
- */
-export function tradeFeePct(assetType: "stock" | "crypto" | "forex" | "commodity", side: "long" | "short"): number {
-  const t = snapshot.trading;
-  if (assetType === "stock") {
-    const fee = t.stockFeePct;
-    const tax = side === "short" ? 0 : t.sellTaxPct; // short VN không có thuế bán thực tế
-    return fee + tax;
-  }
-  if (assetType === "crypto") return t.cryptoFeePct;
-  return 0;
-}
-
-/** Phí tổng (đơn vị giá trị) cho lệnh entry→exit. Bỏ qua nếu user tắt includeFees. */
-export function tradeFeesValue(
-  assetType: "stock" | "crypto" | "forex" | "commodity",
-  side: "long" | "short",
-  entry: number,
-  exit: number | null,
-  size: number | null,
-  leverage: number | null,
-): number {
-  if (!snapshot.trading.includeFeesInPnl) return 0;
-  const notional = entry * (size ?? 1) * (leverage ?? 1);
-  const feePct = tradeFeePct(assetType, side) / 100;
-  // Entry luôn mất phí; exit mất phí khi đã đóng (mua/bán đều mất phí ở cả 2 chiều)
-  return notional * feePct + (exit != null ? exit * (size ?? 1) * (leverage ?? 1) * feePct : 0);
-}
-
-export function useSettingsContext(): SettingsCtxValue {
-  const ctx = useContext(SettingsCtx);
-  if (!ctx) throw new Error("useSettingsContext outside provider");
-  return ctx;
+    // Detect login + pull server settings
+    void fetch("/api/v1/auth/me")
+      .then((r) => r.json())
+      .then((j) => {
+        if (j?.ok && j?.data?.user) {
+          loggedIn = true;
+          return fetch("/api/v1/settings")
+            .then((r) => r.json())
+            .then((s) => {
+              if (s?.ok && s?.data?.settings) {
+                snapshot = mergeDeep(DEFAULT_SETTINGS, s.data.settings as Partial<UserSettings>);
+                persistLocal();
+                applyHtmlAttrs(snapshot);
+                notify();
+              }
+            });
+        }
+      })
+      .catch(() => {});
+  }, []);
+  return <>{children}</>;
 }
