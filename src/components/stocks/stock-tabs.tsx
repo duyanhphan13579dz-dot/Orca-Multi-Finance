@@ -1,8 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
-import { useEffect, useRef } from "react";
+import { usePathname, useRouter } from "next/navigation";
+import { useEffect, useRef, useState, useTransition } from "react";
+import { Spinner } from "@/components/ui";
+import { signalNavStart } from "@/components/route-progress";
+import { markAppNavigating } from "@/lib/hooks";
 
 /** Tổng quan → BCTC → Cơ bản → Định giá → Doanh nghiệp */
 const TABS = [
@@ -15,12 +18,16 @@ const TABS = [
 
 export function StockTabs({ symbol }: { symbol: string }) {
   const pathname = usePathname() || "";
+  const router = useRouter();
   const base = `/stocks/${symbol}`;
   const navRef = useRef<HTMLElement>(null);
+  const [pending, startTransition] = useTransition();
+  const [pendingHref, setPendingHref] = useState<string | null>(null);
 
   useEffect(() => {
     const active = navRef.current?.querySelector<HTMLElement>("[data-active=true]");
     active?.scrollIntoView({ inline: "center", block: "nearest", behavior: "smooth" });
+    setPendingHref(null);
   }, [pathname]);
 
   return (
@@ -28,6 +35,7 @@ export function StockTabs({ symbol }: { symbol: string }) {
       ref={navRef}
       className="stock-tabs-scroll border-t border-line"
       aria-label="Tab cổ phiếu"
+      data-pending={pending ? "true" : undefined}
     >
       {TABS.map((t) => {
         const href = `${base}${t.href}`;
@@ -35,17 +43,29 @@ export function StockTabs({ symbol }: { symbol: string }) {
           t.key === "overview"
             ? pathname === base || pathname === `${base}/`
             : pathname.startsWith(href);
+        const isTabPending = pending && pendingHref === href;
         return (
           <Link
             key={t.key}
             href={href}
             data-active={active ? "true" : undefined}
-            className={`min-h-11 shrink-0 rounded-t-md px-3.5 py-2.5 text-[12.5px] font-medium leading-snug transition-colors sm:min-h-0 sm:px-4 sm:py-2.5 ${
+            aria-busy={isTabPending || undefined}
+            onClick={(e) => {
+              if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
+              if (active && !pending) return;
+              e.preventDefault();
+              setPendingHref(href);
+              markAppNavigating(280);
+              signalNavStart();
+              startTransition(() => router.push(href));
+            }}
+            className={`inline-flex min-h-11 shrink-0 items-center gap-1.5 rounded-t-md px-3.5 py-2.5 text-[12.5px] font-medium leading-snug transition-colors sm:min-h-0 sm:px-4 sm:py-2.5 ${
               active
                 ? "border border-b-0 border-line bg-surface-elevated text-accent-primary"
                 : "text-text-muted hover:text-text-primary"
-            }`}
+            } ${isTabPending ? "opacity-90" : ""}`}
           >
+            {isTabPending ? <Spinner size="sm" className="text-accent-primary" /> : null}
             <span className="sm:hidden">{t.short}</span>
             <span className="hidden sm:inline">{t.label}</span>
           </Link>
