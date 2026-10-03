@@ -400,3 +400,94 @@ select.input { cursor: pointer; padding-right: 1.75rem; }
 @media (max-width: 900px) { .stock-hero-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 @media (max-width: 560px) { .stock-workspace { padding: 0.65rem 0.6rem 1.5rem; gap: 0.75rem; } .stock-hero { padding: 0.75rem; } .stock-hero-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); } .stock-decision-metrics { width: 100%; justify-content: flex-start; } }
 
+/* Stock detail — clear card-based composition */
+.stock-workspace.stock-page-body {
+  gap: 1rem;
+  padding: 1rem clamp(1rem, 2vw, 1.5rem) 2.5rem;
+}
+.stock-hero-panel {
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--color-accent-primary) 26%, var(--color-border-subtle));
+  border-radius: 1rem;
+  background: linear-gradient(135deg, #06172d 0%, var(--color-surface-primary) 58%, #071a31 100%);
+}
+.stock-hero {
+  display: grid;
+  grid-template-columns: minmax(20rem, 0.8fr) minmax(0, 2fr);
+  align-items: stretch;
+  gap: 1.25rem;
+  padding: 1.4rem;
+}
+.stock-hero-main {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  justify-content: center;
+  gap: 0.35rem;
+}
+.stock-hero-title-row { gap: 0.75rem; }
+.stock-hero-symbol { font-size: clamp(1.7rem, 3vw, 2.35rem); }
+.stock-hero-name { font-size: 0.95rem; }
+.stock-hero-price-row { gap: 0.7rem; margin-top: 0.8rem; }
+.stock-hero-price { font-size: clamp(2.35rem, 4.5vw, 3.65rem); line-height: 1; }
+.stock-hero-stats {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  align-self: end;
+  gap: 0.65rem;
+}
+.stock-stat {
+  min-height: 7.5rem;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 1rem;
+  border: 1px solid color-mix(in srgb, var(--color-accent-primary) 32%, var(--color-border-subtle));
+  border-radius: 0.85rem;
+  background: color-mix(in srgb, #09254a 70%, var(--color-surface-primary));
+}
+.stock-stat-label { font-size: 0.9rem; color: var(--color-text-secondary); }
+.stock-stat-value { margin-top: 0; font-size: clamp(1rem, 1.7vw, 1.35rem); }
+.stock-meta-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.75rem;
+  padding: 1rem 1.4rem;
+  border-top: 1px solid var(--color-border-subtle);
+}
+.stock-meta-chip {
+  justify-content: space-between;
+  min-height: 4.5rem;
+  padding: 0.9rem 1rem;
+  border-color: color-mix(in srgb, var(--color-accent-primary) 28%, var(--color-border-subtle));
+  border-radius: 0.8rem;
+  background: color-mix(in srgb, #09254a 68%, var(--color-surface-primary));
+}
+.stock-meta-chip-label { font-size: 0.9rem; text-transform: none; }
+.stock-meta-chip-value { font-size: 1.25rem; }
+.stock-tabs-scroll { gap: 0; padding: 0.45rem 0.55rem; border-top: 1px solid var(--color-border-subtle); }
+.stock-tabs-scroll a { min-height: 3.1rem; padding-inline: 1.25rem; border-radius: 0; border-color: transparent; }
+.stock-tabs-scroll a[data-active="true"] { border-color: var(--color-accent-primary); border-radius: 0.7rem; background: linear-gradient(135deg, var(--color-accent-primary), #1478ff); color: white; }
+.stock-decision-strip { padding: 1rem 1.15rem; border-radius: 0.9rem; }
+.stock-section-card { padding: 1.15rem; border-radius: 1rem; }
+.stock-section-heading { margin-bottom: 1rem; padding-bottom: 0.85rem; }
+.stock-section-heading h2 { font-size: 1.05rem; }
+@media (max-width: 1100px) {
+  .stock-hero { grid-template-columns: 1fr; }
+  .stock-hero-stats { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+}
+@media (max-width: 720px) {
+  .stock-hero-stats, .stock-meta-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .stock-hero { padding: 1rem; }
+}
+@media (max-width: 560px) {
+  .stock-workspace.stock-page-body { padding-inline: 0.65rem; }
+  .stock-hero-stats, .stock-meta-strip { grid-template-columns: 1fr 1fr; gap: 0.5rem; }
+  .stock-stat { min-height: 5.5rem; padding: 0.7rem; }
+  .stock-meta-chip { min-height: 3.8rem; padding: 0.7rem; }
+  .stock-meta-chip-label { font-size: 0.75rem; }
+  .stock-meta-chip-value { font-size: 1rem; }
+}
+
