@@ -45,6 +45,9 @@ import { ErrorBoundary } from "@/components/error-boundary";
 import { NotifBell } from "@/components/notif-bell";
 import { PriceAlertEngine } from "@/components/price-alert-engine";
 
+const SIDEBAR_EXPANDED = 268;
+const SIDEBAR_COLLAPSED = 60;
+
 const NAV_SECTIONS: {
   title: string;
   items: {
@@ -106,6 +109,9 @@ export function ShellInner({ children }: { children: ReactNode }) {
     } catch {
       /* ignore */
     }
+    return () => {
+      if (sideAnimTimer.current) clearTimeout(sideAnimTimer.current);
+    };
   }, []);
 
   useEffect(() => {
@@ -124,7 +130,8 @@ export function ShellInner({ children }: { children: ReactNode }) {
       return next;
     });
     if (sideAnimTimer.current) clearTimeout(sideAnimTimer.current);
-    sideAnimTimer.current = setTimeout(() => setSideAnimating(false), 320);
+    // slightly longer than CSS duration so will-change clears after paint
+    sideAnimTimer.current = setTimeout(() => setSideAnimating(false), 340);
   }, []);
 
   const onNav = useCallback(
@@ -149,10 +156,86 @@ export function ShellInner({ children }: { children: ReactNode }) {
     [router],
   );
 
-  const renderSidebar = (opts: { collapsed: boolean; mobile?: boolean }) => {
-    const isCollapsed = opts.collapsed;
-    const isMobile = opts.mobile === true;
+  /** Desktop sidebar: always layout as expanded; outer width clips — no mid-anim reflow */
+  const renderDesktopSidebar = () => {
+    const NavItem = ({
+      href,
+      label,
+      icon: Icon,
+    }: {
+      href: string;
+      label: string;
+      icon: ComponentType<{ className?: string }>;
+    }) => {
+      const active = isActivePath(pathname, href);
+      return (
+        <Link
+          href={href}
+          onClick={(e) => onNav(href, e)}
+          onMouseEnter={() => onHover(href)}
+          className={
+            "orca-nav-item group relative flex h-9 shrink-0 items-center gap-2.5 rounded-lg px-2.5 text-[13px] leading-none " +
+            (active
+              ? "bg-accent-primary/15 font-medium text-accent-primary"
+              : "text-text-secondary hover:bg-surface-elevated hover:text-text-primary")
+          }
+          title={label}
+        >
+          <Icon className="size-4 shrink-0 opacity-90" />
+          <span className="orca-nav-item-label min-w-0 flex-1 truncate">{label}</span>
+        </Link>
+      );
+    };
 
+    return (
+      <div className="orca-sidebar flex h-full flex-col" style={{ width: SIDEBAR_EXPANDED }}>
+        <div className="flex min-h-[3.25rem] shrink-0 items-center gap-1 border-b border-border-subtle px-2 py-2">
+          <Link
+            href="/"
+            onClick={(e) => onNav("/", e)}
+            className="grid size-9 shrink-0 place-items-center"
+            title="ORCA Financial"
+          >
+            <OrcaMark size={28} />
+          </Link>
+          <Link
+            href="/"
+            onClick={(e) => onNav("/", e)}
+            className="orca-sidebar-brand-text min-w-0 flex-1 overflow-hidden"
+            title="ORCA Financial"
+          >
+            <span className="block truncate text-[13px] font-bold tracking-wide text-text-primary">
+              ORCA<span className="text-accent-primary"> FINANCIAL</span>
+            </span>
+            <span className="block truncate text-[9px] font-medium uppercase tracking-[0.06em] text-text-muted">
+              Intelligent Investment
+            </span>
+          </Link>
+        </div>
+
+        <nav className="orca-sidebar-nav min-h-0 flex-1 space-y-2.5 overflow-y-auto overscroll-contain px-2 py-2.5">
+          {NAV_SECTIONS.map((section) => (
+            <div key={section.title} className="space-y-0.5">
+              <div className="orca-sidebar-section-title px-2.5 text-[10px] font-semibold uppercase tracking-wider text-text-muted">
+                {section.title}
+              </div>
+              <div className="flex flex-col gap-0.5">
+                {section.items.map((item) => (
+                  <NavItem key={item.href} href={item.href} label={item.label} icon={item.icon} />
+                ))}
+              </div>
+            </div>
+          ))}
+        </nav>
+
+        <div className="shrink-0 border-t border-border-subtle p-2">
+          <UserMenu collapsed={false} />
+        </div>
+      </div>
+    );
+  };
+
+  const renderMobileSidebar = () => {
     const NavItem = ({
       href,
       label,
@@ -168,14 +251,11 @@ export function ShellInner({ children }: { children: ReactNode }) {
           href={href}
           onClick={(e) => {
             onNav(href, e);
-            if (isMobile) setMobileOpen(false);
+            setMobileOpen(false);
           }}
           onMouseEnter={() => onHover(href)}
           className={
-            "group relative flex shrink-0 items-center gap-2.5 rounded-lg leading-none orca-nav-item " +
-            (isMobile ? "min-h-11 text-[14px] " : "h-9 text-[13px] ") +
-            (isCollapsed ? "justify-center px-0" : isMobile ? "px-3" : "px-2.5") +
-            " " +
+            "orca-nav-item group relative flex min-h-11 shrink-0 items-center gap-2.5 rounded-lg px-3 text-[14px] leading-none " +
             (active
               ? "bg-accent-primary/15 font-medium text-accent-primary"
               : "text-text-secondary hover:bg-surface-elevated hover:text-text-primary")
@@ -183,100 +263,41 @@ export function ShellInner({ children }: { children: ReactNode }) {
           title={label}
         >
           <Icon className="size-4 shrink-0 opacity-90" />
-          <span
-            className={
-              "truncate orca-nav-item-label " +
-              (isCollapsed
-                ? "pointer-events-none ml-0 max-w-0 overflow-hidden opacity-0"
-                : isMobile
-                  ? "max-w-none flex-1 opacity-100"
-                  : "max-w-[160px] opacity-100")
-            }
-          >
-            {label}
-          </span>
+          <span className="min-w-0 flex-1 truncate">{label}</span>
         </Link>
       );
     };
 
     return (
       <div className="flex h-full min-h-0 flex-col overflow-hidden">
-        <div
-          className={
-            "shrink-0 border-b border-border-subtle " +
-            (isCollapsed
-              ? "flex flex-col items-center gap-1.5 px-1 py-2.5"
-              : isMobile
-                ? "flex items-center gap-2 px-3 py-3.5"
-                : "flex min-h-[3.5rem] items-center gap-1 px-2 py-2")
-          }
-        >
+        <div className="flex shrink-0 items-center gap-2 border-b border-border-subtle px-3 py-3.5">
           <Link
             href="/"
             onClick={(e) => {
               onNav("/", e);
-              if (isMobile) setMobileOpen(false);
+              setMobileOpen(false);
             }}
-            className={isCollapsed ? "grid place-items-center" : "min-w-0 flex-1"}
+            className="min-w-0 flex-1"
             title="ORCA Financial"
           >
-            {isCollapsed ? (
-              <OrcaMark size={28} />
-            ) : isMobile ? (
-              <OrcaMobileBrand />
-            ) : (
-              <OrcaWordmark size={32} subtitle className="w-full" />
-            )}
+            <OrcaMobileBrand />
           </Link>
-          {isMobile ? (
-            <button
-              type="button"
-              className="grid size-10 shrink-0 place-items-center rounded-lg text-text-muted hover:bg-surface-elevated hover:text-text-primary"
-              onClick={() => setMobileOpen(false)}
-              aria-label="Đóng menu"
-            >
-              <X className="size-5" />
-            </button>
-          ) : (
-            <button
-              type="button"
-              className="grid size-8 shrink-0 place-items-center rounded-md text-text-muted transition-colors hover:bg-surface-elevated hover:text-text-primary"
-              onClick={toggleCollapsed}
-              aria-label={isCollapsed ? "Mở rộng sidebar" : "Thu gọn sidebar"}
-            >
-              {isCollapsed ? (
-                <ChevronsRight className="size-4" />
-              ) : (
-                <ChevronsLeft className="size-4" />
-              )}
-            </button>
-          )}
+          <button
+            type="button"
+            className="grid size-10 shrink-0 place-items-center rounded-lg text-text-muted hover:bg-surface-elevated hover:text-text-primary"
+            onClick={() => setMobileOpen(false)}
+            aria-label="Đóng menu"
+          >
+            <X className="size-5" />
+          </button>
         </div>
-
-        <nav
-          className={
-            "orca-sidebar-nav min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain py-3 " +
-            (isMobile ? "px-2.5" : "px-2")
-          }
-        >
+        <nav className="orca-sidebar-nav min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain px-2.5 py-3">
           {NAV_SECTIONS.map((section) => (
             <div key={section.title} className="space-y-0.5">
-              <div
-                className={
-                  "px-2.5 text-[10px] font-semibold uppercase tracking-wider text-text-muted transition-[opacity,height,margin] duration-200 ease-out " +
-                  (isCollapsed
-                    ? "mb-0 h-0 overflow-hidden opacity-0"
-                    : isMobile
-                      ? "mb-1.5 opacity-100"
-                      : "mb-1 opacity-100")
-                }
-              >
+              <div className="mb-1.5 px-2.5 text-[10px] font-semibold uppercase tracking-wider text-text-muted">
                 {section.title}
               </div>
-              {isCollapsed ? (
-                <div className="mx-auto mb-1 h-px w-6 bg-border-subtle/80" aria-hidden />
-              ) : null}
-              <div className={"flex flex-col " + (isMobile ? "gap-1" : "gap-0.5")}>
+              <div className="flex flex-col gap-1">
                 {section.items.map((item) => (
                   <NavItem key={item.href} href={item.href} label={item.label} icon={item.icon} />
                 ))}
@@ -284,9 +305,8 @@ export function ShellInner({ children }: { children: ReactNode }) {
             </div>
           ))}
         </nav>
-
-        <div className={"shrink-0 border-t border-border-subtle " + (isMobile ? "p-3" : "p-2")}>
-          <UserMenu collapsed={isCollapsed} />
+        <div className="shrink-0 border-t border-border-subtle p-3">
+          <UserMenu collapsed={false} />
         </div>
       </div>
     );
@@ -302,12 +322,24 @@ export function ShellInner({ children }: { children: ReactNode }) {
       <div className="relative z-10 flex min-h-0 flex-1">
         <aside
           className={
-            "orca-aside relative hidden h-full shrink-0 overflow-hidden border-r border-border-subtle bg-surface-base md:block " +
+            "orca-aside relative hidden h-full shrink-0 border-r border-border-subtle bg-surface-base md:block " +
             (sideAnimating ? "is-collapsing " : "") +
-            (collapsed ? "w-[56px]" : "w-[268px]")
+            (collapsed ? "is-collapsed" : "is-expanded")
           }
+          style={{
+            width: collapsed ? SIDEBAR_COLLAPSED : SIDEBAR_EXPANDED,
+          }}
         >
-          <div className="orca-sidebar h-full">{renderSidebar({ collapsed })}</div>
+          {renderDesktopSidebar()}
+          <button
+            type="button"
+            className="orca-sidebar-toggle absolute top-2.5 z-20 grid size-8 place-items-center rounded-md border border-border-subtle/80 bg-surface-base text-text-muted shadow-sm transition-colors hover:bg-surface-elevated hover:text-text-primary"
+            style={{ right: collapsed ? 6 : 8 }}
+            onClick={toggleCollapsed}
+            aria-label={collapsed ? "Mở rộng sidebar" : "Thu gọn sidebar"}
+          >
+            {collapsed ? <ChevronsRight className="size-4" /> : <ChevronsLeft className="size-4" />}
+          </button>
         </aside>
 
         <div
@@ -320,7 +352,7 @@ export function ShellInner({ children }: { children: ReactNode }) {
           <button
             type="button"
             className={
-              "orca-drawer-backdrop absolute inset-0 bg-black/50 transition-opacity duration-200 " +
+              "orca-drawer-backdrop absolute inset-0 bg-black/50 " +
               (mobileOpen ? "opacity-100" : "opacity-0")
             }
             aria-label="Đóng menu"
@@ -328,11 +360,11 @@ export function ShellInner({ children }: { children: ReactNode }) {
           />
           <aside
             className={
-              "orca-drawer absolute left-0 top-0 flex h-full w-[min(320px,94vw)] flex-col overflow-hidden bg-surface-base pb-[env(safe-area-inset-bottom)] pt-[env(safe-area-inset-top)] shadow-2xl transition-transform duration-200 ease-out " +
+              "orca-drawer absolute left-0 top-0 flex h-full w-[min(320px,94vw)] flex-col overflow-hidden bg-surface-base pb-[env(safe-area-inset-bottom)] pt-[env(safe-area-inset-top)] shadow-2xl " +
               (mobileOpen ? "translate-x-0" : "-translate-x-full")
             }
           >
-            {renderSidebar({ collapsed: false, mobile: true })}
+            {renderMobileSidebar()}
           </aside>
         </div>
 
@@ -407,7 +439,7 @@ function UserMenu({ collapsed }: { collapsed: boolean }) {
         onClick={() => setOpen((o) => !o)}
         className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left hover:bg-surface-elevated"
       >
-        <span className="grid size-8 place-items-center overflow-hidden rounded-md border border-border-subtle bg-surface-elevated text-[11px] font-bold">
+        <span className="grid size-8 shrink-0 place-items-center overflow-hidden rounded-md border border-border-subtle bg-surface-elevated text-[11px] font-bold">
           {settings.profile.avatarUrl ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img src={settings.profile.avatarUrl} alt="" className="size-full object-cover" />
