@@ -99,15 +99,13 @@ export interface TechnicalSnapshot {
   ema: { ema12: number | null; ema26: number | null };
   bollinger: { upper: number; mid: number; lower: number } | null;
   atr14: number | null;
-  /** Volume-derived money-flow state; null when the asset has no usable volume. */
   moneyFlow?: {
-  cmf20: number | null;
-  obvTrend: "inflow" | "outflow" | "neutral" | "unknown";
-  volumeRatio20: number | null;
-  pressure: number;
-  label: "strong-inflow" | "inflow" | "balanced" | "outflow" | "strong-outflow" | "unknown";
+    cmf20: number | null;
+    obvTrend: "inflow" | "outflow" | "neutral" | "unknown";
+    volumeRatio20: number | null;
+    pressure: number;
+    label: "strong-inflow" | "inflow" | "balanced" | "outflow" | "strong-outflow" | "unknown";
   };
-  /** Deterministic VSA + SMC + ICT analysis; it describes evidence, not institutional intent. */
   moneyFlowAnalysis?: MoneyFlowAnalysis;
   volatility30d: number | null;
   maxDrawdown: number | null;
@@ -126,13 +124,27 @@ export interface TechnicalSnapshot {
     ageBars: number;
     candles: number;
   }[];
-  /** Composite MUA / BÁN / QUAN SÁT + confidence. */
+  /** Composite MUA / BÁN / QUAN SÁT + confidence (+ plan when actionable). */
   tradeSignal?: {
     action: "buy" | "sell" | "watch";
     actionVi: "MUA" | "BÁN" | "QUAN SÁT";
     confidence: number;
     bias: number;
     reasons: string[];
+    plan?: {
+      entry: number;
+      stopLoss: number;
+      takeProfit: number;
+      takeProfit1: number;
+      takeProfit2: number;
+      takeProfit3: number;
+      riskReward: number;
+      riskPct: number;
+      rewardPct: number;
+      invalidation: number;
+      basis: string[];
+      notes: string[];
+    } | null;
   };
   dataQuality?: {
     bars: number;
@@ -206,7 +218,6 @@ export interface ForexRow extends Quote {
   group: "major" | "minor" | "exotic";
 }
 
-/** Shared payload returned by GET /api/v1/forex/markets. */
 export interface ForexMarket {
   rows: ForexRow[];
   usdStrengthNote: string;
