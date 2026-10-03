@@ -277,7 +277,7 @@ export default function StockOverviewPage({ params }: { params: Promise<{ symbol
     },
   );
 
-  if (!symbol || (isLoading && !res)) return <Loading rows={8} />;
+  if (!symbol || (isLoading && !res)) return <Loading rows={3} label="Đang tải tổng quan" />;
   if (!res?.success || !data) {
     return (
       <Unavailable
