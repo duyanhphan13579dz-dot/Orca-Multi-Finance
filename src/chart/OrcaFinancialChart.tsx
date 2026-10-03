@@ -35,6 +35,22 @@ const CHART_KINDS: { id: ChartKind; label: string }[] = [
   { id: "bar", label: "Bar" },
 ];
 
+type StockRange = "1D" | "1W" | "1M" | "1Y";
+
+const STOCK_RANGES: { id: StockRange; label: string; timeframe: string; limit: number }[] = [
+  { id: "1D", label: "1D", timeframe: "5m", limit: 110 },
+  { id: "1W", label: "1W", timeframe: "1h", limit: 80 },
+  { id: "1M", label: "1M", timeframe: "1d", limit: 35 },
+  { id: "1Y", label: "1Y", timeframe: "1w", limit: 60 },
+];
+
+function stockRangeForTimeframe(timeframe: string): StockRange {
+  if (timeframe === "5m" || timeframe === "15m" || timeframe === "1h") return "1D";
+  if (timeframe === "1w") return "1Y";
+  if (timeframe === "1d") return "1M";
+  return "1M";
+}
+
 type IndKey =
   | "ema"
   | "ma10"
@@ -114,6 +130,9 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
     const pref = defaultTimeframe ?? settings.dashboard.defaultTimeframe;
     return tfs.includes(pref) ? pref : tfs.includes("1h") ? "1h" : tfs[0];
   });
+  const [stockRange, setStockRange] = useState<StockRange>(() =>
+    stockRangeForTimeframe(defaultTimeframe ?? settings.dashboard.defaultTimeframe),
+  );
   const [engineReady, setEngineReady] = useState(false);
   const [activeKind, setActiveKind] = useState<ChartKind>(() => normalizeKind(prefs.chartType));
 
@@ -133,7 +152,9 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
     extraLevelsRef.current = extraLevels;
   }, [extraLevels]);
 
-  const limit = historyLimit(assetType, tf);
+  const limit = assetType === "stock"
+    ? STOCK_RANGES.find((range) => range.id === stockRange)?.limit ?? 35
+    : historyLimit(assetType, tf);
   const { data, isLoading, mutate } = useApi<ChartMarketData>(
     `/api/v1/chart/history?symbol=${encodeURIComponent(symbol)}&assetType=${assetType}&timeframe=${tf}&limit=${limit}`,
   );
@@ -423,6 +444,11 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
     update({ chart: { ...settings.chart, chartType: kind } });
   };
 
+  const selectStockRange = (range: (typeof STOCK_RANGES)[number]) => {
+    setStockRange(range.id);
+    setTf(range.timeframe);
+  };
+
   const toggleInd = (key: IndKey | "volume") => {
     const mgr = mgrRef.current;
     if (key === "volume") {
@@ -506,13 +532,19 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
           ) : null}
         </div>
         <div className="chart-control-group ml-auto">
-          <span className="chart-control-label">Khung thời gian</span>
-          <div className="seg" role="group" aria-label="Khung thời gian biểu đồ">
-            {tfs.map((x) => (
-              <button key={x} data-active={tf === x} onClick={() => setTf(x)} type="button" aria-pressed={tf === x}>
-                {TF_LABEL[x] ?? x}
-              </button>
-            ))}
+          <span className="chart-control-label">Khoảng xem</span>
+          <div className="seg" role="group" aria-label="Khoảng thời gian biểu đồ">
+            {assetType === "stock"
+              ? STOCK_RANGES.map((range) => (
+                  <button key={range.id} data-active={stockRange === range.id} onClick={() => selectStockRange(range)} type="button" aria-pressed={stockRange === range.id}>
+                    {range.label}
+                  </button>
+                ))
+              : tfs.map((x) => (
+                  <button key={x} data-active={tf === x} onClick={() => setTf(x)} type="button" aria-pressed={tf === x}>
+                    {TF_LABEL[x] ?? x}
+                  </button>
+                ))}
           </div>
         </div>
       </div>
@@ -569,7 +601,7 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
                   : "text-text-secondary"
             }
           >
-            {mtfBias.summaryVi ?? mtfBias.bias}
+            {mtfBias.summary ?? mtfBias.bias}
           </span>
         </div>
       )}

@@ -75,19 +75,19 @@ export default function StockProfilePage({ params }: { params: Promise<{ symbol:
   const profileMeta = res.meta;
 
   return (
-    <main className="stock-workspace">
+    <main className="stock-workspace stock-profile-page">
       <section className="panel panel-elevated overflow-hidden">
-        <div className="stock-hero border-b border-line/70 bg-gradient-to-br from-accent/10 via-transparent to-transparent sm:p-5">
-          <div className="flex flex-col justify-between gap-5 lg:flex-row lg:items-start">
-            <div className="flex min-w-0 flex-col gap-3 lg:flex-row">
+        <div className="stock-profile-hero border-b border-line/70 bg-gradient-to-br from-accent/10 via-transparent to-transparent sm:p-5">
+          <div className="stock-profile-hero-inner">
+            <div className="stock-profile-identity">
               {p?.logo ? <img src={p.logo} alt={p.vnName ?? symbol} className="!h-14 !w-14 max-h-14 max-w-14 shrink-0 rounded-lg border border-line bg-white object-contain" /> : <div className="flex size-14 shrink-0 items-center justify-center rounded-lg border border-line bg-bg-2 text-accent"><Building2 /></div>}
               <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><span className="rounded bg-accent/15 px-2 py-0.5 text-[12px] font-bold tracking-wide text-accent">{symbol}</span>{p?.floor && <Badge>{p.floor}</Badge>}</div><h1 className="mt-2 text-xl font-semibold tracking-tight text-ink sm:text-2xl">{p?.vnName ?? symbol}</h1>{p?.enName && <p className="truncate text-[12px] text-ink-3">{p.enName}</p>}<div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-ink-3"><span className="inline-flex items-center gap-1"><Waypoints /> Hồ sơ doanh nghiệp</span>{p?.website && <a className="inline-flex items-center gap-1 text-accent hover:underline" href={p.website} target="_blank" rel="noreferrer">Website <ExternalLink /></a>}</div></div>
             </div>
-            <div className="grid w-full min-w-0 grid-cols-1 gap-2 sm:grid-cols-3 lg:w-auto lg:max-w-[48%]"><PanelMetric label="Nhân sự" value={p?.employees != null ? fmtNum(p.employees, 0) : "—"} tone="neutral" /><PanelMetric label="Ngày thành lập" value={p?.foundDate ? p.foundDate : "—"} tone="neutral" /><PanelMetric label="Tín hiệu nghiên cứu" value={totalInsights || "—"} detail="SWOT + catalyst + risk" tone={totalInsights ? "up" : "warn"} /></div>
+            <div className="stock-profile-metrics"><PanelMetric label="Nhân sự" value={p?.employees != null ? fmtNum(p.employees, 0) : "—"} tone="neutral" /><PanelMetric label="Ngày thành lập" value={p?.foundDate ? p.foundDate : "—"} tone="neutral" /><PanelMetric label="Tín hiệu nghiên cứu" value={totalInsights || "—"} detail="SWOT + catalyst + risk" tone={totalInsights ? "up" : "warn"} /></div>
           </div>
           {p?.vnSummary && <p className="mt-5 max-w-4xl text-[12px] leading-relaxed text-ink-2">{p.vnSummary}</p>}
         </div>
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-2.5 sm:px-5"><MetaLine meta={profileMeta} />{p?.taxCode && <span className="text-[10px] text-ink-3">MST {p.taxCode}</span>}{p?.vnAddress && <span className="inline-flex items-center gap-1 text-[10px] text-ink-3"><Globe2 />{p.vnAddress}</span>}</div>
+        <div className="stock-profile-meta"><MetaLine meta={profileMeta} />{p?.taxCode && <span className="text-[10px] text-ink-3">MST {p.taxCode}</span>}{p?.vnAddress && <span className="inline-flex items-center gap-1 text-[10px] text-ink-3"><Globe2 />{p.vnAddress}</span>}</div>
       </section>
 
       <div className="stock-section-grid lg:grid-cols-[1.25fr_0.75fr]">
