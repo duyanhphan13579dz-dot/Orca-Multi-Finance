@@ -234,24 +234,11 @@ export async function getVnMarketBoard(): Promise<{
   sessionDate: string;
   meta: Meta;
 } | null> {
-  bootVndLive();
-  bootSsiLive();
-  try {
-    const mq = await vndirect.getVndMarketQuotes();
-    if (!mq.quotes?.length) return null;
-    const idx = await vndirect
-      .getVndIndices()
-      .catch(() => ({ items: [] as IndexQuote[], sourceTs: null as number | null }));
-    return {
-      quotes: mq.quotes,
-      indices: sortIndices(idx.items),
-      universeSize: mq.quotes.length,
-      sessionDate: mq.sessionDate,
-      meta: buildMeta({ source: "vndirect", sourceTimestampMs: mq.sourceTs ?? Date.now() }),
-    };
-  } catch {
-    return null;
-  }
+  const { loadVnMarketBoardCached } = await import("./vn-market-board-cache");
+  return loadVnMarketBoardCached(() => {
+    bootVndLive();
+    bootSsiLive();
+  });
 }
 
 export async function getVnUniverseList(): Promise<{
@@ -291,7 +278,6 @@ export interface VnStockDetail {
   financialMeta: FinancialPackageMeta | null;
   financialGrowth: GrowthSnapshot | null;
   financialTtm: NormalizedPeriod | null;
-  /** Detailed ratios from multi-source quote + BCTC (ratio-engine) */
   detailedRatios: import("../financial/ratio-engine").RatioEngineResult | null;
   ratioMap: Record<string, number | null>;
   metricsSources: string[];
@@ -305,7 +291,6 @@ async function withBudget<T>(p: Promise<T>, ms: number): Promise<T | null> {
   ]);
 }
 
-/** Build one stock detail pack — all sources in one parallel wave + short budgets. */
 async function produceVnStockDetail(
   sym: string,
 ): Promise<{ detail: VnStockDetail; meta: Meta } | null> {
@@ -418,10 +403,6 @@ async function produceVnStockDetail(
   };
 }
 
-/**
- * Stock detail — soft SWR so layout + page share one flight.
- * Fresh 12s (trading) / 25s · stale up to 90s.
- */
 export async function getVnStockDetail(
   symbol: string,
 ): Promise<{ detail: VnStockDetail; meta: Meta } | null> {
