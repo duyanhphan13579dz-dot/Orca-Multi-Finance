@@ -10,7 +10,6 @@ import {
   LayoutDashboard,
   Monitor,
   ShieldCheck,
-  ShootersHorizontal,
   SlidersHorizontal,
   User2,
   Wallet,
