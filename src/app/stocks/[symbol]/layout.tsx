@@ -74,10 +74,10 @@ export default function StockSymbolLayout({
   }, []);
 
   if (!symbol || (isLoading && !res)) {
+    // Single brand loader — do not render children (page has its own Loading)
     return (
-      <div className="stock-workspace">
-        <Loading rows={4} />
-        {children}
+      <div className="stock-workspace stock-page-body">
+        <Loading rows={6} full label="Đang tải dữ liệu cổ phiếu" />
       </div>
     );
   }
