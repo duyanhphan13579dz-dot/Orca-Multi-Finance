@@ -65,18 +65,17 @@ export function SettingsPage() {
   };
 
   return (
-    <div className="mx-auto max-w-4xl">
-      <header className="mb-4">
-        <h1 className="text-lg font-semibold text-text-primary">Cài đặt</h1>
-        <p className="mt-0.5 text-[12px] text-text-muted">
-          Thay đổi lưu ngay trên thiết bị; đăng nhập để đồng bộ giữa các máy. Google Sheets nằm
-          trong tab Dữ liệu realtime.
+    <div className="mx-auto max-w-5xl">
+      <header className="mb-3">
+        <h1 className="text-[17px] font-semibold leading-tight text-text-primary">Cài đặt</h1>
+        <p className="mt-0.5 max-w-2xl text-[11.5px] leading-snug text-text-muted">
+          Lưu trên thiết bị; đăng nhập để đồng bộ. Google Sheets nằm trong tab Dữ liệu realtime.
         </p>
       </header>
 
-      <div className="grid grid-cols-12 gap-3">
-        <Panel className="col-span-12 md:col-span-3" pad={false}>
-          <nav className="flex gap-0.5 overflow-x-auto p-1.5 md:flex-col" aria-label="Mục cài đặt">
+      <div className="grid grid-cols-12 items-start gap-2.5">
+        <Panel className="col-span-12 md:sticky md:top-2 md:col-span-3" pad={false}>
+          <nav className="flex gap-0.5 overflow-x-auto p-1 md:flex-col" aria-label="Mục cài đặt">
             {TABS.map((t) => {
               const Icon = t.icon;
               return (
@@ -85,13 +84,13 @@ export function SettingsPage() {
                   type="button"
                   onClick={() => selectTab(t.id)}
                   aria-current={tab === t.id ? "page" : undefined}
-                  className={`flex shrink-0 items-center gap-2.5 rounded-md px-2.5 py-2 text-left text-[12.5px] transition-colors ${
+                  className={`flex shrink-0 items-center gap-2 rounded-md px-2 py-1.5 text-left text-[12px] transition-colors ${
                     tab === t.id
                       ? "bg-accent-primary/12 font-medium text-accent-primary"
                       : "text-text-secondary hover:bg-surface-elevated hover:text-text-primary"
                   }`}
                 >
-                  <Icon className="size-4 shrink-0" />
+                  <Icon className="size-3.5 shrink-0" />
                   {t.label}
                 </button>
               );
@@ -99,7 +98,7 @@ export function SettingsPage() {
           </nav>
         </Panel>
 
-        <div className="col-span-12 min-w-0 space-y-3 md:col-span-9">
+        <div className="col-span-12 min-w-0 space-y-2 md:col-span-9">
           {tab === "profile" && <ProfileTab onOpenSecurity={() => selectTab("security")} />}
           {tab === "appearance" && <AppearanceTab />}
           {tab === "dashboard" && <DashboardTab />}
