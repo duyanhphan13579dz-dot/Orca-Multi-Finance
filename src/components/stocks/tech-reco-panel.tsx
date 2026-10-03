@@ -4,7 +4,7 @@ import { memo } from "react";
 import { useApi } from "@/lib/hooks";
 import type { StockTechRecoResult } from "@/lib/services/stock-tech-reco";
 import { Badge, FreshnessDot, Loading, Panel } from "@/components/ui";
-import { Brain, Compass, ShieldAlert } from "lucide-react";
+import { Brain, Compass, Crosshair, ShieldAlert } from "lucide-react";
 
 const CONF_VI: Record<string, string> = {
   HIGH: "Cao",
@@ -17,6 +17,10 @@ const REL_VI: Record<string, string> = {
   medium: "TB",
   low: "thấp",
 };
+
+function fmtPx(n: number) {
+  return n.toLocaleString("vi-VN", { maximumFractionDigits: 2 });
+}
 
 export const TechRecoPanel = memo(function TechRecoPanel({ symbol }: { symbol: string }) {
   const { data, meta, isLoading } = useApi<StockTechRecoResult>(
@@ -107,6 +111,63 @@ export const TechRecoPanel = memo(function TechRecoPanel({ symbol }: { symbol: s
           />
         </div>
 
+        {quant.plan && (signal === "MUA" || signal === "BÁN") ? (
+          <div className="space-y-2 rounded-lg border border-border-subtle bg-surface-elevated/50 p-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <Crosshair className="size-3.5 text-accent-primary" />
+              <span className="text-[10px] font-semibold uppercase tracking-wider text-text-muted">
+                Đề xuất Entry · SL · TP
+              </span>
+              <Badge tone={signalTone}>R:R 1:{quant.plan.riskReward.toFixed(1)}</Badge>
+            </div>
+            <div className="grid grid-cols-3 gap-2">
+              <div className="rounded-md border border-border-subtle bg-background-secondary/60 px-2.5 py-2">
+                <div className="text-[10px] uppercase tracking-wide text-text-muted">Entry</div>
+                <div className="num mt-0.5 text-[15px] font-semibold text-text-primary">
+                  {fmtPx(quant.plan.entry)}
+                </div>
+              </div>
+              <div className="rounded-md border border-negative/30 bg-negative/5 px-2.5 py-2">
+                <div className="text-[10px] uppercase tracking-wide text-text-muted">Stop Loss</div>
+                <div className="num mt-0.5 text-[15px] font-semibold text-negative">
+                  {fmtPx(quant.plan.stopLoss)}
+                </div>
+                <div className="text-[10px] text-text-muted">−{quant.plan.riskPct}%</div>
+              </div>
+              <div className="rounded-md border border-positive/30 bg-positive/5 px-2.5 py-2">
+                <div className="text-[10px] uppercase tracking-wide text-text-muted">Take Profit</div>
+                <div className="num mt-0.5 text-[15px] font-semibold text-positive">
+                  {fmtPx(quant.plan.takeProfit)}
+                </div>
+                <div className="text-[10px] text-text-muted">+{quant.plan.rewardPct}%</div>
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-text-secondary">
+              <span>
+                TP1 <strong className="num text-text-primary">{fmtPx(quant.plan.takeProfit1)}</strong>
+              </span>
+              <span>
+                TP2 <strong className="num text-text-primary">{fmtPx(quant.plan.takeProfit2)}</strong>
+              </span>
+              <span>
+                TP3 <strong className="num text-text-primary">{fmtPx(quant.plan.takeProfit3)}</strong>
+              </span>
+            </div>
+            {quant.plan.basis?.length > 0 && (
+              <ul className="space-y-0.5 text-[10.5px] text-text-muted">
+                {quant.plan.basis.map((b, i) => (
+                  <li key={i}>· {b}</li>
+                ))}
+              </ul>
+            )}
+          </div>
+        ) : (
+          <div className="rounded-lg border border-dashed border-border-subtle px-3 py-2 text-[11.5px] text-text-muted">
+            Chưa có tín hiệu MUA/BÁN rõ — mặc định QUAN SÁT. Entry/SL/TP chỉ hiện khi có đồng thuận kỹ
+            thuật.
+          </div>
+        )}
+
         {quant.patterns && quant.patterns.length > 0 && (
           <div>
             <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-text-muted">
@@ -135,15 +196,12 @@ export const TechRecoPanel = memo(function TechRecoPanel({ symbol }: { symbol: s
 
         <div className="space-y-1.5">
           <div className="text-[10px] font-semibold uppercase tracking-wider text-text-muted">
-            Chỉ báo / yếu tố
+            Yếu tố kỹ thuật
           </div>
           {quant.factors.map((f) => (
-            <div
-              key={f.key}
-              className="flex items-start gap-2 rounded-md border border-border-subtle/80 px-2 py-1.5"
-            >
+            <div key={f.key} className="flex items-start gap-2">
               <span
-                className={`mt-1 size-1.5 shrink-0 rounded-full ${
+                className={`mt-1.5 size-1.5 shrink-0 rounded-full ${
                   f.bias === "up" ? "bg-positive" : f.bias === "down" ? "bg-negative" : "bg-text-muted"
                 }`}
               />
@@ -192,7 +250,12 @@ export const TechRecoPanel = memo(function TechRecoPanel({ symbol }: { symbol: s
 
         {llmStatus !== "ok" && llmStatus !== "skipped" && (
           <p className="text-[10px] text-text-muted">
-            AI: {llmStatus === "unavailable" ? "không khả dụng" : llmStatus === "failed" ? "lỗi" : llmStatus}{" "}
+            AI:{" "}
+            {llmStatus === "unavailable"
+              ? "không khả dụng"
+              : llmStatus === "failed"
+                ? "lỗi"
+                : llmStatus}{" "}
             — đang dùng tín hiệu định lượng.
           </p>
         )}
