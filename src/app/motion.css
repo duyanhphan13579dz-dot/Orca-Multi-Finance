@@ -33,7 +33,6 @@ html {
   -webkit-overflow-scrolling: touch;
   scrollbar-width: thin;
   scrollbar-color: color-mix(in srgb, var(--color-border-default) 70%, transparent) transparent;
-  scroll-behavior: smooth;
 }
 .orca-sidebar-nav::-webkit-scrollbar { width: 5px; }
 .orca-sidebar-nav::-webkit-scrollbar-thumb {
@@ -42,14 +41,35 @@ html {
 }
 .orca-sidebar-nav::-webkit-scrollbar-track { background: transparent; }
 
+/* Sidebar rail: only width animates; inner content stays 268px and is clipped */
 .orca-aside {
-  contain: layout style paint;
+  overflow: hidden;
+  contain: layout style;
   transform: translateZ(0);
   backface-visibility: hidden;
-  transition: width var(--dur-side) var(--ease-out-smooth);
+  transition: width 300ms var(--ease-out-smooth);
 }
 .orca-aside.is-collapsing {
   will-change: width;
+}
+.orca-aside .orca-sidebar {
+  width: 268px;
+  min-width: 268px;
+}
+.orca-sidebar-toggle {
+  transition: right 300ms var(--ease-out-smooth),
+              background-color var(--dur-fast) var(--ease-out-soft),
+              color var(--dur-fast) var(--ease-out-soft);
+}
+.orca-sidebar-brand-text,
+.orca-sidebar-section-title,
+.orca-aside .orca-nav-item-label {
+  transition: opacity 160ms var(--ease-out-soft);
+}
+.orca-aside.is-collapsed .orca-sidebar-brand-text,
+.orca-aside.is-collapsed .orca-sidebar-section-title,
+.orca-aside.is-collapsed .orca-nav-item-label {
+  opacity: 0;
 }
 
 .orca-main-scroll {
@@ -187,8 +207,7 @@ html {
               color var(--dur-fast) var(--ease-out-soft);
 }
 .orca-nav-item-label {
-  transition: opacity var(--dur-med) var(--ease-out-smooth),
-              max-width var(--dur-side) var(--ease-out-smooth);
+  transition: opacity 160ms var(--ease-out-soft);
 }
 
 .orca-drawer {
@@ -390,5 +409,8 @@ html {
   .orca-loading-dots > span {
     animation: none !important;
     opacity: 0.55;
+  }
+  .orca-aside {
+    transition: none !important;
   }
 }
