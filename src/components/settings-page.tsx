@@ -1,10 +1,20 @@
 "use client";
 
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import {
-  Bell, Bot, Database, LayoutDashboard, Monitor, ShieldCheck, SlidersHorizontal, User2, Wallet, Save,
+  Bell,
+  Bot,
+  Database,
+  LayoutDashboard,
+  Monitor,
+  ShieldCheck,
+  ShootersHorizontal,
+  SlidersHorizontal,
+  User2,
+  Wallet,
+  Save,
 } from "lucide-react";
 import { useSettings, DASHBOARD_WIDGETS, type UserSettings } from "@/lib/settings";
 import { Badge, Panel } from "@/components/ui";
@@ -24,43 +34,62 @@ import {
 import { SheetsSyncPanel } from "@/components/sheets-sync-panel";
 
 const TABS = [
-  { id: "profile", label: "Profile", icon: User2 },
-  { id: "appearance", label: "Appearance", icon: Monitor },
-  { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { id: "profile", label: "Hồ sơ", icon: User2 },
+  { id: "appearance", label: "Giao diện", icon: Monitor },
+  { id: "dashboard", label: "Bảng điều khiển", icon: LayoutDashboard },
   { id: "trading", label: "Giao dịch & Phí", icon: Wallet },
-  { id: "realtime", label: "Data & Realtime", icon: Database },
-  { id: "notifications", label: "Notifications", icon: Bell },
-  { id: "ai", label: "AI Settings", icon: Bot },
-  { id: "security", label: "Security", icon: ShieldCheck },
-  { id: "data", label: "Dữ liệu", icon: Save },
-  { id: "system", label: "System", icon: SlidersHorizontal },
+  { id: "realtime", label: "Dữ liệu realtime", icon: Database },
+  { id: "notifications", label: "Thông báo", icon: Bell },
+  { id: "ai", label: "Cài đặt AI", icon: Bot },
+  { id: "security", label: "Bảo mật", icon: ShieldCheck },
+  { id: "data", label: "Quản lý dữ liệu", icon: Save },
+  { id: "system", label: "Hệ thống", icon: SlidersHorizontal },
 ] as const;
 
 type TabId = (typeof TABS)[number]["id"];
 
 export function SettingsPage() {
   const params = useSearchParams();
+  const router = useRouter();
   const initial = (params.get("tab") as TabId) || "profile";
   const [tab, setTab] = useState<TabId>(TABS.some((t) => t.id === initial) ? initial : "profile");
 
+  useEffect(() => {
+    const q = params.get("tab") as TabId | null;
+    if (q && TABS.some((t) => t.id === q) && q !== tab) setTab(q);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [params]);
+
+  const selectTab = (id: TabId) => {
+    setTab(id);
+    router.replace(`/settings?tab=${id}`, { scroll: false });
+  };
+
   return (
     <div className="mx-auto max-w-4xl">
-      <h1 className="mb-1 text-lg font-semibold">Cai dat</h1>
-      <p className="mb-4 text-[12px] text-text-muted">
-        Thay doi luu local; Google Sheets dong bo qua tab Data & Realtime.
-      </p>
+      <header className="mb-4">
+        <h1 className="text-lg font-semibold text-text-primary">Cài đặt</h1>
+        <p className="mt-0.5 text-[12px] text-text-muted">
+          Thay đổi lưu ngay trên thiết bị; đăng nhập để đồng bộ giữa các máy. Google Sheets nằm
+          trong tab Dữ liệu realtime.
+        </p>
+      </header>
+
       <div className="grid grid-cols-12 gap-3">
         <Panel className="col-span-12 md:col-span-3" pad={false}>
-          <nav className="flex gap-0.5 overflow-x-auto p-1.5 md:flex-col" aria-label="Settings tabs">
+          <nav className="flex gap-0.5 overflow-x-auto p-1.5 md:flex-col" aria-label="Mục cài đặt">
             {TABS.map((t) => {
               const Icon = t.icon;
               return (
                 <button
                   key={t.id}
-                  onClick={() => setTab(t.id)}
+                  type="button"
+                  onClick={() => selectTab(t.id)}
                   aria-current={tab === t.id ? "page" : undefined}
                   className={`flex shrink-0 items-center gap-2.5 rounded-md px-2.5 py-2 text-left text-[12.5px] transition-colors ${
-                    tab === t.id ? "bg-accent-primary/12 text-accent-primary" : "text-text-secondary hover:bg-surface-elevated hover:text-text-primary"
+                    tab === t.id
+                      ? "bg-accent-primary/12 font-medium text-accent-primary"
+                      : "text-text-secondary hover:bg-surface-elevated hover:text-text-primary"
                   }`}
                 >
                   <Icon className="size-4 shrink-0" />
@@ -70,8 +99,9 @@ export function SettingsPage() {
             })}
           </nav>
         </Panel>
+
         <div className="col-span-12 min-w-0 space-y-3 md:col-span-9">
-          {tab === "profile" && <ProfileTab />}
+          {tab === "profile" && <ProfileTab onOpenSecurity={() => selectTab("security")} />}
           {tab === "appearance" && <AppearanceTab />}
           {tab === "dashboard" && <DashboardTab />}
           {tab === "trading" && <TradingTab />}
