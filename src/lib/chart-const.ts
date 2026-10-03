@@ -78,13 +78,29 @@ export function binanceInterval(tf: string): string {
   if (tf === "1d") return "1d";
   if (tf === "1w") return "1w";
   if (tf === "1M") return "1M";
+  if (tf === "12M") return "1M"; // aggregate 12× monthly
   return tf;
 }
 
-export function yahooInterval(tf: string): string {
-  if (tf === "1w") return "1wk";
-  if (tf === "1M" || tf === "12M") return "1mo";
-  return tf;
+/** VNDirect dchart resolution codes */
+export function vndDchartResolution(tf: string): "1" | "5" | "15" | "30" | "60" | "D" | null {
+  switch (tf) {
+    case "1m":
+      return "1";
+    case "5m":
+      return "5";
+    case "15m":
+      return "15";
+    case "30m":
+      return "30";
+    case "1h":
+    case "2h":
+      return "60";
+    case "1d":
+      return "D";
+    default:
+      return null; // 4h/1w/1M/12M: aggregate
+  }
 }
 
 /** aggregate small candles into a larger timeframe */
@@ -133,7 +149,7 @@ export interface ChartIndicators {
 
 export interface ChartSignalMarker {
   time: number;
-  type: string;
+  type: "buy-signal" | "sell-signal" | "volume-spike" | "rsi-extreme" | "breakout" | "breakdown" | string;
   position: "aboveBar" | "belowBar" | "inBar";
   title: string;
 }
