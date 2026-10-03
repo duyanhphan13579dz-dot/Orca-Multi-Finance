@@ -339,19 +339,6 @@ select.input { cursor: pointer; padding-right: 1.75rem; }
   box-shadow: 0 6px 18px color-mix(in srgb, #000 12%, transparent);
 }
 .stock-section-card { padding: 0.8rem; }
-.stock-section-grid { display: grid; min-width: 0; gap: 0.8rem; }
-.stock-profile-page { gap: 0.8rem; }
-.stock-profile-hero { padding: 0.9rem; }
-.stock-profile-hero-inner { display: flex; min-width: 0; align-items: flex-start; justify-content: space-between; gap: 1rem; }
-.stock-profile-identity { display: flex; min-width: 0; flex: 1 1 auto; align-items: flex-start; gap: 0.8rem; }
-.stock-profile-identity h1 { margin: 0.35rem 0 0; line-height: 1.2; }
-.stock-profile-metrics { display: grid; width: min(100%, 28rem); flex: 0 1 28rem; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.45rem; }
-.stock-profile-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem 0.9rem; padding: 0.55rem 0.9rem; border-top: 1px solid color-mix(in srgb, var(--color-border-subtle) 75%, transparent); }
-.stock-profile-meta svg { width: 0.75rem; height: 0.75rem; }
-.stock-profile-page [data-orca-card] { min-width: 0; }
-.stock-profile-page .panel-body { min-width: 0; }
-.stock-profile-page .panel-header { min-height: 3rem; }
-.stock-profile-page .panel-title { line-height: 1.25; }
 .stock-section-heading {
   display: flex;
   align-items: center;
@@ -451,8 +438,6 @@ select.input { cursor: pointer; padding-right: 1.75rem; }
 
 @media (max-width: 1100px) {
   .stock-hero { grid-template-columns: 1fr; }
-  .stock-profile-hero-inner { flex-direction: column; }
-  .stock-profile-metrics { width: 100%; max-width: 32rem; }
 }
 @media (max-width: 900px) {
   .stock-hero-stats { grid-template-columns: repeat(5, minmax(0, 1fr)); }
@@ -470,10 +455,6 @@ select.input { cursor: pointer; padding-right: 1.75rem; }
   .stock-stat { padding: 0.45rem; }
   .stock-decision-left, .stock-decision-metrics { justify-content: flex-start; }
   .stock-decision-metrics { width: 100%; }
-  .stock-profile-hero { padding: 0.7rem; }
-  .stock-profile-identity { gap: 0.6rem; }
-  .stock-profile-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.3rem; }
-  .stock-profile-meta { padding-inline: 0.7rem; }
   .chart-toolbar-row { flex-wrap: wrap; gap: 0.35rem; padding: 0.4rem 0.5rem; }
   .chart-toolbar-row > .chart-control-group { width: 100%; }
   .chart-toolbar-row > .chart-control-group:last-child { justify-content: space-between; }

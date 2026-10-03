@@ -28,14 +28,34 @@ export default function StockSymbolLayout({
 
   useEffect(() => {
     if (!symbol) return;
-    const priority = [
-      `/api/v1/stocks/${symbol}/style-fit`,
+    const paths = [
+      `/api/v1/stocks/${symbol}/technical`,
+      `/api/v1/stocks/${symbol}/valuation`,
+      `/api/v1/stocks/${symbol}/financials`,
       `/api/v1/stocks/${symbol}/structure`,
       `/api/v1/stocks/${symbol}/tech-reco`,
+      `/api/v1/stocks/${symbol}/style-fit`,
     ];
-    const run = () => priority.forEach((url) => prefetchApi(url));
+    const run = () => {
+      const priority = [
+        `/api/v1/stocks/${symbol}/style-fit`,
+        `/api/v1/stocks/${symbol}/structure`,
+        `/api/v1/stocks/${symbol}/tech-reco`,
+      ];
+      for (const url of priority) prefetchApi(url);
+      for (const url of paths) {
+        if (priority.includes(url)) continue;
+        prefetchApi(url);
+      }
+    };
     if (typeof requestIdleCallback !== "undefined") requestIdleCallback(run, { timeout: 800 });
     else setTimeout(run, 120);
+    for (const url of [
+      `/api/v1/stocks/${symbol}/style-fit`,
+      `/api/v1/stocks/${symbol}/structure`,
+    ]) {
+      prefetchApi(url);
+    }
   }, [symbol]);
 
   if (!symbol || (isLoading && !res)) {
