@@ -1,3 +1,4 @@
+import type React from "react";
 import { AlertTriangle } from "lucide-react";
 import type { FreshnessStatus, Meta } from "@/lib/types";
 
@@ -161,13 +162,74 @@ export function formatAge(ms: number): string {
   return `${Math.round(h / 24)}d trước`;
 }
 
-export function Loading({ rows = 6 }: { rows?: number }) {
+export function Spinner({
+  size = "md",
+  className = "",
+}: {
+  size?: "sm" | "md" | "lg";
+  className?: string;
+}) {
   return (
-    <div className="space-y-2 p-2">
+    <span
+      className={`orca-spinner orca-spinner-${size} ${className}`.trim()}
+      role="status"
+      aria-label="Đang tải"
+    />
+  );
+}
+
+export function Button({
+  children,
+  loading = false,
+  disabled,
+  variant = "primary",
+  size = "md",
+  className = "",
+  type = "button",
+  ...rest
+}: React.ButtonHTMLAttributes<HTMLButtonElement> & {
+  loading?: boolean;
+  variant?: "primary" | "secondary" | "ghost";
+  size?: "sm" | "md" | "lg";
+}) {
+  const isDisabled = disabled || loading;
+  return (
+    <button
+      type={type}
+      disabled={isDisabled}
+      aria-busy={loading || undefined}
+      className={`orca-btn orca-btn-${variant} orca-btn-${size} ${className}`.trim()}
+      {...rest}
+    >
+      {loading ? <Spinner size={size === "lg" ? "md" : "sm"} /> : null}
+      <span className={loading ? "opacity-90" : undefined}>{children}</span>
+    </button>
+  );
+}
+
+/** Compact inline loader for tab panels / list sections */
+export function TabLoading({ label = "Đang tải…" }: { label?: string }) {
+  return (
+    <div className="flex min-h-[10rem] flex-col items-center justify-center gap-2.5 py-8" aria-busy="true">
+      <Spinner size="md" className="text-accent-primary" />
+      <span className="text-[12px] text-text-muted">{label}</span>
+    </div>
+  );
+}
+
+export function Loading({ rows = 6, label }: { rows?: number; label?: string }) {
+  return (
+    <div className="space-y-2 p-2" aria-busy="true" aria-label={label ?? "Đang tải"}>
+      {label ? (
+        <div className="mb-1 flex items-center gap-2 text-[11px] text-text-muted">
+          <Spinner size="sm" className="text-accent-primary" />
+          {label}
+        </div>
+      ) : null}
       {Array.from({ length: rows }).map((_, i) => (
         <div
           key={i}
-          className="h-8 animate-pulse rounded-md bg-surface-elevated"
+          className="orca-skeleton h-8 rounded-md"
           style={{ width: `${70 + (i % 3) * 10}%` }}
         />
       ))}
