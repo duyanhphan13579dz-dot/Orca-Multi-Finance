@@ -233,8 +233,6 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
     const chart = chartRef.current;
     if (!engineReady || !mgr || !chart) return;
 
-    // Timeframe switched — drop previous series immediately (SWR keepPreviousData
-    // would otherwise keep painting the old TF until the new fetch resolves).
     if (appliedTfRef.current !== tf) {
       appliedTfRef.current = tf;
       try {
@@ -508,18 +506,18 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
 
   return (
     <div className="relative overflow-hidden rounded-xl border border-border-subtle bg-background-secondary">
-      <div className="chart-toolbar-row border-b border-border-subtle">
-        <div className="chart-control-group min-w-0">
-          {title ? <span className="truncate text-[12px] font-semibold text-text-primary">{title}</span> : null}
+      <div className="chart-toolbar-row chart-toolbar-row--primary">
+        <div className="chart-identity shrink-0">
+          {title ? <span className="chart-identity-symbol">{title}</span> : null}
           {liveState ? (
-            <span className="text-[10px] text-text-muted">
-              {liveState.state === "live" ? "● live" : `○ ${liveState.state}`}
+            <span className={`chart-live-pill ${liveState.state === "live" ? "chart-live-pill--on" : ""}`}>
+              {liveState.state === "live" ? "live" : liveState.state}
             </span>
           ) : null}
         </div>
-        <div className="chart-control-group ml-auto">
-          <span className="chart-control-label">Khung thời gian</span>
-          <div className="seg" role="group" aria-label="Khung thời gian biểu đồ">
+
+        <div className="chart-tf-scroll" role="group" aria-label="Khung thời gian">
+          <div className="seg chart-tf-seg">
             {tfs.map((x) => (
               <button key={x} data-active={tf === x} onClick={() => setTf(x)} type="button" aria-pressed={tf === x}>
                 {TF_LABEL[x] ?? x}
@@ -527,23 +525,24 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
             ))}
           </div>
         </div>
-      </div>
 
-      <div className="chart-toolbar-row">
-        <div className="chart-control-group min-w-0 flex-1">
-          <span className="chart-control-label">Kiểu</span>
+        <div className="chart-style-group shrink-0">
           <div className="seg" role="group" aria-label="Kiểu biểu đồ">
             {CHART_KINDS.map((k) => (
-              <button key={k.id} type="button" data-active={activeKind === k.id} onClick={() => setKind(k.id)} aria-pressed={activeKind === k.id}>
+              <button
+                key={k.id}
+                type="button"
+                data-active={activeKind === k.id}
+                onClick={() => setKind(k.id)}
+                aria-pressed={activeKind === k.id}
+              >
                 {k.label}
               </button>
             ))}
           </div>
           <button
             type="button"
-            className={`ml-1 rounded-md border px-2 py-0.5 text-[10.5px] font-medium ${
-              smcOn ? "border-accent-primary/50 text-accent-primary" : "border-border-subtle text-text-muted"
-            }`}
+            className={`chart-smc-btn ${smcOn ? "is-on" : ""}`}
             onClick={() => setSmcOn((v) => !v)}
             aria-pressed={smcOn}
           >
@@ -552,29 +551,52 @@ export function OrcaFinancialChart({ symbol, assetType, defaultTimeframe, height
         </div>
       </div>
 
-      <div className="flex flex-wrap items-center gap-1.5 border-b border-border-subtle px-3 py-1.5">
-        <span className="chart-control-label">Chỉ báo</span>
-        {OVERLAY_INDS.map(renderChip)}
-        <span className="mx-1 text-text-muted">·</span>
-        {OSC_INDS.map(renderChip)}
+      <div className="chart-toolbar-row chart-toolbar-row--inds">
+        <span className="chart-control-label shrink-0">Chỉ báo</span>
+        <div className="chart-ind-scroll">
+          {OVERLAY_INDS.map(renderChip)}
+          <span className="chart-ind-sep" aria-hidden>
+            ·
+          </span>
+          {OSC_INDS.map(renderChip)}
+        </div>
       </div>
 
-      {mtfBias ? (
-        <div className="flex flex-wrap items-center gap-2 border-b border-border-subtle px-3 py-1.5 text-[11px]">
-          <span className="text-text-muted">MTF bias</span>
-          <span className="font-semibold text-text-primary">{mtfBias.label}</span>
-          {mtfBias.summary ? <span className="text-text-muted">{mtfBias.summary}</span> : null}
+      {(mtfBias || readout) && (
+        <div className="chart-meta-strip">
+          {mtfBias ? (
+            <div className="chart-meta-bias">
+              <span className="chart-meta-kicker">MTF</span>
+              <span className="chart-meta-value">{mtfBias.label}</span>
+              {mtfBias.summary ? <span className="chart-meta-note">{mtfBias.summary}</span> : null}
+            </div>
+          ) : null}
+          {readout ? (
+            <div className="chart-meta-readout">
+              {readout.ema20 != null && (
+                <span>
+                  EMA20 <strong className="num">{readout.ema20.toFixed(2)}</strong>
+                </span>
+              )}
+              {readout.ema50 != null && (
+                <span>
+                  EMA50 <strong className="num">{readout.ema50.toFixed(2)}</strong>
+                </span>
+              )}
+              {readout.rsi != null && (
+                <span>
+                  RSI <strong className="num">{readout.rsi.toFixed(1)}</strong>
+                </span>
+              )}
+              {readout.macd != null && (
+                <span>
+                  MACD <strong className="num">{readout.macd.toFixed(3)}</strong>
+                </span>
+              )}
+            </div>
+          ) : null}
         </div>
-      ) : null}
-
-      {readout ? (
-        <div className="flex flex-wrap gap-3 border-b border-border-subtle px-3 py-1 text-[10.5px] text-text-muted">
-          {readout.ema20 != null && <span>EMA20 {readout.ema20.toFixed(2)}</span>}
-          {readout.ema50 != null && <span>EMA50 {readout.ema50.toFixed(2)}</span>}
-          {readout.rsi != null && <span>RSI {readout.rsi.toFixed(1)}</span>}
-          {readout.macd != null && <span>MACD {readout.macd.toFixed(3)}</span>}
-        </div>
-      ) : null}
+      )}
 
       <div ref={hostRef} className="w-full" style={{ height }} />
 
