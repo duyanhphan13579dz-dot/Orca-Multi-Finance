@@ -9,7 +9,6 @@ export const VNDIRECT = "vndirect";
 const PRIMARY_BASE = () =>
   (process.env.VNDIRECT_BASE_URL ?? "https://api-finfo.vndirect.com.vn").replace(/\/$/, "");
 
-/** Known finfo hosts — rotate on transient failures. */
 function vndBases(): string[] {
   const primary = PRIMARY_BASE();
   const alts = ["https://api-finfo.vndirect.com.vn", "https://finfo-api.vndirect.com.vn"];
@@ -117,7 +116,6 @@ async function vndGet<T>(path: string, timeoutMs = 8_000): Promise<T> {
   throw new ProviderError(`vndirect: ${lastErr}`, VNDIRECT);
 }
 
-/** Universe đầy đủ (phân trang + mã mới niêm yết) */
 export async function getVndUniverse(): Promise<
   { symbol: string; name: string | null; exchange: string | null; industry: string | null }[]
 > {
@@ -175,47 +173,8 @@ export async function getVndIndices(): Promise<{ items: IndexQuote[]; sourceTs: 
 export async function getVndMarketQuotes(
   sessionDate?: string,
 ): Promise<{ quotes: Quote[]; sourceTs: number | null; sessionDate: string }> {
-  const date = sessionDate ?? (await getVndLatestSessionDate());
-  const pageSize = 500;
-  let page = 1;
-  let totalPages = 1;
-  const quotes: Quote[] = [];
-  let newest: number | null = null;
-  while (page <= totalPages && page <= 12) {
-    const payload = await vndGet<Page<VndPriceRow>>(
-      `/v4/stock_prices?q=date:${date}~type:STOCK&size=${pageSize}&page=${page}`,
-      14_000,
-    );
-    const data = payload.data ?? [];
-    totalPages = Math.max(1, Number(payload.totalPages) || 1);
-    for (const r of data) {
-      const symbol = String(r.code ?? "").toUpperCase();
-      const price = num(r.close);
-      if (!symbol || price == null || price <= 0) continue;
-      const t = r.date ? Date.parse(`${r.date}T15:00:00+07:00`) : null;
-      if (t != null && Number.isFinite(t) && (newest == null || t > newest)) newest = t;
-      quotes.push({
-        symbol,
-        assetClass: "stock",
-        price,
-        change: num(r.change),
-        changePercent: num(r.changePercent) ?? num(r.changeRatio) ?? num(r.pctChange),
-        open: num(r.open),
-        high: num(r.high),
-        low: num(r.low),
-        volume: num(r.nmVolume),
-        quoteVolume: num(r.nmValue),
-        referencePrice: num(r.basicPrice),
-        ceilingPrice: num(r.ceilingPrice),
-        floorPrice: num(r.floorPrice),
-        updatedAt: r.date ?? null,
-      });
-    }
-    if (!data.length) break;
-    page += 1;
-  }
-  if (!quotes.length) throw new ProviderError("vndirect: empty market quotes", VNDIRECT);
-  return { quotes, sourceTs: newest, sessionDate: date };
+  const { fetchVndMarketQuotesParallel } = await import("./vndirect-market-quotes");
+  return fetchVndMarketQuotesParallel(sessionDate);
 }
 
 export async function getVndQuotes(symbols: string[]): Promise<{ quotes: Quote[]; sourceTs: number | null }> {
