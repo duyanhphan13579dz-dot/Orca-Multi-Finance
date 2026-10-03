@@ -1,12 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import Link from "next/link";
+import { useEffect, useState } from "react";
 import { useSettings } from "@/lib/settings";
-import { Panel } from "@/components/ui";
+import { Button, Panel } from "@/components/ui";
 import { useApi } from "@/lib/hooks";
 import { OrcaMark } from "@/components/logo";
 import { fmtNum } from "@/components/ui";
-import { Monitor, Moon, Sun } from "lucide-react";
+import { Copy, LogIn, Monitor, Moon, ShieldCheck, Sun } from "lucide-react";
 
 /* ------------------------------- primitives ------------------------------- */
 
@@ -48,6 +49,7 @@ export function Seg<T extends string>({
       {options.map((o) => (
         <button
           key={o.value}
+          type="button"
           data-active={value === o.value}
           onClick={() => onChange(o.value)}
           role="radio"
@@ -63,6 +65,7 @@ export function Seg<T extends string>({
 export function Switch({ on, onChange, label }: { on: boolean; onChange: (v: boolean) => void; label?: string }) {
   return (
     <button
+      type="button"
       className="switch"
       data-on={on}
       onClick={() => onChange(!on)}
@@ -95,82 +98,219 @@ const TIMEZONES = [
   "UTC",
 ];
 
-export function ProfileTab() {
+function ProfileAvatar({
+  size = 64,
+  displayName,
+}: {
+  size?: number;
+  displayName: string;
+}) {
+  const { settings } = useSettings();
+  const initials = (displayName || "OR").slice(0, 2).toUpperCase();
+
+  if (settings.profile.avatarUrl) {
+    return (
+      // eslint-disable-next-line @next/next/no-img-element
+      <img
+        src={settings.profile.avatarUrl}
+        alt="Avatar"
+        className="size-full object-cover"
+        style={{ width: size, height: size }}
+      />
+    );
+  }
+  if (settings.profile.avatarStyle === "orca") {
+    return <OrcaMark size={Math.round(size * 0.75)} className="rounded-lg" />;
+  }
+  const bg =
+    settings.profile.avatarStyle === "initials-ocean"
+      ? "bg-gradient-to-br from-accent-primary to-accent-2"
+      : settings.profile.avatarStyle === "initials-amber"
+        ? "bg-gradient-to-br from-warn to-warning"
+        : "bg-surface-modal text-text-primary";
+  return (
+    <span
+      className={`grid size-full place-items-center font-bold text-white ${bg}`}
+      style={{ fontSize: Math.max(12, size * 0.28) }}
+    >
+      {initials}
+    </span>
+  );
+}
+
+export function ProfileTab({ onOpenSecurity }: { onOpenSecurity?: () => void }) {
   const { settings, update } = useSettings();
   const { data: me, mutate } = useApi<{ user: { id: string; email: string; name: string | null } }>(
     "/api/v1/auth/me",
   );
   const [name, setName] = useState("");
+  const [dirty, setDirty] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [copied, setCopied] = useState(false);
 
-  const effectiveName = name || settings.profile.displayName || me?.user?.name || "";
+  // Seed name once from settings / auth; allow clearing the field (no fallback trap)
+  useEffect(() => {
+    if (dirty) return;
+    setName(settings.profile.displayName || me?.user?.name || "");
+  }, [settings.profile.displayName, me?.user?.name, dirty]);
+
+  const displayName = name;
+  const email = me?.user?.email ?? null;
+  const loggedIn = Boolean(me?.user);
 
   const saveName = async () => {
-    update({ profile: { ...settings.profile, displayName: effectiveName } });
-    if (me?.user) {
-      await fetch("/api/v1/auth/profile", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: effectiveName }),
-      });
-      await mutate();
+    setSaving(true);
+    try {
+      update({ profile: { ...settings.profile, displayName: name.trim() } });
+      if (me?.user) {
+        await fetch("/api/v1/auth/profile", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: name.trim() }),
+        });
+        await mutate();
+      }
+      setDirty(false);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 1800);
+    } finally {
+      setSaving(false);
     }
-    setSaved(true);
-    setTimeout(() => setSaved(false), 1500);
+  };
+
+  const copyEmail = async () => {
+    if (!email) return;
+    try {
+      await navigator.clipboard.writeText(email);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1200);
+    } catch {
+      /* ignore */
+    }
   };
 
   return (
     <>
-      <Section title="Thông tin tài khoản" desc="Tên hiển thị, avatar và tuỳ chọn khu vực.">
-        <Row
-          label="Tên hiển thị"
-          hint={me?.user ? me.user.email : "Đăng nhập để đồng bộ tài khoản giữa các thiết bị"}
-        >
-          <div className="flex items-center gap-2">
+      {/* ——— Identity hero ——— */}
+      <Panel className="mb-3 overflow-hidden" pad={false}>
+        <div className="relative px-4 py-5 sm:px-5">
+          <div
+            className="pointer-events-none absolute inset-0 opacity-40"
+            style={{
+              background:
+                "radial-gradient(ellipse 80% 60% at 10% 0%, color-mix(in srgb, var(--color-accent-primary) 22%, transparent), transparent 55%)",
+            }}
+          />
+          <div className="relative flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-center gap-3.5">
+              <div className="grid size-[72px] shrink-0 place-items-center overflow-hidden rounded-2xl border border-border-subtle bg-surface-elevated shadow-sm">
+                <ProfileAvatar size={72} displayName={displayName} />
+              </div>
+              <div className="min-w-0">
+                <div className="truncate text-[17px] font-semibold tracking-tight text-text-primary">
+                  {displayName.trim() || "Người dùng ORCA"}
+                </div>
+                <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[12px] text-text-muted">
+                  {email ? (
+                    <button
+                      type="button"
+                      onClick={() => void copyEmail()}
+                      className="inline-flex items-center gap-1 hover:text-text-primary"
+                      title="Sao chép email"
+                    >
+                      {email}
+                      <Copy className="size-3 opacity-70" />
+                      {copied ? <span className="text-[10px] text-positive">Đã chép</span> : null}
+                    </button>
+                  ) : (
+                    <span>Chưa đăng nhập</span>
+                  )}
+                </div>
+                <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                  <span
+                    className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10.5px] font-medium ${
+                      loggedIn
+                        ? "border-up/30 bg-up/10 text-up"
+                        : "border-border-subtle bg-surface-elevated text-text-muted"
+                    }`}
+                  >
+                    <span className={`size-1.5 rounded-full ${loggedIn ? "bg-up" : "bg-text-muted"}`} />
+                    {loggedIn ? "Đã đăng nhập" : "Khách"}
+                  </span>
+                  <span className="rounded-full border border-border-subtle bg-surface-elevated px-2 py-0.5 text-[10.5px] text-text-muted">
+                    {settings.profile.region === "vn" ? "Việt Nam" : "Toàn cầu"}
+                  </span>
+                  <span className="rounded-full border border-border-subtle bg-surface-elevated px-2 py-0.5 text-[10.5px] text-text-muted">
+                    {settings.profile.timezone.replace(/_/g, " ")}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+              {loggedIn ? (
+                <Button type="button" variant="secondary" size="sm" onClick={onOpenSecurity}>
+                  <ShieldCheck className="size-3.5" />
+                  Bảo mật
+                </Button>
+              ) : (
+                <Link
+                  href="/login"
+                  className="orca-btn orca-btn-primary orca-btn-sm inline-flex items-center gap-1.5"
+                >
+                  <LogIn className="size-3.5" />
+                  Đăng nhập
+                </Link>
+              )}
+            </div>
+          </div>
+        </div>
+      </Panel>
+
+      <Section title="Chỉnh sửa hồ sơ" desc="Tên hiển thị và ảnh đại diện dùng trên toàn hệ thống.">
+        <Row label="Tên hiển thị" hint="Hiện trên sidebar và báo cáo khi đã lưu">
+          <div className="flex flex-wrap items-center gap-2">
             <input
-              value={effectiveName}
-              onChange={(e) => setName(e.target.value)}
+              value={name}
+              onChange={(e) => {
+                setName(e.target.value);
+                setDirty(true);
+              }}
               placeholder="Tên của bạn"
-              className="input w-44"
+              className="input w-48"
+              maxLength={64}
             />
-            <button
-              onClick={saveName}
-              className="rounded-md bg-accent-primary px-2.5 py-1.5 text-[12px] font-semibold text-white"
-            >
+            <Button type="button" size="sm" loading={saving} disabled={!dirty && !saving} onClick={() => void saveName()}>
               Lưu
-            </button>
+            </Button>
             <SavedNote show={saved} />
           </div>
         </Row>
 
-        <div className="space-y-3">
-          <div className="text-[12.5px] text-text-primary">Avatar</div>
+        {email ? (
+          <Row label="Email" hint="Không thể đổi tại đây — liên hệ hỗ trợ nếu cần">
+            <span className="text-[12.5px] text-text-secondary">{email}</span>
+          </Row>
+        ) : (
+          <Row label="Email" hint="Đăng nhập để đồng bộ hồ sơ giữa thiết bị">
+            <Link href="/login" className="text-[12.5px] font-medium text-accent-primary hover:underline">
+              Đăng nhập ngay
+            </Link>
+          </Row>
+        )}
+
+        <div className="space-y-3 border-t border-border-subtle pt-3">
+          <div className="text-[12.5px] font-medium text-text-primary">Ảnh đại diện</div>
           <p className="text-[11px] text-text-muted">
-            Chọn phong cách sẵn có hoặc tải ảnh tùy chỉnh (sau khi đăng nhập ảnh được đồng bộ qua
-            settings).
+            Chọn phong cách sẵn có hoặc tải ảnh (tự crop vuông 160px). Ảnh tùy chỉnh đồng bộ khi đã
+            đăng nhập.
           </p>
-          <div className="flex flex-wrap items-center gap-3">
+          <div className="flex flex-wrap items-start gap-4">
             <div className="grid size-16 place-items-center overflow-hidden rounded-xl border border-border-subtle bg-surface-elevated">
-              {settings.profile.avatarUrl ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={settings.profile.avatarUrl} alt="Avatar" className="size-full object-cover" />
-              ) : settings.profile.avatarStyle === "orca" ? (
-                <OrcaMark size={48} className="rounded-lg" />
-              ) : (
-                <span
-                  className={`grid size-full place-items-center text-[14px] font-bold text-white ${
-                    settings.profile.avatarStyle === "initials-ocean"
-                      ? "bg-gradient-to-br from-accent-primary to-accent-2"
-                      : settings.profile.avatarStyle === "initials-amber"
-                        ? "bg-gradient-to-br from-warn to-warning"
-                        : "bg-surface-modal text-text-primary"
-                  }`}
-                >
-                  {effectiveName.slice(0, 2).toUpperCase() || "OR"}
-                </span>
-              )}
+              <ProfileAvatar size={64} displayName={displayName} />
             </div>
-            <div className="flex flex-col gap-1.5">
+            <div className="flex min-w-0 flex-1 flex-col gap-2">
               <div className="flex flex-wrap gap-1.5">
                 {(
                   [
@@ -193,8 +333,7 @@ export function ProfileTab() {
                       })
                     }
                     aria-label={`Avatar ${style}`}
-                    className={`grid size-9 place-items-center overflow-hidden rounded-lg border-2 transition-all ${
-                      !settings.profile.avatarUrl && settings.profile.avatarStyle === style
+                    className={`grid size-9 place-items-center overflow-hidden rounded-lg border-2 transition-all ${\n                      !settings.profile.avatarUrl && settings.profile.avatarStyle === style
                         ? "border-accent-primary"
                         : "border-transparent opacity-70 hover:opacity-100"
                     } ${cls ?? ""}`}
@@ -203,7 +342,7 @@ export function ProfileTab() {
                       <OrcaMark size={34} className="rounded-lg" />
                     ) : (
                       <span className="text-[10px] font-bold text-white">
-                        {effectiveName.slice(0, 2).toUpperCase() || "OR"}
+                        {(displayName || "OR").slice(0, 2).toUpperCase()}
                       </span>
                     )}
                   </button>
@@ -272,21 +411,17 @@ export function ProfileTab() {
                   </button>
                 ) : null}
               </div>
-              {!me?.user ? (
-                <p className="text-[10.5px] text-text-muted">
-                  Đăng nhập để đồng bộ avatar giữa các thiết bị.
-                </p>
-              ) : (
-                <p className="text-[10.5px] text-text-muted">
-                  Đã đăng nhập — avatar lưu local và đồng bộ settings server.
-                </p>
-              )}
+              <p className="text-[10.5px] text-text-muted">
+                {loggedIn
+                  ? "Đã đăng nhập — avatar lưu local và đồng bộ settings server."
+                  : "Đăng nhập để đồng bộ avatar giữa các thiết bị."}
+              </p>
             </div>
           </div>
         </div>
       </Section>
 
-      <Section title="Ngôn ngữ & Khu vực" desc="Múi giờ áp dụng cho đồng hồ và mọi timestamp hiển thị.">
+      <Section title="Ngôn ngữ & khu vực" desc="Múi giờ áp dụng cho đồng hồ và mọi timestamp hiển thị.">
         <Row label="Ngôn ngữ giao diện">
           <Seg
             value={settings.profile.language}
@@ -332,7 +467,7 @@ export function AppearanceTab() {
   const a = settings.appearance;
   return (
     <>
-      <Section title="Theme" desc="Deep Navy Professional là theme mặc định của ORCA Financial.">
+      <Section title="Giao diện" desc="Deep Navy Professional là theme mặc định của ORCA Financial.">
         <Row label="Chế độ hiển thị">
           <Seg
             value={a.mode}
@@ -365,7 +500,7 @@ export function AppearanceTab() {
             ]}
           />
         </Row>
-        <Row label="Mật độ hiển thị (density)" hint="Compact phù hợp màn hình dữ liệu dày đặc">
+        <Row label="Mật độ hiển thị" hint="Compact phù hợp màn hình dữ liệu dày đặc">
           <Seg
             value={a.density}
             onChange={(v) => update({ appearance: { ...a, density: v } })}
@@ -387,7 +522,10 @@ export function AppearanceTab() {
             ]}
           />
         </Row>
-        <Row label="Giảm hiệu ứng chuyển động" hint="Tắt animation marquee/pulse — tự động bật khi hệ điều hành bật reduced motion">
+        <Row
+          label="Giảm hiệu ứng chuyển động"
+          hint="Tắt animation — tự động khi hệ điều hành bật reduced motion"
+        >
           <Switch
             on={settings.accessibility.reducedMotion}
             onChange={(v) => update({ accessibility: { ...settings.accessibility, reducedMotion: v } })}
@@ -404,10 +542,7 @@ export function AppearanceTab() {
             ]}
           />
         </Row>
-        <Row
-          label="Đơn vị tiền"
-          hint="Quy đổi khối lượng/giá trị USD → ₫ theo tỷ giá USD/VND realtime"
-        >
+        <Row label="Đơn vị tiền" hint="Quy đổi khối lượng/giá trị theo tỷ giá USD/VND">
           <Seg
             value={a.currency}
             onChange={(v) => update({ appearance: { ...a, currency: v } })}
