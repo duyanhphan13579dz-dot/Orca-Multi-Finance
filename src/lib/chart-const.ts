@@ -78,48 +78,35 @@ export function binanceInterval(tf: string): string {
   if (tf === "1d") return "1d";
   if (tf === "1w") return "1w";
   if (tf === "1M") return "1M";
-  if (tf === "12M") return "1M"; // aggregate 12× monthly
   return tf;
 }
 
-/** Map app TF → VNDirect dchart resolution (native only). */
-export function vndDchartResolution(tf: string): "1" | "5" | "15" | "30" | "60" | "D" | null {
-  switch (tf) {
-    case "1m":
-      return "1";
-    case "5m":
-      return "5";
-    case "15m":
-      return "15";
-    case "30m":
-      return "30";
-    case "1h":
-      return "60";
-    case "1d":
-      return "D";
-    default:
-      return null; // 4h/1w/1M/12M: aggregate
-  }
+export function yahooInterval(tf: string): string {
+  if (tf === "1w") return "1wk";
+  if (tf === "1M" || tf === "12M") return "1mo";
+  return tf;
 }
 
 /** aggregate small candles into a larger timeframe */
 export function aggregateCandles(candles: ChartCandle[], tfMs: number): ChartCandle[] {
-  if (!candles.length) return [];
+  if (!candles.length || tfMs <= 0) return candles;
   const out: ChartCandle[] = [];
-  let cur: ChartCandle | null = null;
+  let bucket: ChartCandle | null = null;
+  let bucketStart = 0;
   for (const c of candles) {
-    const bucket = Math.floor(c.time / tfMs) * tfMs;
-    if (!cur || bucket !== cur.time) {
-      if (cur) out.push(cur);
-      cur = { time: bucket, open: c.open, high: c.high, low: c.low, close: c.close, volume: c.volume ?? 0 };
+    const start = Math.floor(c.time / tfMs) * tfMs;
+    if (!bucket || start !== bucketStart) {
+      if (bucket) out.push(bucket);
+      bucketStart = start;
+      bucket = { time: start, open: c.open, high: c.high, low: c.low, close: c.close, volume: c.volume ?? 0 };
     } else {
-      cur.high = Math.max(cur.high, c.high);
-      cur.low = Math.min(cur.low, c.low);
-      cur.close = c.close;
-      cur.volume = (cur.volume ?? 0) + (c.volume ?? 0);
+      bucket.high = Math.max(bucket.high, c.high);
+      bucket.low = Math.min(bucket.low, c.low);
+      bucket.close = c.close;
+      bucket.volume = (bucket.volume ?? 0) + (c.volume ?? 0);
     }
   }
-  if (cur) out.push(cur);
+  if (bucket) out.push(bucket);
   return out;
 }
 
@@ -132,6 +119,11 @@ export interface IndicatorPoint {
 export interface ChartIndicators {
   ema20: IndicatorPoint[];
   ema50: IndicatorPoint[];
+  ma10: IndicatorPoint[];
+  ma20: IndicatorPoint[];
+  ma50: IndicatorPoint[];
+  ma100: IndicatorPoint[];
+  ma200: IndicatorPoint[];
   bollinger: { upper: IndicatorPoint[]; mid: IndicatorPoint[]; lower: IndicatorPoint[] } | null;
   vwap: IndicatorPoint[] | null;
   rsi: IndicatorPoint[];
@@ -141,7 +133,7 @@ export interface ChartIndicators {
 
 export interface ChartSignalMarker {
   time: number;
-  type: "buy-signal" | "sell-signal" | "volume-spike" | "rsi-extreme" | "breakout" | "breakdown" | string;
+  type: string;
   position: "aboveBar" | "belowBar" | "inBar";
   title: string;
 }
