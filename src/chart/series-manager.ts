@@ -38,7 +38,22 @@ export function sanitizeCandle(c: ChartCandle): ChartCandle | null {
   };
 }
 
-type IndicatorKey = "ema20" | "ema50" | "bbU" | "bbM" | "bbL" | "vwap" | "rsi" | "macdM" | "macdS" | "macdH";
+type IndicatorKey =
+  | "ema20"
+  | "ema50"
+  | "ma10"
+  | "ma20"
+  | "ma50"
+  | "ma100"
+  | "ma200"
+  | "bbU"
+  | "bbM"
+  | "bbL"
+  | "vwap"
+  | "rsi"
+  | "macdM"
+  | "macdS"
+  | "macdH";
 
 type AnyBase =
   | ISeriesApi<"Candlestick">
@@ -342,7 +357,19 @@ export class SeriesManager {
 
   rebuildIndicators(
     ind: ChartIndicators | null,
-    visible: { ema: boolean; bollinger: boolean; vwap: boolean; rsi: boolean; macd: boolean; srLevels: boolean },
+    visible: {
+      ema: boolean;
+      ma10: boolean;
+      ma20: boolean;
+      ma50: boolean;
+      ma100: boolean;
+      ma200: boolean;
+      bollinger: boolean;
+      vwap: boolean;
+      rsi: boolean;
+      macd: boolean;
+      srLevels: boolean;
+    },
   ) {
     for (const [, s] of this.indicators) {
       try {
@@ -392,6 +419,22 @@ export class SeriesManager {
     this.indicators.get("ema20")?.applyOptions({ visible: visible.ema });
     push("ema50", add("ema50", 0, T.warn), ind.ema50);
     this.indicators.get("ema50")?.applyOptions({ visible: visible.ema });
+
+    const maColors: Record<"ma10" | "ma20" | "ma50" | "ma100" | "ma200", string> = {
+      ma10: "#f59e0b",
+      ma20: "#38bdf8",
+      ma50: "#a78bfa",
+      ma100: "#f472b6",
+      ma200: "#f87171",
+    };
+    for (const key of ["ma10", "ma20", "ma50", "ma100", "ma200"] as const) {
+      const pts = ind[key];
+      if (pts?.length) {
+        push(key, add(key, 0, maColors[key]), pts);
+        this.indicators.get(key)?.applyOptions({ visible: visible[key] });
+      }
+    }
+
     if (ind.bollinger) {
       push("bbU", add("bbU", 0, "rgba(110,168,254,0.55)", { dashed: true }), ind.bollinger.upper);
       push("bbM", add("bbM", 0, "rgba(110,168,254,0.75)"), ind.bollinger.mid);
@@ -427,9 +470,17 @@ export class SeriesManager {
     }
   }
 
-  setIndicatorVisible(k: "ema" | "bollinger" | "vwap" | "rsi" | "macd", on: boolean) {
+  setIndicatorVisible(
+    k: "ema" | "ma10" | "ma20" | "ma50" | "ma100" | "ma200" | "bollinger" | "vwap" | "rsi" | "macd",
+    on: boolean,
+  ) {
     const map: Record<string, IndicatorKey[]> = {
       ema: ["ema20", "ema50"],
+      ma10: ["ma10"],
+      ma20: ["ma20"],
+      ma50: ["ma50"],
+      ma100: ["ma100"],
+      ma200: ["ma200"],
       bollinger: ["bbU", "bbM", "bbL"],
       vwap: ["vwap"],
       rsi: ["rsi"],
