@@ -55,6 +55,12 @@ export async function GET(req: Request) {
         stale: market.meta.stale,
         note: market.meta.note,
       },
+      {
+        // Board is large — short private cache so rapid tab hops skip origin.
+        "Cache-Control": market.meta.stale
+          ? "private, max-age=5, stale-while-revalidate=30"
+          : "private, max-age=8, stale-while-revalidate=25",
+      },
     );
   }
 
