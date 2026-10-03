@@ -138,6 +138,15 @@ function ProfileAvatar({
   );
 }
 
+function avatarPresetClass(style: string, cls: string | null, active: boolean) {
+  const base =
+    "grid size-9 place-items-center overflow-hidden rounded-lg border-2 transition-all";
+  const state = active
+    ? "border-accent-primary"
+    : "border-transparent opacity-70 hover:opacity-100";
+  return `${base} ${state} ${cls ?? ""}`;
+}
+
 export function ProfileTab({ onOpenSecurity }: { onOpenSecurity?: () => void }) {
   const { settings, update } = useSettings();
   const { data: me, mutate } = useApi<{ user: { id: string; email: string; name: string | null } }>(
@@ -149,7 +158,6 @@ export function ProfileTab({ onOpenSecurity }: { onOpenSecurity?: () => void }) 
   const [saved, setSaved] = useState(false);
   const [copied, setCopied] = useState(false);
 
-  // Seed name once from settings / auth; allow clearing the field (no fallback trap)
   useEffect(() => {
     if (dirty) return;
     setName(settings.profile.displayName || me?.user?.name || "");
@@ -192,7 +200,6 @@ export function ProfileTab({ onOpenSecurity }: { onOpenSecurity?: () => void }) 
 
   return (
     <>
-      {/* ——— Identity hero ——— */}
       <Panel className="mb-3 overflow-hidden" pad={false}>
         <div className="relative px-4 py-5 sm:px-5">
           <div
@@ -229,13 +236,13 @@ export function ProfileTab({ onOpenSecurity }: { onOpenSecurity?: () => void }) 
                 </div>
                 <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
                   <span
-                    className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10.5px] font-medium ${
+                    className={
                       loggedIn
-                        ? "border-up/30 bg-up/10 text-up"
-                        : "border-border-subtle bg-surface-elevated text-text-muted"
-                    }`}
+                        ? "inline-flex items-center gap-1 rounded-full border border-up/30 bg-up/10 px-2 py-0.5 text-[10.5px] font-medium text-up"
+                        : "inline-flex items-center gap-1 rounded-full border border-border-subtle bg-surface-elevated px-2 py-0.5 text-[10.5px] font-medium text-text-muted"
+                    }
                   >
-                    <span className={`size-1.5 rounded-full ${loggedIn ? "bg-up" : "bg-text-muted"}`} />
+                    <span className={loggedIn ? "size-1.5 rounded-full bg-up" : "size-1.5 rounded-full bg-text-muted"} />
                     {loggedIn ? "Đã đăng nhập" : "Khách"}
                   </span>
                   <span className="rounded-full border border-border-subtle bg-surface-elevated px-2 py-0.5 text-[10.5px] text-text-muted">
@@ -281,7 +288,13 @@ export function ProfileTab({ onOpenSecurity }: { onOpenSecurity?: () => void }) 
               className="input w-48"
               maxLength={64}
             />
-            <Button type="button" size="sm" loading={saving} disabled={!dirty && !saving} onClick={() => void saveName()}>
+            <Button
+              type="button"
+              size="sm"
+              loading={saving}
+              disabled={!dirty && !saving}
+              onClick={() => void saveName()}
+            >
               Lưu
             </Button>
             <SavedNote show={saved} />
@@ -319,34 +332,35 @@ export function ProfileTab({ onOpenSecurity }: { onOpenSecurity?: () => void }) 
                     ["initials-slate", "bg-surface-modal"],
                     ["initials-amber", "bg-gradient-to-br from-warn to-warning"],
                   ] as const
-                ).map(([style, cls]) => (
-                  <button
-                    key={style}
-                    type="button"
-                    onClick={() =>
-                      update({
-                        profile: {
-                          ...settings.profile,
-                          avatarStyle: style,
-                          avatarUrl: null,
-                        },
-                      })
-                    }
-                    aria-label={`Avatar ${style}`}
-                    className={`grid size-9 place-items-center overflow-hidden rounded-lg border-2 transition-all ${\n                      !settings.profile.avatarUrl && settings.profile.avatarStyle === style
-                        ? "border-accent-primary"
-                        : "border-transparent opacity-70 hover:opacity-100"
-                    } ${cls ?? ""}`}
-                  >
-                    {style === "orca" ? (
-                      <OrcaMark size={34} className="rounded-lg" />
-                    ) : (
-                      <span className="text-[10px] font-bold text-white">
-                        {(displayName || "OR").slice(0, 2).toUpperCase()}
-                      </span>
-                    )}
-                  </button>
-                ))}
+                ).map(([style, cls]) => {
+                  const active =
+                    !settings.profile.avatarUrl && settings.profile.avatarStyle === style;
+                  return (
+                    <button
+                      key={style}
+                      type="button"
+                      onClick={() =>
+                        update({
+                          profile: {
+                            ...settings.profile,
+                            avatarStyle: style,
+                            avatarUrl: null,
+                          },
+                        })
+                      }
+                      aria-label={`Avatar ${style}`}
+                      className={avatarPresetClass(style, cls, active)}
+                    >
+                      {style === "orca" ? (
+                        <OrcaMark size={34} className="rounded-lg" />
+                      ) : (
+                        <span className="text-[10px] font-bold text-white">
+                          {(displayName || "OR").slice(0, 2).toUpperCase()}
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 <label className="cursor-pointer rounded-md border border-border-subtle bg-surface-elevated px-2.5 py-1.5 text-[12px] font-medium text-text-primary hover:border-accent-primary">
@@ -528,7 +542,9 @@ export function AppearanceTab() {
         >
           <Switch
             on={settings.accessibility.reducedMotion}
-            onChange={(v) => update({ accessibility: { ...settings.accessibility, reducedMotion: v } })}
+            onChange={(v) =>
+              update({ accessibility: { ...settings.accessibility, reducedMotion: v } })
+            }
             label="Reduced motion"
           />
         </Row>
