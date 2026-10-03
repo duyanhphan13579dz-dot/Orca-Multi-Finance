@@ -130,7 +130,6 @@ export function ShellInner({ children }: { children: ReactNode }) {
       return next;
     });
     if (sideAnimTimer.current) clearTimeout(sideAnimTimer.current);
-    // slightly longer than CSS duration so will-change clears after paint
     sideAnimTimer.current = setTimeout(() => setSideAnimating(false), 340);
   }, []);
 
@@ -189,19 +188,19 @@ export function ShellInner({ children }: { children: ReactNode }) {
 
     return (
       <div className="orca-sidebar flex h-full flex-col" style={{ width: SIDEBAR_EXPANDED }}>
-        <div className="flex min-h-[3.25rem] shrink-0 items-center gap-1 border-b border-border-subtle px-2 py-2">
+        <div className="orca-sidebar-header relative flex min-h-[3.25rem] shrink-0 items-center gap-1 border-b border-border-subtle px-2 py-2">
           <Link
             href="/"
             onClick={(e) => onNav("/", e)}
-            className="grid size-9 shrink-0 place-items-center"
+            className="orca-sidebar-logo grid size-9 shrink-0 place-items-center rounded-lg"
             title="ORCA Financial"
           >
-            <OrcaMark size={28} />
+            <OrcaMark size={30} />
           </Link>
           <Link
             href="/"
             onClick={(e) => onNav("/", e)}
-            className="orca-sidebar-brand-text min-w-0 flex-1 overflow-hidden"
+            className="orca-sidebar-brand-text min-w-0 flex-1 overflow-hidden pr-8"
             title="ORCA Financial"
           >
             <span className="block truncate text-[13px] font-bold tracking-wide text-text-primary">
@@ -333,8 +332,12 @@ export function ShellInner({ children }: { children: ReactNode }) {
           {renderDesktopSidebar()}
           <button
             type="button"
-            className="orca-sidebar-toggle absolute top-2.5 z-20 grid size-8 place-items-center rounded-md border border-border-subtle/80 bg-surface-base text-text-muted shadow-sm transition-colors hover:bg-surface-elevated hover:text-text-primary"
-            style={{ right: collapsed ? 6 : 8 }}
+            className={
+              "orca-sidebar-toggle absolute z-20 grid size-8 place-items-center rounded-md border border-border-subtle/80 bg-surface-base text-text-muted shadow-sm transition-colors hover:bg-surface-elevated hover:text-text-primary " +
+              (collapsed
+                ? "left-1/2 top-[3.35rem] -translate-x-1/2"
+                : "right-2 top-2.5")
+            }
             onClick={toggleCollapsed}
             aria-label={collapsed ? "Mở rộng sidebar" : "Thu gọn sidebar"}
           >
