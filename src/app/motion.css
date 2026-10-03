@@ -69,11 +69,11 @@ html {
 }
 .orca-main-scroll::-webkit-scrollbar-track { background: transparent; }
 
-/* ——— Page route enter (template.tsx remounts on navigation) ——— */
+/* ——— Page route enter — soft, no blank flash ——— */
 @keyframes orca-page-in {
   from {
-    opacity: 0;
-    transform: translateY(6px);
+    opacity: 0.92;
+    transform: translateY(3px);
   }
   to {
     opacity: 1;
@@ -81,7 +81,36 @@ html {
   }
 }
 .orca-page-enter {
-  animation: orca-page-in var(--dur-med) var(--ease-spring) both;
+  animation: orca-page-in 180ms var(--ease-out-soft) both;
+}
+
+/* ——— Top route progress (masks RSC latency) ——— */
+.orca-route-progress {
+  pointer-events: none;
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 9999;
+  height: 2px;
+  background: transparent;
+}
+.orca-route-progress-bar {
+  height: 100%;
+  width: 0;
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--color-accent-primary) 85%, #38bdf8),
+    var(--color-accent-primary),
+    color-mix(in srgb, var(--color-accent-primary) 70%, #a78bfa)
+  );
+  box-shadow: 0 0 8px color-mix(in srgb, var(--color-accent-primary) 55%, transparent);
+  transition: width 200ms var(--ease-out-soft);
+  border-radius: 0 1px 1px 0;
+}
+.orca-route-progress[data-active="0"] .orca-route-progress-bar {
+  transition: width 160ms var(--ease-out-smooth), opacity 200ms ease;
+  opacity: 0;
 }
 
 /* ——— Modal / landing overlay ——— */
@@ -192,5 +221,8 @@ html {
   }
   .orca-interactive:active {
     transform: none;
+  }
+  .orca-route-progress-bar {
+    transition: none !important;
   }
 }
