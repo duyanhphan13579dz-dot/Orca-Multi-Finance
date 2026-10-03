@@ -98,6 +98,32 @@ const TIMEZONES = [
   "UTC",
 ];
 
+const EXP_LABEL = {
+  beginner: "Mới bắt đầu",
+  intermediate: "Trung cấp",
+  advanced: "Nâng cao",
+} as const;
+
+const RISK_LABEL = {
+  conservative: "Thận trọng",
+  balanced: "Cân bằng",
+  aggressive: "Tích cực",
+} as const;
+
+const STYLE_LABEL = {
+  long_term: "Dài hạn",
+  swing: "Swing",
+  day: "Trong ngày",
+  mixed: "Hỗn hợp",
+} as const;
+
+const MARKET_OPTS = [
+  { id: "stocks" as const, label: "CK VN" },
+  { id: "crypto" as const, label: "Crypto" },
+  { id: "forex" as const, label: "Forex" },
+  { id: "commodities" as const, label: "Hàng hóa" },
+];
+
 function ProfileAvatar({
   size = 64,
   displayName,
@@ -149,37 +175,54 @@ function avatarPresetClass(style: string, cls: string | null, active: boolean) {
 
 export function ProfileTab({ onOpenSecurity }: { onOpenSecurity?: () => void }) {
   const { settings, update } = useSettings();
+  const p = settings.profile;
   const { data: me, mutate } = useApi<{ user: { id: string; email: string; name: string | null } }>(
     "/api/v1/auth/me",
   );
   const [name, setName] = useState("");
+  const [bio, setBio] = useState("");
   const [dirty, setDirty] = useState(false);
+  const [bioDirty, setBioDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     if (dirty) return;
-    setName(settings.profile.displayName || me?.user?.name || "");
-  }, [settings.profile.displayName, me?.user?.name, dirty]);
+    setName(p.displayName || me?.user?.name || "");
+  }, [p.displayName, me?.user?.name, dirty]);
+
+  useEffect(() => {
+    if (bioDirty) return;
+    setBio(p.bio || "");
+  }, [p.bio, bioDirty]);
 
   const displayName = name;
   const email = me?.user?.email ?? null;
   const loggedIn = Boolean(me?.user);
 
-  const saveName = async () => {
+  const saveProfile = async () => {
     setSaving(true);
     try {
-      update({ profile: { ...settings.profile, displayName: name.trim() } });
+      const nextName = name.trim();
+      const nextBio = bio.trim().slice(0, 160);
+      update({
+        profile: {
+          ...p,
+          displayName: nextName,
+          bio: nextBio,
+        },
+      });
       if (me?.user) {
         await fetch("/api/v1/auth/profile", {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ name: name.trim() }),
+          body: JSON.stringify({ name: nextName }),
         });
         await mutate();
       }
       setDirty(false);
+      setBioDirty(false);
       setSaved(true);
       setTimeout(() => setSaved(false), 1800);
     } finally {
@@ -198,8 +241,21 @@ export function ProfileTab({ onOpenSecurity }: { onOpenSecurity?: () => void }) 
     }
   };
 
+  const toggleMarket = (id: (typeof MARKET_OPTS)[number]["id"]) => {
+    const cur = p.preferredMarkets ?? [];
+    const next = cur.includes(id) ? cur.filter((m) => m !== id) : [...cur, id];
+    // Always keep at least one market
+    if (next.length === 0) return;
+    update({
+      profile: { ...p, preferredMarkets: next },
+      // Sync primary dashboard market to first preferred
+      dashboard: { ...settings.dashboard, defaultMarket: next[0] },
+    });
+  };
+
   return (
     <>
+      {/* Hero */}
       <Panel className="mb-2 overflow-hidden" pad={false}>
         <div className="relative px-3.5 py-3.5 sm:px-4">
           <div
@@ -246,12 +302,20 @@ export function ProfileTab({ onOpenSecurity }: { onOpenSecurity?: () => void }) 
                     {loggedIn ? "Đã đăng nhập" : "Khách"}
                   </span>
                   <span className="rounded-full border border-border-subtle bg-surface-elevated px-2 py-0.5 text-[10.5px] text-text-muted">
-                    {settings.profile.region === "vn" ? "Việt Nam" : "Toàn cầu"}
+                    {RISK_LABEL[p.riskAppetite] ?? "Cân bằng"}
                   </span>
                   <span className="rounded-full border border-border-subtle bg-surface-elevated px-2 py-0.5 text-[10.5px] text-text-muted">
-                    {settings.profile.timezone.replace(/_/g, " ")}
+                    {STYLE_LABEL[p.tradingStyle] ?? "Swing"}
+                  </span>
+                  <span className="rounded-full border border-border-subtle bg-surface-elevated px-2 py-0.5 text-[10.5px] text-text-muted">
+                    {p.region === "vn" ? "Việt Nam" : "Toàn cầu"}
                   </span>
                 </div>
+                {p.bio ? (
+                  <p className="mt-1.5 max-w-md text-[11.5px] leading-snug text-text-secondary line-clamp-2">
+                    {p.bio}
+                  </p>
+                ) : null}
               </div>
             </div>
 
@@ -275,7 +339,7 @@ export function ProfileTab({ onOpenSecurity }: { onOpenSecurity?: () => void }) 
         </div>
       </Panel>
 
-      <Section title="Chỉnh sửa hồ sơ" desc="Tên hiển thị và ảnh đại diện dùng trên toàn hệ thống.">
+      <Section title="Chỉnh sửa hồ sơ" desc="Tên, giới thiệu và ảnh đại diện dùng trên toàn hệ thống.">
         <Row label="Tên hiển thị" hint="Hiện trên sidebar và báo cáo khi đã lưu">
           <div className="flex flex-wrap items-center gap-2">
             <input
@@ -288,18 +352,39 @@ export function ProfileTab({ onOpenSecurity }: { onOpenSecurity?: () => void }) 
               className="input w-48"
               maxLength={64}
             />
-            <Button
-              type="button"
-              size="sm"
-              loading={saving}
-              disabled={!dirty && !saving}
-              onClick={() => void saveName()}
-            >
-              Lưu
-            </Button>
-            <SavedNote show={saved} />
           </div>
         </Row>
+
+        <div className="space-y-1.5">
+          <div className="flex items-center justify-between gap-2">
+            <div className="text-[12px] text-text-primary">Giới thiệu ngắn</div>
+            <span className="text-[10px] text-text-muted">{bio.length}/160</span>
+          </div>
+          <textarea
+            value={bio}
+            onChange={(e) => {
+              setBio(e.target.value.slice(0, 160));
+              setBioDirty(true);
+            }}
+            placeholder="VD: Trader mid-cap VN, ưu tiên kỹ thuật + dòng tiền…"
+            rows={2}
+            className="input w-full resize-none text-[12.5px]"
+            maxLength={160}
+          />
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            type="button"
+            size="sm"
+            loading={saving}
+            disabled={(!dirty && !bioDirty) || saving}
+            onClick={() => void saveProfile()}
+          >
+            Lưu hồ sơ
+          </Button>
+          <SavedNote show={saved} />
+        </div>
 
         {email ? (
           <Row label="Email" hint="Không thể đổi tại đây — liên hệ hỗ trợ nếu cần">
@@ -316,8 +401,7 @@ export function ProfileTab({ onOpenSecurity }: { onOpenSecurity?: () => void }) 
         <div className="space-y-2 border-t border-border-subtle pt-2.5">
           <div className="text-[12.5px] font-medium text-text-primary">Ảnh đại diện</div>
           <p className="text-[11px] text-text-muted">
-            Chọn phong cách sẵn có hoặc tải ảnh (tự crop vuông 160px). Ảnh tùy chỉnh đồng bộ khi đã
-            đăng nhập.
+            Chọn phong cách sẵn có hoặc tải ảnh (tự crop vuông 160px).
           </p>
           <div className="flex flex-wrap items-start gap-4">
             <div className="grid size-16 place-items-center overflow-hidden rounded-xl border border-border-subtle bg-surface-elevated">
@@ -333,19 +417,14 @@ export function ProfileTab({ onOpenSecurity }: { onOpenSecurity?: () => void }) 
                     ["initials-amber", "bg-gradient-to-br from-warn to-warning"],
                   ] as const
                 ).map(([style, cls]) => {
-                  const active =
-                    !settings.profile.avatarUrl && settings.profile.avatarStyle === style;
+                  const active = !p.avatarUrl && p.avatarStyle === style;
                   return (
                     <button
                       key={style}
                       type="button"
                       onClick={() =>
                         update({
-                          profile: {
-                            ...settings.profile,
-                            avatarStyle: style,
-                            avatarUrl: null,
-                          },
+                          profile: { ...p, avatarStyle: style, avatarUrl: null },
                         })
                       }
                       aria-label={`Avatar ${style}`}
@@ -394,11 +473,7 @@ export function ProfileTab({ onOpenSecurity }: { onOpenSecurity?: () => void }) 
                           ctx.drawImage(img, sx, sy, min, min, 0, 0, size, size);
                           const out = canvas.toDataURL("image/jpeg", 0.85);
                           update({
-                            profile: {
-                              ...settings.profile,
-                              avatarStyle: "custom",
-                              avatarUrl: out,
-                            },
+                            profile: { ...p, avatarStyle: "custom", avatarUrl: out },
                           });
                         };
                         img.src = dataUrl;
@@ -407,17 +482,13 @@ export function ProfileTab({ onOpenSecurity }: { onOpenSecurity?: () => void }) 
                     }}
                   />
                 </label>
-                {settings.profile.avatarUrl ? (
+                {p.avatarUrl ? (
                   <button
                     type="button"
                     className="rounded-md px-2.5 py-1.5 text-[12px] text-text-muted hover:text-negative"
                     onClick={() =>
                       update({
-                        profile: {
-                          ...settings.profile,
-                          avatarUrl: null,
-                          avatarStyle: "orca",
-                        },
+                        profile: { ...p, avatarUrl: null, avatarStyle: "orca" },
                       })
                     }
                   >
@@ -425,12 +496,73 @@ export function ProfileTab({ onOpenSecurity }: { onOpenSecurity?: () => void }) 
                   </button>
                 ) : null}
               </div>
-              <p className="text-[10.5px] text-text-muted">
-                {loggedIn
-                  ? "Đã đăng nhập — avatar lưu local và đồng bộ settings server."
-                  : "Đăng nhập để đồng bộ avatar giữa các thiết bị."}
-              </p>
             </div>
+          </div>
+        </div>
+      </Section>
+
+      <Section
+        title="Hồ sơ nhà đầu tư"
+        desc="Giúp ORCA cá nhân hóa gợi ý, AI và thứ tự thị trường trên dashboard."
+      >
+        <Row label="Kinh nghiệm" hint="Mức độ quen thuộc với phân tích & giao dịch">
+          <Seg
+            value={p.experience}
+            onChange={(v) => update({ profile: { ...p, experience: v } })}
+            options={[
+              { value: "beginner", label: "Mới" },
+              { value: "intermediate", label: "Trung cấp" },
+              { value: "advanced", label: "Nâng cao" },
+            ]}
+          />
+        </Row>
+        <Row label="Khẩu vị rủi ro" hint="Ảnh hưởng cảnh báo và độ sâu phân tích rủi ro">
+          <Seg
+            value={p.riskAppetite}
+            onChange={(v) => update({ profile: { ...p, riskAppetite: v } })}
+            options={[
+              { value: "conservative", label: "Thận trọng" },
+              { value: "balanced", label: "Cân bằng" },
+              { value: "aggressive", label: "Tích cực" },
+            ]}
+          />
+        </Row>
+        <Row label="Phong cách giao dịch" hint="Khung thời gian bạn thường giữ vị thế">
+          <Seg
+            value={p.tradingStyle}
+            onChange={(v) => update({ profile: { ...p, tradingStyle: v } })}
+            options={[
+              { value: "long_term", label: "Dài hạn" },
+              { value: "swing", label: "Swing" },
+              { value: "day", label: "Day" },
+              { value: "mixed", label: "Hỗn hợp" },
+            ]}
+          />
+        </Row>
+        <div className="space-y-1.5">
+          <div className="text-[12px] text-text-primary">Thị trường ưu tiên</div>
+          <p className="text-[10.5px] text-text-muted">
+            Chọn ít nhất một. Thị trường đầu tiên sẽ là mặc định trên dashboard.
+          </p>
+          <div className="flex flex-wrap gap-1.5">
+            {MARKET_OPTS.map((m) => {
+              const on = (p.preferredMarkets ?? []).includes(m.id);
+              return (
+                <button
+                  key={m.id}
+                  type="button"
+                  onClick={() => toggleMarket(m.id)}
+                  className={
+                    "rounded-md border px-2.5 py-1 text-[11.5px] font-medium transition-colors " +
+                    (on
+                      ? "border-accent-primary/40 bg-accent-primary/15 text-accent-primary"
+                      : "border-border-subtle bg-surface-elevated text-text-secondary hover:text-text-primary")
+                  }
+                >
+                  {m.label}
+                </button>
+              );
+            })}
           </div>
         </div>
       </Section>
@@ -438,8 +570,8 @@ export function ProfileTab({ onOpenSecurity }: { onOpenSecurity?: () => void }) 
       <Section title="Ngôn ngữ & khu vực" desc="Múi giờ áp dụng cho đồng hồ và mọi timestamp hiển thị.">
         <Row label="Ngôn ngữ giao diện">
           <Seg
-            value={settings.profile.language}
-            onChange={(v) => update({ profile: { ...settings.profile, language: v } })}
+            value={p.language}
+            onChange={(v) => update({ profile: { ...p, language: v } })}
             options={[
               { value: "vi", label: "Tiếng Việt" },
               { value: "en", label: "English" },
@@ -448,8 +580,8 @@ export function ProfileTab({ onOpenSecurity }: { onOpenSecurity?: () => void }) 
         </Row>
         <Row label="Múi giờ">
           <select
-            value={settings.profile.timezone}
-            onChange={(e) => update({ profile: { ...settings.profile, timezone: e.target.value } })}
+            value={p.timezone}
+            onChange={(e) => update({ profile: { ...p, timezone: e.target.value } })}
             className="input w-48"
           >
             {TIMEZONES.map((tz) => (
@@ -461,8 +593,8 @@ export function ProfileTab({ onOpenSecurity }: { onOpenSecurity?: () => void }) 
         </Row>
         <Row label="Khu vực ưu tiên" hint="Ảnh hưởng thứ tự gợi ý tài sản">
           <Seg
-            value={settings.profile.region}
-            onChange={(v) => update({ profile: { ...settings.profile, region: v } })}
+            value={p.region}
+            onChange={(v) => update({ profile: { ...p, region: v } })}
             options={[
               { value: "vn", label: "Việt Nam" },
               { value: "global", label: "Toàn cầu" },
