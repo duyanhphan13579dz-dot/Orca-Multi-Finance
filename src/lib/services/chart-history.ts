@@ -7,9 +7,11 @@ import { getBiquotePublicOhlc, biquoteIntervalFor } from "../providers/forex";
 import { getVnOhlcv } from "./stocks";
 import { validateBars, detectGaps } from "../quality";
 import {
+  aggregateCandles,
   binanceInterval,
   TF_MS,
   tfsFor,
+  vndDchartResolution,
   type ChartAssetType,
   type ChartCandle,
 } from "../chart-const";
@@ -71,17 +73,71 @@ async function cryptoCandles(symbol: string, tf: string, limit: number): Promise
   return { candles, source: "binance" };
 }
 
-async function stockCandles(symbol: string, limit: number): Promise<CandleSeriesResult> {
-  const res = await getVnOhlcv(symbol, Math.min(limit, 500));
-  const bars = res?.bars ?? [];
-  let candles: ChartCandle[] = bars.map((b) => toCandle(b));
+/**
+ * VN stock/index candles for a specific timeframe.
+ * Native dchart resolutions: 1m/5m/15m/30m/1h/1d.
+ * Aggregated: 4h (from 1h), 1w/1M/12M (from daily).
+ */
+async function stockCandles(symbol: string, tf: string, limit: number): Promise<CandleSeriesResult> {
+  const want = Math.min(Math.max(limit, 40), 2000);
+  const native = vndDchartResolution(tf);
+
+  // Choose dchart resolution + how many base bars to fetch
+  let resolution: "D" | "1" | "5" | "15" | "30" | "60" = "D";
+  let fetchBars = want;
+  if (native) {
+    resolution = native;
+    fetchBars = want;
+  } else if (tf === "4h") {
+    resolution = "60";
+    fetchBars = Math.min(want * 4, 1_500);
+  } else {
+    // 1w / 1M / 12M → daily then aggregate
+    resolution = "D";
+    const mult = tf === "1w" ? 6 : tf === "1M" ? 24 : 280;
+    fetchBars = Math.min(want * mult, 2_000);
+  }
+
+  let bars: OhlcvBar[] = [];
+  let source = "vndirect-dchart";
+
+  try {
+    const { fetchVndDchartHistory } = await import("../providers/vndirect-dchart");
+    const raw = await Promise.race([
+      fetchVndDchartHistory(symbol, resolution, fetchBars),
+      new Promise<never>((_, rej) => setTimeout(() => rej(new Error("dchart_budget")), 8_000)),
+    ]);
+    if (raw?.length) bars = raw;
+  } catch {
+    /* fall through */
+  }
+
+  // Fallback: daily OHLCV only (ignores intraday tf — better than empty)
+  if (!bars.length) {
+    const res = await getVnOhlcv(symbol, Math.min(want, 500));
+    bars = res?.bars ?? [];
+    source = (res?.meta as { source?: string } | undefined)?.source ?? "vnstock";
+  }
+
+  let candles: ChartCandle[] = (bars ?? []).map((b) => toCandle(b));
   candles = scaleVnStockToFullVnd(candles);
+
+  // Aggregate when TF has no native dchart resolution
+  if (!native) {
+    const tfMs = TF_MS[tf];
+    if (tfMs && candles.length) {
+      candles = aggregateCandles(candles, tfMs);
+    }
+  }
+
   const idx = canonicalIndexSymbol(symbol);
   if (idx) {
     const v = validateIndexCandles(symbol, candles);
     candles = v.valid;
   }
-  return { candles, source: (res?.meta as { source?: string } | undefined)?.source ?? "vnstock" };
+
+  if (candles.length > want) candles = candles.slice(-want);
+  return { candles, source };
 }
 
 async function yahooCandles(symbol: string, tf: string, _limit: number): Promise<CandleSeriesResult> {
@@ -143,7 +199,7 @@ export async function getChartHistory(
   if (!tfsFor(args.assetType).includes(tf)) return null;
 
   try {
-    const cacheKey = `chart:v4:${args.assetType}:${symbol}:${tf}:${limit}`;
+    const cacheKey = `chart:v5:${args.assetType}:${symbol}:${tf}:${limit}`;
     const res = await cached(cacheKey, {
       ttlMs:
         args.assetType === "crypto"
@@ -157,7 +213,7 @@ export async function getChartHistory(
         if (args.assetType === "crypto") {
           series = await cryptoCandles(symbol, tf, limit);
         } else if (args.assetType === "stock") {
-          series = await stockCandles(symbol, limit);
+          series = await stockCandles(symbol, tf, limit);
         } else if (args.assetType === "forex" || args.assetType === "commodity") {
           series = await forexCandles(symbol, tf, limit);
         } else {
