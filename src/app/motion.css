@@ -212,6 +212,36 @@ html {
   transform: scale(0.98);
 }
 
+/* ——— Page loading skeletons ——— */
+@keyframes orca-shimmer {
+  0% { background-position: 120% 0; }
+  100% { background-position: -120% 0; }
+}
+.orca-skeleton {
+  background: linear-gradient(
+    105deg,
+    color-mix(in srgb, var(--color-surface-elevated) 88%, transparent) 0%,
+    color-mix(in srgb, var(--color-border-subtle) 55%, var(--color-surface-elevated)) 45%,
+    color-mix(in srgb, var(--color-surface-elevated) 88%, transparent) 90%
+  );
+  background-size: 220% 100%;
+  animation: orca-shimmer 1.35s var(--ease-out-soft) infinite;
+  border: 1px solid color-mix(in srgb, var(--color-border-subtle) 50%, transparent);
+}
+.orca-skeleton-bar {
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--color-accent-primary) 35%, transparent),
+    var(--color-accent-primary),
+    color-mix(in srgb, var(--color-accent-primary) 35%, transparent)
+  );
+  background-size: 200% 100%;
+  animation: orca-shimmer 1.1s linear infinite;
+}
+.orca-page-loading {
+  animation: orca-page-in 180ms var(--ease-out-soft) both;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .orca-page-enter,
   .orca-modal-overlay,
@@ -224,5 +254,10 @@ html {
   }
   .orca-route-progress-bar {
     transition: none !important;
+  }
+  .orca-skeleton,
+  .orca-skeleton-bar {
+    animation: none !important;
+    background: var(--color-surface-elevated);
   }
 }
