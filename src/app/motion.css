@@ -57,7 +57,9 @@ html {
   min-width: 268px;
 }
 .orca-sidebar-toggle {
-  transition: right 300ms var(--ease-out-smooth),
+  transition: top 300ms var(--ease-out-smooth),
+              left 300ms var(--ease-out-smooth),
+              right 300ms var(--ease-out-smooth),
               background-color var(--dur-fast) var(--ease-out-soft),
               color var(--dur-fast) var(--ease-out-soft);
 }
@@ -70,6 +72,14 @@ html {
 .orca-aside.is-collapsed .orca-sidebar-section-title,
 .orca-aside.is-collapsed .orca-nav-item-label {
   opacity: 0;
+}
+/* Collapsed rail: logo stays visible; room for expand toggle under logo */
+.orca-aside.is-collapsed .orca-sidebar-logo {
+  position: relative;
+  z-index: 1;
+}
+.orca-aside.is-collapsed .orca-sidebar-nav {
+  padding-top: 2rem;
 }
 
 .orca-main-scroll {
