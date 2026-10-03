@@ -7,7 +7,6 @@ import { analyzeMoneyFlow } from "./engines/money-flow";
 
 /**
  * Technical analysis engine — deterministic quantitative computations.
- * Candlestick patterns use the VN ruleset engine (candlestick-patterns.ts).
  * tradeSignal = MUA / BÁN / QUAN SÁT + confidence (+ Entry/SL/TP plan).
  */
 
@@ -86,6 +85,43 @@ export function macd(
   return { macd: macdLine, signal, histogram };
 }
 
+export function stochastic(
+  highs: number[],
+  lows: number[],
+  closes: number[],
+  period = 14,
+  smooth = 3,
+): (number | null)[] {
+  const n = closes.length;
+  const raw: (number | null)[] = new Array(n).fill(null);
+  for (let i = period - 1; i < n; i++) {
+    let hi = -Infinity;
+    let lo = Infinity;
+    for (let j = i - period + 1; j <= i; j++) {
+      if (highs[j] > hi) hi = highs[j];
+      if (lows[j] < lo) lo = lows[j];
+    }
+    const range = hi - lo;
+    raw[i] = range > 1e-12 ? ((closes[i] - lo) / range) * 100 : 50;
+  }
+  if (smooth <= 1) return raw;
+  const out: (number | null)[] = new Array(n).fill(null);
+  for (let i = 0; i < n; i++) {
+    if (raw[i] == null) continue;
+    if (i < period - 1 + smooth - 1) continue;
+    let sum = 0;
+    let cnt = 0;
+    for (let j = i - smooth + 1; j <= i; j++) {
+      if (raw[j] != null) {
+        sum += raw[j] as number;
+        cnt++;
+      }
+    }
+    if (cnt === smooth) out[i] = sum / cnt;
+  }
+  return out;
+}
+
 export function bollinger(
   values: number[],
   period = 20,
@@ -127,33 +163,69 @@ export function atr(bars: OhlcvBar[], period = 14): number | null {
   return avg;
 }
 
-export function supportResistance(
-  bars: OhlcvBar[],
-  lookback = 60,
-): { support: number[]; resistance: number[] } {
-  const slice = bars.slice(-lookback);
-  if (slice.length < 10) return { support: [], resistance: [] };
-  const lows = slice.map((b) => b.low).sort((a, b) => a - b);
-  const highs = slice.map((b) => b.high).sort((a, b) => a - b);
-  const support = [lows[Math.floor(lows.length * 0.15)], lows[Math.floor(lows.length * 0.3)]].filter(
-    (v, i, a) => a.indexOf(v) === i,
-  );
-  const resistance = [
-    highs[Math.floor(highs.length * 0.7)],
-    highs[Math.floor(highs.length * 0.85)],
-  ].filter((v, i, a) => a.indexOf(v) === i);
-  return { support, resistance };
+export interface MoneyFlowSnapshot {
+  cmf20: number | null;
+  obvTrend: "inflow" | "outflow" | "neutral" | "unknown";
+  volumeRatio20: number | null;
+  pressure: number;
+  label: "strong-inflow" | "inflow" | "balanced" | "outflow" | "strong-outflow" | "unknown";
 }
 
-function pctChange(closes: number[], barsBack: number): number | null {
-  if (closes.length <= barsBack) return null;
-  const a = closes[closes.length - 1];
-  const b = closes[closes.length - 1 - barsBack];
-  if (!b) return null;
-  return ((a - b) / b) * 100;
+export function moneyFlow(bars: OhlcvBar[], period = 20): MoneyFlowSnapshot {
+  const usable = bars.filter((b) => Number.isFinite(b.volume) && b.volume > 0);
+  if (usable.length < period) {
+    return { cmf20: null, obvTrend: "unknown", volumeRatio20: null, pressure: 0, label: "unknown" };
+  }
+  const slice = usable.slice(-period);
+  let mfvSum = 0;
+  let volSum = 0;
+  let obv = 0;
+  const vols: number[] = [];
+  for (let i = 0; i < slice.length; i++) {
+    const b = slice[i];
+    const range = b.high - b.low;
+    const mfm = range > 1e-12 ? ((b.close - b.low) - (b.high - b.close)) / range : 0;
+    mfvSum += mfm * b.volume;
+    volSum += b.volume;
+    vols.push(b.volume);
+    if (i > 0) {
+      if (b.close > slice[i - 1].close) obv += b.volume;
+      else if (b.close < slice[i - 1].close) obv -= b.volume;
+    }
+  }
+  const cmf = volSum > 0 ? mfvSum / volSum : null;
+  const avgVol = vols.reduce((a, b) => a + b, 0) / vols.length;
+  const recent = vols.slice(-5).reduce((a, b) => a + b, 0) / Math.min(5, vols.length);
+  const volumeRatio20 = avgVol > 0 ? recent / avgVol : null;
+  const pressure = (cmf ?? 0) * 0.7 + Math.tanh(obv / (avgVol * 10 + 1)) * 0.3;
+  const obvTrend = obv > avgVol * 2 ? "inflow" : obv < -avgVol * 2 ? "outflow" : "neutral";
+  const label =
+    pressure > 0.25
+      ? "strong-inflow"
+      : pressure > 0.08
+        ? "inflow"
+        : pressure < -0.25
+          ? "strong-outflow"
+          : pressure < -0.08
+            ? "outflow"
+            : "balanced";
+  return { cmf20: cmf, obvTrend, volumeRatio20, pressure, label };
 }
 
-function maxDrawdown(closes: number[]): number | null {
+export function annualizedVolatility(closes: number[], lookback = 30): number | null {
+  if (closes.length < lookback + 1) return null;
+  const rets: number[] = [];
+  for (let i = closes.length - lookback; i < closes.length; i++) {
+    const r = Math.log(closes[i] / closes[i - 1]);
+    if (Number.isFinite(r)) rets.push(r);
+  }
+  if (rets.length < 5) return null;
+  const mean = rets.reduce((a, b) => a + b, 0) / rets.length;
+  const variance = rets.reduce((a, b) => a + (b - mean) ** 2, 0) / rets.length;
+  return Math.sqrt(variance) * Math.sqrt(252);
+}
+
+export function maxDrawdown(closes: number[]): number | null {
   if (closes.length < 2) return null;
   let peak = closes[0];
   let maxDd = 0;
@@ -165,30 +237,75 @@ function maxDrawdown(closes: number[]): number | null {
   return maxDd;
 }
 
-function volatility(closes: number[], period = 20): number | null {
-  if (closes.length < period + 1) return null;
-  const rets: number[] = [];
-  for (let i = closes.length - period; i < closes.length; i++) {
-    if (closes[i - 1] > 0) rets.push(Math.log(closes[i] / closes[i - 1]));
+export function supportResistance(
+  bars: OhlcvBar[],
+  lookback = 120,
+): { support: number[]; resistance: number[] } {
+  const slice = bars.slice(-lookback);
+  if (slice.length < 10) return { support: [], resistance: [] };
+  const last = slice[slice.length - 1].close;
+  const highs: number[] = [];
+  const lows: number[] = [];
+  for (let i = 2; i < slice.length - 2; i++) {
+    const b = slice[i];
+    if (
+      b.high >= slice[i - 1].high &&
+      b.high >= slice[i - 2].high &&
+      b.high >= slice[i + 1].high &&
+      b.high >= slice[i + 2].high
+    )
+      highs.push(b.high);
+    if (
+      b.low <= slice[i - 1].low &&
+      b.low <= slice[i - 2].low &&
+      b.low <= slice[i + 1].low &&
+      b.low <= slice[i + 2].low
+    )
+      lows.push(b.low);
   }
-  if (rets.length < 2) return null;
-  const mean = rets.reduce((a, b) => a + b, 0) / rets.length;
-  const variance = rets.reduce((a, b) => a + (b - mean) ** 2, 0) / (rets.length - 1);
-  return Math.sqrt(variance * 252);
+  const cluster = (levels: number[], below: boolean): number[] => {
+    const tolFor = (p: number) => p * 0.005;
+    const sorted = levels
+      .filter((l) => (below ? l < last * 0.995 : l > last * 1.005))
+      .sort((a, b) => (below ? b - a : a - b));
+    const out: number[] = [];
+    for (const l of sorted) {
+      if (out.some((o) => Math.abs(o - l) <= tolFor(l))) continue;
+      out.push(l);
+      if (out.length >= 3) break;
+    }
+    return out;
+  };
+  return { support: cluster(lows, true), resistance: cluster(highs, false) };
 }
 
-/** Build full technical snapshot from OHLCV bars. */
+function pctChange(closes: number[], barsBack: number): number | null {
+  if (closes.length <= barsBack) return null;
+  const a = closes[closes.length - 1];
+  const b = closes[closes.length - 1 - barsBack];
+  if (!b) return null;
+  return ((a - b) / b) * 100;
+}
+
+export function detectPatterns(bars: OhlcvBar[]): CandlePattern[] {
+  return toLegacyCandlePatterns(detectCandlePatterns(bars));
+}
+
+/** Primary entry — used by stocks/crypto/forex services. */
+export function analyzeSeries(bars: OhlcvBar[]): TechnicalSnapshot | null {
+  return buildTechnicalSnapshot(bars);
+}
+
 export function buildTechnicalSnapshot(barsIn: OhlcvBar[]): TechnicalSnapshot | null {
   if (!barsIn?.length || barsIn.length < 30) return null;
 
-  // Deduplicate by time ascending
   const byTime = new Map<number, OhlcvBar>();
   for (const b of barsIn) {
     if (b && Number.isFinite(b.time) && b.time > 0 && Number.isFinite(b.close) && b.close > 0) {
       byTime.set(b.time, b);
     }
   }
-  const bars = [...byTime.values()].sort((a, b) => a.time - b.time);
+  const bars = [...byTime.values()].sort((a, c) => a.time - c.time);
   const deduplicated = bars.length < barsIn.length;
   if (bars.length < 30) return null;
 
@@ -219,12 +336,11 @@ export function buildTechnicalSnapshot(barsIn: OhlcvBar[]): TechnicalSnapshot | 
         }
       : null;
   const atr14 = atr(bars, 14);
-  const vol = volatility(closes, 20);
+  const vol = annualizedVolatility(closes, 20);
   const sr = supportResistance(bars);
   const high52w = Math.max(...closes.slice(-252));
   const low52w = Math.min(...closes.slice(-252));
 
-  // Trend score
   let score = 0;
   if (sma20 != null && last > sma20) score += 15;
   else if (sma20 != null) score -= 15;
@@ -265,7 +381,7 @@ export function buildTechnicalSnapshot(barsIn: OhlcvBar[]): TechnicalSnapshot | 
         pressure: moneyFlowAnalysis.pressure,
         label: moneyFlowAnalysis.label,
       }
-    : undefined;
+    : moneyFlow(bars);
 
   const divergences = detectDivergences(bars, { rsi: rsiSeries, macdHist: macdFull.histogram });
   const candlePatterns = detectCandlePatterns(bars);
@@ -288,30 +404,6 @@ export function buildTechnicalSnapshot(barsIn: OhlcvBar[]): TechnicalSnapshot | 
   }
   for (const d of divergences.slice(0, 3)) {
     signals.push(divergenceSummaryLine(d));
-  }
-  if (moneyFlowAnalysis) {
-    if (moneyFlowAnalysis.smc.fvg) {
-      const f = moneyFlowAnalysis.smc.fvg;
-      signals.push(
-        `FVG ${f.direction === "bullish" ? "bullish" : "bearish"} ${f.status} · ${f.low.toFixed(2)}–${f.high.toFixed(2)}`,
-      );
-    }
-    if (moneyFlowAnalysis.smc.orderBlock && moneyFlowAnalysis.smc.orderBlock.status !== "BREAKER") {
-      const ob = moneyFlowAnalysis.smc.orderBlock;
-      signals.push(
-        `Order Block ${ob.direction === "bullish" ? "bullish" : "bearish"} ${ob.status ?? "OPEN"} · ${ob.low.toFixed(2)}–${ob.high.toFixed(2)}`,
-      );
-    }
-    if (moneyFlowAnalysis.ict.inOte) {
-      signals.push(
-        `Giá trong OTE (${moneyFlowAnalysis.ict.premiumDiscount}) — vùng entry ICT ưu tiên`,
-      );
-    } else if (moneyFlowAnalysis.ict.premiumDiscount !== "EQUILIBRIUM") {
-      signals.push(`ICT ${moneyFlowAnalysis.ict.premiumDiscount} zone`);
-    }
-    for (const ev of moneyFlowAnalysis.vsa.events.slice(0, 3)) {
-      signals.push(`VSA: ${ev}`);
-    }
   }
 
   const latestBarTime = bars[bars.length - 1]!.time;
@@ -346,7 +438,6 @@ export function buildTechnicalSnapshot(barsIn: OhlcvBar[]): TechnicalSnapshot | 
   }
   const tradeSignal = { ...tradeSignalBase, plan };
 
-  // YTD: approximate from calendar if timestamps available
   let ytd: number | null = null;
   const yearStart = new Date(new Date().getFullYear(), 0, 1).getTime();
   const ytdBar = bars.find((b) => b.time >= yearStart);
@@ -389,6 +480,5 @@ export function buildTechnicalSnapshot(barsIn: OhlcvBar[]): TechnicalSnapshot | 
   };
 }
 
-// Re-export helpers used elsewhere
 export { toLegacyCandlePatterns };
 export type { CandlePattern };
