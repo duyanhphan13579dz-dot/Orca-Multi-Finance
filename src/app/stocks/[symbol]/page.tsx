@@ -5,7 +5,7 @@ import dynamic from "next/dynamic";
 import { useApi } from "@/lib/hooks";
 import type { VnStockDetail } from "@/lib/services/stocks";
 import type { Meta } from "@/lib/types";
-import { Badge, FreshnessDot, Loading, Panel, Unavailable } from "@/components/ui";
+import { FreshnessDot, Loading, Panel, Unavailable } from "@/components/ui";
 import {
   Activity,
   ArrowDownRight,
@@ -57,6 +57,26 @@ const SECTION_NAV = [
   { id: "sec-deep", label: "Chuyên sâu" },
 ] as const;
 
+const TREND_VI: Record<string, string> = {
+  "strong-up": "Tăng mạnh",
+  up: "Xu hướng tăng",
+  sideways: "Đi ngang",
+  down: "Xu hướng giảm",
+  "strong-down": "Giảm mạnh",
+};
+
+const MONEY_FLOW_VI: Record<string, string> = {
+  "strong-inflow": "Vào mạnh",
+  inflow: "Vào",
+  balanced: "Cân bằng",
+  outflow: "Ra",
+  "strong-outflow": "Ra mạnh",
+};
+
+/** Sticky-offset helpers: hero bar → section nav → content. */
+const ANCHOR_OFFSET =
+  "calc(var(--stock-sticky-h, 6.35rem) + var(--stock-nav-h, 2.55rem) + 0.45rem)";
+
 function scrollToSection(id: string) {
   const el = document.getElementById(id);
   if (!el) return;
@@ -76,20 +96,26 @@ function DecisionStrip({
 }) {
   const trend = technical?.trend;
   const trendLabel =
-    typeof trend === "object" && trend ? trend.label : String(trend ?? "Chưa rõ");
-  const isUp = trendLabel.includes("up");
-  const isDown = trendLabel.includes("down");
+    typeof trend === "object" && trend
+      ? TREND_VI[trend.label] ?? trend.label
+      : String(trend ?? "Chưa rõ");
+  const isUp = typeof trend === "object" && trend
+    ? trend.label === "up" || trend.label === "strong-up"
+    : String(trend ?? "").includes("up");
+  const isDown = typeof trend === "object" && trend
+    ? trend.label === "down" || trend.label === "strong-down"
+    : String(trend ?? "").includes("down");
   const tone = isUp ? "up" : isDown ? "down" : "neutral";
   const action = isUp ? "Theo dõi tăng" : isDown ? "Thận trọng" : "Quan sát";
   const Icon = isUp ? ArrowUpRight : isDown ? ArrowDownRight : Activity;
 
-  const price =
-    quote?.price != null ? quote.price.toLocaleString("vi-VN") : "—";
   const rsi = technical?.rsi14 != null ? technical.rsi14.toFixed(1) : "—";
   const vol30 =
     technical?.volatility30d != null
       ? `${(technical.volatility30d * 100).toFixed(1)}%`
       : "—";
+  const flow = technical?.moneyFlow?.label;
+  const flowLabel = flow ? MONEY_FLOW_VI[flow] ?? flow : null;
 
   return (
     <div
@@ -116,88 +142,98 @@ function DecisionStrip({
       </div>
 
       <div className="stock-decision-metrics">
-        <MetricChip label="Giá" value={price} />
+        {quote?.price != null && (
+          <MetricChip
+            label="Giá"
+            value={quote.price.toLocaleString("vi-VN")}
+            tone={quote.changePercent != null ? (quote.changePercent >= 0 ? "up" : "down") : undefined}
+          />
+        )}
         <MetricChip label="RSI" value={rsi} />
+        {flowLabel && (
+          <MetricChip
+            label="Dòng tiền"
+            value={flowLabel}
+            tone={flow === "inflow" || flow === "strong-inflow" ? "up" : flow === "outflow" || flow === "strong-outflow" ? "down" : undefined}
+          />
+        )}
         <MetricChip label="Vol 30D" value={vol30} />
-        <Badge tone={tone}>{action}</Badge>
         <FreshnessDot status={meta?.freshness} ageMs={meta?.ageMs} />
       </div>
     </div>
   );
 }
 
-function MetricChip({ label, value }: { label: string; value: string }) {
+function MetricChip({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: string;
+  tone?: "up" | "down";
+}) {
   return (
     <span className="stock-metric-chip">
       <span className="stock-metric-chip-label">{label}</span>
-      <strong className="num stock-metric-chip-value">{value}</strong>
+      <strong
+        className={`num stock-metric-chip-value ${
+          tone === "up" ? "text-up" : tone === "down" ? "text-down" : "text-text-primary"
+        }`}
+      >
+        {value}
+      </strong>
     </span>
   );
 }
 
+/** In-page nav with scroll-spy: highlights the section currently in view. */
 function SectionNav() {
+  const [active, setActive] = useState<string>("");
+
+  useEffect(() => {
+    const els = SECTION_NAV.map((s) => document.getElementById(s.id)).filter(
+      (el): el is HTMLElement => el != null,
+    );
+    if (!els.length) return;
+    const visible = new Set<Element>();
+    const pick = () => {
+      const first = els.find((el) => visible.has(el));
+      if (first) setActive(first.id);
+    };
+    const io = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (entry.isIntersecting) visible.add(entry.target);
+          else visible.delete(entry.target);
+        }
+        pick();
+      },
+      // A section counts as "in view" while crossing the upper third of the viewport.
+      { rootMargin: "-25% 0px -65% 0px", threshold: 0 },
+    );
+    for (const el of els) io.observe(el);
+    return () => io.disconnect();
+  }, []);
+
   return (
     <nav aria-label="Mục trong trang" className="stock-section-nav">
       {SECTION_NAV.map((s) => (
         <button
           key={s.id}
           type="button"
-          onClick={() => scrollToSection(s.id)}
+          onClick={() => {
+            setActive(s.id);
+            scrollToSection(s.id);
+          }}
+          data-active={active === s.id ? "true" : undefined}
+          aria-current={active === s.id ? "true" : undefined}
           className="stock-section-nav-item"
         >
           {s.label}
         </button>
       ))}
     </nav>
-  );
-}
-
-function StockHero({ data }: { data: VnStockDetail }) {
-  const quote = data.quote;
-  const changePositive = (quote?.changePercent ?? 0) >= 0;
-  const format = (value: number | null | undefined, suffix = "") =>
-    value == null ? "—" : `${value.toLocaleString("vi-VN")}${suffix}`;
-  const stats = [
-    { label: "Khối lượng", value: format(quote?.volume), unit: "CP" },
-    { label: "Giá trị", value: format(quote?.quoteVolume), unit: "VND" },
-    { label: "CP lưu hành", value: format(data.sharesOutstanding), unit: "CP" },
-    { label: "NN ròng", value: "—", unit: "VND", accent: true },
-    { label: "Cập nhật", value: quote?.updatedAt ? new Date(quote.updatedAt).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" }) : "—", unit: quote?.updatedAt ? new Date(quote.updatedAt).toLocaleDateString("vi-VN") : "" },
-  ];
-
-  return (
-    <section className="stock-hero-panel" aria-labelledby="stock-hero-title">
-      <div className="stock-hero">
-        <div className="stock-hero-main">
-          <div className="stock-hero-title-row">
-            <div className="stock-symbol-mark">{data.symbol.slice(0, 3)}</div>
-            <div>
-              <h1 id="stock-hero-title" className="stock-hero-symbol">{data.symbol}</h1>
-              <p className="stock-hero-name">{data.profile?.vnName ?? data.name ?? "Doanh nghiệp niêm yết"}</p>
-            </div>
-            <span className="stock-exchange-badge">{data.profile?.floor ?? "HOSE"}</span>
-            <span className="stock-live-status"><i /> Đang giao dịch</span>
-          </div>
-          <div className="stock-hero-price-row">
-            <strong className="stock-hero-price">{format(quote?.price)}</strong>
-            <span className="stock-hero-currency">{quote?.currency ?? "VND"}</span>
-            <span className={changePositive ? "stock-change stock-change--up" : "stock-change stock-change--down"}>
-              {changePositive ? "▲" : "▼"} {format(quote?.changePercent, "%")} ({format(quote?.change)})
-            </span>
-          </div>
-          <p className="stock-hero-updated">Cập nhật: {quote?.updatedAt ? new Date(quote.updatedAt).toLocaleString("vi-VN") : "Chưa có thời gian"}</p>
-        </div>
-        <div className="stock-hero-stats">
-          {stats.map((stat) => (
-            <div className={`stock-stat${stat.accent ? " stock-stat--accent" : ""}`} key={stat.label}>
-              <span className="stock-stat-label">{stat.label}</span>
-              <strong className="stock-stat-value">{stat.value}</strong>
-              <span className="stock-stat-unit">{stat.unit}</span>
-            </div>
-          ))}
-        </div>
-      </div>
-    </section>
   );
 }
 
@@ -245,9 +281,7 @@ export default function StockOverviewPage({ params }: { params: Promise<{ symbol
   const q = data.quote;
 
   return (
-    <div className="stock-workspace stock-overview">
-      <StockHero data={data} />
-
+    <div className="stock-workspace">
       <DecisionStrip
         symbol={data.symbol}
         quote={q}
@@ -259,7 +293,7 @@ export default function StockOverviewPage({ params }: { params: Promise<{ symbol
 
       <section
         id="sec-chart"
-        className="stock-section-card stock-trading-zone scroll-mt-28 grid gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(280px,340px)] xl:items-start 2xl:grid-cols-12"
+        className="stock-section-card stock-trading-zone grid gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(280px,340px)] xl:items-start 2xl:grid-cols-12"
         aria-labelledby="sec-chart-title"
       >
         <div className="stock-section-heading" id="sec-chart-title">
@@ -303,17 +337,20 @@ export default function StockOverviewPage({ params }: { params: Promise<{ symbol
             </Panel>
           )}
         </div>
-        <div className="min-w-0 xl:sticky xl:top-[7.25rem] xl:self-start 2xl:col-span-3">
+        <div
+          className="min-w-0 xl:sticky xl:self-start 2xl:col-span-3"
+          style={{ top: ANCHOR_OFFSET }}
+        >
           <OrderBookPanel symbol={data.symbol} compact />
         </div>
       </section>
 
       <section
         id="sec-signals"
-        className="stock-section-card scroll-mt-28 grid gap-3 lg:grid-cols-2 lg:items-start 2xl:grid-cols-12"
+        className="stock-section-card grid gap-3 lg:grid-cols-2 lg:items-start 2xl:grid-cols-12"
         aria-labelledby="sec-signals-title"
       >
-        <div className="stock-section-heading lg:col-span-2" id="sec-signals-title">
+        <div className="stock-section-heading" id="sec-signals-title">
           <div>
             <p className="stock-section-kicker">Tín hiệu</p>
             <h2>Động lượng &amp; mẫu hình</h2>
@@ -323,7 +360,11 @@ export default function StockOverviewPage({ params }: { params: Promise<{ symbol
         <div className="min-w-0 2xl:col-span-6">
           <TechRecoPanel symbol={data.symbol} />
         </div>
-        <div id="sec-structure" className="min-w-0 scroll-mt-28 2xl:col-span-6">
+        <div
+          id="sec-structure"
+          className="min-w-0 2xl:col-span-6"
+          style={{ scrollMarginTop: ANCHOR_OFFSET }}
+        >
           <PatternAnalysisHub
             symbol={data.symbol}
             patterns={data.patterns ?? []}
@@ -332,7 +373,7 @@ export default function StockOverviewPage({ params }: { params: Promise<{ symbol
         </div>
       </section>
 
-      <section id="sec-deep" className="stock-section-card scroll-mt-28" aria-labelledby="sec-deep-title">
+      <section id="sec-deep" className="stock-section-card" aria-labelledby="sec-deep-title">
         <div className="stock-section-heading" id="sec-deep-title">
           <div>
             <p className="stock-section-kicker">Phân tích</p>
