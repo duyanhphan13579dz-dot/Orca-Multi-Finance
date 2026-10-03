@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { useApi } from "@/lib/hooks";
 import type { StockStyleFitResult, StyleCriterionExplanation } from "@/lib/services/stock-style-fit";
 import type { StructureAnalysis } from "@/lib/engines/wyckoff-elliott";
@@ -246,34 +247,48 @@ function DetailModal({
   onClose: () => void;
   children: React.ReactNode;
 }) {
+  const [mounted, setMounted] = useState(false);
+
   useEffect(() => {
+    setMounted(true);
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
     };
     document.addEventListener("keydown", onKey);
-    const prev = document.body.style.overflow;
+    const prevOverflow = document.body.style.overflow;
+    const prevPadding = document.body.style.paddingRight;
+    const sb = window.innerWidth - document.documentElement.clientWidth;
     document.body.style.overflow = "hidden";
+    if (sb > 0) document.body.style.paddingRight = `${sb}px`;
     return () => {
       document.removeEventListener("keydown", onKey);
-      document.body.style.overflow = prev;
+      document.body.style.overflow = prevOverflow;
+      document.body.style.paddingRight = prevPadding;
     };
   }, [onClose]);
 
-  return (
+  if (!mounted) return null;
+
+  return createPortal(
     <div
-      className="fixed inset-0 z-[80] flex items-end justify-center sm:items-center"
+      className="fixed inset-0 z-[200] flex items-center justify-center p-4"
       role="dialog"
       aria-modal="true"
       aria-label={title}
     >
+      {/* Full-page dim overlay */}
       <button
         type="button"
-        className="absolute inset-0 bg-black/55 backdrop-blur-[2px]"
+        className="absolute inset-0 cursor-default border-0 bg-black/70 backdrop-blur-[3px]"
         aria-label="Đóng"
         onClick={onClose}
       />
-      <div className="relative z-[1] mx-3 mb-3 max-h-[min(88vh,720px)] w-full max-w-lg overflow-hidden rounded-xl border border-border-subtle bg-surface-primary shadow-2xl shadow-black/40 sm:mb-0">
-        <div className="flex items-center justify-between gap-3 border-b border-border-subtle px-4 py-3">
+      {/* Centered panel */}
+      <div
+        className="relative z-[1] flex max-h-[min(86vh,720px)] w-full max-w-lg flex-col overflow-hidden rounded-xl border border-border-subtle bg-surface-primary shadow-2xl shadow-black/50"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border-subtle px-4 py-3">
           <h2 className="text-[15px] font-semibold text-text-primary">{title}</h2>
           <button
             type="button"
@@ -284,9 +299,10 @@ function DetailModal({
             <X className="size-4" />
           </button>
         </div>
-        <div className="max-h-[min(76vh,640px)] overflow-y-auto px-4 py-3">{children}</div>
+        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">{children}</div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
