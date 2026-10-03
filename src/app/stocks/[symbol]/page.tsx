@@ -152,55 +152,6 @@ function SectionNav() {
   );
 }
 
-function StockHero({ data }: { data: VnStockDetail }) {
-  const quote = data.quote;
-  const changePositive = (quote?.changePercent ?? 0) >= 0;
-  const format = (value: number | null | undefined, suffix = "") =>
-    value == null ? "—" : `${value.toLocaleString("vi-VN")}${suffix}`;
-  const stats = [
-    { label: "Khối lượng", value: format(quote?.volume), unit: "CP" },
-    { label: "Giá trị", value: format(quote?.quoteVolume), unit: "VND" },
-    { label: "CP lưu hành", value: format(data.sharesOutstanding), unit: "CP" },
-    { label: "NN ròng", value: "—", unit: "VND", accent: true },
-    { label: "Cập nhật", value: quote?.updatedAt ? new Date(quote.updatedAt).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" }) : "—", unit: quote?.updatedAt ? new Date(quote.updatedAt).toLocaleDateString("vi-VN") : "" },
-  ];
-
-  return (
-    <section className="stock-hero-panel" aria-labelledby="stock-hero-title">
-      <div className="stock-hero">
-        <div className="stock-hero-main">
-          <div className="stock-hero-title-row">
-            <div className="stock-symbol-mark">{data.symbol.slice(0, 3)}</div>
-            <div>
-              <h1 id="stock-hero-title" className="stock-hero-symbol">{data.symbol}</h1>
-              <p className="stock-hero-name">{data.profile?.vnName ?? data.name ?? "Doanh nghiệp niêm yết"}</p>
-            </div>
-            <span className="stock-exchange-badge">{data.profile?.floor ?? "HOSE"}</span>
-            <span className="stock-live-status"><i /> Đang giao dịch</span>
-          </div>
-          <div className="stock-hero-price-row">
-            <strong className="stock-hero-price">{format(quote?.price)}</strong>
-            <span className="stock-hero-currency">{quote?.currency ?? "VND"}</span>
-            <span className={changePositive ? "stock-change stock-change--up" : "stock-change stock-change--down"}>
-              {changePositive ? "▲" : "▼"} {format(quote?.changePercent, "%")} ({format(quote?.change)})
-            </span>
-          </div>
-          <p className="stock-hero-updated">Cập nhật: {quote?.updatedAt ? new Date(quote.updatedAt).toLocaleString("vi-VN") : "Chưa có thời gian"}</p>
-        </div>
-        <div className="stock-hero-stats">
-          {stats.map((stat) => (
-            <div className={`stock-stat${stat.accent ? " stock-stat--accent" : ""}`} key={stat.label}>
-              <span className="stock-stat-label">{stat.label}</span>
-              <strong className="stock-stat-value">{stat.value}</strong>
-              <span className="stock-stat-unit">{stat.unit}</span>
-            </div>
-          ))}
-        </div>
-      </div>
-    </section>
-  );
-}
-
 function useChartHeight() {
   const [h, setH] = useState(320);
   useEffect(() => {
@@ -246,8 +197,6 @@ export default function StockOverviewPage({ params }: { params: Promise<{ symbol
 
   return (
     <div className="stock-workspace stock-overview">
-      <StockHero data={data} />
-
       <DecisionStrip
         symbol={data.symbol}
         quote={q}

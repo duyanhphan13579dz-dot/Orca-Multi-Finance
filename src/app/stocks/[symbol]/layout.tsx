@@ -77,7 +77,7 @@ export default function StockSymbolLayout({
 
   return (
     <div className="stock-workspace stock-page-body">
-      <Panel pad={false} className="stock-hero-panel sticky top-0 z-20 overflow-visible">
+      <Panel pad={false} className="stock-hero-panel">
         <div className="stock-hero">
           <div className="stock-hero-main">
             <div className="stock-hero-title-row">
