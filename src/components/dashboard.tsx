@@ -4,7 +4,8 @@ import "./command-center/command-center.css";
 import { useApi } from "@/lib/hooks";
 import type { MarketIntel } from "@/lib/services/market-intel";
 import type { IndexQuote, Quote } from "@/lib/types";
-import { Loading, Unavailable } from "@/components/ui";
+import { Unavailable } from "@/components/ui";
+import { PageSkeleton } from "@/components/page-skeleton";
 import { CommandCenter } from "@/components/command-center/command-center";
 
 type StocksBoard = {
@@ -51,13 +52,10 @@ export function Dashboard() {
 
   if (isLoading && !intel) {
     return (
-      <div className="space-y-3">
-        <Loading rows={6} />
-        <Loading rows={8} />
-        <p className="text-center text-[11px] text-text-muted">
-          Đang dựng Market Command Center…
-        </p>
-      </div>
+      <PageSkeleton
+        variant="dashboard"
+        title="Market Command Center"
+      />
     );
   }
 
