@@ -207,34 +207,94 @@ export function Button({
   );
 }
 
-/** Compact inline loader for tab panels / list sections */
-export function TabLoading({ label = "Đang tải…" }: { label?: string }) {
+/**
+ * Shared ORCA brand loader — logo + name + subtitle + blinking dots.
+ * Used by pages (full) and sections/panels (compact).
+ */
+export function BrandLoading({
+  title,
+  size = "md",
+  full = false,
+}: {
+  title?: string;
+  size?: "sm" | "md" | "lg";
+  /** Fill near-viewport height and center in the content frame */
+  full?: boolean;
+}) {
+  const mark = size === "lg" ? 64 : size === "sm" ? 36 : 48;
+  const nameCls =
+    size === "lg"
+      ? "text-[18px] sm:text-[20px]"
+      : size === "sm"
+        ? "text-[13px]"
+        : "text-[15px] sm:text-[16px]";
+  const subCls = size === "sm" ? "text-[9px]" : "text-[10px] sm:text-[10.5px]";
+
   return (
-    <div className="flex min-h-[10rem] flex-col items-center justify-center gap-2.5 py-8" aria-busy="true">
-      <Spinner size="md" className="text-accent-primary" />
-      <span className="text-[12px] text-text-muted">{label}</span>
+    <div
+      className={
+        full
+          ? "orca-page-loading relative -m-3 flex w-[calc(100%+1.5rem)] items-center justify-center sm:-m-4 sm:w-[calc(100%+2rem)]"
+          : "orca-page-loading flex w-full flex-col items-center justify-center px-3 py-8"
+      }
+      style={full ? { minHeight: "calc(100dvh - 3.5rem)" } : { minHeight: size === "sm" ? "8rem" : "12rem" }}
+      aria-busy="true"
+      aria-label={title ? `Đang tải ${title}` : "Đang tải"}
+    >
+      <div className="orca-loading-brand flex flex-col items-center justify-center gap-3 text-center">
+        <div className="orca-loading-logo-wrap">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src="/brand/orca-mark.svg"
+            alt="ORCA Financial"
+            width={mark}
+            height={mark}
+            className="orca-loading-logo block shrink-0 rounded-lg"
+            style={{ width: mark, height: mark }}
+            draggable={false}
+          />
+        </div>
+        <div className="flex flex-col items-center gap-1 leading-none">
+          <span className={`font-bold tracking-[0.04em] text-text-primary ${nameCls}`}>
+            ORCA<span className="text-accent-primary"> FINANCIAL</span>
+          </span>
+          <span className={`font-medium uppercase tracking-[0.1em] text-text-muted ${subCls}`}>
+            Intelligent Investment
+          </span>
+        </div>
+        {title ? (
+          <span className="text-[12px] font-medium text-text-secondary">{title}</span>
+        ) : null}
+        <div className="orca-loading-dots" aria-hidden>
+          <span />
+          <span />
+          <span />
+        </div>
+      </div>
     </div>
   );
 }
 
-export function Loading({ rows = 6, label }: { rows?: number; label?: string }) {
-  return (
-    <div className="space-y-2 p-2" aria-busy="true" aria-label={label ?? "Đang tải"}>
-      {label ? (
-        <div className="mb-1 flex items-center gap-2 text-[11px] text-text-muted">
-          <Spinner size="sm" className="text-accent-primary" />
-          {label}
-        </div>
-      ) : null}
-      {Array.from({ length: rows }).map((_, i) => (
-        <div
-          key={i}
-          className="orca-skeleton h-8 rounded-md"
-          style={{ width: `${70 + (i % 3) * 10}%` }}
-        />
-      ))}
-    </div>
-  );
+/** Compact inline loader for tab panels / list sections */
+export function TabLoading({ label = "Đang tải…" }: { label?: string }) {
+  return <BrandLoading size="sm" title={label} />;
+}
+
+/**
+ * Default loading used across pages & panels.
+ * `rows` kept for API compatibility (maps to size).
+ */
+export function Loading({
+  rows = 6,
+  label,
+  full = false,
+}: {
+  rows?: number;
+  label?: string;
+  full?: boolean;
+}) {
+  const size = full || rows >= 8 ? "lg" : rows >= 5 ? "md" : "sm";
+  return <BrandLoading size={size as "sm" | "md" | "lg"} title={label} full={full} />;
 }
 
 export function Unavailable({
