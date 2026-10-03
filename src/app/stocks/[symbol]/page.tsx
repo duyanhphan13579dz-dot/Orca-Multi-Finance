@@ -84,13 +84,9 @@ function scrollToSection(id: string) {
 }
 
 function DecisionStrip({
-  symbol,
-  quote,
   technical,
   meta,
 }: {
-  symbol: string;
-  quote: VnStockDetail["quote"];
   technical: VnStockDetail["technical"];
   meta: Meta | null;
 }) {
@@ -122,11 +118,10 @@ function DecisionStrip({
       id="sec-decision"
       className={`stock-decision-strip stock-decision-strip--${tone}`}
     >
+      {/* Symbol already in sticky hero — avoid a second identity/logo here. */}
       <div className="stock-decision-left">
-        <ShieldCheck className="size-3.5 shrink-0 text-accent-primary" />
-        <Icon className="size-3.5 shrink-0" />
-        <span className="font-semibold text-text-primary">{symbol}</span>
-        <span className="text-text-muted">·</span>
+        <ShieldCheck className="size-3.5 shrink-0 text-accent-primary" aria-hidden />
+        <Icon className="size-3.5 shrink-0" aria-hidden />
         <span
           className={
             tone === "up"
@@ -138,17 +133,11 @@ function DecisionStrip({
         >
           {action}
         </span>
-        <span className="hidden text-text-muted sm:inline">· {trendLabel}</span>
+        <span className="text-text-muted">·</span>
+        <span className="text-text-secondary">{trendLabel}</span>
       </div>
 
       <div className="stock-decision-metrics">
-        {quote?.price != null && (
-          <MetricChip
-            label="Giá"
-            value={quote.price.toLocaleString("vi-VN")}
-            tone={quote.changePercent != null ? (quote.changePercent >= 0 ? "up" : "down") : undefined}
-          />
-        )}
         <MetricChip label="RSI" value={rsi} />
         {flowLabel && (
           <MetricChip
@@ -209,7 +198,6 @@ function SectionNav() {
         }
         pick();
       },
-      // A section counts as "in view" while crossing the upper third of the viewport.
       { rootMargin: "-25% 0px -65% 0px", threshold: 0 },
     );
     for (const el of els) io.observe(el);
@@ -278,16 +266,9 @@ export default function StockOverviewPage({ params }: { params: Promise<{ symbol
     );
   }
 
-  const q = data.quote;
-
   return (
     <div className="stock-workspace">
-      <DecisionStrip
-        symbol={data.symbol}
-        quote={q}
-        technical={data.technical}
-        meta={meta ?? null}
-      />
+      <DecisionStrip technical={data.technical} meta={meta ?? null} />
 
       <SectionNav />
 
@@ -299,12 +280,12 @@ export default function StockOverviewPage({ params }: { params: Promise<{ symbol
         <div className="stock-section-heading" id="sec-chart-title">
           <div>
             <p className="stock-section-kicker">Thị trường</p>
-            <h2>Biểu đồ &amp; sổ lệnh</h2>
+            <h2>Biểu đồ & sổ lệnh</h2>
           </div>
           <span className="stock-section-index">01</span>
         </div>
         <div className="min-w-0 2xl:col-span-9">
-          {q || data.bars.length > 0 ? (
+          {data.quote || data.bars.length > 0 ? (
             <div className="stock-chart-frame min-h-[320px]">
               <OrcaChart
                 symbol={data.symbol}
@@ -313,20 +294,20 @@ export default function StockOverviewPage({ params }: { params: Promise<{ symbol
                 height={chartH}
                 title={data.symbol}
                 extraLevels={[
-                  ...(q?.ceilingPrice != null
-                    ? [{ label: "Trần", price: q.ceilingPrice, color: "rgba(181,140,255,0.7)" }]
+                  ...(data.quote?.ceilingPrice != null
+                    ? [{ label: "Trần", price: data.quote.ceilingPrice, color: "rgba(181,140,255,0.7)" }]
                     : []),
-                  ...(q?.referencePrice != null
+                  ...(data.quote?.referencePrice != null
                     ? [
                         {
                           label: "Tham chiếu",
-                          price: q.referencePrice,
+                          price: data.quote.referencePrice,
                           color: "rgba(245,165,36,0.7)",
                         },
                       ]
                     : []),
-                  ...(q?.floorPrice != null
-                    ? [{ label: "Sàn", price: q.floorPrice, color: "rgba(56,189,248,0.7)" }]
+                  ...(data.quote?.floorPrice != null
+                    ? [{ label: "Sàn", price: data.quote.floorPrice, color: "rgba(56,189,248,0.7)" }]
                     : []),
                 ]}
               />
@@ -353,7 +334,7 @@ export default function StockOverviewPage({ params }: { params: Promise<{ symbol
         <div className="stock-section-heading" id="sec-signals-title">
           <div>
             <p className="stock-section-kicker">Tín hiệu</p>
-            <h2>Động lượng &amp; mẫu hình</h2>
+            <h2>Động lượng & mẫu hình</h2>
           </div>
           <span className="stock-section-index">02</span>
         </div>
@@ -390,7 +371,7 @@ export default function StockOverviewPage({ params }: { params: Promise<{ symbol
         <div className="stock-section-heading" id="stock-news-title">
           <div>
             <p className="stock-section-kicker">Thông tin</p>
-            <h2>Tin tức &amp; cảm xúc thị trường</h2>
+            <h2>Tin tức & cảm xúc thị trường</h2>
           </div>
           <span className="stock-section-index">04</span>
         </div>
