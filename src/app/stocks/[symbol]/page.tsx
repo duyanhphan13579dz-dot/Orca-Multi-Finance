@@ -206,10 +206,18 @@ export default function StockOverviewPage({ params }: { params: Promise<{ symbol
 
       <SectionNav />
 
-      <div
+      <section
         id="sec-chart"
-        className="stock-trading-zone scroll-mt-28 grid gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(280px,340px)] xl:items-start 2xl:grid-cols-12"
+        className="stock-section-card stock-trading-zone scroll-mt-28 grid gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(280px,340px)] xl:items-start 2xl:grid-cols-12"
+        aria-labelledby="sec-chart-title"
       >
+        <div className="stock-section-heading" id="sec-chart-title">
+          <div>
+            <p className="stock-section-kicker">Thị trường</p>
+            <h2>Biểu đồ &amp; sổ lệnh</h2>
+          </div>
+          <span className="stock-section-index">01</span>
+        </div>
         <div className="min-w-0 2xl:col-span-9">
           {q || data.bars.length > 0 ? (
             <div className="stock-chart-frame min-h-[320px]">
@@ -247,12 +255,20 @@ export default function StockOverviewPage({ params }: { params: Promise<{ symbol
         <div className="min-w-0 xl:sticky xl:top-[7.25rem] xl:self-start 2xl:col-span-3">
           <OrderBookPanel symbol={data.symbol} compact />
         </div>
-      </div>
+      </section>
 
-      <div
+      <section
         id="sec-signals"
-        className="scroll-mt-28 grid gap-3 lg:grid-cols-2 lg:items-start 2xl:grid-cols-12"
+        className="stock-section-card scroll-mt-28 grid gap-3 lg:grid-cols-2 lg:items-start 2xl:grid-cols-12"
+        aria-labelledby="sec-signals-title"
       >
+        <div className="stock-section-heading lg:col-span-2" id="sec-signals-title">
+          <div>
+            <p className="stock-section-kicker">Tín hiệu</p>
+            <h2>Động lượng &amp; mẫu hình</h2>
+          </div>
+          <span className="stock-section-index">02</span>
+        </div>
         <div className="min-w-0 2xl:col-span-6">
           <TechRecoPanel symbol={data.symbol} />
         </div>
@@ -263,15 +279,31 @@ export default function StockOverviewPage({ params }: { params: Promise<{ symbol
             technical={data.technical}
           />
         </div>
-      </div>
+      </section>
 
-      <div id="sec-deep" className="scroll-mt-28">
+      <section id="sec-deep" className="stock-section-card scroll-mt-28" aria-labelledby="sec-deep-title">
+        <div className="stock-section-heading" id="sec-deep-title">
+          <div>
+            <p className="stock-section-kicker">Phân tích</p>
+            <h2>Chuyên sâu kỹ thuật</h2>
+          </div>
+          <span className="stock-section-index">03</span>
+        </div>
         {data.technical ? (
           <TechnicalPanel tech={data.technical} patterns={data.patterns} />
         ) : null}
-      </div>
+      </section>
 
-      <StockNewsSentiment symbol={data.symbol} />
+      <section className="stock-section-card stock-news-section" aria-labelledby="stock-news-title">
+        <div className="stock-section-heading" id="stock-news-title">
+          <div>
+            <p className="stock-section-kicker">Thông tin</p>
+            <h2>Tin tức &amp; cảm xúc thị trường</h2>
+          </div>
+          <span className="stock-section-index">04</span>
+        </div>
+        <StockNewsSentiment symbol={data.symbol} />
+      </section>
     </div>
   );
 }
