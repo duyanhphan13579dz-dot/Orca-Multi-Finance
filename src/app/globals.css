@@ -76,18 +76,53 @@ body {
 .bg-canvas { background-color: var(--color-canvas); }
 .bg-surface-base { background-color: var(--color-surface-primary); }
 .bg-surface-elevated { background-color: var(--color-surface-elevated); }
+.bg-background-primary { background-color: var(--color-background-primary); }
 .text-text-primary { color: var(--color-text-primary); }
 .text-text-secondary { color: var(--color-text-secondary); }
 .text-text-muted { color: var(--color-text-muted); }
+.text-accent-primary { color: var(--color-accent-primary); }
 .border-border-subtle { border-color: var(--color-border-subtle); }
 .border-border-default { border-color: var(--color-border-default); }
-.bg-background-primary { background-color: var(--color-background-primary); }
-.bg-surface-base { background-color: var(--color-surface-primary); }
+
+.panel {
+  border-radius: 0.75rem;
+  border: 1px solid color-mix(in srgb, var(--color-border-subtle) 90%, transparent);
+  background: color-mix(in srgb, var(--color-surface-primary) 92%, transparent);
+}
+.panel-elevated {
+  background: color-mix(in srgb, var(--color-surface-elevated) 95%, transparent);
+}
+.panel-inset {
+  border-radius: 0.55rem;
+  border: 1px solid color-mix(in srgb, var(--color-border-subtle) 70%, transparent);
+  background: color-mix(in srgb, var(--color-surface-elevated) 40%, transparent);
+}
+.panel-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.7rem 0.9rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--color-border-subtle) 80%, transparent);
+}
+.panel-title {
+  margin: 0;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+.panel-subtitle {
+  margin: 0.15rem 0 0;
+  font-size: 0.7rem;
+  color: var(--color-text-muted);
+}
+.panel-body { padding: 0.75rem 0.9rem; }
 
 .seg {
   display: inline-flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 0.15rem;
+  gap: 0.2rem;
   padding: 0.15rem;
   border-radius: 0.5rem;
   border: 1px solid var(--color-border-subtle);
