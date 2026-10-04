@@ -311,50 +311,159 @@ html[data-reduced-motion="true"] .ticker-track { animation: none; }
 }
 .stock-metric-chip-value { font-size: 0.74rem; font-weight: 700; color: var(--color-text-primary); }
 
-/* Chart + market breadth */
+/* Chart + market breadth — mobile-safe */
 .stock-chart-breadth-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1.65fr) minmax(16rem, 0.9fr);
+  grid-template-columns: minmax(0, 1.65fr) minmax(0, 0.9fr);
   gap: 0.75rem;
   align-items: stretch;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
 }
-.stock-chart-frame--compact { min-height: 0; }
+.stock-chart-breadth-grid > * {
+  min-width: 0;
+  max-width: 100%;
+}
+.stock-chart-frame--compact {
+  min-height: 0;
+  width: 100%;
+  max-width: 100%;
+  overflow: hidden;
+}
 .stock-breadth-card {
-  display: flex; flex-direction: column; gap: 0.35rem; min-width: 0;
-  padding: 0.85rem 0.9rem; border-radius: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 0.75rem 0.8rem;
+  border-radius: 0.75rem;
   border: 1px solid color-mix(in srgb, var(--color-border-subtle) 90%, transparent);
   background: color-mix(in srgb, var(--color-surface-elevated) 55%, transparent);
+  overflow: hidden;
 }
 .stock-breadth-head {
-  display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; margin-bottom: 0.25rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.15rem;
+  min-width: 0;
 }
 .stock-breadth-title {
-  display: inline-flex; align-items: center; gap: 0.35rem;
-  font-size: 0.72rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-width: 0;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
   color: var(--color-text-secondary);
 }
 .stock-breadth-score {
-  display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.35rem 0.65rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  min-width: 0;
+}
+.stock-breadth-score-main {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.35rem 0.55rem;
+  min-width: 0;
+}
+.stock-breadth-score-num {
+  font-size: clamp(1.35rem, 5vw, 1.65rem);
+  font-weight: 750;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+.stock-breadth-score-label {
+  font-size: 0.8rem;
+  font-weight: 650;
+  line-height: 1.2;
+}
+.stock-breadth-score-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.65rem;
+  font-size: 0.62rem;
+  color: var(--color-text-muted);
 }
 .stock-breadth-stats {
-  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.4rem; margin-top: 0.65rem;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.35rem;
+  margin-top: 0.5rem;
+  width: 100%;
 }
 .stock-breadth-stat {
-  display: flex; align-items: center; gap: 0.35rem; padding: 0.4rem 0.45rem;
-  border-radius: 0.5rem; border: 1px solid var(--color-border-subtle);
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  min-width: 0;
+  padding: 0.35rem 0.4rem;
+  border-radius: 0.5rem;
+  border: 1px solid var(--color-border-subtle);
   background: color-mix(in srgb, var(--color-surface-primary) 70%, transparent);
+  overflow: hidden;
 }
-.stock-breadth-stat--up { color: var(--color-up); border-color: color-mix(in srgb, var(--color-up) 28%, var(--color-border-subtle)); }
-.stock-breadth-stat--down { color: var(--color-down); border-color: color-mix(in srgb, var(--color-down) 28%, var(--color-border-subtle)); }
+.stock-breadth-stat-icon {
+  width: 0.9rem;
+  height: 0.9rem;
+  flex-shrink: 0;
+}
+.stock-breadth-stat-body {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+}
+.stock-breadth-stat--up {
+  color: var(--color-up);
+  border-color: color-mix(in srgb, var(--color-up) 28%, var(--color-border-subtle));
+}
+.stock-breadth-stat--down {
+  color: var(--color-down);
+  border-color: color-mix(in srgb, var(--color-down) 28%, var(--color-border-subtle));
+}
 .stock-breadth-stat--flat { color: var(--color-text-muted); }
 .stock-breadth-stat-label {
-  font-size: 0.58rem; font-weight: 650; letter-spacing: 0.04em; text-transform: uppercase; color: var(--color-text-muted);
+  font-size: 0.55rem;
+  font-weight: 650;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .stock-breadth-stat-value {
-  font-size: 0.9rem; font-weight: 700; color: var(--color-text-primary); line-height: 1.15;
+  font-size: clamp(0.78rem, 3.2vw, 0.92rem);
+  font-weight: 700;
+  color: var(--color-text-primary);
+  line-height: 1.15;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
-@media (max-width: 960px) {
+@media (max-width: 1100px) {
   .stock-chart-breadth-grid { grid-template-columns: 1fr; }
+}
+@media (max-width: 480px) {
+  .stock-breadth-card { padding: 0.65rem 0.7rem; }
+  .stock-breadth-stat {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.15rem;
+    padding: 0.4rem 0.35rem;
+  }
+  .stock-breadth-stat-icon { display: none; }
+  .stock-breadth-stat-value { font-size: 0.95rem; }
 }
 
 /* Company profile hero */
@@ -408,7 +517,8 @@ html[data-reduced-motion="true"] .ticker-track { animation: none; }
 
 /* Section cards */
 .stock-section-card {
-  position: relative; min-width: 0; padding: 1.05rem 1.1rem 1.15rem;
+  position: relative; min-width: 0; max-width: 100%; overflow-x: clip;
+  padding: 1.05rem 1.1rem 1.15rem;
   border: 1px solid color-mix(in srgb, var(--color-border-subtle) 92%, transparent);
   border-radius: 0.95rem;
   background: linear-gradient(145deg, color-mix(in srgb, var(--color-surface-primary) 98%, transparent), color-mix(in srgb, var(--color-surface-elevated) 48%, transparent));
@@ -470,6 +580,12 @@ html[data-reduced-motion="true"] .ticker-track { animation: none; }
 @media (max-width: 1024px) { .stock-hero { grid-template-columns: 1fr; } }
 @media (max-width: 768px) { .stock-hero-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 @media (max-width: 640px) {
+  .stock-section-card {
+    padding: 0.85rem 0.75rem 0.95rem;
+  }
+  .stock-chart-breadth-grid {
+    gap: 0.55rem;
+  }
   .stock-workspace { --stock-sticky-h: 6.75rem; }
   .stock-hero-name { display: none; }
   .stock-hero-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
