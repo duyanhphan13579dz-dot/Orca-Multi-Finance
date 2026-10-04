@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { memo, useEffect, useRef, useState, type ReactNode } from "react";
 import { prefetchApi, useApi } from "@/lib/hooks";
 import type { VnStockDetail } from "@/lib/services/stocks";
 import { AddToWatchlist } from "@/components/watchlist-button";
@@ -232,7 +232,7 @@ export default function StockSymbolLayout({
   );
 }
 
-function Stat({
+const Stat = memo(function Stat({
   label,
   value,
   className = "",
@@ -255,4 +255,4 @@ function Stat({
       </div>
     </div>
   );
-}
+});

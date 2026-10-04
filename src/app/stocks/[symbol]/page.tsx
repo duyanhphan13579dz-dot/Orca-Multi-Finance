@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { memo, useEffect, useState, useRef } from "react";
 import dynamic from "next/dynamic";
 import { useApi } from "@/lib/hooks";
 import type { VnStockDetail } from "@/lib/services/stocks";
@@ -71,7 +71,7 @@ function scrollToSection(id: string) {
   el.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
-function DecisionStrip({
+const DecisionStrip = memo(function DecisionStrip({
   quote,
   technical,
   meta,
@@ -171,9 +171,9 @@ function DecisionStrip({
       </div>
     </div>
   );
-}
+});
 
-function MetricChip({
+const MetricChip = memo(function MetricChip({
   label,
   value,
   tone,
@@ -202,7 +202,7 @@ function MetricChip({
       </span>
     </span>
   );
-}
+});
 
 export default function StockDetailPage({ params }: { params: Promise<{ symbol: string }> }) {
   const [symbol, setSymbol] = useState("");
