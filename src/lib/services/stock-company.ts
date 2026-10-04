@@ -7,6 +7,7 @@ import {
   type VndCompanyProfile,
   type VndShareholder,
 } from "../providers/vndirect-company";
+import { getVietcapCompany } from "../providers/vietcap";
 import { fetchVndirectFinancials, periodsToLegacyRows } from "../financial/vndirect-fs";
 import { llmChat, llmConfigured } from "../ai/gateway";
 import { buildDeterministicResearch, enrichFoundDate } from "./company-research";
@@ -28,6 +29,60 @@ export interface StockCompanyPackage {
   } | null;
   notes: string[];
   researchSource?: string;
+}
+
+function profileFromVietcap(
+  sym: string,
+  vc: NonNullable<Awaited<ReturnType<typeof getVietcapCompany>>>,
+): VndCompanyProfile {
+  return {
+    code: sym,
+    floor: vc.exchange,
+    logo: null,
+    vnName: vc.name,
+    enName: vc.nameEn,
+    foundDate: vc.listedDate,
+    taxCode: null,
+    vnAddress: null,
+    phone: null,
+    fax: null,
+    website: null,
+    email: null,
+    employees: null,
+    vnSummary: vc.sector ? `Ngành: ${vc.sector}` : null,
+    enSummary: vc.sector ? `Sector: ${vc.sector}` : null,
+  };
+}
+
+async function loadCompanyCore(sym: string): Promise<{
+  profile: VndCompanyProfile | null;
+  shareholders: VndShareholder[];
+  sources: string[];
+}> {
+  const sources: string[] = [];
+  const [vndProfile, shareholders, vietcap] = await Promise.all([
+    getVndCompanyProfile(sym).catch(() => null),
+    getVndShareholders(sym, 50).catch(() => [] as VndShareholder[]),
+    getVietcapCompany(sym).catch(() => null),
+  ]);
+
+  let profile = enrichFoundDate(vndProfile);
+  if (profile) sources.push("vndirect");
+  if (shareholders.length) sources.push("vndirect-holders");
+
+  if (!profile && vietcap) {
+    profile = profileFromVietcap(sym, vietcap);
+    sources.push("vietcap");
+  } else if (profile && vietcap) {
+    // Fill gaps from Vietcap
+    if (!profile.vnName && vietcap.name) profile = { ...profile, vnName: vietcap.name };
+    if (!profile.enName && vietcap.nameEn) profile = { ...profile, enName: vietcap.nameEn };
+    if (!profile.floor && vietcap.exchange) profile = { ...profile, floor: vietcap.exchange };
+    if (!profile.foundDate && vietcap.listedDate) profile = { ...profile, foundDate: vietcap.listedDate };
+    sources.push("vietcap-fill");
+  }
+
+  return { profile, shareholders, sources };
 }
 
 export async function enrichCompanyWithAi(
@@ -86,27 +141,26 @@ Trả đúng JSON, không markdown.
 }`;
 
   try {
-    const raw = await llmChat("analysis", {
+    const raw = await llmChat({
       system,
-      user: `CONTEXT:\n${JSON.stringify(context)}\n\nViết SWOT, chuỗi giá trị, catalyst, rủi ro bằng tiếng Việt, ngắn, bám số liệu.`,
+      user: `CONTEXT:\n${JSON.stringify(context)}\n\nPhân tích ngắn gọn, tiếng Việt.`,
       temperature: 0.2,
+      maxTokens: 1200,
     });
-    const text = raw?.text ?? "";
-    const start = text.indexOf("{");
-    const end = text.lastIndexOf("}");
-    if (start < 0 || end <= start) return null;
-    const parsed = JSON.parse(text.slice(start, end + 1)) as {
+    const text = typeof raw === "string" ? raw : String(raw ?? "");
+    const m = text.match(/\{[\s\S]*\}/);
+    if (!m) return null;
+    const parsed = JSON.parse(m[0]) as {
       valueChain?: StockCompanyPackage["valueChain"];
       swot?: StockCompanyPackage["swot"];
       catalysts?: string[];
       risks?: string[];
     };
-
     return {
       valueChain: parsed.valueChain ?? null,
       swot: parsed.swot ?? null,
-      catalysts: Array.isArray(parsed.catalysts) ? parsed.catalysts : [],
-      risks: Array.isArray(parsed.risks) ? parsed.risks : [],
+      catalysts: Array.isArray(parsed.catalysts) ? parsed.catalysts.map(String) : [],
+      risks: Array.isArray(parsed.risks) ? parsed.risks.map(String) : [],
     };
   } catch {
     return null;
@@ -116,21 +170,30 @@ Trả đúng JSON, không markdown.
 export async function getStockCompanyPackage(
   symbol: string,
 ): Promise<{ data: StockCompanyPackage; meta: Meta } | null> {
-  try {
-    const sym = symbol.trim().toUpperCase();
-    if (!sym) return null;
+  const sym = symbol.trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+  if (!sym) return null;
 
-    const companyRes = await cached(`vn:company:${sym}:v2`, {
-      ttlMs: 6 * 3_600_000,
-      staleMs: 7 * 24 * 3_600_000,
-      producer: async () => {
-        const [profile, shareholders] = await Promise.all([
-          getVndCompanyProfile(sym),
-          getVndShareholders(sym, 50),
-        ]);
-        return { profile: enrichFoundDate(profile), shareholders };
-      },
-    });
+  try {
+    // Cache only successful packs; empty profile uses short TTL via throw+retry path
+    let core: { profile: VndCompanyProfile | null; shareholders: VndShareholder[]; sources: string[] };
+    try {
+      const companyRes = await cached(`vn:company:${sym}:v4`, {
+        ttlMs: 2 * 3_600_000,
+        staleMs: 24 * 3_600_000,
+        softSwr: true,
+        producer: async () => {
+          const pack = await loadCompanyCore(sym);
+          // Do not long-cache total empties — forces re-fetch next time
+          if (!pack.profile && !pack.shareholders.length) {
+            throw new Error(`company empty ${sym}`);
+          }
+          return pack;
+        },
+      });
+      core = companyRes.value;
+    } catch {
+      core = await loadCompanyCore(sym);
+    }
 
     let fin: {
       income: Record<string, unknown>[];
@@ -152,31 +215,24 @@ export async function getStockCompanyPackage(
     }
 
     const notes: string[] = [];
-    if (!companyRes.value.profile) notes.push("Chưa lấy được hồ sơ doanh nghiệp từ VNDirect.");
-    if (!companyRes.value.shareholders.length) notes.push("Chưa có danh sách cổ đông lớn.");
+    if (!core.profile) notes.push("Chưa lấy được hồ sơ doanh nghiệp (VNDirect/Vietcap).");
+    if (!core.shareholders.length) notes.push("Chưa có danh sách cổ đông lớn.");
     if (!fin.income.length) notes.push("Chưa lấy được BCTC — SWOT dựa chủ yếu trên hồ sơ.");
+    if (core.sources.length) notes.push(`Nguồn: ${[...new Set(core.sources)].join(" + ")}`);
 
     const det =
-      companyRes.value.profile || fin.income.length
+      core.profile || fin.income.length
         ? buildDeterministicResearch({
-            symbol: sym,
-            profile: companyRes.value.profile,
-            shareholders: companyRes.value.shareholders,
-            income: fin.income,
-            balance: fin.balance,
-            cashflow: fin.cashflow,
+            profile: core.profile,
+            shareholders: core.shareholders,
+            fin,
           })
         : null;
 
     let ai: Awaited<ReturnType<typeof enrichCompanyWithAi>> = null;
-    if (companyRes.value.profile && llmConfigured()) {
+    if (core.profile && llmConfigured()) {
       try {
-        ai = await enrichCompanyWithAi(
-          sym,
-          companyRes.value.profile,
-          companyRes.value.shareholders,
-          fin,
-        );
+        ai = await enrichCompanyWithAi(sym, core.profile, core.shareholders, fin);
       } catch {
         /* non-fatal */
       }
@@ -212,14 +268,14 @@ export async function getStockCompanyPackage(
       ai && det ? "deterministic+llm" : det ? "deterministic-fs+profile" : ai ? "llm" : "none";
 
     if (det)
-      notes.push("SWOT / catalyst / rủi ro / chuỗi giá trị suy từ hồ sơ + BCTC VNDirect (không bịa số).");
+      notes.push("SWOT / catalyst / rủi ro / chuỗi giá trị suy từ hồ sơ + BCTC (không bịa số).");
     if (ai) notes.push("Đã bổ sung gợi ý từ AI — ưu tiên đối chiếu số liệu BCTC.");
     if (!det && !ai) notes.push("Chưa đủ dữ liệu nền để dựng SWOT tự động.");
 
     const data: StockCompanyPackage = {
       symbol: sym,
-      profile: companyRes.value.profile,
-      shareholders: companyRes.value.shareholders,
+      profile: core.profile,
+      shareholders: core.shareholders,
       board: [],
       valueChain,
       catalysts,
@@ -229,16 +285,37 @@ export async function getStockCompanyPackage(
       researchSource,
     };
 
-    const meta = buildMeta({
-      source: researchSource === "none" ? "vndirect" : `vndirect+${researchSource}`,
-      sourceTimestampMs: Date.now(),
-      cached: companyRes.cached,
-      stale: companyRes.stale,
-      note: det ? "Hồ sơ DN + BCTC → SWOT/catalyst/chuỗi giá trị" : "Hồ sơ DN VNDirect",
-      partial: !companyRes.value.profile || !swot,
-    });
-    return { data, meta };
-  } catch {
-    return null;
+    return {
+      data,
+      meta: buildMeta({
+        source: core.sources.join("+") || "company",
+        sourceTimestampMs: Date.now(),
+        note: det ? "Hồ sơ DN + BCTC → SWOT/catalyst" : "Hồ sơ DN",
+        partial: !core.profile || !swot,
+      }),
+    };
+  } catch (e) {
+    console.warn("[getStockCompanyPackage]", sym, e instanceof Error ? e.message : e);
+    // Degraded shell — never hard-fail the tab
+    return {
+      data: {
+        symbol: sym,
+        profile: null,
+        shareholders: [],
+        board: [],
+        valueChain: null,
+        catalysts: [],
+        risks: [],
+        swot: null,
+        notes: ["Nguồn hồ sơ tạm gián đoạn — bấm làm mới để thử lại."],
+        researchSource: "none",
+      },
+      meta: buildMeta({
+        source: "degraded",
+        sourceTimestampMs: Date.now(),
+        note: "degraded company shell",
+        partial: true,
+      }),
+    };
   }
 }
