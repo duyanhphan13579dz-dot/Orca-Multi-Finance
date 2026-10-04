@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import dynamic from "next/dynamic";
 import { useApi } from "@/lib/hooks";
 import type { VnStockDetail } from "@/lib/services/stocks";
@@ -120,37 +120,21 @@ function DecisionStrip({
       className={`stock-decision-strip stock-decision-strip--${tone}`}
     >
       <div className="stock-decision-left">
-        <ShieldCheck className="size-3.5 shrink-0 text-accent-primary" aria-hidden />
-        <Icon className="size-3.5 shrink-0" aria-hidden />
-        <span
-          className={
-            tone === "up"
-              ? "font-semibold text-positive"
-              : tone === "down"
-                ? "font-semibold text-negative"
-                : "font-semibold text-text-secondary"
-          }
-        >
-          {signal}
+        <span className={`stock-signal-badge stock-signal-badge--${tone}`} aria-label={`Tín hiệu ${signal}`}>
+          <Icon className="size-3.5 shrink-0" aria-hidden />
+          <span className="stock-signal-badge-text">{signal}</span>
+          {ts?.confidence != null && (
+            <span className="stock-signal-badge-conf">{Math.round(ts.confidence)}%</span>
+          )}
         </span>
-        {ts?.confidence != null && (
-          <>
-            <span className="text-text-muted">·</span>
-            <span className="text-text-muted">{Math.round(ts.confidence)}%</span>
-          </>
-        )}
-        <span className="text-text-muted">·</span>
-        <span className="text-text-secondary">{trendLabel}</span>
+        <span className="stock-decision-trend" title={trendLabel}>
+          <ShieldCheck className="size-3 shrink-0 text-accent-primary" aria-hidden />
+          {trendLabel}
+        </span>
         {ts?.reasons?.[0] && (
-          <>
-            <span className="text-text-muted">·</span>
-            <span
-              className="max-w-[14rem] truncate text-[11px] text-text-muted"
-              title={ts.reasons.join(" · ")}
-            >
-              {ts.reasons[0]}
-            </span>
-          </>
+          <span className="stock-decision-reason" title={ts.reasons.join(" · ")}>
+            {ts.reasons[0]}
+          </span>
         )}
       </div>
 
@@ -169,15 +153,15 @@ function DecisionStrip({
           />
         )}
         {plan && signal !== "QUAN SÁT" ? (
-          <>
-            <MetricChip label="Entry" value={fmt(plan.entry)} />
+          <span className="stock-plan-group" role="group" aria-label="Kế hoạch giao dịch">
+            <MetricChip label="Entry" value={fmt(plan.entry)} emphasis />
             <MetricChip label="SL" value={fmt(plan.stopLoss)} tone="down" />
             <MetricChip label="TP1" value={fmt(plan.takeProfit1 ?? plan.takeProfit)} tone="up" />
             <MetricChip label="TP" value={fmt(plan.takeProfit)} tone="up" />
-            <MetricChip label="R:R" value={`1:${plan.riskReward.toFixed(1)}`} />
-          </>
+            <MetricChip label="R:R" value={`1:${plan.riskReward.toFixed(1)}`} emphasis />
+          </span>
         ) : (
-          <MetricChip label="Setup" value="Chờ xác nhận" />
+          <MetricChip label="Setup" value="Chờ xác nhận" muted />
         )}
         <MetricChip label="RSI" value={rsi} />
         {flowLabel && (
@@ -204,13 +188,21 @@ function MetricChip({
   label,
   value,
   tone,
+  emphasis,
+  muted,
 }: {
   label: string;
   value: string;
   tone?: "up" | "down";
+  emphasis?: boolean;
+  muted?: boolean;
 }) {
   return (
-    <span className="stock-metric-chip">
+    <span
+      className={`stock-metric-chip${emphasis ? " stock-metric-chip--emphasis" : ""}${
+        muted ? " stock-metric-chip--muted" : ""
+      }${tone === "up" ? " stock-metric-chip--up" : tone === "down" ? " stock-metric-chip--down" : ""}`}
+    >
       <span className="stock-metric-chip-label">{label}</span>
       <span
         className={`stock-metric-chip-value num ${
@@ -225,6 +217,9 @@ function MetricChip({
 
 export default function StockDetailPage({ params }: { params: Promise<{ symbol: string }> }) {
   const [symbol, setSymbol] = useState("");
+  const [activeSection, setActiveSection] = useState<string>(SECTION_NAV[0].id);
+  const navRef = useRef<HTMLElement>(null);
+
   useEffect(() => {
     params.then((p) => setSymbol(p.symbol.toUpperCase()));
   }, [params]);
@@ -233,6 +228,37 @@ export default function StockDetailPage({ params }: { params: Promise<{ symbol: 
     symbol ? `/api/v1/stocks/${encodeURIComponent(symbol)}` : null,
     { refreshInterval: 30_000 },
   );
+
+  // Highlight section nav as the user scrolls
+  useEffect(() => {
+    if (!data?.symbol) return;
+    const ids = SECTION_NAV.map((s) => s.id);
+    const els = ids.map((id) => document.getElementById(id)).filter(Boolean) as HTMLElement[];
+    if (!els.length) return;
+
+    const io = new IntersectionObserver(
+      (entries) => {
+        const visible = entries
+          .filter((e) => e.isIntersecting)
+          .sort((a, b) => b.intersectionRatio - a.intersectionRatio);
+        if (visible[0]?.target?.id) setActiveSection(visible[0].target.id);
+      },
+      {
+        rootMargin: "-20% 0px -55% 0px",
+        threshold: [0.08, 0.2, 0.4],
+      },
+    );
+    for (const el of els) io.observe(el);
+    return () => io.disconnect();
+  }, [data?.symbol]);
+
+  // Keep active pill in view on narrow screens
+  useEffect(() => {
+    const nav = navRef.current;
+    if (!nav) return;
+    const btn = nav.querySelector<HTMLElement>(`[data-section="${activeSection}"]`);
+    btn?.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "center" });
+  }, [activeSection]);
 
   if (!symbol || (isLoading && !res)) {
     return (
@@ -255,13 +281,18 @@ export default function StockDetailPage({ params }: { params: Promise<{ symbol: 
 
   return (
     <div className="stock-workspace stock-page-body">
-      <nav className="stock-section-nav" aria-label="Mục trang">
+      <nav ref={navRef} className="stock-section-nav" aria-label="Mục trang">
         {SECTION_NAV.map((s) => (
           <button
             key={s.id}
             type="button"
+            data-section={s.id}
+            data-active={activeSection === s.id ? "true" : "false"}
             className="stock-section-nav-item"
-            onClick={() => scrollToSection(s.id)}
+            onClick={() => {
+              setActiveSection(s.id);
+              scrollToSection(s.id);
+            }}
           >
             {s.label}
           </button>
