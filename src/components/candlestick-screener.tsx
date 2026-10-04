@@ -5,6 +5,7 @@ import { useCallback, useMemo, useState } from "react";
 import { useApi } from "@/lib/hooks";
 import { VN_SECTOR_MAP } from "@/lib/vn/master";
 import { Badge, Chg, fmtNum, FreshnessDot, Loading, MetaLine, Panel, Unavailable } from "@/components/ui";
+import { DarkSelect } from "@/components/dark-select";
 import { Play } from "@/components/screener-icons";
 
 type PatternHit = {
@@ -93,20 +94,21 @@ export function CandlestickScreener({ defaultSector }: { defaultSector?: string 
         <div className="flex flex-wrap items-end gap-2 p-3">
           <label>
             <span className="mb-0.5 block text-[10px] uppercase tracking-wider text-text-muted">Ngành</span>
-            <select value={sector} onChange={(e) => setSector(e.target.value)} className="input !w-40 !py-1.5 text-[12px]">
-              <option value="">Tất cả</option>
-              {VN_SECTOR_MAP.map((s) => (
-                <option key={s.name} value={s.name}>{s.name}</option>
-              ))}
-            </select>
+            <DarkSelect
+              value={sector}
+              onChange={setSector}
+              className="!w-40"
+              options={[{ value: "", label: "Tất cả" }, ...VN_SECTOR_MAP.map((s) => ({ value: s.name, label: s.name }))]}
+            />
           </label>
           <label>
             <span className="mb-0.5 block text-[10px] uppercase tracking-wider text-text-muted">Nhóm mẫu</span>
-            <select value={category} onChange={(e) => setCategory(e.target.value)} className="input !w-40 !py-1.5 text-[12px]">
-              {CATEGORIES.map((c) => (
-                <option key={c.id} value={c.id}>{c.label}</option>
-              ))}
-            </select>
+            <DarkSelect
+              value={category}
+              onChange={setCategory}
+              className="!w-40"
+              options={CATEGORIES.map((c) => ({ value: c.id, label: c.label }))}
+            />
           </label>
           <label>
             <span className="mb-0.5 block text-[10px] uppercase tracking-wider text-text-muted">Điểm min</span>
