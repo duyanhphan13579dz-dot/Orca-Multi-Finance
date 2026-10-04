@@ -74,7 +74,6 @@ async function loadCompanyCore(sym: string): Promise<{
     profile = profileFromVietcap(sym, vietcap);
     sources.push("vietcap");
   } else if (profile && vietcap) {
-    // Fill gaps from Vietcap
     if (!profile.vnName && vietcap.name) profile = { ...profile, vnName: vietcap.name };
     if (!profile.enName && vietcap.nameEn) profile = { ...profile, enName: vietcap.nameEn };
     if (!profile.floor && vietcap.exchange) profile = { ...profile, floor: vietcap.exchange };
@@ -141,26 +140,27 @@ Trả đúng JSON, không markdown.
 }`;
 
   try {
-    const raw = await llmChat({
+    const raw = await llmChat("analysis", {
       system,
-      user: `CONTEXT:\n${JSON.stringify(context)}\n\nPhân tích ngắn gọn, tiếng Việt.`,
+      user: `CONTEXT:\n${JSON.stringify(context)}\n\nViết SWOT, chuỗi giá trị, catalyst, rủi ro bằng tiếng Việt, ngắn, bám số liệu.`,
       temperature: 0.2,
-      maxTokens: 1200,
     });
-    const text = typeof raw === "string" ? raw : String(raw ?? "");
-    const m = text.match(/\{[\s\S]*\}/);
-    if (!m) return null;
-    const parsed = JSON.parse(m[0]) as {
+    const text = raw?.text ?? "";
+    const start = text.indexOf("{");
+    const end = text.lastIndexOf("}");
+    if (start < 0 || end <= start) return null;
+    const parsed = JSON.parse(text.slice(start, end + 1)) as {
       valueChain?: StockCompanyPackage["valueChain"];
       swot?: StockCompanyPackage["swot"];
       catalysts?: string[];
       risks?: string[];
     };
+
     return {
       valueChain: parsed.valueChain ?? null,
       swot: parsed.swot ?? null,
-      catalysts: Array.isArray(parsed.catalysts) ? parsed.catalysts.map(String) : [],
-      risks: Array.isArray(parsed.risks) ? parsed.risks.map(String) : [],
+      catalysts: Array.isArray(parsed.catalysts) ? parsed.catalysts : [],
+      risks: Array.isArray(parsed.risks) ? parsed.risks : [],
     };
   } catch {
     return null;
@@ -174,7 +174,6 @@ export async function getStockCompanyPackage(
   if (!sym) return null;
 
   try {
-    // Cache only successful packs; empty profile uses short TTL via throw+retry path
     let core: { profile: VndCompanyProfile | null; shareholders: VndShareholder[]; sources: string[] };
     try {
       const companyRes = await cached(`vn:company:${sym}:v4`, {
@@ -183,7 +182,6 @@ export async function getStockCompanyPackage(
         softSwr: true,
         producer: async () => {
           const pack = await loadCompanyCore(sym);
-          // Do not long-cache total empties — forces re-fetch next time
           if (!pack.profile && !pack.shareholders.length) {
             throw new Error(`company empty ${sym}`);
           }
@@ -223,9 +221,12 @@ export async function getStockCompanyPackage(
     const det =
       core.profile || fin.income.length
         ? buildDeterministicResearch({
+            symbol: sym,
             profile: core.profile,
             shareholders: core.shareholders,
-            fin,
+            income: fin.income,
+            balance: fin.balance,
+            cashflow: fin.cashflow,
           })
         : null;
 
@@ -296,7 +297,6 @@ export async function getStockCompanyPackage(
     };
   } catch (e) {
     console.warn("[getStockCompanyPackage]", sym, e instanceof Error ? e.message : e);
-    // Degraded shell — never hard-fail the tab
     return {
       data: {
         symbol: sym,
