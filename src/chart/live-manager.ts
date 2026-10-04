@@ -97,13 +97,39 @@ export class ChartLiveManager {
       this.startSoftPoll(symbol, timeframe, handlers, assetType, tk);
     }
 
+    // Resume SSE/soft path when tab becomes visible or network returns
+    if (assetType !== "crypto") {
+      if (typeof document !== "undefined") {
+        const onVis = () => {
+          if (tk !== this.token) return;
+          if (document.visibilityState !== "visible") return;
+          if (this.es && this.es.readyState === EventSource.OPEN) return;
+          try { this.es?.close(); } catch { /* */ }
+          this.es = null;
+          this.startSse(symbol, timeframe, handlers, assetType, tk);
+        };
+        document.addEventListener("visibilitychange", onVis);
+        this.visHandler = onVis;
+      }
+      if (typeof window !== "undefined") {
+        const onOnline = () => {
+          if (tk !== this.token) return;
+          try { this.es?.close(); } catch { /* */ }
+          this.es = null;
+          this.startSse(symbol, timeframe, handlers, assetType, tk);
+        };
+        window.addEventListener("online", onOnline);
+        this.onlineHandler = onOnline;
+      }
+    }
+
     this.interval = setInterval(() => {
       if (tk !== this.token) return;
       const age = this.lastEventAt ? Date.now() - this.lastEventAt : null;
       handlers.onLiveState(
         age == null
           ? { state: this.lastEventAt ? "live" : "connecting", ageMs: null }
-          : age < 12_000
+          : age < 7_000
             ? { state: "live", ageMs: age }
             : { state: "delayed", ageMs: age },
       );
@@ -232,7 +258,7 @@ export class ChartLiveManager {
         this.es = null;
         setTimeout(() => {
           if (tk === this.token) this.startSse(symbol, timeframe, handlers, assetType, tk);
-        }, 2_500);
+        }, 1_000 + Math.random() * 800);
       }
     };
   }
@@ -268,7 +294,7 @@ export class ChartLiveManager {
           this.lastPrice != null &&
           Math.abs(d.price - this.lastPrice) < 1e-9 &&
           this.lastEventAt &&
-          Date.now() - this.lastEventAt < 4_000
+          Date.now() - this.lastEventAt < 2_200
         ) {
           this.lastEventAt = Date.now();
           return;
@@ -319,7 +345,7 @@ export class ChartLiveManager {
 
     this.pollTimer = setInterval(
       poll,
-      assetType === "forex" || assetType === "commodity" ? 2_000 : 5_000,
+      assetType === "forex" || assetType === "commodity" ? 1_500 : 2_000,
     );
     void poll();
   }

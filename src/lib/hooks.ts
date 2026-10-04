@@ -7,7 +7,7 @@ import { getSettingsSnapshot, resolveRefresh } from "./settings";
 import { clientCacheGet, clientCacheSet, clientCacheHas } from "./client-cache";
 
 const FETCH_TIMEOUT_MS = 9_000;
-const CLIENT_DEDUPE_MS = 3_200;
+const CLIENT_DEDUPE_MS = 2_400;
 const pendingFetches = new Map<string, { promise: Promise<ApiResponse<unknown>>; startedAt: number }>();
 
 let navFreezeUntil = 0;
@@ -111,7 +111,7 @@ export function useApi<T>(url: string | null, opts?: { refreshInterval?: number;
     const f = freshnessRef.current;
     if (f === "STALE" || f === "UNAVAILABLE") return Math.max(baseRefresh, 40_000);
     if (f === "DELAYED" || f === "DEGRADED") return Math.max(baseRefresh, 24_000);
-    if (f === "LIVE") return Math.max(10_000, Math.min(baseRefresh, 15_000));
+    if (f === "LIVE") return Math.max(8_000, Math.min(baseRefresh, 12_000));
     return baseRefresh;
   })();
 
@@ -131,14 +131,14 @@ export function useApi<T>(url: string | null, opts?: { refreshInterval?: number;
       refreshInterval,
       revalidateOnFocus: rt.backgroundRefresh && !inNavFreeze,
       revalidateOnReconnect: rt.autoReconnect,
-      focusThrottleInterval: rt.lowDataMode ? 60_000 : 28_000,
+      focusThrottleInterval: rt.lowDataMode ? 60_000 : 18_000,
       shouldRetryOnError: rt.autoReconnect,
       errorRetryInterval: rt.lowDataMode ? 45_000 : 10_000,
       errorRetryCount: rt.autoReconnect ? 2 : 0,
       keepPreviousData: true,
       fallbackData,
       revalidateIfStale: true,
-      dedupingInterval: rt.lowDataMode ? 16_000 : 4_000,
+      dedupingInterval: rt.lowDataMode ? 16_000 : 2_800,
       suspense: false,
       onSuccess: (payload) => {
         if (payload?.success) {
