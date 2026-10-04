@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 /**
  * ORCA Settings System — client store + server persistence.
@@ -329,17 +329,24 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  const value: SettingsCtxValue = {
-    settings: snapshot,
-    update: updateSettings,
-    reset: () => {
-      snapshot = { ...DEFAULT_SETTINGS, updatedAt: Date.now() };
-      persistLocal();
-      applyHtmlAttrs(snapshot);
-      scheduleServerSync();
-      notify();
-    },
-  };
+  const update = useCallback((patch: Partial<UserSettings>) => {
+    updateSettings(patch);
+  }, []);
+
+  const reset = useCallback(() => {
+    snapshot = { ...DEFAULT_SETTINGS, updatedAt: Date.now() };
+    persistLocal();
+    applyHtmlAttrs(snapshot);
+    scheduleServerSync();
+    notify();
+  }, []);
+
+  // Stable context identity — only changes when settings snapshot actually notifies
+  const value = useMemo<SettingsCtxValue>(
+    () => ({ settings: snapshot, update, reset }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- tick drives refresh via setTick in listener
+    [update, reset, snapshot.updatedAt],
+  );
 
   return <SettingsCtx.Provider value={value}>{children}</SettingsCtx.Provider>;
 }

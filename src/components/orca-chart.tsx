@@ -6,7 +6,7 @@
  * All existing `import { OrcaChart }` call sites keep working unchanged.
  */
 import dynamic from "next/dynamic";
-import { useEffect, useRef, useState, type ComponentProps } from "react";
+import { memo, useEffect, useRef, useState, type ComponentProps } from "react";
 import { Loading } from "@/components/ui";
 
 type ChartProps = ComponentProps<typeof import("@/chart/OrcaFinancialChart").OrcaFinancialChart>;
@@ -46,7 +46,7 @@ function ChartSkeleton({ height }: { height: number }) {
  * Viewport gate: keep a reserved height so layout does not jump, then mount
  * the dynamic chart chunk only after intersection (with generous rootMargin).
  */
-export function OrcaChart(props: ChartProps) {
+function OrcaChartInner(props: ChartProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const [ready, setReady] = useState(false);
   const height = props.height ?? 430;
@@ -81,4 +81,4 @@ export function OrcaChart(props: ChartProps) {
   );
 }
 
-export default OrcaChart;
+export const OrcaChart = memo(OrcaChartInner);
