@@ -78,6 +78,62 @@ body {
 .bg-surface-elevated { background-color: var(--color-surface-elevated); }
 .text-text-primary { color: var(--color-text-primary); }
 .text-text-secondary { color: var(--color-text-secondary); }
+.text-text-muted { color: var(--color-text-muted); }
+.border-border-subtle { border-color: var(--color-border-subtle); }
+.border-border-default { border-color: var(--color-border-default); }
+.bg-background-primary { background-color: var(--color-background-primary); }
+.bg-surface-base { background-color: var(--color-surface-primary); }
+
+.seg {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.15rem;
+  padding: 0.15rem;
+  border-radius: 0.5rem;
+  border: 1px solid var(--color-border-subtle);
+  background: var(--color-surface-elevated);
+}
+.seg > button {
+  border: 0;
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: 0.75rem;
+  padding: 0.3rem 0.55rem;
+  border-radius: 0.35rem;
+  cursor: pointer;
+}
+.seg > button[data-active="true"] {
+  background: color-mix(in srgb, var(--color-accent-primary) 22%, transparent);
+  color: var(--color-accent-primary);
+}
+.seg > button:hover { color: var(--color-text-primary); }
+
+@keyframes ticker-marquee {
+  from { transform: translate3d(0, 0, 0); }
+  to { transform: translate3d(-50%, 0, 0); }
+}
+.ticker-bar {
+  position: relative;
+  height: 1.75rem;
+  overflow: hidden;
+  width: 100%;
+  border-top: 1px solid var(--color-border-subtle);
+  background: color-mix(in srgb, var(--color-canvas) 88%, var(--color-surface-primary));
+}
+@media (min-width: 640px) {
+  .ticker-bar { height: 2rem; }
+}
+.ticker-track {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  width: max-content;
+  min-width: 200%;
+  height: 100%;
+  will-change: transform;
+  animation: ticker-marquee 48s linear infinite;
+}
+.ticker-track.is-paused,
 .ticker-track:hover { animation-play-state: paused; }
 html[data-reduced-motion="true"] .ticker-track { animation: none; }
 
@@ -108,7 +164,6 @@ html[data-reduced-motion="true"] .ticker-track { animation: none; }
 textarea.input { min-height: 4rem; resize: vertical; }
 select.input { cursor: pointer; padding-right: 1.75rem; }
 
-/* Native select options (fallback when not using DarkSelect) */
 select.input {
   appearance: none;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%236b7f9e' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
