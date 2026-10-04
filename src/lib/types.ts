@@ -2,12 +2,9 @@
 import type { MoneyFlowAnalysis } from "./engines/money-flow";
 
 export type FreshnessStatus = "LIVE" | "FRESH" | "DELAYED" | "STALE" | "DEGRADED" | "UNAVAILABLE";
-
 export type AssetClass = "stock" | "crypto" | "forex" | "commodity" | "index";
-
 export type QualityStatus = "VALID" | "SUSPECT" | "INVALID" | "STALE";
 
-/** Standard API meta describing data provenance + freshness + quality. */
 export interface Meta {
   source: string;
   sourceTimestamp: string | null;
@@ -26,16 +23,8 @@ export interface Meta {
   outputValidation?: { validated: boolean; unsupportedClaims: number; recovered?: string };
 }
 
-export interface ApiOk<T> {
-  success: true;
-  data: T;
-  meta: Meta;
-}
-export interface ApiErr {
-  success: false;
-  error: { code: string; message: string };
-  meta?: Meta;
-}
+export interface ApiOk<T> { success: true; data: T; meta: Meta; }
+export interface ApiErr { success: false; error: { code: string; message: string }; meta?: Meta; }
 export type ApiResponse<T> = ApiOk<T> | ApiErr;
 
 export interface Quote {
@@ -56,15 +45,6 @@ export interface Quote {
   updatedAt?: string | null;
 }
 
-export interface IndexQuote {
-  code: string;
-  name?: string | null;
-  value: number;
-  change: number | null;
-  changePercent: number | null;
-  updatedAt?: string | null;
-}
-
 export interface OhlcvBar {
   time: number;
   open: number;
@@ -72,6 +52,26 @@ export interface OhlcvBar {
   low: number;
   close: number;
   volume: number;
+}
+
+export interface NewsArticle {
+  id: string;
+  title: string;
+  url: string;
+  source: string;
+  publishedAt: string | null;
+  summary?: string | null;
+  symbols?: string[];
+  sentiment?: number | null;
+}
+
+export interface IndexQuote {
+  code: string;
+  name?: string | null;
+  value: number;
+  change: number | null;
+  changePercent: number | null;
+  updatedAt?: string | null;
 }
 
 /* ------------------------------ Alpha / Beta (CAPM) ----------------------- */
@@ -99,12 +99,7 @@ export interface AlphaBetaSnapshot {
   alphaH2: number | null;
   profile: AlphaBetaProfile;
   profileVi: string;
-  quality: {
-    reliable: boolean;
-    lowR2: boolean;
-    wideSe: boolean;
-    flags: string[];
-  };
+  quality: { reliable: boolean; lowR2: boolean; wideSe: boolean; flags: string[] };
   benchmark: string;
   window: string;
   summary: string;
@@ -173,7 +168,6 @@ export interface TechnicalSnapshot {
     stale: boolean;
     deduplicated: boolean;
   };
-  /** CAPM weekly alpha/beta vs VNINDEX (when market series available). */
   alphaBeta?: AlphaBetaSnapshot | null;
 }
 
@@ -185,18 +179,14 @@ export interface CandlePattern {
   description: string;
 }
 
-/* ------------------------------ Divergence -------------------------------- */
-
 export type DivergenceKind =
   | "regular_bullish"
   | "regular_bearish"
   | "hidden_bullish"
   | "hidden_bearish";
-
-export type DivergenceOscillator = "rsi" | "macd_hist" | "macd_line";
-
+export type DivergenceOscillator = "rsi" | "macd_hist" | "macd_line" | "stoch";
 export type DivergenceStrength = "A" | "B" | "C";
-
+export interface DivergencePivot { index: number; price: number; osc: number; time?: number; }
 export interface DivergenceSignal {
   kind: DivergenceKind;
   oscillator: DivergenceOscillator;
@@ -207,15 +197,25 @@ export interface DivergenceSignal {
   note?: string;
 }
 
-/* ------------------------------ Other shared ------------------------------ */
+export interface CryptoMarketRow extends Quote { marketCap?: number | null; rank?: number | null; }
+export interface ForexRow extends Quote { pair?: string; }
+export interface ForexMarket { rows: ForexRow[]; updatedAt?: string | null; }
+export interface CommodityRow extends Quote { unit?: string | null; }
 
-export interface BulletinTechnical {
-  symbol: string;
-  trend?: string;
-  rsi?: number | null;
+export interface BulletinOverview { narrative?: string; riskGauge?: number; }
+export interface BulletinFlow { foreignNet?: number | null; }
+export interface BulletinTopMover { symbol: string; changePercent: number; }
+export interface BulletinSectors { leaders?: string[]; laggards?: string[]; }
+export interface BulletinTechnical { symbol: string; trend?: string; rsi?: number | null; }
+export interface MarketBulletin {
+  overview?: BulletinOverview;
+  flow?: BulletinFlow;
+  topMovers?: BulletinTopMover[];
+  sectors?: BulletinSectors;
+  technical?: BulletinTechnical[];
 }
 
-export interface ProviderHealth {
+export interface ProviderStatus {
   id: string;
   ok: boolean;
   latencyMs: number | null;
