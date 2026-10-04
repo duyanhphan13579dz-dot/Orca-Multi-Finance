@@ -15,6 +15,7 @@ import {
 import { OrcaChart } from "@/components/orca-chart";
 import { StockNewsSentiment } from "@/components/stocks/news-sentiment-chip";
 import { OrderBookPanel } from "@/components/stocks/order-book-panel";
+import { MarketBreadthCard } from "@/components/stocks/market-breadth-card";
 
 const TechRecoPanel = dynamic(
   () => import("@/components/stocks/tech-reco-panel").then((m) => m.TechRecoPanel),
@@ -290,17 +291,20 @@ export default function StockDetailPage({ params }: { params: Promise<{ symbol: 
       <section id="sec-chart" className="stock-section-card" style={{ scrollMarginTop: ANCHOR_OFFSET }}>
         <div className="stock-section-heading">
           <div>
-            <p className="stock-section-kicker">Chart · Depth</p>
-            <h2>Biểu đồ & sổ lệnh</h2>
+            <p className="stock-section-kicker">Depth · Chart · Breadth</p>
+            <h2>Sổ lệnh · Biểu đồ · Độ rộng</h2>
           </div>
           <span className="stock-section-index">01</span>
         </div>
-        <div className="stock-chart-side-grid">
+        <div className="stock-chart-trio-grid">
+          <div className="stock-side-depth">
+            <OrderBookPanel symbol={data.symbol} compact />
+          </div>
           <div className="stock-chart-frame stock-chart-frame--compact">
             <OrcaChart symbol={data.symbol} assetType="stock" title={data.symbol} height={340} />
           </div>
-          <div className="stock-side-depth">
-            <OrderBookPanel symbol={data.symbol} compact />
+          <div className="stock-side-breadth">
+            <MarketBreadthCard />
           </div>
         </div>
       </section>
