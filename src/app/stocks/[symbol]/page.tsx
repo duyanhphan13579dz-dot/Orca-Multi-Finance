@@ -15,7 +15,6 @@ import {
 import { OrcaChart } from "@/components/orca-chart";
 import { StockNewsSentiment } from "@/components/stocks/news-sentiment-chip";
 import { OrderBookPanel } from "@/components/stocks/order-book-panel";
-import { MarketBreadthCard } from "@/components/stocks/market-breadth-card";
 
 const TechRecoPanel = dynamic(
   () => import("@/components/stocks/tech-reco-panel").then((m) => m.TechRecoPanel),
@@ -43,7 +42,7 @@ const PatternAnalysisHub = dynamic(
 const SECTION_NAV = [
   { id: "sec-chart", label: "Biểu đồ" },
   { id: "sec-signals", label: "Tín hiệu & cấu trúc" },
-  { id: "sec-deep", label: "Chuyên sâu" },
+  { id: "sec-deep", label: "Tin tức" },
 ] as const;
 
 const TREND_VI: Record<string, string> = {
@@ -63,7 +62,7 @@ const MONEY_FLOW_VI: Record<string, string> = {
 };
 
 const ANCHOR_OFFSET =
-  "calc(var(--stock-sticky-h, 6.35rem) + var(--stock-nav-h, 2.55rem) + 0.45rem)";
+  "calc(var(--stock-sticky-h, 5.15rem) + var(--stock-nav-h, 2.35rem) + 0.45rem)";
 
 function scrollToSection(id: string) {
   const el = document.getElementById(id);
@@ -291,16 +290,18 @@ export default function StockDetailPage({ params }: { params: Promise<{ symbol: 
       <section id="sec-chart" className="stock-section-card" style={{ scrollMarginTop: ANCHOR_OFFSET }}>
         <div className="stock-section-heading">
           <div>
-            <p className="stock-section-kicker">Chart · Breadth</p>
-            <h2>Biểu đồ & độ rộng thị trường</h2>
+            <p className="stock-section-kicker">Chart · Depth</p>
+            <h2>Biểu đồ & sổ lệnh</h2>
           </div>
           <span className="stock-section-index">01</span>
         </div>
-        <div className="stock-chart-breadth-grid">
+        <div className="stock-chart-side-grid">
           <div className="stock-chart-frame stock-chart-frame--compact">
-            <OrcaChart symbol={data.symbol} assetType="stock" title={data.symbol} height={340} />
+            <OrcaChart symbol={data.symbol} assetType="stock" title={data.symbol} height={380} />
           </div>
-          <MarketBreadthCard />
+          <div className="stock-side-depth">
+            <OrderBookPanel symbol={data.symbol} compact />
+          </div>
         </div>
       </section>
 
@@ -326,15 +327,12 @@ export default function StockDetailPage({ params }: { params: Promise<{ symbol: 
       <section id="sec-deep" className="stock-section-card" style={{ scrollMarginTop: ANCHOR_OFFSET }}>
         <div className="stock-section-heading">
           <div>
-            <p className="stock-section-kicker">Depth</p>
-            <h2>Sổ lệnh & tin</h2>
+            <p className="stock-section-kicker">News</p>
+            <h2>Tin & cảm xúc</h2>
           </div>
           <span className="stock-section-index">03</span>
         </div>
-        <div className="grid gap-3 lg:grid-cols-2">
-          <OrderBookPanel symbol={data.symbol} />
-          <StockNewsSentiment symbol={data.symbol} />
-        </div>
+        <StockNewsSentiment symbol={data.symbol} />
       </section>
     </div>
   );
