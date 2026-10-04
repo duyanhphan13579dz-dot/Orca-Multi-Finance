@@ -125,26 +125,26 @@ export default function StockSymbolLayout({
                   {(q.referencePrice != null ||
                     q.ceilingPrice != null ||
                     q.floorPrice != null) && (
-                    <span className="stock-band-group" aria-label="Biên độ giá">
+                    <div className="stock-band-grid" aria-label="Biên độ giá">
                       {q.referencePrice != null && (
-                        <span className="stock-band-chip">
+                        <div className="stock-band-cell stock-band-cell--tc">
                           <span className="stock-band-label">TC</span>
-                          <span className="num">{fmtNum(q.referencePrice, 2)}</span>
-                        </span>
+                          <span className="stock-band-val num">{fmtNum(q.referencePrice, 2)}</span>
+                        </div>
                       )}
                       {q.ceilingPrice != null && (
-                        <span className="stock-band-chip stock-band-ceil">
+                        <div className="stock-band-cell stock-band-cell--ceil">
                           <span className="stock-band-label">Trần</span>
-                          <span className="num">{fmtNum(q.ceilingPrice, 2)}</span>
-                        </span>
+                          <span className="stock-band-val num">{fmtNum(q.ceilingPrice, 2)}</span>
+                        </div>
                       )}
                       {q.floorPrice != null && (
-                        <span className="stock-band-chip stock-band-floor">
+                        <div className="stock-band-cell stock-band-cell--floor">
                           <span className="stock-band-label">Sàn</span>
-                          <span className="num">{fmtNum(q.floorPrice, 2)}</span>
-                        </span>
+                          <span className="stock-band-val num">{fmtNum(q.floorPrice, 2)}</span>
+                        </div>
                       )}
-                    </span>
+                    </div>
                   )}
                 </div>
               ) : (
