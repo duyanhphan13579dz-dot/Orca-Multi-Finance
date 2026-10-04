@@ -52,7 +52,7 @@ export async function getYahooChart(yahooSymbol: string, interval: string, range
         const l = q?.low?.[k];
         const c = q?.close?.[k];
         if (o == null || h == null || l == null || c == null) continue;
-        candles.push({ time: ts[k] * 1000, open: o, high: h, low: l, close: c, volume: q?.volume?.[k] ?? 0 });
+        candles.push({ time: ts[k]! * 1000, open: o, high: h, low: l, close: c, volume: q?.volume?.[k] ?? 0 });
       }
       if (!candles.length) continue;
       return {
@@ -67,18 +67,48 @@ export async function getYahooChart(yahooSymbol: string, interval: string, range
   throw new ProviderError(`yahoo: ${lastErr}`, YAHOO);
 }
 
-/** Yahoo symbols for FX (=X) and CFD/futures on the forex board. */
+/**
+ * Yahoo tickers for FX pairs and commodity aliases used by the chart engine.
+ * Commodity page sends GOLD / WTI / … — must NOT fall through to "GOLD=X" (404).
+ */
 const YAHOO_PAIR_SYMBOL: Record<string, string> = {
-  XAUUSD: "GC=F", // COMEX Gold futures — more reliable than XAUUSD=X
-  XAGUSD: "SI=F", // COMEX Silver futures
+  // Metals
+  XAUUSD: "GC=F",
+  GOLD: "GC=F",
+  XAU: "GC=F",
+  XAGUSD: "SI=F",
+  SILVER: "SI=F",
+  XAG: "SI=F",
+  // Energy
   USOIL: "CL=F",
+  WTI: "CL=F",
+  CRUDE: "CL=F",
+  CL: "CL=F",
+  BRENT: "BZ=F",
+  UKOIL: "BZ=F",
+  NATGAS: "NG=F",
+  NG: "NG=F",
+  // Industrial
+  COPPER: "HG=F",
+  HG: "HG=F",
+  // Softs (optional)
+  COFFEE: "KC=F",
+  KC: "KC=F",
+  SUGAR: "SB=F",
+  COTTON: "CT=F",
+  // Index alias
   USTEC: "^NDX",
 };
 
-/** map "EURUSD" → "EURUSD=X"; metals/oil/index use dedicated tickers */
+/** map "EURUSD" → "EURUSD=X"; metals/oil use futures; never emit invalid COMMODITY=X */
 export function yahooSymbolForPair(pair: string): string {
   const p = pair.toUpperCase().replace(/[^A-Z0-9]/g, "");
-  if (YAHOO_PAIR_SYMBOL[p]) return YAHOO_PAIR_SYMBOL[p];
+  if (YAHOO_PAIR_SYMBOL[p]) return YAHOO_PAIR_SYMBOL[p]!;
+  // Already a futures-style code (e.g. GCF passed cleaned) — leave as-is if ends with F pattern handled above
+  // FX pairs are typically 6 letters
+  if (/^[A-Z]{6}$/.test(p)) return `${p}=X`;
+  // Unknown short commodity codes: try as-is rather than broken =X
+  if (p.length <= 5) return p;
   return `${p}=X`;
 }
 
@@ -152,7 +182,7 @@ export async function getYahooQuotes(symbols: string[]): Promise<Map<string, Yah
     const batch = symbols.slice(i, i + chunk);
     const results = await Promise.allSettled(batch.map((s) => getYahooQuote(s)));
     results.forEach((r, j) => {
-      if (r.status === "fulfilled") out.set(batch[j], r.value);
+      if (r.status === "fulfilled") out.set(batch[j]!, r.value);
     });
   }
   return out;
@@ -183,6 +213,6 @@ export function yahooIntervalFor(tf: string): { interval: string; range: string;
   if (tf === "1w") return { interval: "1wk", range: "max" };
   if (tf === "1M") return { interval: "1mo", range: "max" };
   if (tf === "1d") return { interval: "1d", range: "2y" };
-  if (INTRADAY_LIMITS[tf]) return { interval: tf === "1h" ? "1h" : tf, range: INTRADAY_LIMITS[tf] };
+  if (INTRADAY_LIMITS[tf]) return { interval: tf === "1h" ? "1h" : tf, range: INTRADAY_LIMITS[tf]! };
   return null;
 }
