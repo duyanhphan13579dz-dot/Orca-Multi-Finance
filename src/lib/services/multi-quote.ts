@@ -37,7 +37,7 @@ const rank = (src: string) => PRICE_PRIORITY[src] ?? 0;
 const CONFLICT_PCT = 0.015;
 const CONFLICT_ABS = 200;
 /** Fan-out when primary covers less than this fraction (lower = more multi-source fills). */
-const PRIMARY_COVERAGE_OK = 0.75;
+const PRIMARY_COVERAGE_OK = 0.55;
 
 type TaggedQuote = Quote & { _src: string; _latencyMs: number };
 type SourceBatch = { src: string; quotes: Quote[]; latencyMs: number; ok: boolean };
@@ -125,7 +125,6 @@ function pickPrice(
       floorPrice: prev.floorPrice ?? next.floorPrice,
     };
   }
-  // same rank — keep previous price, fill gaps
   return {
     ...prev,
     volume: prev.volume ?? next.volume,
@@ -152,7 +151,7 @@ function countConflicts(batches: SourceBatch[]): number {
     if (prices.length < 2) continue;
     const base = prices[0];
     for (let i = 1; i < prices.length; i++) {
-      if (priceConflict(base, prices[i])) {
+      if (priceConflict(base, prices[i]!)) {
         n++;
         break;
       }
