@@ -93,23 +93,23 @@ export function MarketBreadthCard() {
     <div className="stock-breadth-card">
       <div className="stock-breadth-head">
         <span className="stock-breadth-title">
-          <Activity className="size-3.5 text-accent-primary" aria-hidden />
+          <Activity className="size-3.5 shrink-0 text-accent-primary" aria-hidden />
           Độ rộng thị trường
         </span>
         {meta ? <FreshnessDot status={meta.freshness} ageMs={meta.ageMs} /> : null}
       </div>
 
       <div className="stock-breadth-score">
-        <div className="flex items-baseline gap-2">
-          <span className={`num text-[26px] font-bold tabular-nums ${toneClass}`}>
+        <div className="stock-breadth-score-main">
+          <span className={`stock-breadth-score-num num ${toneClass}`}>
             {s != null ? Math.round(s) : "—"}
           </span>
-          <span className={`text-[13px] font-semibold ${toneClass}`}>{ratingVi(rating)}</span>
+          <span className={`stock-breadth-score-label ${toneClass}`}>{ratingVi(rating)}</span>
         </div>
-        {conf ? <span className="text-[10px] text-text-muted">Tin cậy {conf}</span> : null}
-        {data?.session?.labelVi ? (
-          <span className="text-[10px] text-text-muted">{data.session.labelVi}</span>
-        ) : null}
+        <div className="stock-breadth-score-meta">
+          {conf ? <span>Tin cậy {conf}</span> : null}
+          {data?.session?.labelVi ? <span>{data.session.labelVi}</span> : null}
+        </div>
       </div>
 
       <div className="relative mt-2 h-2 overflow-hidden rounded-full bg-gradient-to-r from-rose-500 via-amber-400 to-emerald-500">
@@ -122,22 +122,22 @@ export function MarketBreadthCard() {
 
       <div className="stock-breadth-stats">
         <div className="stock-breadth-stat stock-breadth-stat--up">
-          <TrendingUp className="size-3.5" aria-hidden />
-          <div>
+          <TrendingUp className="stock-breadth-stat-icon" aria-hidden />
+          <div className="stock-breadth-stat-body">
             <div className="stock-breadth-stat-label">Tăng</div>
             <div className="stock-breadth-stat-value num">{adv ?? "—"}</div>
           </div>
         </div>
         <div className="stock-breadth-stat stock-breadth-stat--flat">
-          <Minus className="size-3.5" aria-hidden />
-          <div>
+          <Minus className="stock-breadth-stat-icon" aria-hidden />
+          <div className="stock-breadth-stat-body">
             <div className="stock-breadth-stat-label">Đứng</div>
             <div className="stock-breadth-stat-value num">{unch ?? "—"}</div>
           </div>
         </div>
         <div className="stock-breadth-stat stock-breadth-stat--down">
-          <TrendingDown className="size-3.5" aria-hidden />
-          <div>
+          <TrendingDown className="stock-breadth-stat-icon" aria-hidden />
+          <div className="stock-breadth-stat-body">
             <div className="stock-breadth-stat-label">Giảm</div>
             <div className="stock-breadth-stat-value num">{dec ?? "—"}</div>
           </div>
