@@ -1,4 +1,127 @@
-/* Decision strip + metric chips */
+/* Meta strip (NN mua/bán) — elevated chips with gap */
+.stock-meta-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.4rem;
+  border-top: 1px solid var(--color-border-subtle);
+  padding: 0.4rem 0.85rem 0.45rem;
+}
+.stock-meta-chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.35rem;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 0.4rem;
+  background: color-mix(in srgb, var(--color-surface-elevated) 78%, transparent);
+  padding: 0.28rem 0.5rem;
+  line-height: 1.2;
+}
+.stock-meta-chip-label {
+  color: var(--color-text-muted);
+  font-size: 0.58rem;
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  white-space: nowrap;
+}
+.stock-meta-chip-value {
+  font-size: 0.78rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-primary);
+  white-space: nowrap;
+}
+
+.stock-floor-badge {
+  padding: 0.15rem 0.45rem;
+  border: 1px solid color-mix(in srgb, var(--color-accent-primary) 42%, var(--color-border-subtle));
+  border-radius: 0.4rem;
+  color: var(--color-accent-2);
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+/* Section cards — elevated blocks */
+.stock-section-card {
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 0.85rem;
+  background: color-mix(in srgb, var(--color-surface-primary) 90%, transparent);
+  padding: 0.95rem 1rem 1.05rem;
+  overflow-x: clip;
+  scroll-margin-top: calc(var(--stock-sticky-h, 4.65rem) + var(--stock-nav-h, 2.2rem) + 0.45rem);
+}
+.stock-section-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+.stock-section-kicker {
+  margin: 0 0 0.2rem;
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+.stock-section-heading h2 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--color-text-primary);
+  line-height: 1.3;
+}
+.stock-section-index {
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: var(--color-text-muted);
+  opacity: 0.7;
+  letter-spacing: 0.04em;
+  flex-shrink: 0;
+}
+
+/* Section nav pills */
+.stock-section-nav {
+  display: flex;
+  gap: 0.35rem;
+  overflow-x: auto;
+  scrollbar-width: none;
+  padding: 0.2rem 0;
+  position: sticky;
+  top: calc(var(--stock-sticky-h, 4.65rem) + 0.05rem);
+  z-index: 15;
+  background: color-mix(in srgb, var(--color-canvas) 92%, transparent);
+  backdrop-filter: blur(8px);
+}
+.stock-section-nav::-webkit-scrollbar { display: none; }
+.stock-section-nav-item {
+  flex-shrink: 0;
+  border: 1px solid var(--color-border-subtle);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 0.4rem 0.85rem;
+  border-radius: 999px;
+  cursor: pointer;
+  line-height: 1.2;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+.stock-section-nav-item:hover {
+  border-color: color-mix(in srgb, var(--color-accent-primary) 40%, transparent);
+  color: var(--color-text-primary);
+}
+.stock-section-nav-item[data-active="true"],
+.stock-section-nav-item.is-active {
+  border-color: color-mix(in srgb, var(--color-accent-primary) 50%, transparent);
+  background: color-mix(in srgb, var(--color-accent-primary) 14%, transparent);
+  color: var(--color-accent-primary);
+}
+
+/* Decision strip */
 .stock-decision-strip {
   display: flex;
   flex-wrap: wrap;
@@ -7,8 +130,9 @@
   gap: 0.55rem 0.85rem;
   border: 1px solid var(--color-border-subtle);
   border-radius: 0.75rem;
-  background: color-mix(in srgb, var(--color-surface-primary) 92%, transparent);
+  background: color-mix(in srgb, var(--color-surface-elevated) 55%, transparent);
   padding: 0.55rem 0.85rem;
+  margin-bottom: 0.85rem;
 }
 .stock-decision-strip--up {
   border-color: color-mix(in srgb, var(--color-up) 40%, var(--color-border-subtle));
@@ -126,6 +250,7 @@
 }
 .stock-metric-chip--up .stock-metric-chip-value { color: var(--color-up); }
 .stock-metric-chip--down .stock-metric-chip-value { color: var(--color-down); }
+
 .chart-meta-strip {
   display: flex;
   flex-wrap: wrap;
@@ -158,6 +283,18 @@
   font-variant-numeric: tabular-nums;
   color: var(--color-text-primary);
 }
+
+.stock-side-depth,
+.stock-side-breadth {
+  min-width: 0;
+}
+.stock-chart-frame--compact {
+  min-height: 0;
+  width: 100%;
+  max-width: 100%;
+  overflow: hidden;
+}
+
 @media (max-width: 720px) {
   .stock-decision-strip {
     flex-direction: column;
@@ -165,4 +302,5 @@
   }
   .stock-decision-metrics { justify-content: flex-start; }
   .stock-decision-reason { max-width: 100%; }
+  .stock-meta-strip { padding-left: 0.7rem; padding-right: 0.7rem; }
 }
