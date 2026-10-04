@@ -2,7 +2,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { ArrowRight, Building2, CalendarDays, ExternalLink, Gauge, Globe2, Users, Waypoints } from "lucide-react";
+import { ArrowRight, Building2, CalendarDays, ExternalLink, Gauge, Globe2, RefreshCw, Users, Waypoints } from "lucide-react";
 import { useApi } from "@/lib/hooks";
 import type { StockCompanyPackage } from "@/lib/services/stock-company";
 import { Badge, fmtCompact, fmtNum, Loading, MetaLine, Panel, Unavailable } from "@/components/ui";
@@ -68,35 +68,21 @@ function SectionHeading({
           }`}
         />
         <div>
-          <div className="text-[10px] uppercase tracking-[0.16em] text-ink-3">{eyebrow}</div>
-          <h2 className="text-[14px] font-semibold text-ink">{title}</h2>
+          <div className="text-[10px] uppercase tracking-[0.14em] text-ink-3">{eyebrow}</div>
+          <div className="text-[13px] font-semibold text-ink-1">{title}</div>
         </div>
       </div>
-      {count != null && <Badge tone={tone}>{count} insight</Badge>}
+      {count != null ? <Badge tone="neutral">{count}</Badge> : null}
     </div>
   );
 }
 
-function ValueChainStep({
-  index,
-  label,
-  items,
-  tone,
-}: {
-  index: string;
-  label: string;
-  items: string[];
-  tone: Tone;
-}) {
+function ListBlock({ title, items }: { title: string; items: string[] }) {
   return (
-    <div className="relative flex min-h-[150px] flex-col gap-3 rounded-lg border border-line/70 bg-bg-2/45 p-3">
-      <div className="flex items-center justify-between">
-        <Badge tone={tone}>{index}</Badge>
-        <span className="text-[10px] uppercase tracking-[0.14em] text-ink-3">{items.length} mục</span>
-      </div>
-      <h3 className="text-[13px] font-semibold text-ink">{label}</h3>
+    <div className="rounded-lg border border-line/50 bg-bg-2/30 p-3">
+      <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-ink-3">{title}</div>
       {items.length ? (
-        <ul className="flex flex-col gap-2 text-[11px] leading-relaxed text-ink-2">
+        <ul className="space-y-1.5 text-[12px] text-ink-2">
           {items.map((x, i) => (
             <li key={i} className="flex gap-2">
               <span className="text-ink-3">—</span>
@@ -117,10 +103,21 @@ export default function StockProfilePage({ params }: { params: Promise<{ symbol:
     params.then((p) => setSymbol(p.symbol.toUpperCase()));
   }, [params]);
 
-  const { res, data, isLoading } = useApi<StockCompanyPackage>(
+  const { res, data, isLoading, isValidating, mutate } = useApi<StockCompanyPackage>(
     symbol ? `/api/v1/stocks/${symbol}/profile` : null,
-    { refreshInterval: 600_000 },
+    { refreshInterval: 600_000, timeoutMs: 20_000, keepPreviousData: true },
   );
+
+  useEffect(() => {
+    const onRefresh = (ev: Event) => {
+      const d = (ev as CustomEvent).detail as { symbol?: string } | undefined;
+      if (d?.symbol && d.symbol !== symbol) return;
+      void mutate();
+    };
+    window.addEventListener("orca:stock-refresh", onRefresh);
+    return () => window.removeEventListener("orca:stock-refresh", onRefresh);
+  }, [symbol, mutate]);
+
   const pie = useMemo(() => {
     const list = (data?.shareholders ?? [])
       .filter((s) => s.ownershipPct != null && s.ownershipPct > 0)
@@ -128,13 +125,23 @@ export default function StockProfilePage({ params }: { params: Promise<{ symbol:
     return list.map((s) => ({ name: s.name, pct: s.ownershipPct ?? 0 }));
   }, [data]);
 
-  if (!symbol || (isLoading && !res)) return <Loading rows={8} />;
+  if (!symbol || (isLoading && !res && !data)) return <Loading rows={8} />;
   if (!res?.success || !data)
     return (
-      <Unavailable
-        title={`Không lấy được hồ sơ ${symbol}`}
-        note={res && !res.success ? res.error.message : "Nguồn hồ sơ đang gián đoạn."}
-      />
+      <div className="stock-workspace space-y-3 p-1">
+        <Unavailable
+          title={`Không lấy được hồ sơ ${symbol}`}
+          note={res && !res.success ? res.error.message : "Nguồn hồ sơ đang gián đoạn."}
+        />
+        <button
+          type="button"
+          onClick={() => void mutate()}
+          className="inline-flex items-center gap-2 rounded-lg border border-border-subtle bg-surface-elevated px-3 py-2 text-[12px] font-medium text-text-primary hover:border-accent-primary/40"
+        >
+          <RefreshCw className={`size-3.5 ${isValidating ? "animate-spin" : ""}`} />
+          Thử tải lại hồ sơ
+        </button>
+      </div>
     );
 
   const p = data.profile;
@@ -154,260 +161,140 @@ export default function StockProfilePage({ params }: { params: Promise<{ symbol:
     <main className="stock-workspace">
       <section className="company-profile-card panel panel-elevated overflow-hidden">
         <div className="company-profile-hero">
+          <div className="mb-2 flex justify-end px-1">
+            <button
+              type="button"
+              onClick={() => void mutate()}
+              disabled={isValidating}
+              className="inline-flex items-center gap-1.5 rounded-md border border-border-subtle px-2.5 py-1 text-[11px] font-medium text-text-muted hover:border-accent-primary/40 hover:text-accent-primary disabled:opacity-60"
+            >
+              <RefreshCw className={`size-3 ${isValidating ? "animate-spin" : ""}`} />
+              Làm mới hồ sơ
+            </button>
+          </div>
           <div className="company-profile-top">
             <div className="company-profile-identity">
               {p?.logo ? (
-                <img
-                  src={p.logo}
-                  alt={p.vnName ?? symbol}
-                  className="company-profile-logo"
-                />
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={p.logo} alt={p.vnName ?? symbol} className="size-12 rounded-lg border border-line object-contain bg-bg-1" />
               ) : (
-                <div className="company-profile-logo company-profile-logo--fallback">
+                <div className="flex size-12 items-center justify-center rounded-lg border border-line bg-bg-2 text-accent">
                   <Building2 className="size-6" />
                 </div>
               )}
-              <div className="company-profile-titles min-w-0">
-                <div className="company-profile-badges">
-                  <span className="company-profile-symbol">{symbol}</span>
-                  {p?.floor ? <Badge>{p.floor}</Badge> : null}
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h1 className="text-[18px] font-bold tracking-tight text-ink-1">{symbol}</h1>
+                  {p?.floor ? <Badge tone="neutral">{p.floor}</Badge> : null}
+                  {isValidating ? <span className="text-[10px] text-ink-3">Đang làm mới…</span> : null}
                 </div>
-                <h1 className="company-profile-name">{p?.vnName ?? symbol}</h1>
-                {p?.enName ? <p className="company-profile-en">{p.enName}</p> : null}
-                <div className="company-profile-links">
-                  <span className="inline-flex items-center gap-1">
-                    <Waypoints className="size-3" /> Hồ sơ doanh nghiệp
-                  </span>
-                  {p?.website ? (
-                    <a
-                      className="inline-flex items-center gap-1 text-accent-primary hover:underline"
-                      href={p.website}
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      Website <ExternalLink className="size-3" />
-                    </a>
-                  ) : null}
-                </div>
+                <p className="truncate text-[13px] text-ink-2">{p?.vnName ?? p?.enName ?? "Đang cập nhật tên công ty"}</p>
+                {p?.enName && p.vnName ? <p className="truncate text-[11px] text-ink-3">{p.enName}</p> : null}
               </div>
             </div>
-
-            <div className="company-profile-metrics">
-              <div className="company-metric">
-                <span className="company-metric-label">
-                  <Users className="size-3" /> Nhân sự
+            <div className="flex flex-wrap gap-2 text-[11px] text-ink-3">
+              {p?.foundDate ? (
+                <span className="inline-flex items-center gap-1 rounded-md border border-line/60 px-2 py-1">
+                  <CalendarDays className="size-3" /> {p.foundDate}
                 </span>
-                <span className="company-metric-value num">
-                  {p?.employees != null ? fmtNum(p.employees, 0) : "—"}
+              ) : null}
+              {p?.employees != null ? (
+                <span className="inline-flex items-center gap-1 rounded-md border border-line/60 px-2 py-1">
+                  <Users className="size-3" /> {fmtNum(p.employees, 0)} NV
                 </span>
-              </div>
-              <div className="company-metric">
-                <span className="company-metric-label">
-                  <CalendarDays className="size-3" /> Thành lập
-                </span>
-                <span className="company-metric-value num">
-                  {p?.foundDate ? p.foundDate : "—"}
-                </span>
-              </div>
-              <div className="company-metric">
-                <span className="company-metric-label">
-                  <Gauge className="size-3" /> Tín hiệu
-                </span>
-                <span className="company-metric-value num">{totalInsights || "—"}</span>
-                <span className="company-metric-detail">SWOT · catalyst · risk</span>
-              </div>
+              ) : null}
+              {p?.website ? (
+                <a
+                  href={p.website.startsWith("http") ? p.website : `https://${p.website}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1 rounded-md border border-line/60 px-2 py-1 hover:text-accent"
+                >
+                  <Globe2 className="size-3" /> Website <ExternalLink className="size-3" />
+                </a>
+              ) : null}
             </div>
           </div>
-
-          {p?.vnSummary ? <p className="company-profile-summary">{p.vnSummary}</p> : null}
-        </div>
-
-        <div className="company-profile-footer">
-          <MetaLine meta={profileMeta} />
-          {p?.taxCode ? (
-            <span className="company-profile-meta-item">MST {p.taxCode}</span>
-          ) : null}
-          {p?.vnAddress ? (
-            <span className="company-profile-meta-item company-profile-address">
-              <Globe2 className="size-3 shrink-0" />
-              <span>{p.vnAddress}</span>
-            </span>
-          ) : null}
+          {p?.vnSummary || p?.enSummary ? (
+            <p className="mt-3 text-[12.5px] leading-relaxed text-ink-2">{p.vnSummary ?? p.enSummary}</p>
+          ) : (
+            <p className="mt-3 text-[12px] text-ink-3">
+              {data.notes?.length ? data.notes.join(" · ") : "Chưa có mô tả doanh nghiệp — thử làm mới."}
+            </p>
+          )}
+          {profileMeta ? <MetaLine meta={profileMeta} className="mt-2" /> : null}
         </div>
       </section>
 
-      <div className="stock-section-grid lg:grid-cols-[1.25fr_0.75fr]">
-        <Panel
-          title={
-            <SectionHeading
-              eyebrow="Research snapshot"
-              title="SWOT doanh nghiệp"
-              count={
-                swot
-                  ? swot.strengths.length +
-                    swot.weaknesses.length +
-                    swot.opportunities.length +
-                    swot.threats.length
-                  : 0
-              }
-            />
-          }
-          subtitle="Các luận điểm được suy ra từ hồ sơ, BCTC và dữ liệu thị trường."
-        >
-          {!swot ? (
-            <p className="text-[12px] text-ink-3">
-              SWOT sẽ được dựng từ dữ liệu có kiểm chứng — không điền nội dung suy đoán.
-            </p>
+      <div className="mt-4 grid gap-3 lg:grid-cols-2">
+        <Panel className="space-y-3">
+          <SectionHeading eyebrow="Ownership" title="Cổ đông lớn" count={data.shareholders?.length} />
+          {data.shareholders?.length ? (
+            <ul className="space-y-2">
+              {data.shareholders.slice(0, 12).map((s, i) => (
+                <li key={`${s.name}-${i}`} className="flex items-center justify-between gap-2 rounded-md border border-line/50 px-2.5 py-1.5 text-[12px]">
+                  <span className="min-w-0 truncate text-ink-1">{s.name}</span>
+                  <span className="shrink-0 tabular-nums text-ink-2">
+                    {s.ownershipPct != null ? `${s.ownershipPct.toFixed(2)}%` : s.shares != null ? fmtCompact(s.shares) : "—"}
+                  </span>
+                </li>
+              ))}
+            </ul>
           ) : (
-            <div className="grid gap-2 sm:grid-cols-2">
-              <div className="rounded-lg border border-up/20 bg-up/5 p-3">
-                <h3 className="mb-2 text-[11px] font-semibold text-up">S · Điểm mạnh</h3>
-                <InsightList items={swot.strengths as Insight[]} empty="Chưa có luận điểm." />
-              </div>
-              <div className="rounded-lg border border-down/20 bg-down/5 p-3">
-                <h3 className="mb-2 text-[11px] font-semibold text-down">W · Điểm yếu</h3>
-                <InsightList items={swot.weaknesses as Insight[]} empty="Chưa có luận điểm." />
-              </div>
-              <div className="rounded-lg border border-accent/20 bg-accent/5 p-3">
-                <h3 className="mb-2 text-[11px] font-semibold text-accent">O · Cơ hội</h3>
-                <InsightList items={swot.opportunities as Insight[]} empty="Chưa có luận điểm." />
-              </div>
-              <div className="rounded-lg border border-warn/20 bg-warn/5 p-3">
-                <h3 className="mb-2 text-[11px] font-semibold text-warn">T · Thách thức</h3>
-                <InsightList items={swot.threats as Insight[]} empty="Chưa có luận điểm." />
-              </div>
-            </div>
+            <p className="text-[12px] text-ink-3">Chưa có danh sách cổ đông.</p>
           )}
+          {pie.length > 0 ? (
+            <div className="text-[10px] text-ink-3">Top {pie.length} cổ đông theo % sở hữu</div>
+          ) : null}
         </Panel>
-        <div className="flex flex-col gap-3">
-          <Panel
-            title={
-              <SectionHeading
-                eyebrow="Growth drivers"
-                title="Catalyst tăng trưởng"
-                count={data.catalysts.length}
-                tone="up"
-              />
-            }
-          >
-            <InsightList items={data.catalysts as Insight[]} empty="Chưa có catalyst đã xác thực." />
-          </Panel>
-          <Panel
-            title={
-              <SectionHeading
-                eyebrow="Downside watch"
-                title="Yếu tố rủi ro"
-                count={data.risks.length}
-                tone="warn"
-              />
-            }
-          >
-            <InsightList items={data.risks as Insight[]} empty="Chưa có rủi ro đã xác thực." />
-          </Panel>
-        </div>
-      </div>
 
-      <Panel
-        title={<SectionHeading eyebrow="Business model" title="Chuỗi giá trị doanh nghiệp" />}
-        subtitle="Dòng chảy từ đầu vào đến sản phẩm và doanh thu."
-      >
-        {data.valueChain ? (
-          <div className="grid gap-2 md:grid-cols-3 md:items-stretch">
-            <ValueChainStep index="01" label="Input · Đầu vào" items={data.valueChain.input} tone="accent" />
-            <div className="hidden items-center justify-center md:flex">
-              <ArrowRight className="text-ink-3" />
+        <Panel className="space-y-3">
+          <SectionHeading eyebrow="Research" title="Catalyst & rủi ro" count={totalInsights} tone="warn" />
+          <div className="grid gap-2 sm:grid-cols-2">
+            <div>
+              <div className="mb-1 text-[11px] font-semibold text-up">Catalyst</div>
+              <InsightList items={data.catalysts ?? []} empty="Chưa có catalyst." />
             </div>
-            <ValueChainStep index="02" label="Process · Vận hành" items={data.valueChain.process} tone="up" />
-            <div className="hidden items-center justify-center md:flex">
-              <ArrowRight className="text-ink-3" />
+            <div>
+              <div className="mb-1 text-[11px] font-semibold text-down">Rủi ro</div>
+              <InsightList items={data.risks ?? []} empty="Chưa có rủi ro ghi nhận." />
             </div>
-            <ValueChainStep index="03" label="Output · Đầu ra" items={data.valueChain.output} tone="warn" />
-          </div>
-        ) : (
-          <p className="text-[12px] text-ink-3">
-            Chuỗi giá trị sẽ được điền từ phân tích ngành hoặc tài liệu IR.
-          </p>
-        )}
-      </Panel>
-
-      <div className="stock-section-grid lg:grid-cols-[1.2fr_0.8fr]">
-        <Panel title={<SectionHeading eyebrow="Ownership" title="Cổ đông lớn" count={data.shareholders.length} />}>
-          <div className="overflow-x-auto">
-            {data.shareholders.length ? (
-              <table className="stock-table">
-                <thead>
-                  <tr className="border-b border-line text-left text-ink-3">
-                    <th className="py-2 pr-2">Cổ đông</th>
-                    <th className="py-2 pr-2">Vai trò</th>
-                    <th className="num py-2 text-right">SL CP</th>
-                    <th className="num py-2 text-right">%</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {data.shareholders.slice(0, 15).map((s, i) => (
-                    <tr key={i} className="border-b border-line/40">
-                      <td className="max-w-[180px] truncate py-2 pr-2 text-ink-2">{s.name}</td>
-                      <td className="py-2 pr-2 text-ink-3">{s.role ?? "—"}</td>
-                      <td className="num py-2 text-right">
-                        {s.shares != null ? fmtCompact(s.shares) : "—"}
-                      </td>
-                      <td className="num py-2 text-right">
-                        {s.ownershipPct != null ? `${s.ownershipPct.toFixed(2)}%` : "—"}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            ) : (
-              <p className="text-[12px] text-ink-3">Chưa có dữ liệu cổ đông.</p>
-            )}
-          </div>
-        </Panel>
-        <Panel title={<SectionHeading eyebrow="Concentration" title="Phân bố sở hữu" />}>
-          <div className="flex flex-col gap-2">
-            {pie.length ? (
-              pie.map((s) => (
-                <div key={s.name}>
-                  <div className="mb-1 flex justify-between text-[11px]">
-                    <span className="max-w-[70%] truncate text-ink-2">{s.name}</span>
-                    <span className="num text-ink-3">{s.pct.toFixed(2)}%</span>
-                  </div>
-                  <div className="h-2 overflow-hidden rounded-full bg-bg-2">
-                    <div
-                      className="h-full rounded-full bg-accent/70"
-                      style={{ width: `${Math.min(100, Math.max(2, s.pct))}%` }}
-                    />
-                  </div>
-                </div>
-              ))
-            ) : (
-              <p className="text-[12px] text-ink-3">Chưa đủ dữ liệu để vẽ phân bố.</p>
-            )}
-            <p className="text-[10px] text-ink-3">Top cổ đông theo dữ liệu VNDirect.</p>
           </div>
         </Panel>
       </div>
 
-      <Panel title={<SectionHeading eyebrow="Governance" title="Hội đồng quản trị" count={data.board.length} />}>
-        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-          {data.board.length ? (
-            data.board.map((b, i) => (
-              <div key={i} className="rounded-md border border-line/60 bg-bg-2/40 p-3 text-[12px]">
-                <div className="font-medium text-ink">{b.name}</div>
-                <div className="mt-1 text-ink-3">{b.role}</div>
-              </div>
-            ))
-          ) : (
-            <p className="text-[12px] text-ink-3">Chưa có dữ liệu HĐQT từ nguồn hiện tại.</p>
-          )}
-        </div>
-      </Panel>
-      {data.notes.length > 0 && (
-        <p className="flex items-center gap-2 text-[11px] text-warn/90">
-          <Gauge />
-          {data.notes.join(" • ")}
+      {swot ? (
+        <Panel className="mt-3 space-y-3">
+          <SectionHeading eyebrow="SWOT" title="Điểm mạnh · yếu · cơ hội · đe dọa" />
+          <div className="grid gap-2 sm:grid-cols-2">
+            <ListBlock title="Strengths" items={swot.strengths} />
+            <ListBlock title="Weaknesses" items={swot.weaknesses} />
+            <ListBlock title="Opportunities" items={swot.opportunities} />
+            <ListBlock title="Threats" items={swot.threats} />
+          </div>
+        </Panel>
+      ) : null}
+
+      {data.valueChain ? (
+        <Panel className="mt-3 space-y-3">
+          <SectionHeading eyebrow="Value chain" title="Chuỗi giá trị" tone="accent" />
+          <div className="grid gap-2 md:grid-cols-3">
+            <ListBlock title="Đầu vào" items={data.valueChain.input} />
+            <ListBlock title="Quy trình" items={data.valueChain.process} />
+            <ListBlock title="Đầu ra" items={data.valueChain.output} />
+          </div>
+          <div className="flex items-center gap-1 text-[11px] text-ink-3">
+            <Waypoints className="size-3.5" /> <ArrowRight className="size-3" /> Chuỗi suy từ hồ sơ + BCTC
+          </div>
+        </Panel>
+      ) : null}
+
+      {data.notes?.length ? (
+        <p className="mt-3 flex items-start gap-2 text-[11px] text-ink-3">
+          <Gauge className="mt-0.5 size-3.5 shrink-0" />
+          {data.notes.join(" · ")}
         </p>
-      )}
+      ) : null}
     </main>
   );
 }
