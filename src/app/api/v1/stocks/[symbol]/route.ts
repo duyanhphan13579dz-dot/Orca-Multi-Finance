@@ -3,29 +3,45 @@ import { getVnStockDetail } from "@/lib/services/stocks";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
-export const maxDuration = 30;
+export const maxDuration = 60;
 
 /**
  * GET /api/v1/stocks/:symbol — overview pack (quote · ohlcv · tech · profile · fin).
- * Soft-SWR cached in service; Data Hub scope for singleflight with sibling panels.
+ * Soft-SWR cached in service; retries once on hard failure; prefers partial data over 503.
  */
 export async function GET(_req: Request, ctx: { params: Promise<{ symbol: string }> }) {
   const { symbol } = await ctx.params;
-  try {
+  const sym = (symbol ?? "").toUpperCase();
+
+  async function load() {
     const { runInDataHub } = await import("@/lib/data-engine/hub");
-    const r = await runInDataHub(() => getVnStockDetail(symbol));
-    if (!r) {
+    return runInDataHub(() => getVnStockDetail(sym));
+  }
+
+  try {
+    let r = await load();
+    if (!r?.detail) {
+      await new Promise((res) => setTimeout(res, 400));
+      r = await load();
+    }
+    if (!r?.detail) {
       return unavailable(
-        "vndirect",
-        `Không lấy được dữ liệu ${symbol.toUpperCase()} từ VNDirect — xem /system để biết trạng thái provider.`,
+        "vn-market",
+        `Không lấy được dữ liệu ${sym} — các nguồn SSI/VNDirect/public đang thử lại.`,
       );
     }
     return ok(r.detail, r.meta);
   } catch (e) {
-    console.error("[stocks/detail]", e);
+    console.error("[stocks/detail]", sym, e);
+    try {
+      const direct = await getVnStockDetail(sym);
+      if (direct?.detail) return ok(direct.detail, direct.meta);
+    } catch {
+      /* */
+    }
     return unavailable(
-      "vndirect",
-      e instanceof Error ? e.message : `Lỗi tải ${symbol.toUpperCase()}`,
+      "vn-market",
+      e instanceof Error ? e.message : `Lỗi tải ${sym}`,
     );
   }
 }
