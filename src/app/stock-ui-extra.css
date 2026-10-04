@@ -1,26 +1,15 @@
-.stock-decision-strip{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:0.55rem 0.85rem;border:1px solid var(--color-border-subtle);border-radius:0.75rem;background:color-mix(in srgb,var(--color-surface-primary) 92%,transparent);padding:0.55rem 0.85rem;transition:border-color 0.2s ease,box-shadow 0.2s ease}
-.stock-decision-strip--up{border-color:color-mix(in srgb,var(--color-up) 40%,var(--color-border-subtle));box-shadow:inset 3px 0 0 var(--color-up)}
-.stock-decision-strip--down{border-color:color-mix(in srgb,var(--color-down) 40%,var(--color-border-subtle));box-shadow:inset 3px 0 0 var(--color-down)}
-.stock-decision-strip--neutral{box-shadow:inset 3px 0 0 color-mix(in srgb,var(--color-text-muted) 55%,transparent)}
-.stock-decision-left{display:flex;align-items:center;flex-wrap:wrap;gap:0.45rem 0.65rem;min-width:0}
-.stock-decision-metrics{display:flex;align-items:center;flex-wrap:wrap;justify-content:flex-end;gap:0.35rem}
-.stock-signal-badge{display:inline-flex;align-items:center;gap:0.35rem;padding:0.28rem 0.55rem;border-radius:0.5rem;font-size:0.78rem;font-weight:750;letter-spacing:0.02em;border:1px solid var(--color-border-subtle);background:color-mix(in srgb,var(--color-surface-elevated) 70%,transparent);color:var(--color-text-secondary);line-height:1.2}
-.stock-signal-badge--up{border-color:color-mix(in srgb,var(--color-up) 45%,transparent);background:color-mix(in srgb,var(--color-up) 14%,transparent);color:var(--color-up)}
-.stock-signal-badge--down{border-color:color-mix(in srgb,var(--color-down) 45%,transparent);background:color-mix(in srgb,var(--color-down) 14%,transparent);color:var(--color-down)}
-.stock-signal-badge-conf{font-size:0.65rem;font-weight:600;opacity:0.85;padding-left:0.25rem;border-left:1px solid color-mix(in srgb,currentColor 35%,transparent)}
-.stock-decision-trend{display:inline-flex;align-items:center;gap:0.3rem;font-size:0.72rem;font-weight:550;color:var(--color-text-secondary);white-space:nowrap}
-.stock-decision-reason{max-width:min(16rem,42vw);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:0.68rem;color:var(--color-text-muted)}
-.stock-plan-group{display:inline-flex;align-items:center;flex-wrap:wrap;gap:0.3rem;padding:0.15rem;border-radius:0.5rem;border:1px dashed color-mix(in srgb,var(--color-accent-primary) 35%,var(--color-border-subtle));background:color-mix(in srgb,var(--color-accent-primary) 6%,transparent)}
-.stock-metric-chip{display:inline-flex;align-items:baseline;gap:0.3rem;border:1px solid var(--color-border-subtle);border-radius:0.45rem;background:color-mix(in srgb,var(--color-surface-elevated) 72%,transparent);padding:0.28rem 0.5rem}
-.stock-metric-chip--emphasis{border-color:color-mix(in srgb,var(--color-accent-primary) 40%,var(--color-border-subtle));background:color-mix(in srgb,var(--color-accent-primary) 10%,transparent)}
-.stock-metric-chip--up{border-color:color-mix(in srgb,var(--color-up) 28%,var(--color-border-subtle))}
-.stock-metric-chip--down{border-color:color-mix(in srgb,var(--color-down) 28%,var(--color-border-subtle))}
-.stock-metric-chip-label{font-size:0.6rem;font-weight:650;letter-spacing:0.04em;text-transform:uppercase;color:var(--color-text-muted)}
-.stock-metric-chip-value{font-size:0.78rem;font-weight:700;font-variant-numeric:tabular-nums;color:var(--color-text-primary)}
-.stock-metric-chip--up .stock-metric-chip-value{color:var(--color-up)}
-.stock-metric-chip--down .stock-metric-chip-value{color:var(--color-down)}
-.chart-meta-strip{display:flex;flex-wrap:wrap;align-items:center;gap:0.35rem 0.45rem;padding:0.35rem 0.5rem;border-bottom:1px solid color-mix(in srgb,var(--color-border-subtle) 80%,transparent)}
-.chart-meta-item{display:inline-flex;align-items:center;gap:0.3rem;padding:0.2rem 0.45rem;border-radius:0.4rem;border:1px solid var(--color-border-subtle);background:color-mix(in srgb,var(--color-surface-elevated) 65%,transparent);font-size:0.68rem;line-height:1.2;white-space:nowrap}
-.chart-meta-item-label{font-weight:650;color:var(--color-text-muted);text-transform:uppercase;letter-spacing:0.03em;font-size:0.58rem}
-.chart-meta-item-value{font-weight:700;font-variant-numeric:tabular-nums;color:var(--color-text-primary)}
-@media (max-width:720px){.stock-decision-strip{flex-direction:column;align-items:stretch;gap:0.5rem}.stock-decision-metrics{justify-content:flex-start}.stock-decision-reason{max-width:100%}.stock-plan-group{width:100%}}
+/* Stock UI extras — keep lightweight to avoid CSS parse issues */
+.stock-plan-group {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  padding: 0.15rem;
+  border-radius: 0.5rem;
+  border: 1px dashed color-mix(in srgb, var(--color-accent-primary) 35%, var(--color-border-subtle));
+  background: color-mix(in srgb, var(--color-accent-primary) 6%, transparent);
+}
+.stock-metric-chip--emphasis {
+  border-color: color-mix(in srgb, var(--color-accent-primary) 40%, var(--color-border-subtle));
+  background: color-mix(in srgb, var(--color-accent-primary) 10%, transparent);
+}
