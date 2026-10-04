@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import "./stock-ui.css";
 import "./stock-ui-extra.css";
+import "./chart-ui.css";
 import "./motion.css";
 import { AppShell } from "@/components/shell";
 import { ClientProviders } from "@/components/client-providers";
