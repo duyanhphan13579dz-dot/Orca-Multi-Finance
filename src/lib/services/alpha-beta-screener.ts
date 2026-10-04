@@ -66,7 +66,7 @@ export async function screenAlphaBeta(args?: {
     };
   }
 
-  const quotes = await getVnQuotes().catch(() => null);
+  const quotes = await getVnQuotes(universe).catch(() => null);
   const qMap = new Map(
     (quotes?.quotes ?? []).map((q) => [String(q.symbol).toUpperCase(), q] as const),
   );
