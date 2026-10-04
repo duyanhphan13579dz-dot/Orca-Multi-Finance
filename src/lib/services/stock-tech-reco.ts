@@ -68,9 +68,9 @@ function stanceFromScore(score: number): {
   label: string;
   tone: RecoTone;
 } {
-  if (score >= 25)
+  if (score >= 18)
     return { stance: "watch-long", signal: "MUA", label: "Tín hiệu MUA (kỹ thuật)", tone: "up" };
-  if (score <= -25)
+  if (score <= -18)
     return { stance: "watch-short", signal: "BÁN", label: "Tín hiệu BÁN (kỹ thuật)", tone: "down" };
   return {
     stance: "neutral",
@@ -329,7 +329,7 @@ export function computeStockTechReco(
   // Align with composite engine tradeSignal when present
   if (tech.tradeSignal) {
     const ts = tech.tradeSignal;
-    if ((ts.action === "buy" || ts.action === "sell") && ts.plan && (ts.confidence ?? 0) >= 58) {
+    if ((ts.action === "buy" || ts.action === "sell") && ts.plan && (ts.confidence ?? 0) >= 50) {
       signal = ts.action === "buy" ? "MUA" : "BÁN";
       stance = ts.action === "buy" ? "watch-long" : "watch-short";
       tone = ts.action === "buy" ? "up" : "down";
