@@ -85,43 +85,6 @@ export function macd(
   return { macd: macdLine, signal, histogram };
 }
 
-export function stochastic(
-  highs: number[],
-  lows: number[],
-  closes: number[],
-  period = 14,
-  smooth = 3,
-): (number | null)[] {
-  const n = closes.length;
-  const raw: (number | null)[] = new Array(n).fill(null);
-  for (let i = period - 1; i < n; i++) {
-    let hi = -Infinity;
-    let lo = Infinity;
-    for (let j = i - period + 1; j <= i; j++) {
-      if (highs[j] > hi) hi = highs[j];
-      if (lows[j] < lo) lo = lows[j];
-    }
-    const range = hi - lo;
-    raw[i] = range > 1e-12 ? ((closes[i] - lo) / range) * 100 : 50;
-  }
-  if (smooth <= 1) return raw;
-  const out: (number | null)[] = new Array(n).fill(null);
-  for (let i = 0; i < n; i++) {
-    if (raw[i] == null) continue;
-    if (i < period - 1 + smooth - 1) continue;
-    let sum = 0;
-    let cnt = 0;
-    for (let j = i - smooth + 1; j <= i; j++) {
-      if (raw[j] != null) {
-        sum += raw[j] as number;
-        cnt++;
-      }
-    }
-    if (cnt === smooth) out[i] = sum / cnt;
-  }
-  return out;
-}
-
 export function bollinger(
   values: number[],
   period = 20,
@@ -416,6 +379,25 @@ export function buildTechnicalSnapshot(barsIn: OhlcvBar[]): TechnicalSnapshot | 
     if (prevH >= 0 && macdRes.histogram < 0) macdCross = "bear";
   }
 
+  let bbPosition: -1 | 0 | 1 | null = null;
+  if (bb) {
+    if (last >= bb.upper) bbPosition = 1;
+    else if (last <= bb.lower) bbPosition = -1;
+    else bbPosition = 0;
+  }
+
+  const flowPressure =
+    flow?.label === "strong-inflow" || flow?.label === "inflow"
+      ? ("positive" as const)
+      : flow?.label === "strong-outflow" || flow?.label === "outflow"
+        ? ("negative" as const)
+        : flow && flow.label !== "unknown"
+          ? ("neutral" as const)
+          : null;
+
+  const volumeConfirmed =
+    flow?.volumeRatio20 != null ? flow.volumeRatio20 >= 1.15 : null;
+
   const tradeSignalBase: TradeSignal = computeTradeSignal(candlePatterns, {
     trendScore: score,
     trendLabel: label,
@@ -424,6 +406,10 @@ export function buildTechnicalSnapshot(barsIn: OhlcvBar[]): TechnicalSnapshot | 
     macdCross,
     priceAboveSma20: sma20 != null ? last > sma20 : null,
     priceAboveSma50: sma50 != null ? last > sma50 : null,
+    priceAboveSma200: sma200 != null ? last > sma200 : null,
+    volumeConfirmed,
+    bbPosition,
+    flowPressure,
   });
 
   let plan = null as ReturnType<typeof buildStockTradePlan>;
