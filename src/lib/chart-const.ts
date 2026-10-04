@@ -1,10 +1,10 @@
 /**
  * UNIFIED CHART DATA MODEL + TIMEFRAME MAPS
+ * Shared by API routes, engines, and client chart components.
  */
 
-export type ChartAssetType = "crypto" | "forex" | "stock" | "commodity";
-
 export interface ChartCandle {
+  /** Unix epoch milliseconds */
   time: number;
   open: number;
   high: number;
@@ -13,56 +13,32 @@ export interface ChartCandle {
   volume: number;
 }
 
-export interface IndicatorPoint {
-  time: number;
-  value: number;
-}
+export type ChartAssetType = "crypto" | "forex" | "stock" | "commodity";
 
-export interface MacdPoint {
-  time: number;
-  macd: number;
-  signal: number;
-  histogram: number;
-}
+export const TF_MS: Record<string, number> = {
+  "1m": 60_000,
+  "3m": 3 * 60_000,
+  "5m": 5 * 60_000,
+  "15m": 15 * 60_000,
+  "30m": 30 * 60_000,
+  "1h": 60 * 60_000,
+  "2h": 2 * 60 * 60_000,
+  "4h": 4 * 60 * 60_000,
+  "6h": 6 * 60 * 60_000,
+  "12h": 12 * 60 * 60_000,
+  "1d": 24 * 60 * 60_000,
+  "1w": 7 * 24 * 60 * 60_000,
+  "1M": 30 * 24 * 60 * 60_000,
+  "12M": 365 * 24 * 60 * 60_000,
+};
 
-export interface ChartIndicators {
-  ema20?: IndicatorPoint[];
-  ema50?: IndicatorPoint[];
-  ema200?: IndicatorPoint[];
-  ma10?: IndicatorPoint[];
-  ma20?: IndicatorPoint[];
-  ma50?: IndicatorPoint[];
-  ma100?: IndicatorPoint[];
-  ma200?: IndicatorPoint[];
-  bollinger?: { time: number; upper: number; mid: number; lower: number }[];
-  vwap?: IndicatorPoint[];
-  rsi?: IndicatorPoint[];
-  macd?: MacdPoint[];
-  srLevels?: { price: number; kind: "support" | "resistance" }[];
-}
+export const CRYPTO_TFS = ["1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "12h", "1d", "1w", "1M", "12M"] as const;
 
-export interface ChartSignalMarker {
-  time: number;
-  position: "aboveBar" | "belowBar";
-  color: string;
-  shape: "arrowUp" | "arrowDown" | "circle";
-  text?: string;
-}
+export const FOREX_TFS = ["5m", "15m", "30m", "1h", "4h", "1d", "1w", "1M", "12M"] as const;
 
-export interface ChartMarketData {
-  candles: ChartCandle[];
-  indicators: ChartIndicators | null;
-  markers: ChartSignalMarker[];
-  intervalMs: number;
-  gaps: number;
-  suspect: number;
-  /** Echo request timeframe so client can ignore stale/keepPrevious payloads */
-  timeframe?: string;
-}
+/** VN stocks — dchart native: 1/5/15/30/60/D; 4h/1w/1M aggregated */
+export const STOCK_TFS = ["1m", "5m", "15m", "1h", "4h", "1d", "1w", "1M", "12M"] as const;
 
-export const CRYPTO_TFS = ["1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "12h", "1d", "1w"] as const;
-export const FOREX_TFS = ["1m", "5m", "15m", "30m", "1h", "4h", "1d", "1w", "1M"] as const;
-export const STOCK_TFS = ["1m", "5m", "15m", "30m", "1h", "4h", "1d", "1w", "1M", "12M"] as const;
 export const COMMODITY_TFS = ["5m", "15m", "30m", "1h", "4h", "1d", "1w", "1M", "12M"] as const;
 
 export function tfsFor(asset: ChartAssetType): readonly string[] {
@@ -89,77 +65,96 @@ export const TF_LABEL: Record<string, string> = {
   "12M": "12M",
 };
 
-export const TF_MS: Record<string, number> = {
-  "1m": 60_000,
-  "3m": 180_000,
-  "5m": 300_000,
-  "15m": 900_000,
-  "30m": 1_800_000,
-  "1h": 3_600_000,
-  "2h": 7_200_000,
-  "4h": 14_400_000,
-  "6h": 21_600_000,
-  "12h": 43_200_000,
-  "1d": 86_400_000,
-  "1w": 604_800_000,
-  "1M": 2_592_000_000,
-  "12M": 31_536_000_000,
-};
-
-/** binance kline interval for crypto timeframe (1:1 where available) */
-export function binanceInterval(tf: string): string | null {
-  const map: Record<string, string> = {
-    "1m": "1m",
-    "3m": "3m",
-    "5m": "5m",
-    "15m": "15m",
-    "30m": "30m",
-    "1h": "1h",
-    "2h": "2h",
-    "4h": "4h",
-    "6h": "6h",
-    "12h": "12h",
-    "1d": "1d",
-    "1w": "1w",
-  };
-  return map[tf] ?? null;
+/** Map app timeframe → Binance kline interval (crypto). */
+export function binanceInterval(tf: string): string {
+  if (tf === "1M") return "1M";
+  if (tf === "12M") return "1M";
+  return tf;
 }
 
-/** VNDirect dchart resolution for stock TF */
-export function vndDchartResolution(tf: string): "D" | "1" | "5" | "15" | "30" | "60" | null {
-  const map: Record<string, "D" | "1" | "5" | "15" | "30" | "60"> = {
-    "1m": "1",
-    "5m": "5",
-    "15m": "15",
-    "30m": "30",
-    "1h": "60",
-    "1d": "D",
-  };
-  return map[tf] ?? null;
+/** Map app timeframe → VNDirect dchart resolution. Null = needs aggregation. */
+export function vndDchartResolution(tf: string): "1" | "5" | "15" | "30" | "60" | "D" | null {
+  switch (tf) {
+    case "1m":
+      return "1";
+    case "5m":
+      return "5";
+    case "15m":
+      return "15";
+    case "30m":
+      return "30";
+    case "1h":
+      return "60";
+    case "1d":
+      return "D";
+    default:
+      return null;
+  }
 }
 
-/** aggregate small candles into a larger timeframe */
-export function aggregateCandles(
-  bars: ChartCandle[],
-  bucketMs: number,
-): ChartCandle[] {
-  if (!bars.length || bucketMs <= 0) return bars;
+/** Aggregate lower-TF candles into higher TF buckets (ms-aligned). */
+export function aggregateCandles(candles: ChartCandle[], tfMs: number): ChartCandle[] {
+  if (!candles.length || tfMs <= 0) return candles;
   const out: ChartCandle[] = [];
+  let bucket: ChartCandle | null = null;
   let bucketStart = -1;
-  let cur: ChartCandle | null = null;
-  for (const b of bars) {
-    const t = Math.floor(b.time / bucketMs) * bucketMs;
-    if (t !== bucketStart || !cur) {
-      if (cur) out.push(cur);
-      bucketStart = t;
-      cur = { time: t, open: b.open, high: b.high, low: b.low, close: b.close, volume: b.volume };
+  for (const c of candles) {
+    const start = Math.floor(c.time / tfMs) * tfMs;
+    if (bucket && start === bucketStart) {
+      bucket.high = Math.max(bucket.high, c.high);
+      bucket.low = Math.min(bucket.low, c.low);
+      bucket.close = c.close;
+      bucket.volume += c.volume ?? 0;
     } else {
-      cur.high = Math.max(cur.high, b.high);
-      cur.low = Math.min(cur.low, b.low);
-      cur.close = b.close;
-      cur.volume += b.volume;
+      if (bucket) out.push(bucket);
+      bucketStart = start;
+      bucket = {
+        time: start,
+        open: c.open,
+        high: c.high,
+        low: c.low,
+        close: c.close,
+        volume: c.volume ?? 0,
+      };
     }
   }
-  if (cur) out.push(cur);
+  if (bucket) out.push(bucket);
   return out;
+}
+
+export interface IndicatorPoint {
+  time: number;
+  value: number;
+}
+
+export interface ChartIndicators {
+  ema20: IndicatorPoint[];
+  ema50: IndicatorPoint[];
+  sma20: IndicatorPoint[];
+  sma50: IndicatorPoint[];
+  rsi: IndicatorPoint[];
+  macd: { macd: IndicatorPoint[]; signal: IndicatorPoint[]; histogram: IndicatorPoint[] };
+  bollinger: { upper: IndicatorPoint[]; mid: IndicatorPoint[]; lower: IndicatorPoint[] };
+  vwap: IndicatorPoint[];
+  atr: IndicatorPoint[];
+  levels?: { support: number[]; resistance: number[] };
+}
+
+export interface ChartSignalMarker {
+  time: number;
+  position: "aboveBar" | "belowBar";
+  shape: "arrowUp" | "arrowDown" | "circle";
+  color: string;
+  text?: string;
+}
+
+export interface ChartMarketData {
+  candles: ChartCandle[];
+  indicators: ChartIndicators | null;
+  markers: ChartSignalMarker[];
+  intervalMs: number;
+  gaps: number;
+  suspect: number;
+  /** Echo request timeframe so client can ignore stale payloads */
+  timeframe?: string;
 }
