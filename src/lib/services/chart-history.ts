@@ -1,31 +1,35 @@
 import "server-only";
 import { cached } from "../cache";
 import { buildMeta } from "../freshness";
+import * as binance from "../providers/binance";
+import { getYahooChart, yahooIntervalFor, yahooSymbolForPair } from "../providers/yahoo";
+import { getBiquotePublicOhlc, biquoteIntervalFor } from "../providers/forex";
+import { getVnOhlcv } from "./stocks";
+import { validateBars, detectGaps } from "../quality";
 import {
   aggregateCandles,
+  binanceInterval,
   TF_MS,
   tfsFor,
   vndDchartResolution,
   type ChartAssetType,
   type ChartCandle,
-  type ChartIndicators,
-  type ChartMarketData,
-  type ChartSignalMarker,
 } from "../chart-const";
-import { getYahooChart, yahooIntervalFor, yahooSymbolForPair } from "../providers/yahoo";
-import { getBiquotePublicOhlc, biquoteIntervalFor } from "../providers/forex";
-import { getVnOhlcv } from "./stocks";
 import type { Meta, OhlcvBar } from "../types";
-import { validateBars, detectGaps } from "../data-quality";
 import {
+  type ChartIndicators,
+  type ChartSignalMarker,
+  type ChartMarketData,
+  type ChartArgs,
+  type IndicatorPoint,
   computeMarkers,
   computeIndicators,
   isChartableCommodity,
   canonicalIndexSymbol,
   validateIndexCandles,
-  scaleVnStockToFullVnd,
   toCandle,
-} from "./chart-helpers";
+  scaleVnStockToFullVnd,
+} from "./chart-core";
 
 export type {
   IndicatorPoint,
@@ -33,41 +37,45 @@ export type {
   ChartSignalMarker,
   ChartMarketData,
   ChartArgs,
-} from "./chart-history-types";
+} from "./chart-core";
 
-// Re-export helpers used by index
 export {
   computeMarkers,
   computeIndicators,
   isChartableCommodity,
   canonicalIndexSymbol,
   validateIndexCandles,
-};
+} from "./chart-core";
 
-export interface ChartArgs {
-  symbol: string;
-  assetType: ChartAssetType;
-  timeframe: string;
-  limit?: number;
-}
-
-interface CandleSeriesResult {
+type CandleSeriesResult = {
   candles: ChartCandle[];
   source: string;
   note?: string;
-}
+};
 
 function maxHistoryLimit(assetType: ChartAssetType): number {
-  if (assetType === "crypto") return 5000;
-  if (assetType === "stock") return 2500;
+  if (assetType === "crypto") return 1500;
   if (assetType === "forex" || assetType === "commodity") return 800;
-  return 1000;
+  return 600;
+}
+
+async function cryptoCandles(symbol: string, tf: string, limit: number): Promise<CandleSeriesResult> {
+  const interval = binanceInterval(tf);
+  const raw = await binance.getKlinesDeep(symbol, interval, Math.min(limit, 5000));
+  const candles: ChartCandle[] = (raw ?? []).map((k) => ({
+    time: k.time,
+    open: k.open,
+    high: k.high,
+    low: k.low,
+    close: k.close,
+    volume: k.volume,
+  }));
+  return { candles, source: "binance" };
 }
 
 /**
  * VN stock/index candles for a specific timeframe.
- * Native dchart resolutions: 1m/5m/15m/30m/1h/1d.
- * Aggregated: 4h (from 1h), 1w/1M/12M (from daily).
+ * Native dchart: 1m/5m/15m/30m/1h/1d. Aggregated: 4h, 1w/1M/12M.
  */
 async function stockCandles(symbol: string, tf: string, limit: number): Promise<CandleSeriesResult> {
   const want = Math.min(Math.max(limit, 40), 2000);
@@ -114,9 +122,7 @@ async function stockCandles(symbol: string, tf: string, limit: number): Promise<
 
   if (!native && !usedDailyFallback) {
     const tfMs = TF_MS[tf];
-    if (tfMs && candles.length) {
-      candles = aggregateCandles(candles, tfMs);
-    }
+    if (tfMs && candles.length) candles = aggregateCandles(candles, tfMs);
   } else if (!native && usedDailyFallback) {
     if (tf === "1w" || tf === "1M" || tf === "12M") {
       const tfMs = TF_MS[tf];
@@ -124,19 +130,11 @@ async function stockCandles(symbol: string, tf: string, limit: number): Promise<
     }
   }
 
-  // Never label daily bars as intraday — causes TF switch to look broken
-  if (usedDailyFallback && native && native !== "D") {
+  if (usedDailyFallback && ((native && native !== "D") || tf === "4h")) {
     return {
       candles: [],
       source,
       note: `intraday ${tf} chưa có — dchart đang gián đoạn (không dùng daily giả)`,
-    };
-  }
-  if (usedDailyFallback && tf === "4h") {
-    return {
-      candles: [],
-      source,
-      note: "4h chưa có — dchart đang gián đoạn",
     };
   }
 
@@ -175,7 +173,7 @@ async function forexCandles(symbol: string, tf: string, limit: number): Promise<
         return { candles, source: "biquote-public" };
       }
     } catch {
-      /* fall through to Yahoo */
+      /* fall through */
     }
   }
   const ySymbol = yahooSymbolForPair(pair);
@@ -192,20 +190,6 @@ async function forexCandles(symbol: string, tf: string, limit: number): Promise<
       note: e instanceof Error ? e.message : "forex candles unavailable",
     };
   }
-}
-
-async function cryptoCandles(symbol: string, tf: string, limit: number): Promise<CandleSeriesResult> {
-  const { getBinanceKlines } = await import("../providers/binance");
-  const bars = await getBinanceKlines(symbol, tf, limit);
-  const candles: ChartCandle[] = (bars ?? []).map((b: OhlcvBar) => ({
-    time: b.time,
-    open: b.open,
-    high: b.high,
-    low: b.low,
-    close: b.close,
-    volume: b.volume ?? 0,
-  }));
-  return { candles, source: "binance" };
 }
 
 export async function getChartHistory(
@@ -291,7 +275,7 @@ export async function getChartHistory(
           .join(" · ") || undefined,
       slas:
         args.assetType === "crypto"
-          ? { liveSlaMs: TF_MS[tf] * 1.5, freshSlaMs: TF_MS[tf] * 4, delayedSlaMs: TF_MS[tf] * 12 }
+          ? { liveSlaMs: TF_MS[tf]! * 1.5, freshSlaMs: TF_MS[tf]! * 4, delayedSlaMs: TF_MS[tf]! * 12 }
           : { liveSlaMs: 5 * 60_000, freshSlaMs: 30 * 60_000, delayedSlaMs: 6 * 3_600_000 },
     });
 
