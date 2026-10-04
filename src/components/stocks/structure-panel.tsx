@@ -4,9 +4,25 @@ import { memo } from "react";
 import { useApi } from "@/lib/hooks";
 import type { StructureAnalysis } from "@/lib/engines/wyckoff-elliott";
 import { Badge, FreshnessDot, Loading, Panel } from "@/components/ui";
-import { GitBranch, Layers } from "lucide-react";
+import { Layers } from "lucide-react";
 
-type Data = StructureAnalysis & { symbol: string };
+type AlphaBeta = {
+  beta: number | null;
+  betaAdj: number | null;
+  betaUp: number | null;
+  betaDown: number | null;
+  alphaAnnual: number | null;
+  alphaT: number | null;
+  r2: number | null;
+  n: number;
+  profileVi: string;
+  profile: string;
+  quality?: { reliable: boolean; flags: string[] };
+  summary: string;
+  benchmark?: string;
+};
+
+type Data = StructureAnalysis & { symbol: string; alphaBeta?: AlphaBeta | null };
 
 function biasTone(b: string): "up" | "down" | "neutral" {
   if (b === "bullish") return "up";
@@ -18,11 +34,6 @@ const VOL_VI: Record<string, string> = {
   rising: "tăng",
   falling: "giảm",
   flat: "đi ngang",
-};
-
-const DEGREE_VI: Record<string, string> = {
-  minor: "nhỏ",
-  intermediate: "trung gian",
 };
 
 export const StockStructurePanel = memo(function StockStructurePanel({ symbol }: { symbol: string }) {
@@ -48,18 +59,79 @@ export const StockStructurePanel = memo(function StockStructurePanel({ symbol }:
   }
 
   const { wyckoff: w, elliott: e } = data;
+  const ab = data.alphaBeta;
 
   return (
     <Panel
       title={
         <span className="flex flex-wrap items-center gap-2">
-          <Layers className="size-4 text-accent-primary" /> Wyckoff · Elliott
+          <Layers className="size-4 text-accent-primary" /> Wyckoff · Elliott · αβ
           {meta && <FreshnessDot status={meta.freshness} ageMs={meta.ageMs} />}
         </span>
       }
     >
       <div className="space-y-3">
         <p className="text-[12px] leading-relaxed text-text-secondary">{data.summary}</p>
+
+        {ab && ab.beta != null ? (
+          <div className="rounded-lg border border-border-subtle bg-background-secondary/40 p-2.5">
+            <div className="mb-1.5 flex items-center justify-between gap-2">
+              <span className="text-[10px] font-semibold uppercase tracking-wider text-text-muted">
+                Hệ số Alpha · Beta
+              </span>
+              <Badge
+                tone={
+                  ab.profile?.includes("high_beta_low") ||
+                  ((ab.alphaAnnual ?? 0) > 0 && (ab.alphaT ?? 0) >= 2)
+                    ? "up"
+                    : ab.profile?.includes("neg")
+                      ? "down"
+                      : "neutral"
+                }
+              >
+                {ab.profileVi}
+              </Badge>
+            </div>
+            <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[12px] sm:grid-cols-4">
+              <div>
+                <div className="text-[10px] text-text-muted">α / năm</div>
+                <div className={`num font-medium ${(ab.alphaAnnual ?? 0) >= 0 ? "text-up" : "text-down"}`}>
+                  {ab.alphaAnnual != null ? `${(ab.alphaAnnual * 100).toFixed(1)}%` : "—"}
+                </div>
+              </div>
+              <div>
+                <div className="text-[10px] text-text-muted">t-stat α</div>
+                <div className="num font-medium">{ab.alphaT?.toFixed(2) ?? "—"}</div>
+              </div>
+              <div>
+                <div className="text-[10px] text-text-muted">β / β adj</div>
+                <div className="num font-medium">
+                  {ab.beta?.toFixed(2) ?? "—"}
+                  <span className="text-text-muted"> / {ab.betaAdj?.toFixed(2) ?? "—"}</span>
+                </div>
+              </div>
+              <div>
+                <div className="text-[10px] text-text-muted">R² · n</div>
+                <div className="num font-medium">
+                  {ab.r2 != null ? `${(ab.r2 * 100).toFixed(0)}%` : "—"}
+                  <span className="text-text-muted"> · {ab.n}</span>
+                </div>
+              </div>
+              {(ab.betaUp != null || ab.betaDown != null) && (
+                <div className="col-span-2 sm:col-span-4">
+                  <div className="text-[10px] text-text-muted">Up / Down β</div>
+                  <div className="num text-[12px]">
+                    {ab.betaUp?.toFixed(2) ?? "—"} / {ab.betaDown?.toFixed(2) ?? "—"}
+                  </div>
+                </div>
+              )}
+            </div>
+            <p className="mt-1.5 text-[11px] leading-relaxed text-text-secondary">{ab.summary}</p>
+            {ab.quality?.flags?.length ? (
+              <p className="mt-1 text-[10px] text-text-muted">⚠ {ab.quality.flags.join(" · ")}</p>
+            ) : null}
+          </div>
+        ) : null}
 
         <div className="grid gap-2 md:grid-cols-2">
           <div className="rounded-lg border border-border-subtle bg-background-secondary/40 p-2.5">
@@ -79,68 +151,17 @@ export const StockStructurePanel = memo(function StockStructurePanel({ symbol }:
                 </span>
               )}
             </div>
-            {w.events.length > 0 && (
-              <ul className="mt-1.5 space-y-0.5">
-                {w.events.map((ev, i) => (
-                  <li key={i} className="text-[11px] text-text-secondary">
-                    ▸ {ev}
-                  </li>
-                ))}
-              </ul>
-            )}
-            {w.notes.map((n, i) => (
-              <p key={i} className="mt-1 text-[10.5px] text-text-muted">
-                {n}
-              </p>
-            ))}
           </div>
 
           <div className="rounded-lg border border-border-subtle bg-background-secondary/40 p-2.5">
             <div className="mb-1.5 flex items-center justify-between gap-2">
-              <span className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-text-muted">
-                <GitBranch className="size-3" /> Elliott
+              <span className="text-[10px] font-semibold uppercase tracking-wider text-text-muted">
+                Elliott
               </span>
               <Badge tone={biasTone(e.bias)}>{e.confidence}%</Badge>
             </div>
-            <div className="text-[13px] font-medium text-text-primary">{e.patternVi}</div>
-            <div className="mt-1 text-[11px] text-text-muted">
-              Cấp độ: {DEGREE_VI[e.degree] ?? e.degree}
-            </div>
-            {e.waves.length > 0 && (
-              <div className="mt-1.5 flex flex-wrap gap-1">
-                {e.waves.map((wv, i) => (
-                  <span
-                    key={i}
-                    className="num rounded bg-surface-elevated px-1.5 py-0.5 text-[10px] text-text-secondary"
-                  >
-                    {wv.label}:{wv.price.toLocaleString("vi-VN", { maximumFractionDigits: 2 })}
-                  </span>
-                ))}
-              </div>
-            )}
-            <div className="mt-1.5 grid grid-cols-2 gap-1 text-[10.5px]">
-              <div>
-                <span className="text-text-muted">Vô hiệu </span>
-                <span className="num text-text-secondary">
-                  {e.invalidation != null
-                    ? e.invalidation.toLocaleString("vi-VN", { maximumFractionDigits: 2 })
-                    : "—"}
-                </span>
-              </div>
-              <div>
-                <span className="text-text-muted">Mục tiêu </span>
-                <span className="num text-text-secondary">
-                  {e.nextTarget != null
-                    ? e.nextTarget.toLocaleString("vi-VN", { maximumFractionDigits: 2 })
-                    : "—"}
-                </span>
-              </div>
-            </div>
-            {e.notes.map((n, i) => (
-              <p key={i} className="mt-1 text-[10.5px] text-text-muted">
-                {n}
-              </p>
-            ))}
+            <div className="text-[13px] font-medium text-text-primary">{e.phaseVi ?? e.labelVi ?? e.waveLabel}</div>
+            <div className="mt-1 text-[11px] text-text-muted">{e.summary ?? e.note ?? ""}</div>
           </div>
         </div>
       </div>
