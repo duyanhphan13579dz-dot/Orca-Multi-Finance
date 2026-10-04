@@ -173,8 +173,9 @@ html[data-reduced-motion="true"] .ticker-track { animation: none; }
 }
 .stock-hero-main { display: flex; min-width: 0; flex-direction: column; justify-content: center; gap: 0.18rem; }
 .stock-hero-title-row, .stock-hero-price-row {
-  display: flex; align-items: center; gap: 0.4rem;
+  display: flex; align-items: center; gap: 0.45rem; flex-wrap: wrap;
 }
+.stock-hero-price-row { align-items: flex-start; }
 .stock-hero-title-row { flex-wrap: wrap; gap: 0.4rem; }
 .stock-hero-symbol {
   margin: 0; font-size: clamp(1.15rem, 1.9vw, 1.4rem); font-weight: 750;
@@ -195,14 +196,75 @@ html[data-reduced-motion="true"] .ticker-track { animation: none; }
   letter-spacing: -0.04em; line-height: 1; color: var(--color-text-primary);
 }
 .stock-hero-empty { margin: 0; color: var(--color-text-muted); font-size: 0.78rem; }
-.stock-band-group { display: flex; flex-wrap: wrap; gap: 0.3rem; }
-.stock-band-chip, .stock-meta-chip {
+
+/* TC / Trần / Sàn framed grid */
+.stock-band-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.28rem;
+  min-width: 6.5rem;
+  flex-shrink: 0;
+}
+.stock-band-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 0.08rem;
+  min-width: 0;
+  padding: 0.22rem 0.4rem;
+  border-radius: 0.4rem;
+  border: 1px solid var(--color-border-subtle);
+  background: color-mix(in srgb, var(--color-surface-elevated) 75%, transparent);
+  line-height: 1.15;
+}
+.stock-band-cell .stock-band-label {
+  font-size: 0.52rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+.stock-band-cell .stock-band-val {
+  font-size: 0.78rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-primary);
+}
+/* TC — vàng (tham chiếu) */
+.stock-band-cell--tc {
+  border-color: color-mix(in srgb, #f5a524 45%, var(--color-border-subtle));
+  background: color-mix(in srgb, #f5a524 12%, transparent);
+}
+.stock-band-cell--tc .stock-band-label { color: #f5a524; }
+.stock-band-cell--tc .stock-band-val { color: #fbbf24; }
+/* Trần — tím */
+.stock-band-cell--ceil {
+  border-color: color-mix(in srgb, #b58cff 50%, var(--color-border-subtle));
+  background: color-mix(in srgb, #b58cff 14%, transparent);
+}
+.stock-band-cell--ceil .stock-band-label { color: #c4a1ff; }
+.stock-band-cell--ceil .stock-band-val { color: #d4b8ff; }
+/* Sàn — xanh nhạt */
+.stock-band-cell--floor {
+  grid-column: 1 / -1;
+  border-color: color-mix(in srgb, #38bdf8 48%, var(--color-border-subtle));
+  background: color-mix(in srgb, #38bdf8 12%, transparent);
+}
+.stock-band-cell--floor .stock-band-label { color: #7dd3fc; }
+.stock-band-cell--floor .stock-band-val { color: #7dd3fc; }
+@media (max-width: 480px) {
+  .stock-band-grid { min-width: 5.5rem; }
+  .stock-band-cell .stock-band-val { font-size: 0.72rem; }
+}
+
+.stock-meta-chip {
   display: inline-flex; align-items: baseline; gap: 0.3rem;
   border: 1px solid var(--color-border-subtle); border-radius: 0.4rem;
   background: color-mix(in srgb, var(--color-surface-elevated) 72%, transparent);
   padding: 0.22rem 0.42rem;
 }
-.stock-band-label, .stock-meta-chip-label {
+.stock-meta-chip-label {
   color: var(--color-text-muted); font-size: 0.58rem; font-weight: 650;
   text-transform: uppercase; letter-spacing: 0.05em;
 }
