@@ -78,10 +78,14 @@ export async function getVnIndices(): Promise<{ items: IndexQuote[]; meta: Meta 
       };
     }
     const pub = await getPublicIndices().catch(() => null);
-    if (pub?.length) {
+    const pubItems = Array.isArray(pub) ? pub : pub?.items;
+    if (pubItems?.length) {
       return {
-        items: sortIndices(pub),
-        meta: buildMeta({ source: "public-indices", sourceTimestampMs: Date.now() }),
+        items: sortIndices(pubItems),
+        meta: buildMeta({
+          source: "public-indices",
+          sourceTimestampMs: (pub as { sourceTs?: number })?.sourceTs ?? Date.now(),
+        }),
       };
     }
   } catch {
@@ -90,35 +94,90 @@ export async function getVnIndices(): Promise<{ items: IndexQuote[]; meta: Meta 
   return null;
 }
 
+async function withTimeout<T>(p: Promise<T>, ms: number): Promise<T | null> {
+  try {
+    return await Promise.race([
+      p,
+      new Promise<null>((r) => setTimeout(() => r(null), ms)),
+    ]);
+  } catch {
+    return null;
+  }
+}
+
+/** Parallel multi-source quotes — first non-empty wins; always tries public last. */
 export async function getVnQuotes(symbols: string[]): Promise<{ quotes: Quote[]; meta: Meta } | null> {
   const syms = [...new Set(symbols.map((s) => s.toUpperCase()).filter(Boolean))];
   if (!syms.length) return { quotes: [], meta: buildMeta({ source: "empty", sourceTimestampMs: Date.now() }) };
-  try {
-    if (ssiFcConfigured()) {
-      const ssi = await getSsiQuotes(syms).catch(() => null);
-      if (ssi?.quotes?.length) {
-        return {
-          quotes: ssi.quotes,
-          meta: buildMeta({ source: "ssi-fcdata", sourceTimestampMs: Date.now() }),
-        };
-      }
-    }
-    const vnd = await vndirect.getVndQuotes(syms).catch(() => null);
-    if (vnd?.quotes?.length) {
+
+  type Pack = { quotes: Quote[]; source: string; sourceTs?: number | null };
+
+  const tasks: Promise<Pack | null>[] = [];
+
+  if (ssiFcConfigured()) {
+    tasks.push(
+      withTimeout(
+        getSsiQuotes(syms).then((r) =>
+          r?.quotes?.length ? { quotes: r.quotes, source: "ssi-fcdata", sourceTs: Date.now() } : null,
+        ),
+        4_500,
+      ),
+    );
+  }
+
+  tasks.push(
+    withTimeout(
+      vndirect.getVndQuotes(syms).then((r) =>
+        r?.quotes?.length
+          ? { quotes: r.quotes, source: "vndirect", sourceTs: r.sourceTs ?? Date.now() }
+          : null,
+      ),
+      5_000,
+    ),
+  );
+
+  tasks.push(
+    withTimeout(
+      getMultiQuotes(syms).then((r) =>
+        r?.quotes?.length ? { quotes: r.quotes, source: "multi-quote", sourceTs: Date.now() } : null,
+      ),
+      7_500,
+    ),
+  );
+
+  tasks.push(
+    withTimeout(
+      getPublicQuotes(syms).then((r) =>
+        r?.quotes?.length
+          ? {
+              quotes: r.quotes,
+              source: (r.sources ?? []).join("+") || "public-vn",
+              sourceTs: r.sourceTs ?? Date.now(),
+            }
+          : null,
+      ),
+      5_500,
+    ),
+  );
+
+  const settled = await Promise.all(tasks);
+  for (const preferred of ["ssi-fcdata", "vndirect", "multi-quote", "public-vn"]) {
+    const hit = settled.find(
+      (x) => x && x.quotes.length && (x.source === preferred || x.source.startsWith(preferred)),
+    );
+    if (hit) {
       return {
-        quotes: vnd.quotes,
-        meta: buildMeta({ source: "vndirect", sourceTimestampMs: vnd.sourceTs ?? Date.now() }),
+        quotes: hit.quotes,
+        meta: buildMeta({ source: hit.source, sourceTimestampMs: hit.sourceTs ?? Date.now() }),
       };
     }
-    const multi = await getMultiQuotes(syms).catch(() => null);
-    if (multi?.quotes?.length) {
-      return {
-        quotes: multi.quotes,
-        meta: buildMeta({ source: "multi-quote", sourceTimestampMs: Date.now() }),
-      };
-    }
-  } catch {
-    /* */
+  }
+  const any = settled.find((x) => x && x.quotes.length);
+  if (any) {
+    return {
+      quotes: any.quotes,
+      meta: buildMeta({ source: any.source, sourceTimestampMs: any.sourceTs ?? Date.now() }),
+    };
   }
   return null;
 }
@@ -286,7 +345,6 @@ async function produceVnStockDetail(sym: string): Promise<{ detail: VnStockDetai
     }
   }
 
-  // CAPM alpha/beta vs VNINDEX (weekly OLS)
   if (technical && bars.length >= 80) {
     try {
       const idxPack = await getVnOhlcv("VNINDEX", Math.min(Math.max(bars.length, 260), 560));
@@ -346,33 +404,88 @@ async function produceVnStockDetail(sym: string): Promise<{ detail: VnStockDetai
   };
 }
 
+function emptyStockDetail(sym: string): VnStockDetail {
+  return {
+    symbol: sym,
+    name: null,
+    quote: null,
+    bars: [],
+    technical: null,
+    patterns: [],
+    equity: null,
+    sharesOutstanding: null,
+    profile: null,
+    orderBook: null,
+    foreignFlow: null,
+    financials: { income: null, balance: null, cashflow: null, ratios: null },
+    financialHealth: null,
+    financialMeta: null,
+    financialGrowth: null,
+    financialTtm: null,
+    detailedRatios: null,
+    ratioMap: {},
+    metricsSources: [],
+    notes: ["Nguồn tạm gián đoạn — đang thử lại."],
+  };
+}
+
 export async function getVnStockDetail(
   symbol: string,
 ): Promise<{ detail: VnStockDetail; meta: Meta } | null> {
-  const sym = symbol.toUpperCase();
-  let ttl = 25_000;
-  let stale = 90_000;
+  const sym = symbol.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  if (!sym) return null;
+  let ttl = 20_000;
+  let stale = 120_000;
   try {
     const { getVnSession } = await import("../vn/sessions");
     if (getVnSession().trading) {
-      ttl = 12_000;
-      stale = 60_000;
+      ttl = 10_000;
+      stale = 75_000;
     }
   } catch {
     /* */
   }
   try {
-    const res = await cached<{ detail: VnStockDetail; meta: Meta } | null>(`vn:stock-detail:${sym}:v3`, {
+    const res = await cached<{ detail: VnStockDetail; meta: Meta } | null>(`vn:stock-detail:${sym}:v4`, {
       ttlMs: ttl,
       staleMs: stale,
       softSwr: true,
-      producer: () => produceVnStockDetail(sym),
+      producer: async () => {
+        try {
+          return await produceVnStockDetail(sym);
+        } catch (e) {
+          console.warn("[produceVnStockDetail]", sym, e instanceof Error ? e.message : e);
+          return {
+            detail: emptyStockDetail(sym),
+            meta: buildMeta({
+              source: "degraded",
+              sourceTimestampMs: Date.now(),
+              note: "producer error — degraded shell",
+              partial: true,
+            }),
+          };
+        }
+      },
     });
-    if (!res.value) return null;
-    return { detail: res.value.detail, meta: res.value.meta };
-  } catch {
-    return produceVnStockDetail(sym);
+    if (res.value?.detail) return { detail: res.value.detail, meta: res.value.meta };
+  } catch (e) {
+    console.warn("[getVnStockDetail cache]", sym, e instanceof Error ? e.message : e);
   }
+  try {
+    const direct = await produceVnStockDetail(sym);
+    if (direct) return direct;
+  } catch {
+    /* */
+  }
+  return {
+    detail: emptyStockDetail(sym),
+    meta: buildMeta({
+      source: "degraded",
+      sourceTimestampMs: Date.now(),
+      note: "all providers unavailable",
+      partial: true,
+    }),
+  };
 }
 
 export { getVnOrderBook, type VnOrderBook } from "./stock-orderbook";
