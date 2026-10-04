@@ -1,9 +1,10 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useApi } from "@/lib/hooks";
 import { Badge, FreshnessDot, Loading, Panel, Unavailable } from "@/components/ui";
+import { ChevronDown } from "lucide-react";
 
 type Row = {
   symbol: string;
@@ -75,6 +76,81 @@ function profileTone(p: string): "up" | "down" | "warn" | "neutral" {
   return "neutral";
 }
 
+/** Dark-theme listbox — native <option> forces light OS menu on many browsers. */
+function ProfileSelect({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const label = PROFILES.find((p) => p.v === value)?.l ?? "Tất cả hồ sơ";
+
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      if (!rootRef.current?.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  return (
+    <div ref={rootRef} className="relative w-48">
+      <button
+        type="button"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+        className="input flex w-full !w-48 items-center justify-between gap-1.5 !py-1.5 text-left text-[12px] shadow-[0_2px_10px_rgba(0,0,0,0.35),inset_0_1px_0_rgba(255,255,255,0.04)]"
+      >
+        <span className="truncate text-text-primary">{label}</span>
+        <ChevronDown
+          className={`size-3.5 shrink-0 text-text-muted transition-transform ${open ? "rotate-180" : ""}`}
+          aria-hidden
+        />
+      </button>
+      {open ? (
+        <ul
+          role="listbox"
+          className="absolute left-0 right-0 z-50 mt-1 max-h-60 overflow-auto rounded-lg border border-border-default bg-[var(--color-surface-modal)] py-1 shadow-[0_12px_28px_rgba(0,0,0,0.55),0_0_0_1px_rgba(255,255,255,0.04)]"
+        >
+          {PROFILES.map((p) => {
+            const active = p.v === value;
+            return (
+              <li key={p.v} role="option" aria-selected={active}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    onChange(p.v);
+                    setOpen(false);
+                  }}
+                  className={`flex w-full px-2.5 py-1.5 text-left text-[12px] transition-colors ${
+                    active
+                      ? "bg-accent-primary/20 font-medium text-accent-primary"
+                      : "text-text-primary hover:bg-surface-elevated"
+                  }`}
+                >
+                  {p.l}
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      ) : null}
+    </div>
+  );
+}
+
 export function AlphaBetaScreener({ defaultSector }: { defaultSector: string | null }) {
   const [profile, setProfile] = useState("alpha_high_beta_low");
   const [minAlphaT, setMinAlphaT] = useState("2");
@@ -142,19 +218,9 @@ export function AlphaBetaScreener({ defaultSector }: { defaultSector: string | n
       pad={false}
     >
       <div className="flex flex-wrap items-end gap-2 border-b border-line p-3">
-        <label>
+        <label className="block">
           <span className="mb-0.5 block text-[10px] uppercase tracking-wider text-text-muted">Hồ sơ</span>
-          <select
-            value={profile}
-            onChange={(e) => setProfile(e.target.value)}
-            className="input !w-48 !py-1.5 text-[12px]"
-          >
-            {PROFILES.map((p) => (
-              <option key={p.v} value={p.v}>
-                {p.l}
-              </option>
-            ))}
-          </select>
+          <ProfileSelect value={profile} onChange={setProfile} />
         </label>
         <label>
           <span className="mb-0.5 block text-[10px] uppercase tracking-wider text-text-muted">|t-α| min</span>
