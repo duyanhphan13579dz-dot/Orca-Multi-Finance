@@ -1,6 +1,6 @@
 /**
  * Composite trade signal — tối ưu độ chính xác, giảm nhiễu.
- * MUA / BÁN chỉ khi nến + kỹ thuật đồng thuận (hoặc nến đảo chiều rất mạnh + volume).
+ * MUA / BÁN khi nến + KT đồng thuận, nến đảo chiều mạnh, hoặc setup KT thuần.
  * Còn lại → QUAN SÁT.
  */
 import type { DetectedCandlePattern } from "./candlestick-patterns";
@@ -30,16 +30,25 @@ export interface TechSnapshot {
   macdCross?: "bull" | "bear" | null;
   priceAboveSma20?: boolean | null;
   priceAboveSma50?: boolean | null;
+  /** Giá so với SMA200 */
+  priceAboveSma200?: boolean | null;
   volumeConfirmed?: boolean | null;
+  /** Vị trí trong Bollinger: -1 dưới lower, 0 giữa, +1 trên upper */
+  bbPosition?: -1 | 0 | 1 | null;
+  /** Áp lực dòng tiền */
+  flowPressure?: "positive" | "negative" | "neutral" | null;
 }
 
-/** Ngưỡng siết — giảm false positive */
-const MIN_PATTERN_SCORE = 58;
-const MAX_AGE_BARS = 3;
-const BUY_BIAS = 38;
-const SELL_BIAS = -38;
-const MIN_CONF_ACTION = 58;
-const MIN_CONF_SOFT = 52;
+/** Ngưỡng cân bằng: đủ nhạy để bắt setup, vẫn lọc nhiễu */
+const MIN_PATTERN_SCORE = 52;
+const MAX_AGE_BARS = 4;
+const BUY_BIAS = 28;
+const SELL_BIAS = -28;
+const MIN_CONF_ACTION = 50;
+const MIN_CONF_SOFT = 46;
+/** Tech-only path: xu hướng + MACD đủ mạnh, không bắt buộc nến */
+const TECH_ONLY_BIAS = 34;
+const TECH_ONLY_CONF = 54;
 
 function ageWeight(ageBars: number | undefined): number {
   const a = ageBars ?? 99;
@@ -150,9 +159,11 @@ export function techBiasFromSnapshot(t: TechSnapshot): { bias: number; reasons: 
   let bias = 0;
   const reasons: string[] = [];
 
+  // trendScore is −100…+100 — scale to ±36 max (was incorrectly /3 * 32 → saturated)
   if (t.trendScore != null && Number.isFinite(t.trendScore)) {
-    if (Math.abs(t.trendScore) >= 0.75) {
-      bias += (t.trendScore / 3) * 32;
+    const abs = Math.abs(t.trendScore);
+    if (abs >= 12) {
+      bias += (t.trendScore / 100) * 36;
       if (t.trendLabel === "strong-up" || t.trendLabel === "up") {
         reasons.push("Xu hướng KT nghiêng tăng");
       } else if (t.trendLabel === "strong-down" || t.trendLabel === "down") {
@@ -163,51 +174,78 @@ export function techBiasFromSnapshot(t: TechSnapshot): { bias: number; reasons: 
 
   if (t.rsi14 != null) {
     if (t.rsi14 >= 72) {
-      bias -= 14;
+      bias -= 12;
       reasons.push(`RSI ${t.rsi14.toFixed(0)} quá mua`);
     } else if (t.rsi14 <= 28) {
-      bias += 14;
+      bias += 12;
       reasons.push(`RSI ${t.rsi14.toFixed(0)} quá bán`);
-    } else if (t.rsi14 >= 58) {
-      bias += 5;
-    } else if (t.rsi14 <= 42) {
-      bias -= 5;
+    } else if (t.rsi14 >= 55 && t.rsi14 < 70) {
+      bias += 6;
+    } else if (t.rsi14 <= 45 && t.rsi14 > 30) {
+      bias -= 6;
     }
   }
 
   if (t.macdHistogram != null) {
     const absH = Math.abs(t.macdHistogram);
     if (absH > 1e-8) {
-      const scale = Math.min(1, absH * 50);
+      const scale = Math.min(1, absH * 40);
       if (t.macdHistogram > 0) {
-        bias += 9 * scale;
-        if (scale > 0.3) reasons.push("MACD hist dương");
+        bias += 10 * scale;
+        if (scale > 0.25) reasons.push("MACD hist dương");
       } else {
-        bias -= 9 * scale;
-        if (scale > 0.3) reasons.push("MACD hist âm");
+        bias -= 10 * scale;
+        if (scale > 0.25) reasons.push("MACD hist âm");
       }
     }
   }
 
   if (t.macdCross === "bull") {
-    bias += 12;
+    bias += 14;
     reasons.push("MACD cắt lên");
   } else if (t.macdCross === "bear") {
-    bias -= 12;
+    bias -= 14;
     reasons.push("MACD cắt xuống");
   }
 
   if (t.priceAboveSma20 === true && t.priceAboveSma50 === true) {
     bias += 10;
+    reasons.push("Giá trên SMA20/50");
   } else if (t.priceAboveSma20 === false && t.priceAboveSma50 === false) {
     bias -= 10;
+    reasons.push("Giá dưới SMA20/50");
+  }
+
+  if (t.priceAboveSma200 === true) {
+    bias += 6;
+  } else if (t.priceAboveSma200 === false) {
+    bias -= 6;
+  }
+
+  if (t.bbPosition === 1) {
+    bias -= 5;
+    reasons.push("Chạm/ vượt BB upper");
+  } else if (t.bbPosition === -1) {
+    bias += 5;
+    reasons.push("Chạm/ dưới BB lower");
+  }
+
+  if (t.volumeConfirmed === true) {
+    bias *= 1.08;
+    reasons.push("Khối lượng xác nhận");
+  }
+
+  if (t.flowPressure === "positive") {
+    bias += 6;
+  } else if (t.flowPressure === "negative") {
+    bias -= 6;
   }
 
   return { bias: Math.max(-100, Math.min(100, bias)), reasons };
 }
 
 function isSideways(t: TechSnapshot): boolean {
-  return t.trendLabel === "sideways" || (t.trendScore != null && Math.abs(t.trendScore) < 0.5);
+  return t.trendLabel === "sideways" || (t.trendScore != null && Math.abs(t.trendScore) < 15);
 }
 
 export function computeTradeSignal(
@@ -273,31 +311,56 @@ export function computeTradeSignal(
 
   const softBuy =
     !conflict &&
-    candle.bias >= 45 &&
+    candle.bias >= 40 &&
     candle.topBull != null &&
-    candle.topBull.score >= 78 &&
-    candle.topBull.volumeConfirmed &&
-    (candle.topBull.ageBars ?? 9) <= 2 &&
+    candle.topBull.score >= 72 &&
+    (candle.topBull.volumeConfirmed || candle.topBull.score >= 80) &&
+    (candle.topBull.ageBars ?? 9) <= 3 &&
     confidence >= MIN_CONF_SOFT;
 
   const softSell =
     !conflict &&
-    candle.bias <= -45 &&
+    candle.bias <= -40 &&
     candle.topBear != null &&
-    candle.topBear.score >= 78 &&
-    candle.topBear.volumeConfirmed &&
-    (candle.topBear.ageBars ?? 9) <= 2 &&
+    candle.topBear.score >= 72 &&
+    (candle.topBear.volumeConfirmed || candle.topBear.score >= 80) &&
+    (candle.topBear.ageBars ?? 9) <= 3 &&
     confidence >= MIN_CONF_SOFT;
 
-  if (hardBuy || softBuy) {
+  // Tech-only: xu hướng mạnh + MACD đồng pha, không bắt buộc pattern nến
+  const techOnlyBuy =
+    !conflict &&
+    techB.bias >= TECH_ONLY_BIAS &&
+    (tech.trendLabel === "strong-up" || tech.trendLabel === "up") &&
+    (tech.macdCross === "bull" || (tech.macdHistogram != null && tech.macdHistogram > 0)) &&
+    tech.priceAboveSma20 === true &&
+    confidence >= TECH_ONLY_CONF;
+
+  const techOnlySell =
+    !conflict &&
+    techB.bias <= -TECH_ONLY_BIAS &&
+    (tech.trendLabel === "strong-down" || tech.trendLabel === "down") &&
+    (tech.macdCross === "bear" || (tech.macdHistogram != null && tech.macdHistogram < 0)) &&
+    tech.priceAboveSma20 === false &&
+    confidence >= TECH_ONLY_CONF;
+
+  if (hardBuy || softBuy || techOnlyBuy) {
     action = "buy";
-    if (softBuy && !hardBuy) {
+    if (softBuy && !hardBuy && !techOnlyBuy) {
       confidence = Math.max(confidence, Math.min(85, (candle.topBull?.score ?? 70) - 4));
     }
-  } else if (hardSell || softSell) {
+    if (techOnlyBuy && !hardBuy && !softBuy) {
+      confidence = Math.max(confidence, TECH_ONLY_CONF);
+      reasons.unshift("Setup KT thuần (xu hướng + MACD)");
+    }
+  } else if (hardSell || softSell || techOnlySell) {
     action = "sell";
-    if (softSell && !hardSell) {
+    if (softSell && !hardSell && !techOnlySell) {
       confidence = Math.max(confidence, Math.min(85, (candle.topBear?.score ?? 70) - 4));
+    }
+    if (techOnlySell && !hardSell && !softSell) {
+      confidence = Math.max(confidence, TECH_ONLY_CONF);
+      reasons.unshift("Setup KT thuần (xu hướng + MACD)");
     }
   }
 
