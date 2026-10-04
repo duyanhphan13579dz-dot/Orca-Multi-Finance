@@ -10,9 +10,9 @@ import { ProviderError } from "./binance";
  * Public free VN market feeds — no API key.
  * Parallel race + merge so dashboard stays FRESH/LIVE when primary CTCK feeds fail.
  *
- *  Quotes:  VPS bgapidatafeed ∥ SSI iBoard (merge by symbol, prefer VPS price)
- *  Indices: Yahoo Finance (primary) + VPS index symbols when available
- *  OHLCV:   Entrade chart-api
+ *  Quotes:  VPS bgapidatafeed ∥ SSI iBoard
+ *  Indices: Yahoo ∥ VPS index symbols
+ *  OHLCV:   Entrade chart-api ∥ VPS histdatafeed (TradingView history)
  */
 
 export const PUBLIC_VN = "public-vn-feed";
@@ -25,6 +25,8 @@ const YAHOO_INDEX_MAP: Record<string, string> = {
   HNX30: "HNX30.VN",
   UPCOM: "UPCOMINDEX.VN",
 };
+
+const UA = "Mozilla/5.0 (compatible; Orca-Multi-Finance/1.0)";
 
 function mergeQuotes(batches: Array<{ quotes: Quote[]; sourceTs: number | null; source: string }>): {
   quotes: Quote[];
@@ -172,7 +174,8 @@ export async function getPublicIndices(
   return { items, sourceTs: newest ?? vpsPack.sourceTs };
 }
 
-type EntradeOhlc = {
+type TvOhlc = {
+  s?: string;
   t?: number[];
   o?: number[];
   h?: number[];
@@ -181,6 +184,77 @@ type EntradeOhlc = {
   v?: number[];
 };
 
+function barsFromArrays(
+  t: number[],
+  o: number[],
+  h: number[],
+  l: number[],
+  c: number[],
+  v: number[] | undefined,
+  limit: number,
+): OhlcvBar[] {
+  const bars: OhlcvBar[] = [];
+  for (let i = 0; i < t.length; i++) {
+    const open = o[i];
+    const high = h[i];
+    const low = l[i];
+    const close = c[i];
+    if (open == null || high == null || low == null || close == null) continue;
+    if (!(close > 0)) continue;
+    bars.push({
+      time: t[i] * 1000,
+      open,
+      high,
+      low,
+      close,
+      volume: v?.[i] ?? 0,
+    });
+  }
+  return bars.slice(-limit);
+}
+
+async function fetchEntradeOhlcv(
+  sym: string,
+  from: number,
+  to: number,
+  kind: "stock" | "index",
+  limit: number,
+): Promise<OhlcvBar[]> {
+  const path = kind === "index" ? "index" : "stock";
+  const url =
+    `https://services.entrade.com.vn/chart-api/v2/ohlcs/${path}` +
+    `?from=${from}&to=${to}&symbol=${encodeURIComponent(sym)}&resolution=1D`;
+  const res = await httpJson<TvOhlc>(url, {
+    provider: "entrade",
+    timeoutMs: 8_000,
+    retries: 1,
+    headers: { Accept: "application/json", "User-Agent": UA },
+  });
+  if (!res.ok || !res.data?.t?.length) return [];
+  const d = res.data;
+  return barsFromArrays(d.t!, d.o ?? [], d.h ?? [], d.l ?? [], d.c ?? [], d.v, limit);
+}
+
+async function fetchVpsHistOhlcv(sym: string, from: number, to: number, limit: number): Promise<OhlcvBar[]> {
+  const url =
+    `https://histdatafeed.vps.com.vn/tradingview/history` +
+    `?symbol=${encodeURIComponent(sym)}&resolution=D&from=${from}&to=${to}`;
+  const res = await httpJson<TvOhlc>(url, {
+    provider: "vps-hist",
+    timeoutMs: 8_000,
+    retries: 1,
+    headers: { Accept: "application/json", "User-Agent": UA },
+  });
+  if (!res.ok || res.data?.s === "no_data" || !res.data?.t?.length) return [];
+  const d = res.data;
+  return barsFromArrays(d.t!, d.o ?? [], d.h ?? [], d.l ?? [], d.c ?? [], d.v, limit);
+}
+
+/**
+ * Public OHLCV with parallel race:
+ *  Entrade (DNSE) chart-api ∥ VPS histdatafeed
+ * First non-empty with enough bars wins; otherwise longest series.
+ */
 export async function getPublicOhlcv(
   symbol: string,
   limit = 250,
@@ -188,38 +262,27 @@ export async function getPublicOhlcv(
 ): Promise<OhlcvBar[]> {
   const sym = symbol.toUpperCase().replace(/[^A-Z0-9]/g, "");
   const now = Math.floor(Date.now() / 1000);
-  const from = now - Math.max(limit, 30) * 86400 * 1.5;
-  const path = kind === "index" ? "index" : "stock";
-  const url =
-    `https://services.entrade.com.vn/chart-api/v2/ohlcs/${path}` +
-    `?from=${Math.floor(from)}&to=${now}&symbol=${encodeURIComponent(sym)}&resolution=1D`;
-  const res = await httpJson<EntradeOhlc>(url, {
-    provider: "entrade",
-    timeoutMs: 10_000,
-    retries: 1,
-    headers: { Accept: "application/json", "User-Agent": "Orca-Multi-Finance/1.0" },
-  });
-  if (!res.ok || !res.data?.t?.length) {
-    throw new ProviderError(`entrade ohlcv ${sym}: ${res.error ?? "empty"}`, PUBLIC_VN);
+  const from = Math.floor(now - Math.max(limit, 30) * 86400 * 1.6);
+
+  const settled = await Promise.allSettled([
+    fetchEntradeOhlcv(sym, from, now, kind, limit),
+    fetchVpsHistOhlcv(sym, from, now, limit),
+  ]);
+
+  const candidates: OhlcvBar[][] = [];
+  for (const s of settled) {
+    if (s.status === "fulfilled" && s.value.length >= 5) candidates.push(s.value);
   }
-  const d = res.data;
-  const bars: OhlcvBar[] = [];
-  for (let i = 0; i < d.t!.length; i++) {
-    const o = d.o?.[i];
-    const h = d.h?.[i];
-    const l = d.l?.[i];
-    const c = d.c?.[i];
-    if (o == null || h == null || l == null || c == null) continue;
-    bars.push({
-      time: d.t![i] * 1000,
-      open: o,
-      high: h,
-      low: l,
-      close: c,
-      volume: d.v?.[i] ?? 0,
-    });
+  if (!candidates.length) {
+    for (const s of settled) {
+      if (s.status === "fulfilled" && s.value.length) candidates.push(s.value);
+    }
   }
-  return bars.slice(-limit);
+  if (!candidates.length) {
+    throw new ProviderError(`public ohlcv empty: ${sym}`, PUBLIC_VN);
+  }
+  candidates.sort((a, b) => b.length - a.length);
+  return candidates[0]!.slice(-limit);
 }
 
 /** Liquid universe for board fallback (not full HOSE). */
