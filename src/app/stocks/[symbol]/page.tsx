@@ -62,7 +62,7 @@ const MONEY_FLOW_VI: Record<string, string> = {
 };
 
 const ANCHOR_OFFSET =
-  "calc(var(--stock-sticky-h, 5.15rem) + var(--stock-nav-h, 2.35rem) + 0.45rem)";
+  "calc(var(--stock-sticky-h, 4.65rem) + var(--stock-nav-h, 2.2rem) + 0.45rem)";
 
 function scrollToSection(id: string) {
   const el = document.getElementById(id);
@@ -297,7 +297,7 @@ export default function StockDetailPage({ params }: { params: Promise<{ symbol: 
         </div>
         <div className="stock-chart-side-grid">
           <div className="stock-chart-frame stock-chart-frame--compact">
-            <OrcaChart symbol={data.symbol} assetType="stock" title={data.symbol} height={380} />
+            <OrcaChart symbol={data.symbol} assetType="stock" title={data.symbol} height={340} />
           </div>
           <div className="stock-side-depth">
             <OrderBookPanel symbol={data.symbol} compact />
