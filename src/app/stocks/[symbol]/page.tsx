@@ -215,7 +215,7 @@ export default function StockDetailPage({ params }: { params: Promise<{ symbol: 
 
   const { res, data, meta, isLoading } = useApi<VnStockDetail>(
     symbol ? `/api/v1/stocks/${encodeURIComponent(symbol)}` : null,
-    { refreshInterval: 30_000 },
+    { refreshInterval: 15_000 },
   );
 
   useEffect(() => {
