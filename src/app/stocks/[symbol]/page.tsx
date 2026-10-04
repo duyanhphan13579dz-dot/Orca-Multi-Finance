@@ -141,6 +141,17 @@ function DecisionStrip({
         )}
         <span className="text-text-muted">·</span>
         <span className="text-text-secondary">{trendLabel}</span>
+        {ts?.reasons?.[0] && (
+          <>
+            <span className="text-text-muted">·</span>
+            <span
+              className="max-w-[14rem] truncate text-[11px] text-text-muted"
+              title={ts.reasons.join(" · ")}
+            >
+              {ts.reasons[0]}
+            </span>
+          </>
+        )}
       </div>
 
       <div className="stock-decision-metrics">
@@ -157,13 +168,16 @@ function DecisionStrip({
             }
           />
         )}
-        {plan && signal !== "QUAN SÁT" && (
+        {plan && signal !== "QUAN SÁT" ? (
           <>
             <MetricChip label="Entry" value={fmt(plan.entry)} />
             <MetricChip label="SL" value={fmt(plan.stopLoss)} tone="down" />
+            <MetricChip label="TP1" value={fmt(plan.takeProfit1 ?? plan.takeProfit)} tone="up" />
             <MetricChip label="TP" value={fmt(plan.takeProfit)} tone="up" />
             <MetricChip label="R:R" value={`1:${plan.riskReward.toFixed(1)}`} />
           </>
+        ) : (
+          <MetricChip label="Setup" value="Chờ xác nhận" />
         )}
         <MetricChip label="RSI" value={rsi} />
         {flowLabel && (
