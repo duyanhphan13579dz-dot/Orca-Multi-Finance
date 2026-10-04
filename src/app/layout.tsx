@@ -33,8 +33,8 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="vi" suppressHydrationWarning>
-      <body className="bg-canvas text-text-primary antialiased">
+    <html lang="vi" data-theme="navy" suppressHydrationWarning className="h-full">
+      <body className="h-full overflow-hidden">
         <SettingsProvider>
           <ClientProviders>
             <AppShell>{children}</AppShell>
