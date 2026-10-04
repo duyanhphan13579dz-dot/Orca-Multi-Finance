@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
+import "./stock-ui.css";
 import "./motion.css";
 import { AppShell } from "@/components/shell";
 import { ClientProviders } from "@/components/client-providers";
@@ -32,8 +33,8 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="vi" data-theme="navy" suppressHydrationWarning className="h-full">
-      <body className="h-full overflow-hidden">
+    <html lang="vi" suppressHydrationWarning>
+      <body className="bg-canvas text-text-primary antialiased">
         <SettingsProvider>
           <ClientProviders>
             <AppShell>{children}</AppShell>
