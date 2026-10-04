@@ -50,7 +50,7 @@
   background: color-mix(in srgb, var(--color-surface-primary) 90%, transparent);
   padding: 0.95rem 1rem 1.05rem;
   overflow-x: clip;
-  scroll-margin-top: calc(var(--stock-sticky-h, 4.65rem) + var(--stock-nav-h, 2.2rem) + 0.45rem);
+  scroll-margin-top: 5.5rem;
 }
 .stock-section-heading {
   display: flex;
@@ -83,41 +83,45 @@
   flex-shrink: 0;
 }
 
-/* Section nav pills */
+/* Section nav — compact pill group (NOT full-width sticky bar) */
 .stock-section-nav {
-  display: flex;
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
   gap: 0.35rem;
-  overflow-x: auto;
-  scrollbar-width: none;
-  padding: 0.2rem 0;
-  position: sticky;
-  top: calc(var(--stock-sticky-h, 4.65rem) + 0.05rem);
-  z-index: 15;
-  background: color-mix(in srgb, var(--color-canvas) 92%, transparent);
-  backdrop-filter: blur(8px);
+  width: auto;
+  max-width: 100%;
+  margin: 0 0 0.75rem;
+  padding: 0.2rem;
+  position: relative;
+  z-index: 5;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--color-border-subtle) 90%, transparent);
+  background: color-mix(in srgb, var(--color-surface-elevated) 70%, transparent);
+  box-shadow: 0 4px 14px color-mix(in srgb, #000 16%, transparent);
 }
 .stock-section-nav::-webkit-scrollbar { display: none; }
 .stock-section-nav-item {
   flex-shrink: 0;
-  border: 1px solid var(--color-border-subtle);
+  border: 1px solid transparent;
   background: transparent;
   color: var(--color-text-secondary);
   font-size: 0.72rem;
   font-weight: 600;
-  padding: 0.4rem 0.85rem;
+  padding: 0.4rem 0.9rem;
   border-radius: 999px;
   cursor: pointer;
   line-height: 1.2;
   transition: border-color 0.15s, color 0.15s, background 0.15s;
 }
 .stock-section-nav-item:hover {
-  border-color: color-mix(in srgb, var(--color-accent-primary) 40%, transparent);
   color: var(--color-text-primary);
+  background: color-mix(in srgb, var(--color-surface-primary) 55%, transparent);
 }
 .stock-section-nav-item[data-active="true"],
 .stock-section-nav-item.is-active {
-  border-color: color-mix(in srgb, var(--color-accent-primary) 50%, transparent);
-  background: color-mix(in srgb, var(--color-accent-primary) 14%, transparent);
+  border-color: color-mix(in srgb, var(--color-accent-primary) 45%, transparent);
+  background: color-mix(in srgb, var(--color-accent-primary) 16%, transparent);
   color: var(--color-accent-primary);
 }
 
@@ -303,6 +307,11 @@
   .stock-decision-metrics { justify-content: flex-start; }
   .stock-decision-reason { max-width: 100%; }
   .stock-meta-strip { padding-left: 0.7rem; padding-right: 0.7rem; }
+  .stock-section-nav {
+    border-radius: 0.75rem;
+    width: 100%;
+    justify-content: flex-start;
+  }
 }
 
 /* Market breadth card */
