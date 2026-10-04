@@ -34,9 +34,25 @@ function pickDefaultSymbol(options: CommodityChartOption[]): string {
   return options[0]!.chartSymbol;
 }
 
+function applyCandles(series: any, chart: any, candles: { time: number; close: number }[]) {
+  if (!series || !chart) return;
+  if (!candles.length) {
+    series.setData([]);
+    return;
+  }
+  series.setData(
+    candles.map((c) => ({
+      time: Math.floor(c.time / 1000),
+      value: c.close,
+    })),
+  );
+  chart.timeScale().fitContent();
+}
+
 export function CommodityLineChart({ options, height = 320 }: Props) {
   const shellRef = useRef<HTMLElement>(null);
   const [visible, setVisible] = useState(false);
+  const [chartReady, setChartReady] = useState(0);
   const [chartSymbol, setChartSymbol] = useState(() => pickDefaultSymbol(options));
   const [tf, setTf] = useState<string>("1d");
   const [fallbackNote, setFallbackNote] = useState<string | null>(null);
@@ -95,7 +111,6 @@ export function CommodityLineChart({ options, height = 320 }: Props) {
 
     triedEmpty.current.add(active.chartSymbol);
 
-    // Prefer GOLD / SILVER / WTI before walking the rest of the list
     const ordered = [
       ...PREFERRED_DEFAULT.map((s) => options.find((o) => o.chartSymbol === s)).filter(Boolean),
       ...options,
@@ -117,6 +132,8 @@ export function CommodityLineChart({ options, height = 320 }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<any>(null);
   const seriesRef = useRef<any>(null);
+  const dataRef = useRef(data);
+  dataRef.current = data;
 
   useEffect(() => {
     if (!visible || !hostRef.current) return;
@@ -153,6 +170,10 @@ export function CommodityLineChart({ options, height = 320 }: Props) {
       chartRef.current = chart;
       seriesRef.current = series;
 
+      // Apply any candles already fetched before chart finished loading
+      applyCandles(series, chart, dataRef.current?.candles ?? []);
+      setChartReady((n) => n + 1);
+
       ro = new ResizeObserver(() => {
         if (hostRef.current) chart.applyOptions({ width: hostRef.current.clientWidth });
       });
@@ -174,22 +195,8 @@ export function CommodityLineChart({ options, height = 320 }: Props) {
   }, [visible, height]);
 
   useEffect(() => {
-    const series = seriesRef.current;
-    const chart = chartRef.current;
-    if (!series || !chart) return;
-    const candles = data?.candles ?? [];
-    if (!candles.length) {
-      series.setData([]);
-      return;
-    }
-    series.setData(
-      candles.map((c: { time: number; close: number }) => ({
-        time: Math.floor(c.time / 1000),
-        value: c.close,
-      })),
-    );
-    chart.timeScale().fitContent();
-  }, [data]);
+    applyCandles(seriesRef.current, chartRef.current, data?.candles ?? []);
+  }, [data, chartReady]);
 
   if (!options.length) {
     return (
@@ -211,7 +218,7 @@ export function CommodityLineChart({ options, height = 320 }: Props) {
         <select
           value={active?.chartSymbol ?? ""}
           onChange={(e) => {
-            autoSwitched.current = true; // user choice — stop auto chain
+            autoSwitched.current = true;
             triedEmpty.current.delete(e.target.value);
             setFallbackNote(null);
             setChartSymbol(e.target.value);
@@ -262,7 +269,7 @@ export function CommodityLineChart({ options, height = 320 }: Props) {
         )}
       </div>
       <footer className="border-t border-border-subtle px-3.5 py-2 text-[10px] text-text-muted">
-        Biểu đồ đường tham chiếu quốc tế (Yahoo / Binance PAXG) — có thể khác giá VietnamBiz (VND/nội địa).
+        Biểu đồ đường tham chiếu quốc tế (Yahoo futures GC=F / CL=F / …) — có thể khác giá VietnamBiz (VND/nội địa).
         {tf !== "1d" ? " Intraday thiếu dữ liệu sẽ tự hạ về khung ngày." : ""}
       </footer>
     </section>
