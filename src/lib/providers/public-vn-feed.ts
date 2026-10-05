@@ -75,23 +75,18 @@ export async function getPublicQuotes(symbols: string[]): Promise<{
       sourceTs: quotes.length ? Date.now() : null,
       source: "ssi-iboard" as const,
     })),
-    getVietcapQuotes(uniq.slice(0, 24)).then((r) => ({
-      quotes: r.quotes,
-      sourceTs: r.sourceTs,
+    getVietcapQuotes(uniq).then((r) => ({
+      quotes: r?.quotes ?? [],
+      sourceTs: r?.sourceTs ?? (r?.quotes?.length ? Date.now() : null),
       source: "vietcap" as const,
     })),
   ]);
 
   const batches: Array<{ quotes: Quote[]; sourceTs: number | null; source: string }> = [];
   for (const s of settled) {
-    if (s.status === "fulfilled" && s.value.quotes.length) {
-      batches.push(s.value);
-    }
+    if (s.status === "fulfilled" && s.value.quotes.length) batches.push(s.value);
   }
-  if (!batches.length) {
-    return { quotes: [], sourceTs: null, sources: [] };
-  }
-  const rank = (s: string) => (s === "vps" ? 0 : s === "ssi-iboard" ? 1 : 2);
+  const rank = (src: string) => (src === "vps" ? 0 : src === "ssi-iboard" ? 1 : 2);
   batches.sort((a, b) => rank(a.source) - rank(b.source));
   return mergeQuotes(batches);
 }
@@ -176,8 +171,8 @@ async function fetchEntradeOhlcv(
     v?: number[];
   }>(url, {
     provider: PUBLIC_VN,
-    timeoutMs: 10_000,
-    retries: 1,
+    timeoutMs: 6_000,
+    retries: 0,
     headers: { Accept: "application/json" },
   });
   if (!res.ok || !res.data?.t?.length) return [];
@@ -218,8 +213,8 @@ async function fetchVpsHistOhlcv(
     v?: number[];
   }>(url, {
     provider: PUBLIC_VN,
-    timeoutMs: 10_000,
-    retries: 1,
+    timeoutMs: 6_000,
+    retries: 0,
     headers: { Accept: "application/json" },
   });
   if (!res.ok || res.data?.s === "no_data" || !res.data?.t?.length) return [];
@@ -257,17 +252,17 @@ export async function getPublicOhlcv(
 
   const candidates: OhlcvBar[][] = [];
   for (const s of settled) {
-    if (s.status === "fulfilled" && s.value.length >= 5) candidates.push(s.value);
-  }
-  if (!candidates.length) {
-    for (const s of settled) {
-      if (s.status === "fulfilled" && s.value.length) candidates.push(s.value);
-    }
+    if (s.status === "fulfilled" && s.value.length) candidates.push(s.value);
   }
   if (!candidates.length) {
     throw new ProviderError(`public ohlcv empty: ${sym}`, PUBLIC_VN);
   }
-  candidates.sort((a, b) => b.length - a.length);
+  candidates.sort((a, b) => {
+    const aOk = a.length >= 20 ? 1 : 0;
+    const bOk = b.length >= 20 ? 1 : 0;
+    if (aOk !== bOk) return bOk - aOk;
+    return b.length - a.length;
+  });
   return candidates[0]!.slice(-limit);
 }
 
