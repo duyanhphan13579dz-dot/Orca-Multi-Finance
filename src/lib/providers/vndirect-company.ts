@@ -89,25 +89,33 @@ function mapProfileRow(sym: string, row: Record<string, unknown>): VndCompanyPro
 }
 
 export async function getVndCompanyProfile(symbol: string): Promise<VndCompanyProfile | null> {
-  const sym = symbol.toUpperCase();
-  try {
-    const payload = (
-      await vndirectJson<{ data?: Record<string, unknown>[] }>(
-        `/v4/company_profiles?q=code:${encodeURIComponent(sym)}&size=1`,
-        {
-          provider: VND,
-          timeoutMs: 14_000,
-          retries: 2,
-          accept: (value) => Array.isArray(value.data) && value.data.length > 0,
-        },
-      )
-    ).data;
-    const row = payload.data?.[0] ?? null;
-    if (!row) return null;
-    return mapProfileRow(sym, row);
-  } catch {
-    return null;
+  const sym = symbol.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  if (!sym) return null;
+
+  async function once(timeoutMs: number, retries: number): Promise<VndCompanyProfile | null> {
+    try {
+      const payload = (
+        await vndirectJson<{ data?: Record<string, unknown>[] }>(
+          `/v4/company_profiles?q=code:${encodeURIComponent(sym)}&size=1`,
+          {
+            provider: VND,
+            timeoutMs,
+            retries,
+            accept: (value) => Array.isArray(value.data) && value.data.length > 0,
+          },
+        )
+      ).data;
+      const row = payload.data?.[0] ?? null;
+      if (!row) return null;
+      return mapProfileRow(sym, row);
+    } catch {
+      return null;
+    }
   }
+
+  const first = await once(8_000, 1);
+  if (first) return first;
+  return once(12_000, 1);
 }
 
 export async function getVndShareholders(symbol: string, size = 30): Promise<VndShareholder[]> {
