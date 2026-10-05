@@ -206,11 +206,11 @@ function printCompanyReport(report: CompanyAnalysisReport) {
       .scenario-card>p{font-size:10px;margin:2px 0}
       .business-chart{border:1px solid #ccd;border-radius:6px;padding:8px;margin:8px 0 10px;break-inside:avoid}
       .chart-legend{font-size:10px;color:#5a6b8c;margin-bottom:6px}
-      .bar-chart{height:120px;display:flex;align-items:flex-end;gap:6px;border-bottom:1px solid #ccd;padding:0 4px}
+      .bar-chart{height:120px;display:flex;align-items:flex-end;gap:3px;border-bottom:1px solid #ccd;padding:0 2px}
       .bar-group{height:100%;flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;min-width:20px}
       .bar-group small{font-size:8px;color:#5a6b8c;margin-top:4px;white-space:nowrap}
-      .bars{height:100%;display:flex;align-items:flex-end;gap:2px}
-      .bars i{display:block;width:7px;border-radius:2px 2px 0 0;min-height:2px}
+      .bars{height:100%;display:flex;align-items:flex-end;gap:1px}
+      .bars i{display:block;width:10px;border-radius:2px 2px 0 0;min-height:2px}
       table.kq{width:100%;border-collapse:collapse;margin:6px 0 10px;font-size:12px}
       table.kq th,table.kq td{border:1px solid #ccd;padding:7px 10px;text-align:left;vertical-align:top}
       table.kq th{background:#eef3f9;color:#123f7c;font-size:10.5px;letter-spacing:.04em;font-weight:700}
@@ -650,7 +650,7 @@ function BusinessBarChart({ data }: { data: BusinessChartPoint[] }) {
   const bottom = 32;
   const chartHeight = height - bottom - 12;
   const groupWidth = (width - left - 12) / data.length;
-  const barWidth = Math.max(4, Math.min(16, (groupWidth - 12) / keys.length));
+  const barWidth = Math.max(6, Math.min(22, (groupWidth - 6) / keys.length));
   return (
     <div className="mt-4 rounded-md border border-border-subtle/70 bg-surface p-3">
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
