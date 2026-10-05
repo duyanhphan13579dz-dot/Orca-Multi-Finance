@@ -4,6 +4,9 @@ import { vnPriceQuoteToVnd } from "../financial/vn-units";
 
 const VND = "vndirect-company";
 
+/** Alias dùng bởi valuation / screener / intelligence (board-lot → full VND). */
+export const priceQuoteToVnd = vnPriceQuoteToVnd;
+
 function normalizeYieldRatio(value: number | null | undefined): number | null {
   if (value == null || !Number.isFinite(value) || value < 0) return null;
   const ratio = value > 1 ? value / 100 : value;
