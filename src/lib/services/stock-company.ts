@@ -110,7 +110,6 @@ async function loadCompanyCore(sym: string): Promise<{
 }> {
   const sources: string[] = [];
 
-  // Live sources only — no import of stocks.ts (avoids circular hang on cold start)
   const [vndProfile, shareholdersRaw, vietcap] = await Promise.all([
     getVndCompanyProfile(sym).catch(() => null),
     getVndShareholders(sym, 50).catch(() => [] as VndShareholder[]),
@@ -139,11 +138,9 @@ async function loadCompanyCore(sym: string): Promise<{
     (!profile.website && !profile.vnAddress && !shareholders.length);
   if (thin) {
     const [vnd2, holders2, vc2] = await Promise.all([
-      !profile ? getVndCompanyProfile(sym).catch(() => null) : Promise.resolve(null),
-      !shareholders.length
-        ? getVndShareholders(sym, 50).catch(() => [] as VndShareholder[])
-        : Promise.resolve([] as VndShareholder[]),
-      !vietcap ? getVietcapCompany(sym).catch(() => null) : Promise.resolve(null),
+      getVndCompanyProfile(sym).catch(() => null),
+      getVndShareholders(sym, 50).catch(() => [] as VndShareholder[]),
+      getVietcapCompany(sym).catch(() => null),
     ]);
     if (vnd2) {
       profile = mergeProfiles(profile, enrichFoundDate(vnd2));
@@ -274,14 +271,21 @@ export async function getStockCompanyPackage(
   try {
     let core: { profile: VndCompanyProfile | null; shareholders: VndShareholder[]; sources: string[] };
     try {
-      const companyRes = await cached(`vn:company:${sym}:v6`, {
-        ttlMs: 2 * 3_600_000,
-        staleMs: 24 * 3_600_000,
+      const companyRes = await cached(`vn:company:${sym}:v7`, {
+        ttlMs: 30 * 60_000,
+        staleMs: 6 * 3_600_000,
         softSwr: true,
         producer: async () => {
           let pack = await loadCompanyCore(sym);
-          if (!pack.profile) {
-            pack = await loadCompanyCore(sym);
+          if (!pack.profile || pack.sources.every((s) => s.startsWith("vn-master"))) {
+            const again = await loadCompanyCore(sym);
+            if (again.profile && !again.sources.every((s) => s.startsWith("vn-master"))) {
+              pack = again;
+            } else if (again.shareholders.length > pack.shareholders.length) {
+              pack = again;
+            } else if (!pack.profile && again.profile) {
+              pack = again;
+            }
           }
           if (!pack.profile && !pack.shareholders.length) {
             throw new Error(`company empty ${sym}`);
@@ -304,7 +308,10 @@ export async function getStockCompanyPackage(
       cashflow: Record<string, unknown>[];
     } = { income: [], balance: [], cashflow: [] };
     try {
-      const fs = await fetchVndirectFinancials(sym, { limitPeriods: 8 });
+      const fs = await Promise.race([
+        fetchVndirectFinancials(sym, { limitPeriods: 8 }),
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), 6_000)),
+      ]);
       if (fs?.periods?.length) {
         const rows = periodsToLegacyRows(fs.periods, sym);
         fin = {
@@ -338,7 +345,10 @@ export async function getStockCompanyPackage(
     let ai: Awaited<ReturnType<typeof enrichCompanyWithAi>> = null;
     if (core.profile && llmConfigured()) {
       try {
-        ai = await enrichCompanyWithAi(sym, core.profile, core.shareholders, fin);
+        ai = await Promise.race([
+          enrichCompanyWithAi(sym, core.profile, core.shareholders, fin),
+          new Promise<null>((resolve) => setTimeout(() => resolve(null), 4_000)),
+        ]);
       } catch {
         /* non-fatal */
       }
