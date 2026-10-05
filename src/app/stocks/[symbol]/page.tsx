@@ -213,10 +213,32 @@ export default function StockDetailPage({ params }: { params: Promise<{ symbol: 
     params.then((p) => setSymbol(p.symbol.toUpperCase()));
   }, [params]);
 
-  const { res, data, meta, isLoading } = useApi<VnStockDetail>(
+  const { res, data, meta, isLoading, isValidating, mutate } = useApi<VnStockDetail>(
     symbol ? `/api/v1/stocks/${encodeURIComponent(symbol)}` : null,
-    { refreshInterval: 15_000 },
+    {
+      refreshInterval: 15_000,
+      timeoutMs: 55_000,
+      keepPreviousData: true,
+    },
   );
+
+  const coldRetryRef = useRef(0);
+  useEffect(() => {
+    if (!symbol) return;
+    const hasCore = Boolean(data?.quote?.price || (data?.bars && data.bars.length >= 5));
+    if (hasCore) {
+      coldRetryRef.current = 0;
+      return;
+    }
+    if (isLoading || isValidating) return;
+    if (coldRetryRef.current >= 3) return;
+    coldRetryRef.current += 1;
+    const delay = 1_200 * coldRetryRef.current;
+    const t = window.setTimeout(() => {
+      void mutate();
+    }, delay);
+    return () => window.clearTimeout(t);
+  }, [symbol, data, isLoading, isValidating, mutate, res?.success]);
 
   useEffect(() => {
     if (!data?.symbol) return;
@@ -247,21 +269,41 @@ export default function StockDetailPage({ params }: { params: Promise<{ symbol: 
     btn?.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "center" });
   }, [activeSection]);
 
-  if (!symbol || (isLoading && !res)) {
+  const hasCore = Boolean(data?.quote?.price || (data?.bars && data.bars.length >= 5));
+  const stillRetrying = !hasCore && coldRetryRef.current < 3;
+
+  if (!symbol || ((isLoading || isValidating || stillRetrying) && !hasCore)) {
     return (
       <div className="stock-workspace">
-        <Loading rows={3} />
+        <Loading
+          rows={3}
+          label={
+            stillRetrying && !isLoading
+              ? `Đang thử lại nguồn dữ liệu (${coldRetryRef.current}/3)…`
+              : "Đang tải dữ liệu cổ phiếu — lần đầu có thể mất vài giây"
+          }
+        />
       </div>
     );
   }
 
   if (!res?.success || !data) {
     return (
-      <div className="stock-workspace">
+      <div className="stock-workspace space-y-3">
         <Unavailable
           title={`Không tải được ${symbol}`}
           note={res && !res.success ? res.error.message : "Nguồn dữ liệu đang gián đoạn."}
         />
+        <button
+          type="button"
+          className="rounded-lg border border-border-subtle px-3 py-2 text-[12px] font-medium hover:border-accent-primary/40"
+          onClick={() => {
+            coldRetryRef.current = 0;
+            void mutate();
+          }}
+        >
+          Thử tải lại
+        </button>
       </div>
     );
   }
