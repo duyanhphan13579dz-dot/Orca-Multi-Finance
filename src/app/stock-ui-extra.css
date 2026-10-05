@@ -86,7 +86,7 @@
 /* Section nav — compact pill group (NOT full-width sticky bar) */
 .stock-section-nav {
   display: inline-flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   gap: 0.35rem;
   width: auto;
@@ -99,6 +99,11 @@
   border: 1px solid color-mix(in srgb, var(--color-border-subtle) 90%, transparent);
   background: color-mix(in srgb, var(--color-surface-elevated) 70%, transparent);
   box-shadow: 0 4px 14px color-mix(in srgb, #000 16%, transparent);
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
 }
 .stock-section-nav::-webkit-scrollbar { display: none; }
 .stock-section-nav-item {
@@ -512,4 +517,26 @@
 .company-profile-summary--muted {
   border-style: dashed;
   color: var(--color-text-muted, #7a8699);
+}
+
+/* Sticky stock hero — stable height to avoid scroll jump when pinning */
+.stock-sticky-sentinel {
+  height: 1px;
+  width: 100%;
+  pointer-events: none;
+  visibility: hidden;
+}
+.stock-sticky-head {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  background: color-mix(in srgb, var(--color-background-primary, #070b16) 92%, transparent);
+  backdrop-filter: blur(8px);
+  transition: box-shadow 0.2s ease;
+}
+.stock-sticky-head[data-stuck="true"] {
+  box-shadow: 0 8px 24px color-mix(in srgb, #000 28%, transparent);
+}
+.stock-sticky-head[data-stuck="true"] .stock-hero-name {
+  display: none;
 }
