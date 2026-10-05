@@ -217,28 +217,29 @@ export default function StockDetailPage({ params }: { params: Promise<{ symbol: 
     symbol ? `/api/v1/stocks/${encodeURIComponent(symbol)}` : null,
     {
       refreshInterval: 15_000,
-      timeoutMs: 55_000,
+      timeoutMs: 15_000,
       keepPreviousData: true,
     },
   );
 
+  const isFull = (d: typeof data) =>
+    Boolean(d?.quote?.price && d.quote.price > 0 && d.bars && d.bars.length >= 20);
+
   const coldRetryRef = useRef(0);
   useEffect(() => {
     if (!symbol) return;
-    const hasCore = Boolean(data?.quote?.price || (data?.bars && data.bars.length >= 5));
-    if (hasCore) {
+    if (isFull(data)) {
       coldRetryRef.current = 0;
       return;
     }
     if (isLoading || isValidating) return;
-    if (coldRetryRef.current >= 3) return;
-    coldRetryRef.current += 1;
-    const delay = 1_200 * coldRetryRef.current;
+    if (coldRetryRef.current >= 1) return;
+    coldRetryRef.current = 1;
     const t = window.setTimeout(() => {
       void mutate();
-    }, delay);
+    }, 400);
     return () => window.clearTimeout(t);
-  }, [symbol, data, isLoading, isValidating, mutate, res?.success]);
+  }, [symbol, data, isLoading, isValidating, mutate]);
 
   useEffect(() => {
     if (!data?.symbol) return;
@@ -269,30 +270,30 @@ export default function StockDetailPage({ params }: { params: Promise<{ symbol: 
     btn?.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "center" });
   }, [activeSection]);
 
-  const hasCore = Boolean(data?.quote?.price || (data?.bars && data.bars.length >= 5));
-  const stillRetrying = !hasCore && coldRetryRef.current < 3;
+  const full = isFull(data);
+  const waiting = !full && (isLoading || isValidating || coldRetryRef.current < 1);
 
-  if (!symbol || ((isLoading || isValidating || stillRetrying) && !hasCore)) {
+  if (!symbol || waiting) {
     return (
       <div className="stock-workspace">
         <Loading
           rows={3}
-          label={
-            stillRetrying && !isLoading
-              ? `Đang thử lại nguồn dữ liệu (${coldRetryRef.current}/3)…`
-              : "Đang tải dữ liệu cổ phiếu — lần đầu có thể mất vài giây"
-          }
+          label="Đang tải đầy đủ dữ liệu cổ phiếu (tối đa ~15 giây)…"
         />
       </div>
     );
   }
 
-  if (!res?.success || !data) {
+  if (!res?.success || !data || !full) {
     return (
       <div className="stock-workspace space-y-3">
         <Unavailable
-          title={`Không tải được ${symbol}`}
-          note={res && !res.success ? res.error.message : "Nguồn dữ liệu đang gián đoạn."}
+          title={`Chưa tải đủ dữ liệu ${symbol}`}
+          note={
+            res && !res.success
+              ? res.error.message
+              : "Yêu cầu đủ giá + lịch sử nến. Bấm thử lại."
+          }
         />
         <button
           type="button"
