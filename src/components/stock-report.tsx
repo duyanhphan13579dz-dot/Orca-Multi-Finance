@@ -208,9 +208,9 @@ function printCompanyReport(report: CompanyAnalysisReport) {
       .chart-legend{font-size:10px;color:#5a6b8c;margin-bottom:6px}
       .bar-chart{height:120px;display:flex;align-items:flex-end;gap:3px;border-bottom:1px solid #ccd;padding:0 2px}
       .bar-group{height:100%;flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;min-width:20px}
-      .bar-group small{font-size:8px;color:#5a6b8c;margin-top:4px;white-space:nowrap}
-      .bars{height:100%;display:flex;align-items:flex-end;gap:1px}
-      .bars i{display:block;width:10px;border-radius:2px 2px 0 0;min-height:2px}
+  .bar-group small{font-size:9px;color:#334155;font-weight:700;margin-top:5px;white-space:nowrap}
+  .bars{height:100%;display:flex;align-items:flex-end;gap:2px}
+  .bars i{display:block;width:13px;border-radius:3px 3px 0 0;min-height:2px}
       table.kq{width:100%;border-collapse:collapse;margin:6px 0 10px;font-size:12px}
       table.kq th,table.kq td{border:1px solid #ccd;padding:7px 10px;text-align:left;vertical-align:top}
       table.kq th{background:#eef3f9;color:#123f7c;font-size:10.5px;letter-spacing:.04em;font-weight:700}
@@ -650,12 +650,12 @@ function BusinessBarChart({ data }: { data: BusinessChartPoint[] }) {
   const bottom = 32;
   const chartHeight = height - bottom - 12;
   const groupWidth = (width - left - 12) / data.length;
-  const barWidth = Math.max(6, Math.min(22, (groupWidth - 6) / keys.length));
+  const barWidth = Math.max(8, Math.min(30, (groupWidth * 0.78) / keys.length));
   return (
     <div className="mt-4 rounded-md border border-border-subtle/70 bg-surface p-3">
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
         <div className="text-[10px] font-semibold uppercase tracking-wider text-text-muted">Biểu đồ KQKD theo kỳ</div>
-        <div className="flex flex-wrap gap-3 text-[10px] text-text-muted">
+        <div className="flex flex-wrap gap-3 text-[10px] font-medium text-text-secondary">
           {keys.map(([, label, color]) => <span key={label} className="inline-flex items-center gap-1"><i className="size-2 rounded-sm" style={{ backgroundColor: color }} />{label}</span>)}
         </div>
       </div>
@@ -670,7 +670,7 @@ function BusinessBarChart({ data }: { data: BusinessChartPoint[] }) {
                 const heightValue = value == null ? 0 : (Math.abs(value) / max) * (chartHeight - 12);
                 return <rect key={key} x={x0 + j * barWidth} y={chartHeight - heightValue} width={Math.max(3, barWidth - 2)} height={heightValue} rx="1" fill={color}><title>{`${point.period} · ${label}: ${value == null ? "—" : (value / 1e9).toFixed(1) + " tỷ"}`}</title></rect>;
               })}
-              <text x={left + i * groupWidth + groupWidth / 2} y={height - 10} textAnchor="middle" className="fill-text-muted text-[9px]">{point.period}</text>
+              <text x={left + i * groupWidth + groupWidth / 2} y={height - 9} textAnchor="middle" fill="#334155" fontSize="11" fontWeight="700">{point.period}</text>
             </g>;
           })}
         </svg>
