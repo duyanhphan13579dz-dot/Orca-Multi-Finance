@@ -17,6 +17,7 @@ import { buildDeterministicResearch } from "./company-research";
 import { getOrGenerateCompanyIntelligence, resolveValueChain } from "./company-intelligence";
 import { getNews } from "./news";
 import type { FreshnessStatus, Meta, OhlcvBar } from "../types";
+import { buildPriceScenarios, buildScenarioSummary, type PriceScenario } from "./price-scenarios";
 
 export type ChartPoint = { t: number; c: number };
 
@@ -48,6 +49,8 @@ export type CompanyAnalysisReport = {
     priceSeries: ChartPoint[];
     valuation: string[];
     projection: string[];
+    priceScenarios: PriceScenario[];
+    scenarioSummary: ReturnType<typeof buildScenarioSummary>;
     catalysts: string[];
     risks: string[];
     vsIndustry: string[];
@@ -545,6 +548,19 @@ export async function generateCompanyAnalysisReport(
     risks.push("• Rủi ro thực thi chiến lược và biến động chi phí đầu vào.");
   }
 
+  const priceScenarios = buildPriceScenarios({
+    price,
+    bars,
+    technical,
+    health,
+    revYoy,
+    niYoy,
+    pe: ratios?.pe ?? null,
+    risks,
+    catalysts,
+  });
+  const scenarioSummary = buildScenarioSummary(priceScenarios);
+
   const vsIndustry: string[] = [];
   if (perf.tsr1y != null)
     vsIndustry.push(`Hiệu suất giá ~12 tháng của mã: **${fmtPct(perf.tsr1y * 100)}**.`);
@@ -582,7 +598,7 @@ export async function generateCompanyAnalysisReport(
     );
   } else {
     macro.push(
-      "• Chưa có số liệu nợ vay chi tiết trên BCTC gần nhất; mức độ nhạy lãi suất cần đối chiếu thêm từ thuyết minh BCTC.",
+      "• Chưa có số liệu nợ vay chi tiết trên BCTC gần nhất; mức độ nhạy l��i suất cần đối chiếu thêm từ thuyết minh BCTC.",
     );
   }
   macro.push(
@@ -766,6 +782,8 @@ export async function generateCompanyAnalysisReport(
       priceSeries,
       valuation,
       projection,
+      priceScenarios,
+      scenarioSummary,
       catalysts,
       risks,
       vsIndustry,

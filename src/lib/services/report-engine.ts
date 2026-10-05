@@ -26,6 +26,14 @@ export interface ReportScenario {
   indexZones: string;
   sectorImpact: string;
   risks: string;
+  technicalCauses?: string[];
+  fundamentalCauses?: string[];
+  triggers?: string[];
+  invalidationSignals?: string[];
+  actionPlan?: string[];
+  tasks?: string[];
+  evidence?: string[];
+  dataQuality?: "HIGH" | "MEDIUM" | "LOW";
 }
 
 export interface DailyReport {
