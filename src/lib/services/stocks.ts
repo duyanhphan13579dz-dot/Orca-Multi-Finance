@@ -417,13 +417,12 @@ async function produceVnStockDetail(sym: string): Promise<{ detail: VnStockDetai
     getFinancialsForSymbol(sym).catch(() => null),
   ]);
 
-  // Cold-start recovery: core quote/ohlcv get a second chance
   if (!quoteRes?.quotes?.[0]) {
-    await new Promise((r) => setTimeout(r, 600));
+    await new Promise((r) => setTimeout(r, 350));
     quoteRes = await getVnQuotes([sym]).catch(() => null);
   }
-  if (!(ohlcvRes?.bars?.length)) {
-    await new Promise((r) => setTimeout(r, 400));
+  if (!(ohlcvRes?.bars?.length) || (ohlcvRes.bars?.length ?? 0) < 20) {
+    await new Promise((r) => setTimeout(r, 300));
     ohlcvRes = await getVnOhlcv(sym, 320).catch(() => null);
   }
 
@@ -571,8 +570,9 @@ function emptyStockDetail(sym: string): VnStockDetail {
   };
 }
 
+/** Full pack required: live quote + enough history for technicals */
 function hasCoreData(d: VnStockDetail | null | undefined): boolean {
-  return Boolean(d?.quote?.price || (d?.bars && d.bars.length >= 5));
+  return Boolean(d?.quote?.price && d.quote.price > 0 && d.bars && d.bars.length >= 20);
 }
 
 export async function getVnStockDetail(
@@ -599,7 +599,7 @@ export async function getVnStockDetail(
       producer: async () => {
         let r = await produceVnStockDetail(sym);
         if (!hasCoreData(r?.detail)) {
-          await new Promise((x) => setTimeout(x, 900));
+          await new Promise((x) => setTimeout(x, 400));
           r = await produceVnStockDetail(sym);
         }
         if (!r) throw new Error(`detail empty ${sym}`);
