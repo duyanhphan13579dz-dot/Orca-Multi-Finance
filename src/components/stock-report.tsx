@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import type { CompanyAnalysisReport, ChartPoint } from "@/lib/services/company-analysis-report";
+import type { BusinessChartPoint, CompanyAnalysisReport, ChartPoint } from "@/lib/services/company-analysis-report";
 import type { PriceScenario } from "@/lib/services/price-scenarios";
 import type { ApiResponse } from "@/lib/types";
 import { Badge, FreshnessDot, Loading, MetaLine, Panel } from "@/components/ui";
@@ -158,6 +158,7 @@ function printCompanyReport(report: CompanyAnalysisReport) {
     ${valueChainHtml(s.valueChain)}
     <h2>5. Kết quả kinh doanh</h2>
     ${businessTableHtml(s.businessTable, s.businessResults, s.businessTableMeta)}
+    ${businessBarChartHtml(s.businessChart)}
     <h2>6. Phân tích kỹ thuật</h2>
     ${s.technical.map((l) => `<p>${boldHtml(l)}</p>`).join("")}
     ${chartSvgHtml(s.priceSeries, report.symbol)}
@@ -203,6 +204,13 @@ function printCompanyReport(report: CompanyAnalysisReport) {
       .scenario-card>small{display:block;color:#5a6b8c;margin-bottom:5px}
       .scenario-card>strong{display:block;margin-top:5px;color:#123f7c;font-size:10px}
       .scenario-card>p{font-size:10px;margin:2px 0}
+      .business-chart{border:1px solid #ccd;border-radius:6px;padding:8px;margin:8px 0 10px;break-inside:avoid}
+      .chart-legend{font-size:10px;color:#5a6b8c;margin-bottom:6px}
+      .bar-chart{height:120px;display:flex;align-items:flex-end;gap:6px;border-bottom:1px solid #ccd;padding:0 4px}
+      .bar-group{height:100%;flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;min-width:20px}
+      .bar-group small{font-size:8px;color:#5a6b8c;margin-top:4px;white-space:nowrap}
+      .bars{height:100%;display:flex;align-items:flex-end;gap:2px}
+      .bars i{display:block;width:7px;border-radius:2px 2px 0 0;min-height:2px}
       table.kq{width:100%;border-collapse:collapse;margin:6px 0 10px;font-size:12px}
       table.kq th,table.kq td{border:1px solid #ccd;padding:7px 10px;text-align:left;vertical-align:top}
       table.kq th{background:#eef3f9;color:#123f7c;font-size:10.5px;letter-spacing:.04em;font-weight:700}
@@ -336,6 +344,7 @@ export function StockReportSection() {
               rows={report.sections.businessTable}
               fallback={report.sections.businessResults}
               meta={report.sections.businessTableMeta}
+              chart={report.sections.businessChart}
             />
             <Sec icon={<LineChart className="size-4" />} title="6. Phân tích kỹ thuật" lines={report.sections.technical}>
               <PriceLineChart series={report.sections.priceSeries} symbol={report.symbol} />
@@ -572,10 +581,12 @@ function BusinessTableBlock({
   rows,
   fallback,
   meta,
+  chart,
 }: {
   rows: CompanyAnalysisReport["sections"]["businessTable"];
   fallback: string[];
   meta: CompanyAnalysisReport["sections"]["businessTableMeta"];
+  chart: BusinessChartPoint[];
 }) {
   return (
     <div className="mt-3 rounded-lg border border-border-subtle/80 bg-surface-elevated/40 p-3">
@@ -612,6 +623,7 @@ function BusinessTableBlock({
               </tbody>
             </table>
           </div>
+          <BusinessBarChart data={chart} />
         </>
       ) : (
         <div className="space-y-1 text-[12.5px] text-text-secondary">
@@ -622,6 +634,57 @@ function BusinessTableBlock({
       )}
     </div>
   );
+}
+
+function BusinessBarChart({ data }: { data: BusinessChartPoint[] }) {
+  if (!data?.length) return null;
+  const keys = [
+    ["revenue", "Doanh thu", "#3b82f6"],
+    ["grossProfit", "LN gộp", "#14b8a6"],
+    ["netIncome", "LNST", "#f59e0b"],
+  ] as const;
+  const max = Math.max(1, ...data.flatMap((d) => keys.map(([key]) => Math.abs(d[key] ?? 0))));
+  const width = 720;
+  const height = 220;
+  const left = 34;
+  const bottom = 32;
+  const chartHeight = height - bottom - 12;
+  const groupWidth = (width - left - 12) / data.length;
+  const barWidth = Math.max(4, Math.min(16, (groupWidth - 12) / keys.length));
+  return (
+    <div className="mt-4 rounded-md border border-border-subtle/70 bg-surface p-3">
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+        <div className="text-[10px] font-semibold uppercase tracking-wider text-text-muted">Biểu đồ KQKD theo kỳ</div>
+        <div className="flex flex-wrap gap-3 text-[10px] text-text-muted">
+          {keys.map(([, label, color]) => <span key={label} className="inline-flex items-center gap-1"><i className="size-2 rounded-sm" style={{ backgroundColor: color }} />{label}</span>)}
+        </div>
+      </div>
+      <div className="overflow-x-auto">
+        <svg viewBox={`0 0 ${width} ${height}`} className="h-[220px] min-w-[560px] w-full" role="img" aria-label="Biểu đồ cột doanh thu, lợi nhuận gộp và lợi nhuận sau thuế">
+          <line x1={left} y1={chartHeight} x2={width - 12} y2={chartHeight} stroke="currentColor" className="text-border-subtle" />
+          {data.map((point, i) => {
+            const x0 = left + i * groupWidth + Math.max(2, (groupWidth - keys.length * barWidth) / 2);
+            return <g key={`${point.period}-${i}`}>
+              {keys.map(([key, label, color], j) => {
+                const value = point[key];
+                const heightValue = value == null ? 0 : (Math.abs(value) / max) * (chartHeight - 12);
+                return <rect key={key} x={x0 + j * barWidth} y={chartHeight - heightValue} width={Math.max(3, barWidth - 2)} height={heightValue} rx="1" fill={color}><title>{`${point.period} · ${label}: ${value == null ? "—" : (value / 1e9).toFixed(1) + " tỷ"}`}</title></rect>;
+              })}
+              <text x={left + i * groupWidth + groupWidth / 2} y={height - 10} textAnchor="middle" className="fill-text-muted text-[9px]">{point.period}</text>
+            </g>;
+          })}
+        </svg>
+      </div>
+      <p className="mt-1 text-[10px] text-text-muted">Đơn vị biểu đồ: tỷ đồng; hover vào cột để xem giá trị chi tiết.</p>
+    </div>
+  );
+}
+
+function businessBarChartHtml(data: BusinessChartPoint[]): string {
+  if (!data?.length) return "";
+  const max = Math.max(1, ...data.flatMap((d) => [d.revenue, d.grossProfit, d.netIncome].filter((v): v is number => v != null).map(Math.abs)));
+  const bars = data.map((d) => `<div class="bar-group"><small>${esc(d.period)}</small><div class="bars"><i style="height:${Math.max(2, (Math.abs(d.revenue ?? 0) / max) * 100)}%;background:#3b82f6"></i><i style="height:${Math.max(2, (Math.abs(d.grossProfit ?? 0) / max) * 100)}%;background:#14b8a6"></i><i style="height:${Math.max(2, (Math.abs(d.netIncome ?? 0) / max) * 100)}%;background:#f59e0b"></i></div></div>`).join("");
+  return `<div class="business-chart"><div class="chart-legend">Doanh thu · LN gộp · LNST · đơn vị tỷ đồng</div><div class="bar-chart">${bars}</div></div>`;
 }
 
 function PriceLineChart({ series, symbol }: { series: ChartPoint[]; symbol: string }) {
