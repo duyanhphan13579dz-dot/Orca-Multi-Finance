@@ -174,16 +174,11 @@ function mergeQuotePacks(
   return { quotes: [...bySym.values()], sources: used, newest };
 }
 
-/**
- * Parallel multi-source quotes — MERGE coverage from all healthy sources.
- * Never returns null (empty pack + meta instead).
- */
 export async function getVnQuotes(symbols: string[]): Promise<{ quotes: Quote[]; meta: Meta } | null> {
   const syms = [...new Set(symbols.map((s) => s.toUpperCase()).filter(Boolean))];
   if (!syms.length) return { quotes: [], meta: buildMeta({ source: "empty", sourceTimestampMs: Date.now() }) };
 
   type Pack = { quotes: Quote[]; source: string; sourceTs?: number | null };
-
   const tasks: Promise<Pack | null>[] = [];
 
   if (ssiFcConfigured()) {
@@ -412,15 +407,25 @@ async function produceVnStockDetail(sym: string): Promise<{ detail: VnStockDetai
   const failed: string[] = [];
   const notes: string[] = [];
 
-  const [quoteRes, ohlcvRes, profileRes, equityRes, bookRes, foreignRes, finRes] = await Promise.all([
+  let [quoteRes, ohlcvRes, profileRes, equityRes, bookRes, foreignRes, finRes] = await Promise.all([
     getVnQuotes([sym]).catch(() => null),
-    getVnOhlcv(sym, 320),
+    getVnOhlcv(sym, 320).catch(() => null),
     getVndCompanyProfile(sym).catch(() => null),
     getVndEquitySnapshot(sym).catch(() => null),
     getVnOrderBook(sym).catch(() => null),
     getVndSymbolForeignFlow(sym).catch(() => null),
     getFinancialsForSymbol(sym).catch(() => null),
   ]);
+
+  // Cold-start recovery: core quote/ohlcv get a second chance
+  if (!quoteRes?.quotes?.[0]) {
+    await new Promise((r) => setTimeout(r, 600));
+    quoteRes = await getVnQuotes([sym]).catch(() => null);
+  }
+  if (!(ohlcvRes?.bars?.length)) {
+    await new Promise((r) => setTimeout(r, 400));
+    ohlcvRes = await getVnOhlcv(sym, 320).catch(() => null);
+  }
 
   const quote = quoteRes?.quotes?.[0] ?? null;
   if (!quote) failed.push("quote");
@@ -566,54 +571,66 @@ function emptyStockDetail(sym: string): VnStockDetail {
   };
 }
 
+function hasCoreData(d: VnStockDetail | null | undefined): boolean {
+  return Boolean(d?.quote?.price || (d?.bars && d.bars.length >= 5));
+}
+
 export async function getVnStockDetail(
   symbol: string,
 ): Promise<{ detail: VnStockDetail; meta: Meta } | null> {
   const sym = symbol.toUpperCase().replace(/[^A-Z0-9]/g, "");
   if (!sym) return null;
-  let ttl = 20_000;
-  let stale = 120_000;
+  let ttl = 25_000;
+  let stale = 150_000;
   try {
     const { getVnSession } = await import("../vn/sessions");
     if (getVnSession().trading) {
-      ttl = 10_000;
-      stale = 75_000;
+      ttl = 12_000;
+      stale = 90_000;
     }
   } catch {
     /* */
   }
   try {
-    const res = await cached<{ detail: VnStockDetail; meta: Meta } | null>(`vn:stock-detail:${sym}:v5`, {
+    const res = await cached<{ detail: VnStockDetail; meta: Meta } | null>(`vn:stock-detail:${sym}:v6`, {
       ttlMs: ttl,
       staleMs: stale,
       softSwr: true,
       producer: async () => {
-        const r = await produceVnStockDetail(sym);
+        let r = await produceVnStockDetail(sym);
+        if (!hasCoreData(r?.detail)) {
+          await new Promise((x) => setTimeout(x, 900));
+          r = await produceVnStockDetail(sym);
+        }
         if (!r) throw new Error(`detail empty ${sym}`);
+        if (!hasCoreData(r.detail)) throw new Error(`detail no-core ${sym}`);
         return r;
       },
     });
     return res.value;
   } catch {
-    try {
-      const r = await produceVnStockDetail(sym);
-      if (r) return r;
-    } catch {
-      /* */
+    for (let i = 0; i < 2; i++) {
+      try {
+        if (i > 0) await new Promise((x) => setTimeout(x, 700 * i));
+        const r = await produceVnStockDetail(sym);
+        if (r && hasCoreData(r.detail)) return r;
+        if (r) return r;
+      } catch {
+        /* */
+      }
     }
     return {
       detail: emptyStockDetail(sym),
       meta: buildMeta({
         source: "degraded",
         sourceTimestampMs: Date.now(),
-        note: "partial shell",
+        note: "partial shell — retry client-side",
         partial: true,
       }),
     };
   }
 }
 
-// Boot realtime pipelines (idempotent)
 try {
   if (!isRealtimeWsDisabled()) {
     ensureSsiWsStarted();
