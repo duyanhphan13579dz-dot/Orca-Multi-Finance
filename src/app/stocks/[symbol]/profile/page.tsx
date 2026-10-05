@@ -63,7 +63,7 @@ function SectionHeading({
               : tone === "down"
                 ? "bg-down"
                 : tone === "warn"
-                  ? "bg-warn"
+                  ? "bg-accent"
                   : "bg-accent"
           }`}
         />
@@ -216,9 +216,9 @@ export default function StockProfilePage({ params }: { params: Promise<{ symbol:
             </div>
           </div>
           {p?.vnSummary || p?.enSummary ? (
-            <p className="mt-3 text-[12.5px] leading-relaxed text-ink-2">{p.vnSummary ?? p.enSummary}</p>
+            <p className="company-profile-summary">{p.vnSummary ?? p.enSummary}</p>
           ) : (
-            <p className="mt-3 text-[12px] text-ink-3">
+            <p className="company-profile-summary company-profile-summary--muted">
               {data.notes?.length ? data.notes.join(" · ") : "Chưa có mô tả doanh nghiệp — thử làm mới."}
             </p>
           )}
