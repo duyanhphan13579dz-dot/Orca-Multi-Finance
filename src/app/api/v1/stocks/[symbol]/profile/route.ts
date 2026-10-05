@@ -8,7 +8,7 @@ import {
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
-export const maxDuration = 20;
+export const maxDuration = 25;
 
 function shellPackage(sym: string): { data: StockCompanyPackage; meta: ReturnType<typeof buildMeta> } {
   const profile = profileFromMaster(sym) ?? {
@@ -50,30 +50,20 @@ function shellPackage(sym: string): { data: StockCompanyPackage; meta: ReturnTyp
   };
 }
 
-/**
- * GET /api/v1/stocks/:symbol/profile
- * MUST return 200 with a profile within ~15s for listed symbols.
- * Never leave the client on UNAVAILABLE for codes in the VN master registry.
- */
+/** Prefer live VNDirect package; master shell only on hard failure. */
 export async function GET(_req: Request, ctx: { params: Promise<{ symbol: string }> }) {
   const { symbol } = await ctx.params;
   const sym = (symbol ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "");
   if (!sym) return unavailable("company", "Thiếu mã cổ phiếu");
 
-  const budget = new Promise<null>((resolve) => setTimeout(() => resolve(null), 14_000));
-
   try {
-    const raced = await Promise.race([
-      getStockCompanyPackage(sym).then((r) => r ?? null),
-      budget,
-    ]);
-
-    if (raced?.data?.profile) {
-      return ok(raced.data, raced.meta);
+    const r = await getStockCompanyPackage(sym);
+    if (r?.data?.profile) {
+      return ok(r.data, r.meta);
     }
-    if (raced?.data) {
+    if (r?.data) {
       const shell = shellPackage(sym);
-      return ok({ ...raced.data, profile: shell.data.profile }, raced.meta ?? shell.meta);
+      return ok({ ...r.data, profile: r.data.profile ?? shell.data.profile }, r.meta);
     }
   } catch (e) {
     console.error("[stocks/profile]", sym, e);
