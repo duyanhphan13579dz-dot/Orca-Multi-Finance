@@ -20,6 +20,12 @@ import type { FreshnessStatus, Meta, OhlcvBar } from "../types";
 import { buildPriceScenarios, buildScenarioSummary, type PriceScenario } from "./price-scenarios";
 
 export type ChartPoint = { t: number; c: number };
+export type BusinessChartPoint = {
+  period: string;
+  revenue: number | null;
+  grossProfit: number | null;
+  netIncome: number | null;
+};
 
 export type CompanyAnalysisReport = {
   symbol: string;
@@ -40,6 +46,7 @@ export type CompanyAnalysisReport = {
       prior: string;
       change: string;
     }[];
+    businessChart: BusinessChartPoint[];
     businessTableMeta: {
       periodCurrent: string;
       periodPrior: string;
@@ -146,9 +153,14 @@ export async function generateCompanyAnalysisReport(
     balance = rows.balance as Record<string, unknown>[];
     cashflow = rows.cashflow as Record<string, unknown>[];
   } else if (analysis?.detail?.financials) {
-    income = (analysis.detail.financials.income as Record<string, unknown>[]) ?? [];
-    balance = (analysis.detail.financials.balance as Record<string, unknown>[]) ?? [];
-    cashflow = (analysis.detail.financials.cashflow as Record<string, unknown>[]) ?? [];
+    const legacyFinancials = analysis.detail.financials as {
+      income?: Record<string, unknown>[];
+      balance?: Record<string, unknown>[];
+      cashflow?: Record<string, unknown>[];
+    };
+    income = legacyFinancials.income ?? [];
+    balance = legacyFinancials.balance ?? [];
+    cashflow = legacyFinancials.cashflow ?? [];
   }
 
   let health = analysis?.detail?.financialHealth ?? null;
@@ -365,6 +377,20 @@ export async function generateCompanyAnalysisReport(
       change: "—",
     });
   }
+
+  const businessChart: BusinessChartPoint[] = income
+    .slice(0, 8)
+    .reverse()
+    .map((row) => ({
+      period:
+        (typeof row.period === "string" && row.period) ||
+        (typeof row.fiscalDate === "string" && row.fiscalDate) ||
+        "Kỳ",
+      revenue: n(row.netRevenue) ?? n(row.revenue),
+      grossProfit: n(row.grossProfit),
+      netIncome: n(row.netIncome) ?? n(row.netProfit) ?? n(row.netIncomeParent),
+    }))
+    .filter((row) => row.revenue != null || row.grossProfit != null || row.netIncome != null);
 
   const businessTableMeta =
     businessTable.length > 0
@@ -777,6 +803,7 @@ export async function generateCompanyAnalysisReport(
       valueChain,
       businessResults,
       businessTable,
+      businessChart,
       businessTableMeta,
       technical: technicalLines,
       priceSeries,
