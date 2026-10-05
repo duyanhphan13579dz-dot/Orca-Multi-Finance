@@ -12,26 +12,24 @@ export const maxDuration = 60;
  */
 export async function GET(req: Request) {
   const url = new URL(req.url);
-  const symbol = (url.searchParams.get("symbol") ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "");
-  const assetType = (url.searchParams.get("assetType") ?? "crypto") as ChartAssetType;
-  const timeframe = url.searchParams.get("timeframe") ?? "1h";
-  const rawLimit = Number(url.searchParams.get("limit") ?? 200);
-  const maxLimit = assetType === "crypto" ? 5000 : assetType === "stock" ? 2500 : 2000;
-  const minLimit = assetType === "stock" ? 20 : 50;
+  const symbol = (url.searchParams.get("symbol") ?? "").trim().toUpperCase();
+  const assetType = (url.searchParams.get("assetType") ?? "stock") as ChartAssetType;
+  const timeframe = url.searchParams.get("timeframe") ?? "1d";
+  const rawLimit = Number(url.searchParams.get("limit") ?? "500");
 
-  if (!symbol || symbol.length < 2 || symbol.length > 20) return badRequest("symbol không hợp lệ");
+  if (!symbol) return badRequest("Thiếu symbol");
   if (!["crypto", "forex", "stock", "commodity"].includes(assetType))
-    return badRequest("assetType không hợp lệ");
+    return badRequest("assetType phải là crypto | forex | stock | commodity");
   if (!tfsFor(assetType).includes(timeframe))
     return badRequest(`timeframe không hỗ trợ cho ${assetType} (cho phép: ${tfsFor(assetType).join(", ")})`);
-  if (!Number.isFinite(rawLimit) || rawLimit < minLimit || rawLimit > maxLimit)
-    return badRequest(`limit ${minLimit}..${maxLimit}`);
+  if (!Number.isFinite(rawLimit) || rawLimit < 10 || rawLimit > 5000)
+    return badRequest("limit phải trong khoảng 10–5000");
 
   try {
     const r = await getChartHistory({ symbol, assetType, timeframe, limit: Math.floor(rawLimit) });
-    if (!r || !r.data?.candles?.length) {
+    if (!r) {
       return unavailable(
-        "chart-engine",
+        "chart",
         assetType === "stock"
           ? "Không lấy được chuỗi nến VN — thử timeframe khác hoặc xem /system."
           : assetType === "commodity"
@@ -44,9 +42,6 @@ export async function GET(req: Request) {
     return ok(r.data, r.meta);
   } catch (e) {
     console.warn("[chart/history]", symbol, assetType, timeframe, e instanceof Error ? e.message : e);
-    return unavailable(
-      "chart-engine",
-      e instanceof Error ? e.message : "Lỗi tạm thời khi tải chart — đang kết nối lại.",
-    );
+    return unavailable("chart", e instanceof Error ? e.message : "Lỗi lấy dữ liệu chart");
   }
 }
