@@ -113,9 +113,9 @@ export async function getVndCompanyProfile(symbol: string): Promise<VndCompanyPr
     }
   }
 
-  const first = await once(8_000, 1);
+  const first = await once(10_000, 2);
   if (first) return first;
-  return once(12_000, 1);
+  return once(15_000, 2);
 }
 
 export async function getVndShareholders(symbol: string, size = 30): Promise<VndShareholder[]> {
@@ -126,8 +126,8 @@ export async function getVndShareholders(symbol: string, size = 30): Promise<Vnd
         `/v4/shareholders?q=code:${encodeURIComponent(sym)}&size=${Math.max(1, Math.min(100, size))}`,
         {
           provider: VND,
-          timeoutMs: 10_000,
-          retries: 1,
+          timeoutMs: 12_000,
+          retries: 2,
           accept: (value) => Array.isArray(value.data),
         },
       )
@@ -158,44 +158,32 @@ export async function getVndShareholders(symbol: string, size = 30): Promise<Vnd
 }
 
 export async function getVndEquitySnapshot(symbol: string): Promise<VndEquitySnapshot | null> {
-  const sym = symbol.toUpperCase();
+  const sym = symbol.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  if (!sym) return null;
   try {
     const payload = (
       await vndirectJson<{ data?: Record<string, unknown>[] }>(
-        `/v4/ratios?q=code:${encodeURIComponent(sym)}~itemCode:TOTAL_EQUITY,OUTSTANDING_SHARE,MARKET_CAP&size=20`,
-        { provider: VND, timeoutMs: 12_000, retries: 1 },
+        `/v4/stock_prices?q=code:${encodeURIComponent(sym)}&size=1&sort=date:desc`,
+        {
+          provider: VND,
+          timeoutMs: 10_000,
+          retries: 1,
+          accept: (value) => Array.isArray(value.data),
+        },
       )
     ).data;
-    const rows = payload.data ?? [];
-    let sharesOutstanding: number | null = null;
-    let totalShares: number | null = null;
-    let marketCapReported: number | null = null;
-    let reportDate: string | null = null;
-    for (const r of rows) {
-      const code = String(r.itemCode ?? "");
-      const val = Number(r.value ?? r.numericValue);
-      if (!Number.isFinite(val)) continue;
-      if (code.includes("OUTSTANDING") || code.includes("SHARE")) sharesOutstanding = val;
-      if (code.includes("TOTAL_EQUITY")) totalShares = val;
-      if (code.includes("MARKET_CAP")) marketCapReported = val;
-      if (typeof r.reportDate === "string") reportDate = r.reportDate;
-    }
-    if (sharesOutstanding == null && totalShares == null && marketCapReported == null) {
-      try {
-        const holders = await getVndShareholders(sym, 5);
-        const sum = holders.reduce((a, h) => a + (h.shares ?? 0), 0);
-        if (sum > 0) sharesOutstanding = sum;
-      } catch {
-        /* */
-      }
-    }
-    if (sharesOutstanding == null && totalShares == null && marketCapReported == null) return null;
+    const row = payload.data?.[0];
+    if (!row) return null;
+    const n = (v: unknown) => {
+      const x = Number(v);
+      return Number.isFinite(x) ? x : null;
+    };
     return {
-      sharesOutstanding,
-      totalShares,
-      marketCapReported: marketCapReported != null ? vnPriceQuoteToVnd(marketCapReported) : null,
-      reportDate,
-      source: VND,
+      sharesOutstanding: n(row.listedShare) ?? n(row.sharesOutstanding),
+      totalShares: n(row.totalShare) ?? n(row.listedShare),
+      marketCapReported: n(row.marketCap),
+      reportDate: typeof row.date === "string" ? row.date : null,
+      source: "vndirect",
     };
   } catch {
     return null;
@@ -203,67 +191,52 @@ export async function getVndEquitySnapshot(symbol: string): Promise<VndEquitySna
 }
 
 export async function getVndValuationRatios(symbol: string): Promise<VndValuationRatios | null> {
-  const sym = symbol.toUpperCase();
+  const sym = symbol.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  if (!sym) return null;
   try {
     const payload = (
       await vndirectJson<{ data?: Record<string, unknown>[] }>(
-        `/v4/ratios?q=code:${encodeURIComponent(sym)}~itemCode:PE,PB,PS,EV_EBITDA,EPS,BVPS,ROE,ROA,DIVIDEND_YIELD,MARKET_CAP&size=40`,
-        { provider: VND, timeoutMs: 12_000, retries: 1 },
+        `/v4/ratios?q=code:${encodeURIComponent(sym)}&size=1&sort=reportDate:desc`,
+        {
+          provider: VND,
+          timeoutMs: 10_000,
+          retries: 1,
+          accept: (value) => Array.isArray(value.data) && value.data.length > 0,
+        },
       )
     ).data;
-    const rows = payload.data ?? [];
-    const pick = (codes: string[]) => {
-      for (const r of rows) {
-        const c = String(r.itemCode ?? "").toUpperCase();
-        if (codes.some((x) => c.includes(x))) {
-          const v = Number(r.value ?? r.numericValue);
-          if (Number.isFinite(v)) return v;
-        }
-      }
-      return null;
+    const row = payload.data?.[0];
+    if (!row) return null;
+    const n = (v: unknown) => {
+      const x = Number(v);
+      return Number.isFinite(x) ? x : null;
     };
-    const pe = pick(["PE"]);
-    const pb = pick(["PB"]);
-    const ps = pick(["PS"]);
-    const evEbitda = pick(["EV_EBITDA", "EVEBITDA"]);
-    const eps = pick(["EPS"]);
-    const bvps = pick(["BVPS"]);
-    const roe = pick(["ROE"]);
-    const roa = pick(["ROA"]);
-    const dividendYield = normalizeYieldRatio(pick(["DIVIDEND_YIELD", "DIVYIELD"]));
-    const marketCap = pick(["MARKET_CAP"]);
-    let reportDate: string | null = null;
-    for (const r of rows) {
-      if (typeof r.reportDate === "string") {
-        reportDate = r.reportDate;
-        break;
-      }
-    }
-    if ([pe, pb, ps, eps, bvps, roe, marketCap].every((x) => x == null)) return null;
     return {
-      pe,
-      pb,
-      ps,
-      evEbitda,
-      eps,
-      bvps,
-      roe,
-      roa,
-      dividendYield,
-      marketCap: marketCap != null ? vnPriceQuoteToVnd(marketCap) : null,
-      reportDate,
-      source: VND,
+      pe: n(row.pe) ?? n(row.priceToEarning),
+      pb: n(row.pb) ?? n(row.priceToBook),
+      ps: n(row.ps) ?? n(row.priceToSales),
+      evEbitda: n(row.evEbitda),
+      eps: n(row.eps),
+      bvps: n(row.bvps) ?? n(row.bookValuePerShare),
+      roe: n(row.roe),
+      roa: n(row.roa),
+      dividendYield: normalizeYieldRatio(n(row.dividendYield)),
+      marketCap: n(row.marketCap),
+      reportDate: typeof row.reportDate === "string" ? row.reportDate : null,
+      source: "vndirect",
     };
   } catch {
     return null;
   }
 }
 
-/** @deprecated dùng getVndEquitySnapshot */
 export async function getVndOutstandingShares(
   symbol: string,
 ): Promise<{ shares: number | null; source: string } | null> {
   const snap = await getVndEquitySnapshot(symbol);
   if (!snap) return null;
-  return { shares: snap.sharesOutstanding ?? snap.totalShares, source: snap.source };
+  return {
+    shares: snap.sharesOutstanding ?? snap.totalShares,
+    source: snap.source,
+  };
 }
