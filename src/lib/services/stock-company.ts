@@ -12,6 +12,7 @@ import { fetchVndirectFinancials, periodsToLegacyRows } from "../financial/vndir
 import { llmChat, llmConfigured } from "../ai/gateway";
 import { buildDeterministicResearch, enrichFoundDate } from "./company-research";
 import type { Meta } from "../types";
+import { getSecurity } from "../vn/master";
 
 export interface StockCompanyPackage {
   symbol: string;
@@ -54,31 +55,149 @@ function profileFromVietcap(
   };
 }
 
+function profileFromMaster(sym: string): VndCompanyProfile | null {
+  const sec = getSecurity(sym);
+  if (!sec) return null;
+  return {
+    code: sym,
+    floor: sec.exchange,
+    logo: null,
+    vnName: sec.name,
+    enName: sec.nameEn ?? null,
+    foundDate: null,
+    taxCode: null,
+    vnAddress: null,
+    phone: null,
+    fax: null,
+    website: null,
+    email: null,
+    employees: null,
+    vnSummary: sec.sector ? `Ngành: ${sec.sector}` : null,
+    enSummary: sec.sector ? `Sector: ${sec.sector}` : null,
+  };
+}
+
+function mergeProfiles(
+  base: VndCompanyProfile | null,
+  fill: Partial<VndCompanyProfile> | null,
+): VndCompanyProfile | null {
+  if (!base && !fill) return null;
+  if (!base) return fill as VndCompanyProfile;
+  if (!fill) return base;
+  return {
+    ...base,
+    floor: base.floor ?? fill.floor ?? null,
+    logo: base.logo ?? fill.logo ?? null,
+    vnName: base.vnName ?? fill.vnName ?? null,
+    enName: base.enName ?? fill.enName ?? null,
+    foundDate: base.foundDate ?? fill.foundDate ?? null,
+    taxCode: base.taxCode ?? fill.taxCode ?? null,
+    vnAddress: base.vnAddress ?? fill.vnAddress ?? null,
+    phone: base.phone ?? fill.phone ?? null,
+    fax: base.fax ?? fill.fax ?? null,
+    website: base.website ?? fill.website ?? null,
+    email: base.email ?? fill.email ?? null,
+    employees: base.employees ?? fill.employees ?? null,
+    vnSummary: base.vnSummary ?? fill.vnSummary ?? null,
+    enSummary: base.enSummary ?? fill.enSummary ?? null,
+  };
+}
+
 async function loadCompanyCore(sym: string): Promise<{
   profile: VndCompanyProfile | null;
   shareholders: VndShareholder[];
   sources: string[];
 }> {
   const sources: string[] = [];
-  const [vndProfile, shareholders, vietcap] = await Promise.all([
+
+  const [vndProfile, shareholdersRaw, vietcap, quotePack] = await Promise.all([
     getVndCompanyProfile(sym).catch(() => null),
     getVndShareholders(sym, 50).catch(() => [] as VndShareholder[]),
     getVietcapCompany(sym).catch(() => null),
+    import("./stocks")
+      .then((m) => m.getVnQuotes([sym]))
+      .catch(() => null),
   ]);
 
+  let shareholders = shareholdersRaw;
   let profile = enrichFoundDate(vndProfile);
   if (profile) sources.push("vndirect");
   if (shareholders.length) sources.push("vndirect-holders");
 
-  if (!profile && vietcap) {
-    profile = profileFromVietcap(sym, vietcap);
-    sources.push("vietcap");
-  } else if (profile && vietcap) {
-    if (!profile.vnName && vietcap.name) profile = { ...profile, vnName: vietcap.name };
-    if (!profile.enName && vietcap.nameEn) profile = { ...profile, enName: vietcap.nameEn };
-    if (!profile.floor && vietcap.exchange) profile = { ...profile, floor: vietcap.exchange };
-    if (!profile.foundDate && vietcap.listedDate) profile = { ...profile, foundDate: vietcap.listedDate };
-    sources.push("vietcap-fill");
+  if (vietcap) {
+    const fromVc = profileFromVietcap(sym, vietcap);
+    if (!profile) {
+      profile = fromVc;
+      sources.push("vietcap");
+    } else {
+      profile = mergeProfiles(profile, fromVc);
+      sources.push("vietcap-fill");
+    }
+  }
+
+  const thin =
+    !profile ||
+    (!profile.vnName && !profile.vnSummary) ||
+    (!profile.website && !profile.vnAddress && !shareholders.length);
+  if (thin) {
+    const [vnd2, holders2, vc2] = await Promise.all([
+      !profile ? getVndCompanyProfile(sym).catch(() => null) : Promise.resolve(null),
+      !shareholders.length
+        ? getVndShareholders(sym, 50).catch(() => [] as VndShareholder[])
+        : Promise.resolve([] as VndShareholder[]),
+      !vietcap ? getVietcapCompany(sym).catch(() => null) : Promise.resolve(null),
+    ]);
+    if (vnd2) {
+      profile = mergeProfiles(profile, enrichFoundDate(vnd2));
+      if (!sources.includes("vndirect")) sources.push("vndirect");
+    }
+    if (holders2.length) {
+      shareholders = holders2;
+      if (!sources.includes("vndirect-holders")) sources.push("vndirect-holders");
+    }
+    if (vc2) {
+      profile = mergeProfiles(profile, profileFromVietcap(sym, vc2));
+      if (!sources.includes("vietcap") && !sources.includes("vietcap-fill")) sources.push("vietcap");
+    }
+  }
+
+  const master = profileFromMaster(sym);
+  if (master) {
+    if (!profile) {
+      profile = master;
+      sources.push("vn-master");
+    } else {
+      const before = profile.vnName;
+      profile = mergeProfiles(profile, master)!;
+      if (!before && profile.vnName) sources.push("vn-master-fill");
+    }
+  }
+
+  const q = quotePack?.quotes?.[0];
+  if (q && profile) {
+    if (!profile.vnName && q.name) {
+      profile = { ...profile, vnName: q.name };
+      sources.push("quote-name");
+    }
+  } else if (q && !profile && q.name) {
+    profile = {
+      code: sym,
+      floor: null,
+      logo: null,
+      vnName: q.name,
+      enName: null,
+      foundDate: null,
+      taxCode: null,
+      vnAddress: null,
+      phone: null,
+      fax: null,
+      website: null,
+      email: null,
+      employees: null,
+      vnSummary: null,
+      enSummary: null,
+    };
+    sources.push("quote-shell");
   }
 
   return { profile, shareholders, sources };
@@ -176,14 +295,23 @@ export async function getStockCompanyPackage(
   try {
     let core: { profile: VndCompanyProfile | null; shareholders: VndShareholder[]; sources: string[] };
     try {
-      const companyRes = await cached(`vn:company:${sym}:v4`, {
+      const companyRes = await cached(`vn:company:${sym}:v5`, {
         ttlMs: 2 * 3_600_000,
         staleMs: 24 * 3_600_000,
         softSwr: true,
         producer: async () => {
-          const pack = await loadCompanyCore(sym);
+          let pack = await loadCompanyCore(sym);
+          if (!pack.profile) {
+            pack = await loadCompanyCore(sym);
+          }
           if (!pack.profile && !pack.shareholders.length) {
             throw new Error(`company empty ${sym}`);
+          }
+          const onlyMaster = pack.sources.every(
+            (s) => s.startsWith("vn-master") || s === "quote-name" || s === "quote-shell",
+          );
+          if (onlyMaster) {
+            pack = { ...pack, sources: [...pack.sources, "thin-cache"] };
           }
           return pack;
         },
@@ -191,6 +319,10 @@ export async function getStockCompanyPackage(
       core = companyRes.value;
     } catch {
       core = await loadCompanyCore(sym);
+      if (!core.profile) {
+        const m = profileFromMaster(sym);
+        if (m) core = { profile: m, shareholders: [], sources: ["vn-master-fallback"] };
+      }
     }
 
     let fin: {
@@ -213,7 +345,7 @@ export async function getStockCompanyPackage(
     }
 
     const notes: string[] = [];
-    if (!core.profile) notes.push("Chưa lấy được hồ sơ doanh nghiệp (VNDirect/Vietcap).");
+    if (!core.profile) notes.push("Chưa lấy được hồ sơ doanh nghiệp (VNDirect/Vietcap/master).");
     if (!core.shareholders.length) notes.push("Chưa có danh sách cổ đông lớn.");
     if (!fin.income.length) notes.push("Chưa lấy được BCTC — SWOT dựa chủ yếu trên hồ sơ.");
     if (core.sources.length) notes.push(`Nguồn: ${[...new Set(core.sources)].join(" + ")}`);
@@ -297,21 +429,24 @@ export async function getStockCompanyPackage(
     };
   } catch (e) {
     console.warn("[getStockCompanyPackage]", sym, e instanceof Error ? e.message : e);
+    const master = profileFromMaster(sym);
     return {
       data: {
         symbol: sym,
-        profile: null,
+        profile: master,
         shareholders: [],
         board: [],
         valueChain: null,
         catalysts: [],
         risks: [],
         swot: null,
-        notes: ["Nguồn hồ sơ tạm gián đoạn — bấm làm mới để thử lại."],
-        researchSource: "none",
+        notes: master
+          ? ["Nguồn live tạm gián đoạn — đang dùng hồ sơ master nội bộ. Bấm làm mới để cập nhật."]
+          : ["Nguồn hồ sơ tạm gián đoạn — bấm làm mới để thử lại."],
+        researchSource: master ? "vn-master-fallback" : "none",
       },
       meta: buildMeta({
-        source: "degraded",
+        source: master ? "vn-master-fallback" : "degraded",
         sourceTimestampMs: Date.now(),
         note: "degraded company shell",
         partial: true,
