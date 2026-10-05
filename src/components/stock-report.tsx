@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import type { CompanyAnalysisReport, ChartPoint } from "@/lib/services/company-analysis-report";
+import type { PriceScenario } from "@/lib/services/price-scenarios";
 import type { ApiResponse } from "@/lib/types";
 import { Badge, FreshnessDot, Loading, MetaLine, Panel } from "@/components/ui";
 import { OrcaMark } from "@/components/logo";
@@ -19,6 +20,7 @@ import {
   Globe2,
   Scale,
   Landmark,
+  ListChecks,
 } from "lucide-react";
 
 function esc(s: string): string {
@@ -161,6 +163,7 @@ function printCompanyReport(report: CompanyAnalysisReport) {
     ${chartSvgHtml(s.priceSeries, report.symbol)}
     ${sectionHtml("7. Định giá", s.valuation)}
     ${sectionHtml("8. Dự phóng KQKD & định giá", s.projection)}
+    ${scenariosHtml(s.priceScenarios, s.scenarioSummary)}
     ${groupedSectionHtml("9. Catalyst tăng trưởng (độc lập)", s.catalysts, "catalyst")}
     ${sectionHtml("10. Rủi ro doanh nghiệp", s.risks)}
     ${sectionHtml("11. Tiềm năng so với ngành", s.vsIndustry)}
@@ -194,6 +197,12 @@ function printCompanyReport(report: CompanyAnalysisReport) {
       .scen{display:table;border-collapse:collapse;width:100%;margin:8px 0}
       .scen>div{display:table-cell;border:1px solid #ccd;padding:8px;width:33%;vertical-align:top}
       .scen b{display:block;font-size:10.5px;letter-spacing:.08em;margin-bottom:4px}
+      .scenario-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:8px 0}
+      .scenario-card{border:1px solid #ccd;border-radius:6px;padding:8px;break-inside:avoid;font-size:10.5px}
+      .scenario-card>b{display:block;color:#123f7c;font-size:11px;margin-bottom:2px}
+      .scenario-card>small{display:block;color:#5a6b8c;margin-bottom:5px}
+      .scenario-card>strong{display:block;margin-top:5px;color:#123f7c;font-size:10px}
+      .scenario-card>p{font-size:10px;margin:2px 0}
       table.kq{width:100%;border-collapse:collapse;margin:6px 0 10px;font-size:12px}
       table.kq th,table.kq td{border:1px solid #ccd;padding:7px 10px;text-align:left;vertical-align:top}
       table.kq th{background:#eef3f9;color:#123f7c;font-size:10.5px;letter-spacing:.04em;font-weight:700}
@@ -333,6 +342,7 @@ export function StockReportSection() {
             </Sec>
             <Sec icon={<Scale className="size-4" />} title="7. Định giá" lines={report.sections.valuation} />
             <Sec icon={<TrendingUp className="size-4" />} title="8. Dự phóng KQKD & định giá" lines={report.sections.projection} />
+            <ScenarioBlock scenarios={report.sections.priceScenarios} summary={report.sections.scenarioSummary} />
 
             <div className="mt-4 grid gap-3 lg:grid-cols-2">
               <GroupedSec
@@ -368,6 +378,67 @@ export function StockReportSection() {
       </div>
     </Panel>
   );
+}
+
+function scenarioTone(label: PriceScenario["label"]): string {
+  return label === "Bull" ? "border-emerald-500/40 bg-emerald-500/5" : label === "Bear" ? "border-rose-500/40 bg-rose-500/5" : "border-amber-500/40 bg-amber-500/5";
+}
+
+function scenarioTitleTone(label: PriceScenario["label"]): string {
+  return label === "Bull" ? "text-emerald-500" : label === "Bear" ? "text-rose-500" : "text-amber-500";
+}
+
+function ScenarioBlock({
+  scenarios,
+  summary,
+}: {
+  scenarios: PriceScenario[];
+  summary: { currentRegime: string; primaryScenario: string; watchItems: string[] };
+}) {
+  if (!scenarios?.length) return null;
+  return (
+    <section className="mt-3 rounded-lg border border-accent-primary/30 bg-surface-elevated/40 p-3">
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-accent-primary">
+          <Target className="size-4" /> 9. Kịch bản biến động thị giá & hành động
+        </div>
+        <Badge tone="accent">Ưu tiên: {summary.primaryScenario}</Badge>
+      </div>
+      <p className="mb-3 text-[11px] text-text-muted">Trạng thái hiện tại: {summary.currentRegime}. Kịch bản có điều kiện, không phải khuyến nghị chắc chắn.</p>
+      <div className="grid gap-3 xl:grid-cols-3">
+        {scenarios.map((scenario) => (
+          <div key={scenario.label} className={`rounded-md border p-3 ${scenarioTone(scenario.label)}`}>
+            <div className="flex items-start justify-between gap-2">
+              <div>
+                <h3 className={`text-[13px] font-bold ${scenarioTitleTone(scenario.label)}`}>{scenario.label} · {scenario.title}</h3>
+                <p className="mt-0.5 text-[10px] text-text-muted">{scenario.horizon} · Xác suất tham chiếu {scenario.probabilityRange} · Độ tin cậy {scenario.confidence}</p>
+              </div>
+              <Badge tone={scenario.dataQuality === "HIGH" ? "up" : scenario.dataQuality === "MEDIUM" ? "warn" : "down"}>{scenario.dataQuality}</Badge>
+            </div>
+            <ScenarioList label="Nguyên nhân kỹ thuật" items={scenario.technicalCauses} />
+            <ScenarioList label="Nguyên nhân cơ bản" items={scenario.fundamentalCauses} />
+            <ScenarioList label="Trigger xác nhận" items={scenario.triggers} />
+            <ScenarioList label="Vô hiệu / cảnh báo" items={scenario.invalidationSignals} />
+            <ScenarioList label="Hướng hành động" items={scenario.actionPlan} />
+            <div className="mt-2 border-t border-border-subtle/70 pt-2">
+              <div className="mb-1 flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-text-muted"><ListChecks className="size-3" /> Việc cần làm</div>
+              <ul className="space-y-1 text-[11.5px] leading-relaxed text-text-secondary">{scenario.tasks.map((task, i) => <li key={i}>• {task}</li>)}</ul>
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function ScenarioList({ label, items }: { label: string; items: string[] }) {
+  return <div className="mt-2"><div className="text-[10px] font-semibold uppercase tracking-wider text-text-muted">{label}</div><ul className="mt-0.5 space-y-0.5 text-[11.5px] leading-relaxed text-text-secondary">{items.map((item, i) => <li key={i}>• {item}</li>)}</ul></div>;
+}
+
+function scenariosHtml(scenarios: PriceScenario[], summary: { currentRegime: string; primaryScenario: string }): string {
+  if (!scenarios?.length) return "";
+  const cards = scenarios.map((s) => `<div class="scenario-card"><b>${esc(s.label)} · ${esc(s.title)}</b><small>${esc(s.horizon)} · Xác suất ${esc(s.probabilityRange)} · ${esc(s.dataQuality)}</small><strong>Nguyên nhân kỹ thuật</strong>${s.technicalCauses.map((x) => `<p>• ${esc(x)}</p>`).join("")}<strong>Nguyên nhân cơ bản</strong>${s.fundamentalCauses.map((x) => `<p>• ${esc(x)}</p>`).join("")}<strong>Trigger / vô hiệu</strong>${[...s.triggers, ...s.invalidationSignals].map((x) => `<p>• ${esc(x)}</p>`).join("")}<strong>Hướng hành động & việc cần làm</strong>${[...s.actionPlan, ...s.tasks].map((x) => `<p>• ${esc(x)}</p>`).join("")}</div>`).join("");
+  return `<h2>9. Kịch bản biến động thị giá & hành động</h2><p>Trạng thái: ${esc(summary.currentRegime)} · Ưu tiên: ${esc(summary.primaryScenario)}. Đây là kịch bản có điều kiện, không phải khuyến nghị chắc chắn.</p><div class="scenario-grid">${cards}</div>`;
 }
 
 function Sec({
