@@ -226,6 +226,7 @@ export default function StockDetailPage({ params }: { params: Promise<{ symbol: 
     Boolean(d?.quote?.price && d.quote.price > 0 && d.bars && d.bars.length >= 20);
 
   const coldRetryRef = useRef(0);
+  const hadFullRef = useRef(false);
   useEffect(() => {
     if (!symbol) return;
     if (isFull(data)) {
@@ -247,33 +248,55 @@ export default function StockDetailPage({ params }: { params: Promise<{ symbol: 
     const els = ids.map((id) => document.getElementById(id)).filter(Boolean) as HTMLElement[];
     if (!els.length) return;
 
+    let raf = 0;
     const io = new IntersectionObserver(
       (entries) => {
         const visible = entries
           .filter((e) => e.isIntersecting)
           .sort((a, b) => b.intersectionRatio - a.intersectionRatio);
-        if (visible[0]?.target?.id) setActiveSection(visible[0].target.id);
+        const id = visible[0]?.target?.id;
+        if (!id) return;
+        cancelAnimationFrame(raf);
+        raf = requestAnimationFrame(() => {
+          setActiveSection((prev) => (prev === id ? prev : id));
+        });
       },
       {
-        rootMargin: "-20% 0px -55% 0px",
-        threshold: [0.08, 0.2, 0.4],
+        root: document.querySelector(".orca-main-scroll"),
+        rootMargin: "-18% 0px -50% 0px",
+        threshold: [0.12, 0.25, 0.45],
       },
     );
     for (const el of els) io.observe(el);
-    return () => io.disconnect();
+    return () => {
+      cancelAnimationFrame(raf);
+      io.disconnect();
+    };
   }, [data?.symbol]);
 
   useEffect(() => {
     const nav = navRef.current;
     if (!nav) return;
     const btn = nav.querySelector<HTMLElement>(`[data-section="${activeSection}"]`);
-    btn?.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "center" });
+    if (!btn) return;
+    // Horizontal-only — never call scrollIntoView (it scrolls .orca-main-scroll vertically).
+    const navRect = nav.getBoundingClientRect();
+    const btnRect = btn.getBoundingClientRect();
+    const delta =
+      btnRect.left - navRect.left - (navRect.width - btnRect.width) / 2;
+    nav.scrollTo({ left: nav.scrollLeft + delta, behavior: "smooth" });
   }, [activeSection]);
 
   const full = isFull(data);
-  const waiting = !full && (isLoading || isValidating || coldRetryRef.current < 1);
+  if (full) hadFullRef.current = true;
+  // Only block the whole page on the *first* load. Never unmount content during
+  // background refresh — that resets .orca-main-scroll and jumps the user up.
+  const initialWait =
+    !symbol ||
+    (!data && (isLoading || isValidating || coldRetryRef.current < 1)) ||
+    (!full && !data && isLoading);
 
-  if (!symbol || waiting) {
+  if (initialWait) {
     return (
       <div className="stock-workspace">
         <Loading
@@ -284,7 +307,8 @@ export default function StockDetailPage({ params }: { params: Promise<{ symbol: 
     );
   }
 
-  if (!res?.success || !data || !full) {
+  // Don't tear down the page on a flaky refresh — only when we never got full data
+  if (!data || (!full && !hadFullRef.current)) {
     return (
       <div className="stock-workspace space-y-3">
         <Unavailable
