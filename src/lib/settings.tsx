@@ -136,7 +136,7 @@ export const DEFAULT_SETTINGS: UserSettings = {
     widgets: DASHBOARD_WIDGETS.map((w, i) => ({ id: w.id, visible: true, order: i })),
     defaultAsset: "BTCUSDT",
     defaultMarket: "crypto",
-    defaultTimeframe: "1h",
+    defaultTimeframe: "1d",
   },
   realtime: { liveUpdates: true, lowDataMode: false, refreshSeconds: 15, autoReconnect: true, backgroundRefresh: true },
   chart: {
@@ -341,7 +341,6 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     notify();
   }, []);
 
-  // Stable context identity — only changes when settings snapshot actually notifies
   const value = useMemo<SettingsCtxValue>(
     () => ({ settings: snapshot, update, reset }),
     // eslint-disable-next-line react-hooks/exhaustive-deps -- tick drives refresh via setTick in listener
@@ -354,7 +353,6 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
 export function useSettings(): SettingsCtxValue {
   const ctx = useContext(SettingsCtx);
   if (ctx) return ctx;
-  // Fallback for modules outside provider (should be rare)
   const [, setTick] = useState(0);
   useEffect(() => {
     const l = () => setTick((n) => n + 1);
@@ -403,13 +401,13 @@ export function tradeFeePct(
   assetType: "stock" | "crypto" | "forex" | "commodity",
   side: "long" | "short",
 ): number {
-  const t = snapshot.trading;
   if (assetType === "stock") {
+    const t = snapshot.trading;
     const fee = t.stockFeePct;
     const tax = side === "short" ? 0 : t.sellTaxPct;
     return fee + tax;
   }
-  if (assetType === "crypto") return t.cryptoFeePct;
+  if (assetType === "crypto") return snapshot.trading.cryptoFeePct;
   return 0;
 }
 
