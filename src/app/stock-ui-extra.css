@@ -447,3 +447,69 @@
 @media (max-width: 480px) {
   .stock-breadth-stat-icon { display: none; }
 }
+
+/* —— Company profile card (Doanh nghiệp) —— */
+.company-profile-card {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  overflow: hidden;
+  border-radius: 0.85rem;
+}
+.company-profile-hero {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding: 0.85rem 1rem 1rem;
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+}
+.company-profile-top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.65rem 1rem;
+  width: 100%;
+  min-width: 0;
+}
+.company-profile-identity {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  min-width: 0;
+  flex: 1 1 12rem;
+  overflow: hidden;
+}
+.company-profile-identity > div.min-w-0,
+.company-profile-identity .min-w-0 {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+}
+.company-profile-summary {
+  margin-top: 0.65rem;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 0.65rem 0.75rem;
+  border-radius: 0.55rem;
+  border: 1px solid color-mix(in srgb, var(--color-border-subtle, #2a3344) 90%, transparent);
+  background: color-mix(in srgb, var(--color-surface-elevated, #121820) 55%, transparent);
+  font-size: 0.78rem;
+  line-height: 1.55;
+  color: var(--color-text-secondary, #a8b3c7);
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  white-space: pre-wrap;
+  overflow: hidden;
+}
+.company-profile-summary--muted {
+  border-style: dashed;
+  color: var(--color-text-muted, #7a8699);
+}
