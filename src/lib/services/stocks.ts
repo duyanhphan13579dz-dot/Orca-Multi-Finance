@@ -9,6 +9,7 @@ import * as vndirect from "../providers/vndirect";
 import {
   getSsiIndices,
   getSsiQuotes,
+  getSsiDailyOhlc,
   ssiFcConfigured,
 } from "../providers/ssi-fcdata";
 import { ensureSsiWsStarted, ssiWs } from "../realtime/ssi-ws";
@@ -277,6 +278,46 @@ export async function getVnOhlcv(
 ): Promise<{ bars: OhlcvBar[]; meta: Meta } | null> {
   const sym = symbol.toUpperCase();
   const isIndex = vndirect.isVnIndexSymbol(sym);
+  const kind = isIndex ? ("index" as const) : ("stock" as const);
+
+  const raceBars = async (): Promise<{ bars: OhlcvBar[]; source: string } | null> => {
+    type Cand = { bars: OhlcvBar[]; source: string };
+    const tasks: Promise<Cand | null>[] = [
+      withTimeout(
+        (isIndex ? vndirect.getVndIndexOhlcv(sym, limit) : vndirect.getVndOhlcv(sym, limit))
+          .then((bars) => (bars?.length ? { bars, source: "vndirect" } : null))
+          .catch(() => null),
+        7_000,
+      ),
+      withTimeout(
+        getPublicOhlcv(sym, limit, kind)
+          .then((bars) => (bars?.length ? { bars, source: "public" } : null))
+          .catch(() => null),
+        7_000,
+      ),
+    ];
+    if (ssiFcConfigured() && !isIndex) {
+      tasks.push(
+        withTimeout(
+          getSsiDailyOhlc(sym, { pageSize: Math.max(limit, 320) })
+            .then((bars) => (bars?.length ? { bars: bars.slice(-limit), source: "ssi-fcdata" } : null))
+            .catch(() => null),
+          7_000,
+        ),
+      );
+    }
+    const settled = await Promise.all(tasks);
+    const ok = settled.filter((x): x is Cand => Boolean(x?.bars?.length));
+    if (!ok.length) return null;
+    ok.sort((a, b) => {
+      const aOk = a.bars.length >= 20 ? 1 : 0;
+      const bOk = b.bars.length >= 20 ? 1 : 0;
+      if (aOk !== bOk) return bOk - aOk;
+      return b.bars.length - a.bars.length;
+    });
+    return ok[0]!;
+  };
+
   try {
     let ohlcvTtl = 30_000;
     let ohlcvStale = 180_000;
@@ -289,39 +330,37 @@ export async function getVnOhlcv(
     } catch {
       /* */
     }
-    const res = await cached(`vn:ohlcv:vnd:${sym}:${limit}`, {
+    const res = await cached(`vn:ohlcv:race:${sym}:${limit}:v2`, {
       ttlMs: ohlcvTtl,
       staleMs: ohlcvStale,
       softSwr: true,
       producer: async () => {
-        const [vndBars, pubBars] = await Promise.all([
-          Promise.race([
-            (isIndex ? vndirect.getVndIndexOhlcv(sym, limit) : vndirect.getVndOhlcv(sym, limit)).catch(
-              () => null,
-            ),
-            new Promise<null>((r) => setTimeout(() => r(null), 7_500)),
-          ]),
-          getPublicOhlcv(sym, limit, isIndex ? "index" : "stock").catch(() => [] as OhlcvBar[]),
-        ]);
-        if (vndBars?.length) return vndBars;
-        if (pubBars?.length) return pubBars;
-        throw new Error(`ohlcv empty ${sym}`);
+        let pack = await raceBars();
+        if (!pack || pack.bars.length < 20) {
+          pack = (await raceBars()) ?? pack;
+        }
+        if (!pack?.bars?.length) throw new Error(`ohlcv empty ${sym}`);
+        return pack;
       },
     });
+    const pack = res.value as { bars: OhlcvBar[]; source: string };
     return {
-      bars: res.value,
+      bars: pack.bars,
       meta: buildMeta({
-        source: "vndirect-ohlcv",
-        sourceTimestampMs: res.value[res.value.length - 1]?.time ?? Date.now(),
+        source: `${pack.source}-ohlcv`,
+        sourceTimestampMs: pack.bars[pack.bars.length - 1]?.time ?? Date.now(),
       }),
     };
   } catch {
     try {
-      const bars = await getPublicOhlcv(sym, limit, isIndex ? "index" : "stock");
-      if (bars.length) {
+      const pack = await raceBars();
+      if (pack?.bars?.length) {
         return {
-          bars,
-          meta: buildMeta({ source: "public-ohlcv", sourceTimestampMs: bars[bars.length - 1]?.time }),
+          bars: pack.bars,
+          meta: buildMeta({
+            source: `${pack.source}-ohlcv`,
+            sourceTimestampMs: pack.bars[pack.bars.length - 1]?.time,
+          }),
         };
       }
     } catch {
@@ -417,13 +456,15 @@ async function produceVnStockDetail(sym: string): Promise<{ detail: VnStockDetai
     getFinancialsForSymbol(sym).catch(() => null),
   ]);
 
-  if (!quoteRes?.quotes?.[0]) {
-    await new Promise((r) => setTimeout(r, 350));
-    quoteRes = await getVnQuotes([sym]).catch(() => null);
-  }
-  if (!(ohlcvRes?.bars?.length) || (ohlcvRes.bars?.length ?? 0) < 20) {
-    await new Promise((r) => setTimeout(r, 300));
-    ohlcvRes = await getVnOhlcv(sym, 320).catch(() => null);
+  const needQuote = !quoteRes?.quotes?.[0]?.price;
+  const needBars = !(ohlcvRes?.bars?.length && ohlcvRes.bars.length >= 20);
+  if (needQuote || needBars) {
+    const [q2, o2] = await Promise.all([
+      needQuote ? getVnQuotes([sym]).catch(() => null) : Promise.resolve(quoteRes),
+      needBars ? getVnOhlcv(sym, 320).catch(() => null) : Promise.resolve(ohlcvRes),
+    ]);
+    if (q2?.quotes?.[0]?.price) quoteRes = q2;
+    if (o2?.bars && o2.bars.length >= (ohlcvRes?.bars?.length ?? 0)) ohlcvRes = o2;
   }
 
   const quote = quoteRes?.quotes?.[0] ?? null;
@@ -570,7 +611,6 @@ function emptyStockDetail(sym: string): VnStockDetail {
   };
 }
 
-/** Full pack required: live quote + enough history for technicals */
 function hasCoreData(d: VnStockDetail | null | undefined): boolean {
   return Boolean(d?.quote?.price && d.quote.price > 0 && d.bars && d.bars.length >= 20);
 }
@@ -599,7 +639,6 @@ export async function getVnStockDetail(
       producer: async () => {
         let r = await produceVnStockDetail(sym);
         if (!hasCoreData(r?.detail)) {
-          await new Promise((x) => setTimeout(x, 400));
           r = await produceVnStockDetail(sym);
         }
         if (!r) throw new Error(`detail empty ${sym}`);
@@ -611,10 +650,9 @@ export async function getVnStockDetail(
   } catch {
     for (let i = 0; i < 2; i++) {
       try {
-        if (i > 0) await new Promise((x) => setTimeout(x, 700 * i));
         const r = await produceVnStockDetail(sym);
         if (r && hasCoreData(r.detail)) return r;
-        if (r) return r;
+        if (r && hasCoreData(r.detail) === false && i === 1) return r;
       } catch {
         /* */
       }
