@@ -55,7 +55,7 @@ function profileFromVietcap(
   };
 }
 
-function profileFromMaster(sym: string): VndCompanyProfile | null {
+export function profileFromMaster(sym: string): VndCompanyProfile | null {
   const sec = getSecurity(sym);
   if (!sec) return null;
   return {
@@ -77,7 +77,7 @@ function profileFromMaster(sym: string): VndCompanyProfile | null {
   };
 }
 
-function mergeProfiles(
+export function mergeProfiles(
   base: VndCompanyProfile | null,
   fill: Partial<VndCompanyProfile> | null,
 ): VndCompanyProfile | null {
@@ -110,13 +110,11 @@ async function loadCompanyCore(sym: string): Promise<{
 }> {
   const sources: string[] = [];
 
-  const [vndProfile, shareholdersRaw, vietcap, quotePack] = await Promise.all([
+  // Live sources only — no import of stocks.ts (avoids circular hang on cold start)
+  const [vndProfile, shareholdersRaw, vietcap] = await Promise.all([
     getVndCompanyProfile(sym).catch(() => null),
     getVndShareholders(sym, 50).catch(() => [] as VndShareholder[]),
     getVietcapCompany(sym).catch(() => null),
-    import("./stocks")
-      .then((m) => m.getVnQuotes([sym]))
-      .catch(() => null),
   ]);
 
   let shareholders = shareholdersRaw;
@@ -173,31 +171,12 @@ async function loadCompanyCore(sym: string): Promise<{
     }
   }
 
-  const q = quotePack?.quotes?.[0];
-  if (q && profile) {
-    if (!profile.vnName && q.name) {
-      profile = { ...profile, vnName: q.name };
-      sources.push("quote-name");
+  if (!profile) {
+    const m = profileFromMaster(sym);
+    if (m) {
+      profile = m;
+      sources.push("vn-master-guarantee");
     }
-  } else if (q && !profile && q.name) {
-    profile = {
-      code: sym,
-      floor: null,
-      logo: null,
-      vnName: q.name,
-      enName: null,
-      foundDate: null,
-      taxCode: null,
-      vnAddress: null,
-      phone: null,
-      fax: null,
-      website: null,
-      email: null,
-      employees: null,
-      vnSummary: null,
-      enSummary: null,
-    };
-    sources.push("quote-shell");
   }
 
   return { profile, shareholders, sources };
@@ -295,7 +274,7 @@ export async function getStockCompanyPackage(
   try {
     let core: { profile: VndCompanyProfile | null; shareholders: VndShareholder[]; sources: string[] };
     try {
-      const companyRes = await cached(`vn:company:${sym}:v5`, {
+      const companyRes = await cached(`vn:company:${sym}:v6`, {
         ttlMs: 2 * 3_600_000,
         staleMs: 24 * 3_600_000,
         softSwr: true,
@@ -306,12 +285,6 @@ export async function getStockCompanyPackage(
           }
           if (!pack.profile && !pack.shareholders.length) {
             throw new Error(`company empty ${sym}`);
-          }
-          const onlyMaster = pack.sources.every(
-            (s) => s.startsWith("vn-master") || s === "quote-name" || s === "quote-shell",
-          );
-          if (onlyMaster) {
-            pack = { ...pack, sources: [...pack.sources, "thin-cache"] };
           }
           return pack;
         },
@@ -404,6 +377,17 @@ export async function getStockCompanyPackage(
       notes.push("SWOT / catalyst / rủi ro / chuỗi giá trị suy từ hồ sơ + BCTC (không bịa số).");
     if (ai) notes.push("Đã bổ sung gợi ý từ AI — ưu tiên đối chiếu số liệu BCTC.");
     if (!det && !ai) notes.push("Chưa đủ dữ liệu nền để dựng SWOT tự động.");
+
+    if (!core.profile) {
+      const m = profileFromMaster(sym);
+      if (m) {
+        core = {
+          profile: m,
+          shareholders: core.shareholders,
+          sources: [...core.sources, "vn-master-end"],
+        };
+      }
+    }
 
     const data: StockCompanyPackage = {
       symbol: sym,
