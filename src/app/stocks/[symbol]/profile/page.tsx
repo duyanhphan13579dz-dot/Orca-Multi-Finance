@@ -105,7 +105,7 @@ export default function StockProfilePage({ params }: { params: Promise<{ symbol:
 
   const { res, data, isLoading, isValidating, mutate } = useApi<StockCompanyPackage>(
     symbol ? `/api/v1/stocks/${symbol}/profile` : null,
-    { refreshInterval: 600_000, timeoutMs: 25_000, keepPreviousData: true },
+    { refreshInterval: 600_000, timeoutMs: 15_000, keepPreviousData: true },
   );
 
   useEffect(() => {
