@@ -650,7 +650,7 @@ function BusinessBarChart({ data }: { data: BusinessChartPoint[] }) {
   const bottom = 32;
   const chartHeight = height - bottom - 12;
   const groupWidth = (width - left - 12) / data.length;
-  const barWidth = Math.max(8, Math.min(30, (groupWidth * 0.78) / keys.length));
+  const barWidth = Math.max(10, Math.min(42, (groupWidth * 0.92) / keys.length));
   return (
     <div className="mt-4 rounded-md border border-border-subtle/70 bg-surface p-3">
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
