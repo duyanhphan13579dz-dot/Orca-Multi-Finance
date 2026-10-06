@@ -5,12 +5,8 @@ import type { IndexQuote, OhlcvBar, Quote } from "../types";
 import { ProviderError } from "./binance";
 
 /**
- * SSI FastConnect Data (FC Data) — full market REST adapter (fallback khi VNDIRECT không dùng được).
- * PrivateKey not required (FC Trading only).
- *
- * Credentials (any pair works):
- *   SSI_API_KEY + SSI_API_SECRET
- *   SSI_FC_CONSUMER_ID + SSI_FC_CONSUMER_SECRET
+ * SSI FastConnect Data (FC Data) — full market REST adapter.
+ * Credentials: SSI_API_KEY+SSI_API_SECRET or SSI_FC_CONSUMER_ID+SSI_FC_CONSUMER_SECRET
  */
 
 export const SSI_FCDATA = "ssi-fcdata";
@@ -23,7 +19,6 @@ function baseUrl(): string {
   return (process.env.SSI_FC_DATA_BASE_URL ?? DEFAULT_BASE).replace(/\/$/, "");
 }
 
-/** True when SSI_API_KEY+SSI_API_SECRET or SSI_FC_CONSUMER_ID+SECRET are set. */
 export function ssiFcConfigured(): boolean {
   return ssiCredentialsConfigured();
 }
@@ -95,8 +90,9 @@ type AccessTokenResponse = {
 };
 
 async function fetchAccessToken(): Promise<TokenBundle> {
-  const consumerID = ssiConsumerId();
-  const consumerSecret = ssiConsumerSecret();
+  // Official SSI FC Data body: only consumerID + consumerSecret (camelCase).
+  const consumerID = ssiConsumerId().trim();
+  const consumerSecret = ssiConsumerSecret().trim();
   if (!consumerID || !consumerSecret) {
     throw new ProviderError(
       "ssi-fcdata: missing credentials (set SSI_API_KEY + SSI_API_SECRET or SSI_FC_CONSUMER_ID + SSI_FC_CONSUMER_SECRET)",
@@ -106,10 +102,10 @@ async function fetchAccessToken(): Promise<TokenBundle> {
 
   const url = `${baseUrl()}/api/v2/Market/AccessToken`;
   const res = await httpJson<AccessTokenResponse>(url, {
-    provider: SSI_FCDATA,
+    provider: `${SSI_FCDATA}-auth`,
     method: "POST",
     timeoutMs: 12_000,
-    retries: 1,
+    retries: 0,
     headers: {
       Accept: "application/json",
       "Content-Type": "application/json",
@@ -117,13 +113,25 @@ async function fetchAccessToken(): Promise<TokenBundle> {
     body: JSON.stringify({
       consumerID,
       consumerSecret,
-      ConsumerID: consumerID,
-      ConsumerSecret: consumerSecret,
     }),
   });
 
   if (!res.ok || res.data == null) {
-    throw new ProviderError(`ssi-fcdata auth: ${res.error ?? "unreachable"}`, SSI_FCDATA);
+    let detail = res.error ?? "unreachable";
+    if (res.text) {
+      try {
+        const parsed = JSON.parse(res.text) as { message?: string; status?: number };
+        if (parsed?.message) detail = `${detail}: ${parsed.message}`;
+      } catch {
+        if (res.text.length < 200) detail = `${detail}: ${res.text}`;
+      }
+    }
+    if (res.status === 400) {
+      detail =
+        `${detail} — kiểm tra ConsumerID/Secret là key FastConnect **Data** (không phải Trading), ` +
+        `không khoảng trắng thừa, tạo key tại iBoard API service`;
+    }
+    throw new ProviderError(`ssi-fcdata auth: ${detail}`, SSI_FCDATA);
   }
 
   const body = res.data;
@@ -297,103 +305,62 @@ export async function getSsiDailyOhlc(
 }
 
 type DailyStockPriceRow = {
-  TradingDate?: string;
-  Tradingdate?: string;
   Symbol?: string;
-  Price?: string | number;
-  OpenPrice?: string | number;
-  Openprice?: string | number;
-  HighestPrice?: string | number;
-  Highestprice?: string | number;
-  LowestPrice?: string | number;
-  Lowestprice?: string | number;
-  ClosePrice?: string | number;
-  Closeprice?: string | number;
-  AveragePrice?: string | number;
-  TotalVol?: string | number;
-  Totalmatchvol?: string | number;
-  TotalVal?: string | number;
-  Totalmatchval?: string | number;
+  TradingDate?: string;
+  Open?: string | number;
+  High?: string | number;
+  Low?: string | number;
+  Close?: string | number;
+  Volume?: string | number;
   Change?: string | number;
-  Pricechange?: string | number;
   PerChange?: string | number;
-  Perpricechange?: string | number;
   CeilingPrice?: string | number;
-  Ceilingprice?: string | number;
   FloorPrice?: string | number;
-  Floorprice?: string | number;
   RefPrice?: string | number;
-  Refprice?: string | number;
-  BasicPrice?: string | number;
+  [k: string]: unknown;
 };
 
 function rowToQuote(r: DailyStockPriceRow, fallbackSym?: string): Quote | null {
-  const price = num(r.ClosePrice) ?? num(r.Closeprice) ?? num(r.Price);
-  if (price == null || price <= 0) return null;
+  const last = num(r.Close);
+  if (last == null) return null;
   const sym = String(r.Symbol ?? fallbackSym ?? "").toUpperCase();
   if (!sym) return null;
+  const t = parseSsiDate(r.TradingDate ?? null) ?? Date.now();
   return {
     symbol: sym,
-    assetClass: "stock",
-    price,
-    change: num(r.Change) ?? num(r.Pricechange),
-    changePercent: num(r.PerChange) ?? num(r.Perpricechange),
-    open: num(r.OpenPrice) ?? num(r.Openprice),
-    high: num(r.HighestPrice) ?? num(r.Highestprice),
-    low: num(r.LowestPrice) ?? num(r.Lowestprice),
-    volume: num(r.TotalVol) ?? num(r.Totalmatchvol),
-    quoteVolume: num(r.TotalVal) ?? num(r.Totalmatchval),
-    referencePrice: num(r.RefPrice) ?? num(r.Refprice) ?? num(r.BasicPrice),
-    ceilingPrice: num(r.CeilingPrice) ?? num(r.Ceilingprice),
-    floorPrice: num(r.FloorPrice) ?? num(r.Floorprice),
-    updatedAt: r.TradingDate ?? r.Tradingdate ?? null,
-  };
+    price: last,
+    change: num(r.Change),
+    changePercent: num(r.PerChange),
+    open: num(r.Open),
+    high: num(r.High),
+    low: num(r.Low),
+    volume: num(r.Volume),
+    source: SSI_FCDATA,
+    asOf: new Date(t).toISOString(),
+  } as Quote;
 }
 
 export async function getSsiDailyStockPrice(
   symbol: string,
-  opts?: { fromDate?: string; toDate?: string },
-): Promise<{ quotes: Quote[]; sourceTs: number | null }> {
+): Promise<Quote[]> {
   const sym = symbol.toUpperCase();
-  const fromDate = opts?.fromDate ?? formatSsiDate();
-  const toDate = opts?.toDate ?? formatSsiDate();
-
   const body = await ssiGet<SsiEnvelope<DailyStockPriceRow[]>>("/api/v2/Market/DailyStockPrice", {
     Symbol: sym,
     symbol: sym,
-    FromDate: fromDate,
-    fromDate,
-    ToDate: toDate,
-    toDate,
-    PageIndex: 1,
     pageIndex: 1,
-    PageSize: 50,
-    pageSize: 50,
+    PageIndex: 1,
+    pageSize: 20,
+    PageSize: 20,
+    FromDate: ssiToday(),
+    fromDate: ssiToday(),
+    ToDate: ssiToday(),
+    toDate: ssiToday(),
   });
-
   const rows = Array.isArray(body.data) ? body.data : [];
-  let newest: number | null = null;
-  const quotes: Quote[] = [];
-  for (const r of rows) {
-    const q = rowToQuote(r, sym);
-    if (!q) continue;
-    const t = parseSsiDate(q.updatedAt);
-    if (t != null && (newest == null || t > newest)) newest = t;
-    quotes.push(q);
-  }
-
+  const quotes = rows.map((r) => rowToQuote(r, sym)).filter((x): x is Quote => x != null);
   if (!quotes.length) throw new ProviderError(`ssi-fcdata: empty DailyStockPrice for ${sym}`, SSI_FCDATA);
-  return { quotes, sourceTs: newest };
+  return quotes;
 }
-
-const dayBoardCache = new Map<
-  string,
-  { expiresAt: number; bySym: Map<string, Quote>; sourceTs: number | null }
->();
-const dayBoardInflight = new Map<
-  string,
-  Promise<{ bySym: Map<string, Quote>; sourceTs: number | null }>
->();
 
 async function fetchMarketDayPage(
   market: string,
@@ -415,261 +382,92 @@ async function fetchMarketDayPage(
       PageSize: 1000,
       pageSize: 1000,
     },
-    18_000,
   );
   return Array.isArray(body.data) ? body.data : [];
 }
 
-async function loadDayBoard(fromDate: string, toDate: string): Promise<{
-  bySym: Map<string, Quote>;
-  sourceTs: number | null;
-}> {
-  const key = `${fromDate}|${toDate}`;
-  const hit = dayBoardCache.get(key);
-  if (hit && hit.expiresAt > Date.now()) return { bySym: hit.bySym, sourceTs: hit.sourceTs };
-
-  const inflight = dayBoardInflight.get(key);
-  if (inflight) return inflight;
-
-  const p = (async () => {
-    const bySym = new Map<string, Quote>();
-    let newest: number | null = null;
-
-    await Promise.all(
-      MARKETS.map(async (market) => {
-        try {
-          const pages = await Promise.all([
-            fetchMarketDayPage(market, fromDate, toDate, 1),
-            fetchMarketDayPage(market, fromDate, toDate, 2).catch(() => [] as DailyStockPriceRow[]),
-          ]);
-          for (const rows of pages) {
-            for (const r of rows) {
-              const q = rowToQuote(r);
-              if (!q) continue;
-              const prev = bySym.get(q.symbol);
-              const t = parseSsiDate(q.updatedAt) ?? 0;
-              const pt = prev?.updatedAt ? parseSsiDate(prev.updatedAt) ?? 0 : 0;
-              if (!prev || t >= pt) bySym.set(q.symbol, q);
-              if (t > 0 && (newest == null || t > newest)) newest = t;
-            }
-          }
-        } catch {
-          /* skip market */
-        }
-      }),
-    );
-
-    dayBoardCache.set(key, {
-      expiresAt: Date.now() + 12_000,
-      bySym,
-      sourceTs: newest,
-    });
-    return { bySym, sourceTs: newest };
-  })();
-
-  dayBoardInflight.set(key, p);
-  try {
-    return await p;
-  } finally {
-    dayBoardInflight.delete(key);
-  }
-}
-
 export async function getSsiQuotes(symbols: string[]): Promise<{ quotes: Quote[]; sourceTs: number | null }> {
-  const uniq = [...new Set(symbols.map((s) => s.toUpperCase()).filter(Boolean))].slice(0, 40);
-  if (!uniq.length) return { quotes: [], sourceTs: null };
-
-  const today = formatSsiDate();
-  const board = await loadDayBoard(today, today);
+  const uniq = [...new Set(symbols.map((s) => s.toUpperCase()).filter(Boolean))];
   const quotes: Quote[] = [];
-  const missing: string[] = [];
-
-  for (const s of uniq) {
-    const q = board.bySym.get(s);
-    if (q) quotes.push(q);
-    else missing.push(s);
-  }
-
-  if (missing.length) {
-    const chunk = missing.slice(0, 8);
+  const chunkSize = 8;
+  for (let i = 0; i < uniq.length; i += chunkSize) {
+    const chunk = uniq.slice(i, i + chunkSize);
     const results = await Promise.allSettled(chunk.map((s) => getSsiDailyStockPrice(s)));
     for (const r of results) {
-      if (r.status !== "fulfilled") continue;
-      const sorted = [...r.value.quotes].sort((a, b) => {
-        const ta = a.updatedAt ? parseSsiDate(a.updatedAt) ?? 0 : 0;
-        const tb = b.updatedAt ? parseSsiDate(b.updatedAt) ?? 0 : 0;
-        return tb - ta;
-      });
-      if (sorted[0]) quotes.push(sorted[0]);
+      if (r.status === "fulfilled") quotes.push(...r.value);
     }
   }
-
   if (!quotes.length) throw new ProviderError("ssi-fcdata: empty quotes batch", SSI_FCDATA);
-  return { quotes, sourceTs: board.sourceTs };
+  return { quotes, sourceTs: Date.now() };
 }
 
-/** Full market board from SSI DailyStockPrice (all 3 floors). */
 export async function getSsiFullBoard(): Promise<{
-  quotes: Quote[];
-  sessionDate: string;
-  sourceTs: number | null;
+  bySym: Map<string, Quote>;
+  sourceTs: number;
 }> {
-  const today = formatSsiDate();
-  const board = await loadDayBoard(today, today);
-  if (!board.bySym.size) throw new ProviderError("ssi-fcdata: empty full board", SSI_FCDATA);
-  return {
-    quotes: [...board.bySym.values()],
-    sessionDate: today,
-    sourceTs: board.sourceTs,
-  };
+  const bySym = new Map<string, Quote>();
+  const today = ssiToday();
+  for (const market of MARKETS) {
+    try {
+      const rows = await fetchMarketDayPage(market, today, today, 1);
+      for (const r of rows) {
+        const q = rowToQuote(r);
+        if (q) bySym.set(q.symbol, q);
+      }
+    } catch {
+      /* soft */
+    }
+  }
+  if (!bySym.size) throw new ProviderError("ssi-fcdata: empty full board", SSI_FCDATA);
+  return { bySym, sourceTs: Date.now() };
 }
 
 type DailyIndexRow = {
   IndexCode?: string;
-  Indexcode?: string;
   IndexName?: string;
+  TradingDate?: string;
   IndexValue?: string | number;
   Change?: string | number;
-  RatioChange?: string | number;
-  Totalmatchvol?: string | number;
-  Totalvol?: string | number;
-  TotalQtty?: string | number;
-  TradingDate?: string;
-  "Trading Date"?: string;
-  Time?: string;
+  PerChange?: string | number;
+  [k: string]: unknown;
 };
 
 export async function getSsiIndices(
   codes: string[] = [...CORE_INDICES],
-): Promise<{ items: IndexQuote[]; sourceTs: number | null }> {
-  const today = formatSsiDate();
-  const uniq = [...new Set(codes.map((c) => c.toUpperCase()))];
-
-  const results = await Promise.allSettled(
-    uniq.map(async (code) => {
+): Promise<IndexQuote[]> {
+  const items: IndexQuote[] = [];
+  for (const code of codes) {
+    try {
       const body = await ssiGet<SsiEnvelope<DailyIndexRow[]>>("/api/v2/Market/DailyIndex", {
         IndexId: code,
         indexId: code,
-        FromDate: today,
-        fromDate: today,
-        ToDate: today,
-        toDate: today,
+        FromDate: ssiToday(),
+        fromDate: ssiToday(),
+        ToDate: ssiToday(),
+        toDate: ssiToday(),
         PageIndex: 1,
         pageIndex: 1,
-        PageSize: 5,
-        pageSize: 5,
-        Ascending: false,
-        ascending: false,
+        PageSize: 10,
+        pageSize: 10,
       });
       const rows = Array.isArray(body.data) ? body.data : [];
-      const r = rows[0];
-      if (!r) return null;
-      const value = num(r.IndexValue);
-      if (value == null) return null;
-      const idxCode = String(r.IndexCode ?? r.Indexcode ?? code).toUpperCase();
-      const updated =
-        r.TradingDate ?? (r as { "Trading Date"?: string })["Trading Date"] ?? today;
-      return {
-        item: {
-          code: idxCode,
-          name: r.IndexName ?? idxCode,
-          value,
-          change: num(r.Change) ?? 0,
-          changePercent: num(r.RatioChange) ?? 0,
-          volume: num(r.Totalmatchvol) ?? num(r.Totalvol) ?? num(r.TotalQtty),
-          updatedAt: updated,
-        } satisfies IndexQuote,
-        ts: parseSsiDate(updated),
-      };
-    }),
-  );
-
-  const items: IndexQuote[] = [];
-  let newest: number | null = null;
-  for (const r of results) {
-    if (r.status !== "fulfilled" || !r.value) continue;
-    items.push(r.value.item);
-    if (r.value.ts != null && (newest == null || r.value.ts > newest)) newest = r.value.ts;
-  }
-
-  if (!items.length) throw new ProviderError("ssi-fcdata: empty DailyIndex", SSI_FCDATA);
-  return { items, sourceTs: newest };
-}
-
-type SecuritiesRow = {
-  market?: string;
-  Market?: string;
-  symbol?: string;
-  Symbol?: string;
-  StockName?: string;
-  StockEnName?: string;
-};
-
-export async function getSsiUniverse(): Promise<
-  { symbol: string; name: string | null; exchange: string | null; industry: string | null }[]
-> {
-  const out: { symbol: string; name: string | null; exchange: string | null; industry: string | null }[] =
-    [];
-
-  await Promise.all(
-    MARKETS.map(async (market) => {
-      try {
-        for (let page = 1; page <= 5; page++) {
-          const body = await ssiGet<SsiEnvelope<SecuritiesRow[]>>("/api/v2/Market/Securities", {
-            Market: market,
-            market,
-            PageIndex: page,
-            pageIndex: page,
-            PageSize: 1000,
-            pageSize: 1000,
-          });
-          const rows = Array.isArray(body.data) ? body.data : [];
-          if (!rows.length) break;
-          for (const r of rows) {
-            const symbol = String(r.symbol ?? r.Symbol ?? "").toUpperCase();
-            if (!symbol) continue;
-            out.push({
-              symbol,
-              name: r.StockName ?? r.StockEnName ?? null,
-              exchange: String(r.market ?? r.Market ?? market).toUpperCase(),
-              industry: null,
-            });
-          }
-          if (rows.length < 1000) break;
-        }
-      } catch {
-        /* skip market */
+      for (const r of rows) {
+        const val = num(r.IndexValue);
+        if (val == null) continue;
+        items.push({
+          code: String(r.IndexCode ?? code).toUpperCase(),
+          name: r.IndexName != null ? String(r.IndexName) : code,
+          value: val,
+          change: num(r.Change),
+          changePercent: num(r.PerChange),
+          source: SSI_FCDATA,
+          asOf: new Date().toISOString(),
+        } as IndexQuote);
       }
-    }),
-  );
-
-  if (!out.length) throw new ProviderError("ssi-fcdata: empty Securities universe", SSI_FCDATA);
-  return out;
-}
-
-export async function probeSsiFcdata(): Promise<{
-  configured: boolean;
-  ok: boolean;
-  message: string;
-  latencyMs?: number;
-}> {
-  if (!ssiFcConfigured()) {
-    return {
-      configured: false,
-      ok: false,
-      message: "SSI_API_KEY / SSI_API_SECRET (hoặc SSI_FC_CONSUMER_*) chưa set — SSI chỉ fallback",
-    };
+    } catch {
+      /* soft */
+    }
   }
-  const t0 = Date.now();
-  try {
-    await getSsiAccessToken();
-    return { configured: true, ok: true, message: "SSI AccessToken OK (fallback)", latencyMs: Date.now() - t0 };
-  } catch (e) {
-    return {
-      configured: true,
-      ok: false,
-      message: e instanceof Error ? e.message : "auth failed",
-      latencyMs: Date.now() - t0,
-    };
-  }
+  if (!items.length) throw new ProviderError("ssi-fcdata: empty DailyIndex", SSI_FCDATA);
+  return items;
 }
