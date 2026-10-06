@@ -2,7 +2,7 @@
 import type { MoneyFlowAnalysis } from "./engines/money-flow";
 
 export type FreshnessStatus = "LIVE" | "FRESH" | "DELAYED" | "STALE" | "DEGRADED" | "UNAVAILABLE";
-export type AssetClass = "stock" | "crypto" | "forex" | "commodity" | "index";
+export type AssetClass = "stock" | "crypto" | "forex" | "commodity" | "index" | "derivative";
 export type QualityStatus = "VALID" | "SUSPECT" | "INVALID" | "STALE";
 
 export interface Meta {
@@ -223,4 +223,118 @@ export interface ProviderStatus {
   circuit: "closed" | "open" | "half-open";
   lastError: string | null;
   recentEvents: { at: string; event: string; message: string | null; latencyMs: number | null }[];
+}
+
+/* ------------------------ Vietnam Derivatives (P0) ------------------------ */
+
+export type DerivativeContractStatus = "ACTIVE" | "EXPIRED" | "SUSPENDED" | "MONITORING";
+export type DerivativeContractType = "INDEX_FUTURE" | "BOND_FUTURE" | "COMMODITY_FUTURE" | "OPTION";
+
+export interface DerivativeProduct {
+  id: string;
+  exchange: string;
+  underlying: string;
+  contractType: DerivativeContractType;
+  name: string;
+  nameEn?: string | null;
+  multiplier: number | null;
+  tickSize: number | null;
+  currency: string;
+  quoteUnit?: string | null;
+  settlementType?: string | null;
+  settlementMethod?: string | null;
+  positionLimit?: number | null;
+  source: string;
+  sourceUrl?: string | null;
+  effectiveFrom?: string | null;
+  effectiveTo?: string | null;
+  status?: DerivativeContractStatus;
+}
+
+export interface DerivativeContract {
+  symbol: string;
+  productId: string;
+  exchange: string;
+  underlying: string;
+  contractCode?: string | null;
+  continuousAlias?: string | null;
+  listingDate?: string | null;
+  expiryDate?: string | null;
+  lastTradeDate?: string | null;
+  firstNoticeDate?: string | null;
+  initialMargin?: number | null;
+  maintenanceMargin?: number | null;
+  multiplier?: number | null;
+  tickSize?: number | null;
+  status: DerivativeContractStatus;
+  priority?: number;
+  source: string;
+  sourceUrl?: string | null;
+  retrievedAt?: string | null;
+  effectiveFrom?: string | null;
+  effectiveTo?: string | null;
+  daysToExpiry?: number | null;
+}
+
+export interface DerivativeQuote {
+  symbol: string;
+  last: number | null;
+  change: number | null;
+  changePercent: number | null;
+  open?: number | null;
+  high?: number | null;
+  low?: number | null;
+  volume?: number | null;
+  openInterest?: number | null;
+  settlement?: number | null;
+  mark?: number | null;
+  ceiling?: number | null;
+  floor?: number | null;
+  reference?: number | null;
+  updatedAt?: string | null;
+  source: string;
+}
+
+/** Basis as computed by derivatives service (F − spot). */
+export interface DerivativeBasis {
+  basis: number;
+  basisPct: number;
+  futuresLast: number;
+  spot: number;
+  computedAt: string;
+  symbol?: string;
+  futuresPrice?: number | null;
+  spotPrice?: number | null;
+  basisPercent?: number | null;
+  spotSymbol?: string;
+  note?: string | null;
+}
+
+export interface DerivativeContractRow extends DerivativeContract {
+  quote?: DerivativeQuote | null;
+  basis?: DerivativeBasis | null;
+}
+
+/* ------------------------ Derivatives flow (P1.5) ------------------------- */
+
+export type DerivativeFlowKind =
+  | "long_build_up"
+  | "short_build_up"
+  | "short_covering"
+  | "long_liquidation"
+  | "neutral"
+  | "insufficient";
+
+export interface DerivativeFlowSignal {
+  symbol: string;
+  kind: DerivativeFlowKind;
+  title: string;
+  titleVi: string;
+  description: string;
+  confidence: number;
+  priceChange: number | null;
+  oiChange: number | null;
+  volume: number | null;
+  basisChange: number | null;
+  tone: "positive" | "negative" | "warning" | "muted";
 }
