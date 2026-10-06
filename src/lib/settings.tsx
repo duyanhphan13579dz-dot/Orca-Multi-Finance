@@ -104,6 +104,11 @@ export interface UserSettings {
     includeFeesInPnl: boolean;
   };
   accessibility: { reducedMotion: boolean };
+  /** investment = Multi Finance · personal_finance = Orca Wallet */
+  app: {
+    mode: "investment" | "personal_finance";
+    showModeToggleInHeader: boolean;
+  };
   updatedAt: number;
 }
 
@@ -188,6 +193,10 @@ export const DEFAULT_SETTINGS: UserSettings = {
     includeFeesInPnl: true,
   },
   accessibility: { reducedMotion: false },
+  app: {
+    mode: "investment",
+    showModeToggleInHeader: true,
+  },
   updatedAt: 0,
 };
 
