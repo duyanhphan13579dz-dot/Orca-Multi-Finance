@@ -1,10 +1,8 @@
 import type { Metadata } from "next";
-import { PfSection } from "@/components/personal-finance/pf-section";
+import { PfReport } from "@/components/personal-finance/pf-report";
 
-export const metadata: Metadata = { title: "Báo cáo" };
+export const metadata: Metadata = { title: "Báo cáo PF" };
 
 export default function Page() {
-  return (
-    <PfSection title="Báo cáo" desc="Tổng hợp kỳ và xuất dữ liệu" />
-  );
+  return <PfReport />;
 }
