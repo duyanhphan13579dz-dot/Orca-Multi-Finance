@@ -3,15 +3,15 @@ import { httpJson } from "../http";
 import { ProviderError } from "./binance";
 import { ssiFcConfigured, getSsiAccessToken, ssiToday } from "./ssi-fcdata";
 import type { DerivativeQuote, OhlcvBar } from "../types";
+import {
+  fetchPublicVnDerivativeQuote,
+  fetchPublicVnDerivativeQuotes,
+  fetchPublicVnDerivativeOhlcv,
+} from "./public-vn-derivatives";
 
 /**
- * HNX derivatives market-data adapter (P0).
- *
- * Priority:
- *  1) SSI FastConnect Data with market=DER (when SSI credentials configured)
- *  2) Optional third-party feed via DERIVATIVES_QUOTE_URL (server-side only)
- *
- * Never invents prices. Callers must treat null quotes as UNAVAILABLE.
+ * HNX derivatives market-data adapter.
+ * Priority: SSI FastConnect → DERIVATIVES_QUOTE_URL → public VNDIRECT dchart.
  */
 
 export const HNX_DERIVATIVES = "hnx-derivatives";
@@ -120,94 +120,57 @@ async function ssiGet<T>(
       Accept: "application/json",
     },
   });
-  if (!res.ok || res.data == null) {
-    throw new ProviderError(`ssi-der: ${res.error ?? `HTTP ${res.status}`}`, HNX_DERIVATIVES);
-  }
-  return res.data;
+  return res;
 }
 
-/**
- * Fetch daily price row for a DER symbol via SSI FastConnect (when configured).
- */
 export async function fetchSsiDerivativeQuote(symbol: string): Promise<DerivativeQuote | null> {
   if (!ssiFcConfigured()) return null;
-  const sym = symbol.toUpperCase();
-  const today = ssiToday();
   try {
     const body = await ssiGet<SsiEnvelope<SsiPriceRow[]>>("/api/v2/Market/DailyStockPrice", {
-      Symbol: sym,
-      symbol: sym,
-      FromDate: today,
-      fromDate: today,
-      ToDate: today,
-      toDate: today,
-      PageIndex: 1,
-      pageIndex: 1,
-      PageSize: 10,
-      pageSize: 10,
+      Symbol: symbol,
+      symbol,
       Market: "DER",
       market: "DER",
-    });
-    const rows = Array.isArray(body.data) ? body.data : [];
-    for (const r of rows) {
-      const q = mapRowToQuote(sym, r, "ssi-fcdata");
-      if (q) return q;
-    }
-  } catch {
-    /* try DailyOhlc as secondary */
-  }
-
-  try {
-    const body = await ssiGet<SsiEnvelope<SsiPriceRow[]>>("/api/v2/Market/DailyOhlc", {
-      Symbol: sym,
-      symbol: sym,
-      FromDate: today,
-      fromDate: today,
-      ToDate: today,
-      toDate: today,
-      PageIndex: 1,
       pageIndex: 1,
-      PageSize: 5,
-      pageSize: 5,
+      pageSize: 10,
+      FromDate: ssiToday(),
+      fromDate: ssiToday(),
+      ToDate: ssiToday(),
+      toDate: ssiToday(),
     });
-    const rows = Array.isArray(body.data) ? body.data : [];
+    const rows = Array.isArray(body?.data) ? body.data : [];
     for (const r of rows) {
-      const q = mapRowToQuote(sym, r, "ssi-fcdata");
+      const q = mapRowToQuote(symbol, r, "ssi-fcdata-der");
       if (q) return q;
     }
   } catch {
-    /* fall through */
+    return null;
   }
   return null;
 }
 
-/**
- * Optional generic JSON quote endpoint:
- *   DERIVATIVES_QUOTE_URL=https://…/quotes?symbol={symbol}
- */
-export async function fetchExternalDerivativeQuote(symbol: string): Promise<DerivativeQuote | null> {
+export async function fetchExternalDerivativeQuote(
+  symbol: string,
+): Promise<DerivativeQuote | null> {
   const template = process.env.DERIVATIVES_QUOTE_URL?.trim();
   if (!template) return null;
-  const sym = symbol.toUpperCase();
-  const url = template.includes("{symbol}")
-    ? template.replaceAll("{symbol}", encodeURIComponent(sym))
-    : `${template}${template.includes("?") ? "&" : "?"}symbol=${encodeURIComponent(sym)}`;
-  const res = await httpJson<Record<string, unknown>>(url, {
-    provider: HNX_DERIVATIVES,
-    timeoutMs: 8_000,
-    retries: 1,
-    headers: process.env.DERIVATIVES_QUOTE_API_KEY
-      ? { Authorization: `Bearer ${process.env.DERIVATIVES_QUOTE_API_KEY}` }
-      : undefined,
-  });
-  if (!res.ok || res.data == null) return null;
-  const raw = (res.data.data as Record<string, unknown> | undefined) ?? res.data;
-  return mapRowToQuote(sym, raw, "derivatives-quote-url");
+  const url = template.replace("{symbol}", encodeURIComponent(symbol));
+  try {
+    const headers: Record<string, string> = { Accept: "application/json" };
+    const key = process.env.DERIVATIVES_QUOTE_API_KEY?.trim();
+    if (key) headers.Authorization = `Bearer ${key}`;
+    const data = await httpJson<Record<string, unknown>>(url, {
+      provider: "derivatives-external",
+      timeoutMs: 8_000,
+      retries: 1,
+      headers,
+    });
+    return mapRowToQuote(symbol, data, "derivatives-external");
+  } catch {
+    return null;
+  }
 }
 
-/**
- * Best-effort quote: SSI DER → external URL → null.
- */
 export async function getDerivativeMarketQuote(symbol: string): Promise<DerivativeQuote | null> {
   const sym = symbol.toUpperCase();
   try {
@@ -219,6 +182,12 @@ export async function getDerivativeMarketQuote(symbol: string): Promise<Derivati
   try {
     const ext = await fetchExternalDerivativeQuote(sym);
     if (ext) return ext;
+  } catch {
+    /* continue */
+  }
+  try {
+    const pub = await fetchPublicVnDerivativeQuote(sym);
+    if (pub) return pub;
   } catch {
     /* continue */
   }
@@ -240,10 +209,23 @@ export async function getDerivativeMarketQuotes(
       }
     }),
   );
+  const missing = uniq.filter((s) => !out.has(s));
+  if (missing.length) {
+    try {
+      const pub = await fetchPublicVnDerivativeQuotes(missing);
+      for (const [k, v] of pub) out.set(k, v);
+    } catch {
+      /* soft */
+    }
+  }
   return out;
 }
 
 export function derivativesLiveConfigured(): boolean {
+  return true;
+}
+
+export function derivativesPaidFeedConfigured(): boolean {
   return ssiFcConfigured() || Boolean(process.env.DERIVATIVES_QUOTE_URL?.trim());
 }
 
@@ -259,23 +241,6 @@ function daysAgoSsiLocal(n: number): string {
   return `${get("day")}/${get("month")}/${get("year")}`;
 }
 
-function parseSsiBarDate(d: string | null | undefined): number | null {
-  if (!d) return null;
-  const m = String(d).trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-  if (m) {
-    const t = Date.parse(
-      `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}T15:00:00+07:00`,
-    );
-    return Number.isFinite(t) ? t : null;
-  }
-  const t = Date.parse(d);
-  return Number.isFinite(t) ? t : null;
-}
-
-/**
- * Daily OHLCV for a derivative symbol (P1).
- * SSI DailyOhlc when configured; optional DERIVATIVES_OHLCV_URL.
- */
 export async function fetchDerivativeOhlcv(
   symbol: string,
   days = 60,
@@ -292,65 +257,63 @@ export async function fetchDerivativeOhlcv(
         fromDate: daysAgoSsiLocal(limit + 5),
         ToDate: ssiToday(),
         toDate: ssiToday(),
-        PageIndex: 1,
         pageIndex: 1,
-        PageSize: Math.min(limit, 1000),
-        pageSize: Math.min(limit, 1000),
-        ascending: true,
+        pageSize: limit,
       });
-      const rows = Array.isArray(body.data) ? body.data : [];
+      const rows = Array.isArray(body?.data) ? body.data : [];
       const bars: OhlcvBar[] = [];
       for (const r of rows) {
-        const time = parseSsiBarDate(
-          String(r.TradingDate ?? r.tradingDate ?? r.Time ?? r.time ?? ""),
-        );
-        const open = num(r.Open ?? r.open);
-        const high = num(r.High ?? r.high);
-        const low = num(r.Low ?? r.low);
-        const close = num(r.Close ?? r.close ?? r.LastPrice ?? r.last);
-        const volume = num(r.Volume ?? r.volume ?? r.TotalMatchVolume) ?? 0;
-        if (time == null || open == null || high == null || low == null || close == null) continue;
-        if (close <= 0) continue;
-        bars.push({ time, open, high, low, close, volume });
+        const close = num(r.Close) ?? num(r.close);
+        if (close == null) continue;
+        let time = Date.now();
+        const td = r.TradingDate ?? r.tradingDate ?? r.Date ?? r.date;
+        if (typeof td === "string") {
+          const m = td.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+          if (m) {
+            time = new Date(
+              `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}T15:00:00+07:00`,
+            ).getTime();
+          } else {
+            const p = Date.parse(td);
+            if (Number.isFinite(p)) time = p;
+          }
+        }
+        bars.push({
+          time,
+          open: num(r.Open) ?? num(r.open) ?? close,
+          high: num(r.High) ?? num(r.high) ?? close,
+          low: num(r.Low) ?? num(r.low) ?? close,
+          close,
+          volume: num(r.Volume) ?? num(r.volume),
+        });
       }
-      bars.sort((a, b) => a.time - b.time);
-      if (bars.length) return bars.slice(-limit);
+      if (bars.length) return bars.sort((a, b) => a.time - b.time);
     } catch {
       /* fall through */
     }
   }
 
-  const template = process.env.DERIVATIVES_OHLCV_URL?.trim();
-  if (template) {
-    const url = template.includes("{symbol}")
-      ? template.replaceAll("{symbol}", encodeURIComponent(sym))
-      : `${template}${template.includes("?") ? "&" : "?"}symbol=${encodeURIComponent(sym)}`;
-    const res = await httpJson<{ bars?: OhlcvBar[]; data?: OhlcvBar[] } | OhlcvBar[]>(url, {
-      provider: HNX_DERIVATIVES,
-      timeoutMs: 10_000,
-      retries: 1,
-      headers: process.env.DERIVATIVES_QUOTE_API_KEY
-        ? { Authorization: `Bearer ${process.env.DERIVATIVES_QUOTE_API_KEY}` }
-        : undefined,
-    });
-    if (res.ok && res.data) {
-      const raw = Array.isArray(res.data)
-        ? res.data
-        : (res.data.bars ?? res.data.data ?? []);
-      return raw
-        .filter((b) => b && Number(b.close) > 0 && Number(b.time) > 0)
-        .map((b) => ({
-          time: Number(b.time),
-          open: Number(b.open),
-          high: Number(b.high),
-          low: Number(b.low),
-          close: Number(b.close),
-          volume: Number(b.volume) || 0,
-        }))
-        .sort((a, b) => a.time - b.time)
-        .slice(-limit);
+  const ohlcvUrl = process.env.DERIVATIVES_OHLCV_URL?.trim();
+  if (ohlcvUrl) {
+    try {
+      const url = ohlcvUrl.replace("{symbol}", encodeURIComponent(sym));
+      const data = await httpJson<{ bars?: OhlcvBar[] } | OhlcvBar[]>(url, {
+        provider: "derivatives-ohlcv-external",
+        timeoutMs: 10_000,
+        retries: 1,
+      });
+      const bars = Array.isArray(data) ? data : data?.bars;
+      if (bars?.length) return bars;
+    } catch {
+      /* soft */
     }
   }
 
+  try {
+    const pubBars = await fetchPublicVnDerivativeOhlcv(sym, limit);
+    if (pubBars.length) return pubBars;
+  } catch {
+    /* soft */
+  }
   return [];
 }
