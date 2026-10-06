@@ -307,3 +307,5 @@ export function DerivativesDashboard() {
     </div>
   );
 }
+
+export default DerivativesDashboard;
