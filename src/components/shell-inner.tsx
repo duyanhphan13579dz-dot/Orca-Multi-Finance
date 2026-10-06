@@ -65,6 +65,7 @@ const NAV_SECTIONS: {
       { href: "/crypto", label: "Tiền mã hóa", icon: Coins, core: true },
       { href: "/forex", label: "Ngoại hối", icon: DollarSign },
       { href: "/commodities", label: "Hàng hóa", icon: Boxes },
+      { href: "/derivatives", label: "Phái sinh", icon: CandlestickChart, core: true },
       { href: "/macro-economic", label: "Kinh tế vĩ mô", icon: ChartNoAxesCombined },
       { href: "/currency-interest-rate", label: "Lãi suất tiền tệ", icon: Landmark },
     ],
