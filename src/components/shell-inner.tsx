@@ -100,6 +100,7 @@ export function ShellInner({ children }: { children: ReactNode }) {
   const router = useRouter();
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [hydrated, setHydrated] = useState(false);
   const [sideAnimating, setSideAnimating] = useState(false);
   const sideAnimTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -110,6 +111,7 @@ export function ShellInner({ children }: { children: ReactNode }) {
     } catch {
       /* ignore */
     }
+    setHydrated(true);
     return () => {
       if (sideAnimTimer.current) clearTimeout(sideAnimTimer.current);
     };
@@ -214,7 +216,7 @@ export function ShellInner({ children }: { children: ReactNode }) {
         </div>
 
         <nav className="orca-sidebar-nav min-h-0 flex-1 space-y-2.5 overflow-y-auto overscroll-contain px-2 py-2.5">
-          {NAV_SECTIONS.map((section) => (
+          {hydrated && NAV_SECTIONS.map((section) => (
             <div key={section.title} className="space-y-0.5">
               <div className="orca-sidebar-section-title px-2.5 text-[10px] font-semibold uppercase tracking-wider text-text-muted">
                 {section.title}
@@ -292,7 +294,7 @@ export function ShellInner({ children }: { children: ReactNode }) {
           </button>
         </div>
         <nav className="orca-sidebar-nav min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain px-2.5 py-3">
-          {NAV_SECTIONS.map((section) => (
+          {hydrated && NAV_SECTIONS.map((section) => (
             <div key={section.title} className="space-y-0.5">
               <div className="mb-1.5 px-2.5 text-[10px] font-semibold uppercase tracking-wider text-text-muted">
                 {section.title}
