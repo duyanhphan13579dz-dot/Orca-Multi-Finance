@@ -12,11 +12,13 @@ import {
   fetchPublicVnDerivativeQuotes,
   fetchPublicVnDerivativeOhlcv,
 } from "./public-vn-derivatives";
+import {
+  fetchEntradeDerivativeQuote,
+  fetchEntradeDerivativeQuotes,
+  fetchEntradeDerivativeOhlcv,
+} from "./entrade-derivatives";
 
-/**
- * HNX derivatives market-data adapter.
- * Priority: SSI FastConnect DER → DERIVATIVES_QUOTE_URL → public VNDIRECT dchart.
- */
+/** Cascade: SSI DER → Entrade public → external URL → VNDIRECT dchart. */
 
 export const HNX_DERIVATIVES = "hnx-derivatives";
 
@@ -26,9 +28,11 @@ const num = (v: unknown): number | null => {
   return Number.isFinite(n) ? n : null;
 };
 
-type SsiPriceRow = Record<string, unknown>;
-
-function mapRowToQuote(symbol: string, r: SsiPriceRow, source: string): DerivativeQuote | null {
+function mapRowToQuote(
+  symbol: string,
+  r: Record<string, unknown>,
+  source: string,
+): DerivativeQuote | null {
   const last =
     num(r.Close) ??
     num(r.close) ??
@@ -39,41 +43,22 @@ function mapRowToQuote(symbol: string, r: SsiPriceRow, source: string): Derivati
     num(r.Price) ??
     num(r.price);
   if (last == null || last <= 0) return null;
-
-  let tradingDate = r.TradingDate ?? r.tradingDate ?? r.Time ?? r.time;
-  let updatedAt: string | null = null;
-  if (typeof tradingDate === "string" && tradingDate) {
-    const m = tradingDate.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-    if (m) {
-      updatedAt = new Date(
-        `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}T15:00:00+07:00`,
-      ).toISOString();
-    } else {
-      const t = Date.parse(tradingDate);
-      if (Number.isFinite(t)) updatedAt = new Date(t).toISOString();
-    }
-  }
-
   return {
     symbol: symbol.toUpperCase(),
     last,
-    change: num(r.Change) ?? num(r.change) ?? num(r.PriceChange),
-    changePercent:
-      num(r.PerChange) ??
-      num(r.perChange) ??
-      num(r.ChangePercent) ??
-      num(r.changePercent),
+    change: num(r.Change) ?? num(r.change),
+    changePercent: num(r.PerChange) ?? num(r.changePercent),
     open: num(r.Open) ?? num(r.open),
     high: num(r.High) ?? num(r.high),
     low: num(r.Low) ?? num(r.low),
-    volume: num(r.Volume) ?? num(r.volume) ?? num(r.TotalMatchVolume),
-    openInterest: num(r.OpenInterest) ?? num(r.openInterest) ?? num(r.OI),
-    settlement: num(r.SettlementPrice) ?? num(r.settlementPrice),
+    volume: num(r.Volume) ?? num(r.volume),
+    openInterest: num(r.OpenInterest) ?? num(r.openInterest),
+    settlement: num(r.SettlementPrice),
     mark: null,
-    ceiling: num(r.CeilingPrice) ?? num(r.ceilingPrice),
-    floor: num(r.FloorPrice) ?? num(r.floorPrice),
-    reference: num(r.RefPrice) ?? num(r.ReferencePrice),
-    updatedAt,
+    ceiling: num(r.CeilingPrice),
+    floor: num(r.FloorPrice),
+    reference: num(r.RefPrice),
+    updatedAt: new Date().toISOString(),
     source,
   };
 }
@@ -118,6 +103,12 @@ export async function getDerivativeMarketQuote(symbol: string): Promise<Derivati
     /* continue */
   }
   try {
+    const ent = await fetchEntradeDerivativeQuote(sym);
+    if (ent) return ent;
+  } catch {
+    /* continue */
+  }
+  try {
     const ext = await fetchExternalDerivativeQuote(sym);
     if (ext) return ext;
   } catch {
@@ -155,7 +146,16 @@ export async function getDerivativeMarketQuotes(
       }
     }),
   );
-  const missing = uniq.filter((s) => !out.has(s));
+  let missing = uniq.filter((s) => !out.has(s));
+  if (missing.length) {
+    try {
+      const ent = await fetchEntradeDerivativeQuotes(missing);
+      for (const [k, v] of ent) out.set(k, v);
+    } catch {
+      /* soft */
+    }
+  }
+  missing = uniq.filter((s) => !out.has(s));
   if (missing.length) {
     try {
       const pub = await fetchPublicVnDerivativeQuotes(missing);
@@ -211,6 +211,12 @@ export async function fetchDerivativeOhlcv(
     }
   }
 
+  try {
+    const entBars = await fetchEntradeDerivativeOhlcv(sym, limit);
+    if (entBars.length) return entBars;
+  } catch {
+    /* soft */
+  }
   try {
     const pubBars = await fetchPublicVnDerivativeOhlcv(sym, limit);
     if (pubBars.length) return pubBars;
