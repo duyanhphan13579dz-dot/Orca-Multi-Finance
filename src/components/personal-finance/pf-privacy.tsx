@@ -9,6 +9,7 @@ import {
   loadProfileFromStorage,
   exportDataAsJson,
 } from "@/lib/personal-finance/storage";
+import { pullPfFromServer, pushPfToServer } from "@/lib/personal-finance/sync";
 
 export function PfPrivacy() {
   const [msg, setMsg] = useState<string | null>(null);
@@ -28,7 +29,7 @@ export function PfPrivacy() {
   const wipe = () => {
     if (!confirm("Xóa toàn bộ dữ liệu tài chính cá nhân trên thiết bị này?")) return;
     wipeAllUserData();
-    setMsg("Đã xóa profile + snapshots + assumptions trên localStorage.");
+    setMsg("Đã xóa profile + snapshots + assumptions + goals trên localStorage.");
   };
 
   return (
@@ -39,10 +40,36 @@ export function PfPrivacy() {
       <h1 className="text-[17px] font-semibold text-text-primary">Riêng tư & dữ liệu</h1>
       <Panel className="space-y-3 p-4 text-[12px]">
         <p className="text-text-muted">
-          Dữ liệu PF lưu local trên thiết bị (keys <code>orca_fin_*</code>). Không lưu số tài khoản.
-          Sync server sẽ có ở phase W4 khi đăng nhập.
+          Local-first (<code>orca_fin_*</code>). Khi đăng nhập, có thể đồng bộ lên server
+          (`/api/v1/pf`).
         </p>
         <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={async () => {
+              const r = await pushPfToServer();
+              setMsg(r.ok ? "Đã đẩy lên server." : `Push lỗi: ${r.error}`);
+            }}
+            className="rounded-lg border border-border-subtle px-3 py-1.5"
+          >
+            Đồng bộ lên server
+          </button>
+          <button
+            type="button"
+            onClick={async () => {
+              const r = await pullPfFromServer();
+              setMsg(
+                r.ok
+                  ? r.applied
+                    ? "Đã kéo từ server (áp dụng)."
+                    : "Server không mới hơn local."
+                  : `Pull lỗi: ${r.error}`,
+              );
+            }}
+            className="rounded-lg border border-border-subtle px-3 py-1.5"
+          >
+            Kéo từ server
+          </button>
           <button
             type="button"
             onClick={exportJson}

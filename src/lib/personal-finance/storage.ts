@@ -5,6 +5,14 @@
 import type { FinanceProfile, MonthlySnapshot, AssumptionSet, FinancialGoal } from "./types";
 import { DEFAULT_ASSUMPTIONS } from "./engines/projectionEngine";
 
+function bumpSync() {
+  try {
+    void import("./sync").then((m) => m.schedulePfServerSync());
+  } catch {
+    /* ignore */
+  }
+}
+
 const STORAGE_KEY_PROFILE = "orca_fin_profile_v1";
 const STORAGE_KEY_SNAPSHOTS = "orca_fin_snapshots_v1";
 const STORAGE_KEY_ASSUMPTIONS = "orca_fin_assumptions_v1";
@@ -40,6 +48,7 @@ export function loadProfileFromStorage(): FinanceProfile {
 export function saveProfileToStorage(profile: FinanceProfile): void {
   if (!canUseStorage()) return;
   localStorage.setItem(STORAGE_KEY_PROFILE, JSON.stringify(profile));
+  bumpSync();
 }
 
 export function loadSnapshotsFromStorage(): MonthlySnapshot[] {
@@ -57,6 +66,7 @@ export function loadSnapshotsFromStorage(): MonthlySnapshot[] {
 export function saveSnapshotsToStorage(snapshots: MonthlySnapshot[]): void {
   if (!canUseStorage()) return;
   localStorage.setItem(STORAGE_KEY_SNAPSHOTS, JSON.stringify(snapshots));
+  bumpSync();
 }
 
 export function loadAssumptionsFromStorage(): AssumptionSet {
@@ -73,6 +83,7 @@ export function loadAssumptionsFromStorage(): AssumptionSet {
 export function saveAssumptionsToStorage(assumptions: AssumptionSet): void {
   if (!canUseStorage()) return;
   localStorage.setItem(STORAGE_KEY_ASSUMPTIONS, JSON.stringify(assumptions));
+  bumpSync();
 }
 
 export function loadGoalsFromStorage(): FinancialGoal[] {
@@ -90,6 +101,7 @@ export function loadGoalsFromStorage(): FinancialGoal[] {
 export function saveGoalsToStorage(goals: FinancialGoal[]): void {
   if (!canUseStorage()) return;
   localStorage.setItem(STORAGE_KEY_GOALS, JSON.stringify(goals));
+  bumpSync();
 }
 
 export function wipeAllUserData(): void {
@@ -98,6 +110,7 @@ export function wipeAllUserData(): void {
   localStorage.removeItem(STORAGE_KEY_SNAPSHOTS);
   localStorage.removeItem(STORAGE_KEY_ASSUMPTIONS);
   localStorage.removeItem(STORAGE_KEY_GOALS);
+  localStorage.removeItem("orca_fin_updated_at_v1");
 }
 
 export function exportDataAsJson(
