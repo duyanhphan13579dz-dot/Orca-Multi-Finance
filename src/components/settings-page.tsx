@@ -10,7 +10,7 @@ import {
   LayoutDashboard,
   Monitor,
   ShieldCheck,
-  SliersHorizontal,
+  SlidersHorizontal,
   User2,
   Wallet,
   Save,
