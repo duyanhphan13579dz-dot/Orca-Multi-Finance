@@ -5,6 +5,15 @@ import Link from "next/link";
 import { Panel } from "@/components/ui";
 import { loadSnapshotsFromStorage } from "@/lib/personal-finance/storage";
 import type { MonthlySnapshot } from "@/lib/personal-finance/types";
+import { generateQuantitativeAdvice } from "@/lib/personal-finance/engines/adviceEngine";
+
+function fmtVnd(n: number) {
+  return new Intl.NumberFormat("vi-VN", {
+    style: "currency",
+    currency: "VND",
+    maximumFractionDigits: 0,
+  }).format(n || 0);
+}
 
 export function PfAdvice() {
   const [snap, setSnap] = useState<MonthlySnapshot | null>(null);
@@ -14,48 +23,10 @@ export function PfAdvice() {
     setSnap(s ?? null);
   }, []);
 
-  const tips = useMemo(() => {
-    if (!snap) return [];
-    const m = snap.metrics;
-    const out: { title: string; body: string }[] = [];
-    if (m.savingsRate < 10) {
-      out.push({
-        title: "Tỷ lệ tiết kiệm thấp",
-        body: `Hiện ${m.savingsRate.toFixed(1)}%. Mục tiêu tối thiểu 10–20% thu nhập net.`,
-      });
-    }
-    if (m.emergencyFundMonths < 3) {
-      out.push({
-        title: "Quỹ khẩn cấp mỏng",
-        body: `Chỉ đủ ~${m.emergencyFundMonths.toFixed(1)} tháng chi thiết yếu. Ưu tiên tích lũy tới 3–6 tháng.`,
-      });
-    }
-    if (m.debtToIncomeRatio > 30) {
-      out.push({
-        title: "DTI cao",
-        body: `Trả nợ tối thiểu chiếm ${m.debtToIncomeRatio.toFixed(1)}% thu net. Ưu tiên nợ lãi cao.`,
-      });
-    }
-    if (m.fixedCostRatio > 65) {
-      out.push({
-        title: "Chi cố định nặng",
-        body: `Fixed cost ${m.fixedCostRatio.toFixed(1)}% thu net. Xem lại nhà ở / trả góp.`,
-      });
-    }
-    if (m.healthScore.total >= 70) {
-      out.push({
-        title: "Sức khỏe tài chính ổn",
-        body: `Health score ${m.healthScore.total} (${m.healthScore.ratingText}). Giữ nhịp check-in hàng tháng.`,
-      });
-    }
-    if (out.length === 0) {
-      out.push({
-        title: "Tiếp tục theo dõi",
-        body: "Chưa có cảnh báo mạnh. Duy trì check-in và cập nhật mục tiêu.",
-      });
-    }
-    return out;
-  }, [snap]);
+  const insights = useMemo(
+    () => (snap ? generateQuantitativeAdvice({ snapshot: snap }) : []),
+    [snap],
+  );
 
   return (
     <div className="mx-auto max-w-2xl space-y-3 p-3 sm:p-4">
@@ -63,6 +34,8 @@ export function PfAdvice() {
         ← Tổng quan PF
       </Link>
       <h1 className="text-[17px] font-semibold text-text-primary">Lời khuyên</h1>
+      <p className="text-[11.5px] text-text-muted">Rule-based từ adviceEngine (W3).</p>
+
       {!snap ? (
         <Panel className="p-4 text-[12px] text-text-muted">
           Cần snapshot.{" "}
@@ -72,10 +45,22 @@ export function PfAdvice() {
         </Panel>
       ) : (
         <div className="space-y-2">
-          {tips.map((t) => (
-            <Panel key={t.title} className="p-3">
-              <div className="text-[12px] font-semibold text-text-primary">{t.title}</div>
-              <p className="mt-1 text-[11.5px] text-text-muted">{t.body}</p>
+          {insights.map((i) => (
+            <Panel key={i.id} className="p-3">
+              <div className="flex items-center justify-between gap-2">
+                <div className="text-[12px] font-semibold text-text-primary">{i.title}</div>
+                <span className="text-[10px] uppercase text-text-muted">{i.severity}</span>
+              </div>
+              <p className="mt-1 text-[11.5px] text-text-muted">{i.content.finding}</p>
+              <p className="mt-1 text-[11.5px] text-text-primary">
+                <strong>Hành động:</strong> {i.content.action}
+              </p>
+              {i.content.amount > 0 && (
+                <p className="mt-1 text-[11px] text-text-muted">
+                  Số tiền gợi ý: {fmtVnd(i.content.amount)} · hạn {i.content.deadline}
+                </p>
+              )}
+              <p className="mt-1 text-[10.5px] text-text-muted">{i.content.assumptionsAndConfidence}</p>
             </Panel>
           ))}
         </div>

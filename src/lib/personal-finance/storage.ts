@@ -2,12 +2,13 @@
  * Personal finance localStorage (client-only). Ported from Orca Wallet.
  */
 
-import type { FinanceProfile, MonthlySnapshot, AssumptionSet } from "./types";
+import type { FinanceProfile, MonthlySnapshot, AssumptionSet, FinancialGoal } from "./types";
 import { DEFAULT_ASSUMPTIONS } from "./engines/projectionEngine";
 
 const STORAGE_KEY_PROFILE = "orca_fin_profile_v1";
 const STORAGE_KEY_SNAPSHOTS = "orca_fin_snapshots_v1";
 const STORAGE_KEY_ASSUMPTIONS = "orca_fin_assumptions_v1";
+const STORAGE_KEY_GOALS = "orca_fin_goals_v1";
 
 export const INITIAL_EMPTY_PROFILE: FinanceProfile = {
   birthYear: 1996,
@@ -74,11 +75,29 @@ export function saveAssumptionsToStorage(assumptions: AssumptionSet): void {
   localStorage.setItem(STORAGE_KEY_ASSUMPTIONS, JSON.stringify(assumptions));
 }
 
+export function loadGoalsFromStorage(): FinancialGoal[] {
+  if (!canUseStorage()) return [];
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_GOALS);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as FinancialGoal[];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+export function saveGoalsToStorage(goals: FinancialGoal[]): void {
+  if (!canUseStorage()) return;
+  localStorage.setItem(STORAGE_KEY_GOALS, JSON.stringify(goals));
+}
+
 export function wipeAllUserData(): void {
   if (!canUseStorage()) return;
   localStorage.removeItem(STORAGE_KEY_PROFILE);
   localStorage.removeItem(STORAGE_KEY_SNAPSHOTS);
   localStorage.removeItem(STORAGE_KEY_ASSUMPTIONS);
+  localStorage.removeItem(STORAGE_KEY_GOALS);
 }
 
 export function exportDataAsJson(
