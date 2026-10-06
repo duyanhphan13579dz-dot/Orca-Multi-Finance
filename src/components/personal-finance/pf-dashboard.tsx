@@ -8,6 +8,7 @@ import {
   loadAssumptionsFromStorage,
   INITIAL_EMPTY_PROFILE,
 } from "@/lib/personal-finance/storage";
+import { pullPfFromServer, setPfLoggedIn } from "@/lib/personal-finance/sync";
 import type { FinanceProfile, MonthlySnapshot, AssumptionSet } from "@/lib/personal-finance/types";
 import { Panel } from "@/components/ui";
 
@@ -27,10 +28,19 @@ export function PfDashboard() {
   const [hydrated, setHydrated] = useState(false);
 
   useEffect(() => {
-    setProfile(loadProfileFromStorage());
-    setSnapshots(loadSnapshotsFromStorage());
-    setAssumptions(loadAssumptionsFromStorage());
-    setHydrated(true);
+    let cancelled = false;
+    (async () => {
+      const pull = await pullPfFromServer();
+      if (pull.ok) setPfLoggedIn(true);
+      if (cancelled) return;
+      setProfile(loadProfileFromStorage());
+      setSnapshots(loadSnapshotsFromStorage());
+      setAssumptions(loadAssumptionsFromStorage());
+      setHydrated(true);
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const latest = useMemo(() => {
@@ -52,7 +62,7 @@ export function PfDashboard() {
         <div>
           <h1 className="text-[17px] font-semibold text-text-primary">Tài chính cá nhân</h1>
           <p className="mt-0.5 text-[11.5px] text-text-muted">
-            Orca Wallet trong Multi · local-first · đổi chế độ ở Cài đặt → Hồ sơ
+            Local-first · sync server khi đăng nhập · Cài đặt → Hồ sơ để đổi chế độ
           </p>
         </div>
         <Link
@@ -67,8 +77,7 @@ export function PfDashboard() {
         <Panel className="p-4">
           <p className="text-[13px] text-text-primary">Chưa có snapshot tháng nào.</p>
           <p className="mt-1 text-[11.5px] text-text-muted">
-            Check-in để nhập thu/chi. Engines tại{" "}
-            <code className="text-[11px]">src/lib/personal-finance</code>.
+            Check-in để nhập thu/chi, hoặc kéo từ server nếu đã đồng bộ trước đó.
           </p>
           <Link href="/pf/checkin" className="mt-3 inline-block text-[12px] text-accent underline">
             Mở Check-in →
@@ -78,7 +87,14 @@ export function PfDashboard() {
         <>
           <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
             <Metric label="Kỳ" value={latest.period} />
-            <Metric label="Health score" value={String(m.healthScore?.total ?? "—")} />
+            <Metric
+              label="Health score"
+              value={
+                m.healthScore
+                  ? `${m.healthScore.total} · ${m.healthScore.ratingText}`
+                  : "—"
+              }
+            />
             <Metric label="Net worth" value={fmtVnd(m.netWorth)} />
             <Metric label="Tiết kiệm tháng" value={fmtVnd(m.monthlySavings)} />
           </div>
@@ -104,7 +120,7 @@ export function PfDashboard() {
                 Báo cáo
               </Link>
               <Link className="text-accent underline" href="/pf/privacy">
-                Riêng tư
+                Riêng tư / Sync
               </Link>
             </div>
           </Panel>
