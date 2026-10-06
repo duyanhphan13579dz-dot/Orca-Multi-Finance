@@ -17,8 +17,18 @@ import {
   fetchEntradeDerivativeQuotes,
   fetchEntradeDerivativeOhlcv,
 } from "./entrade-derivatives";
+import {
+  dnseConfigured,
+  fetchDnseDerivativeQuote,
+  fetchDnseDerivativeQuotes,
+} from "./dnse-derivatives";
+import {
+  tcbsConfigured,
+  fetchTcbsDerivativeQuote,
+  fetchTcbsDerivativeQuotes,
+} from "./tcbs-derivatives";
 
-/** Cascade: SSI DER → Entrade public → external URL → VNDIRECT dchart. */
+/** Cascade: SSI → DNSE → TCBS → Entrade → external → VNDIRECT. */
 
 export const HNX_DERIVATIVES = "hnx-derivatives";
 
@@ -88,7 +98,8 @@ export async function fetchExternalDerivativeQuote(
       retries: 1,
       headers,
     });
-    return mapRowToQuote(symbol, data, "derivatives-external");
+    if (!data.ok || !data.data) return null;
+    return mapRowToQuote(symbol, data.data, "derivatives-external");
   } catch {
     return null;
   }
@@ -99,6 +110,22 @@ export async function getDerivativeMarketQuote(symbol: string): Promise<Derivati
   try {
     const ssi = await fetchSsiDerivativeQuote(sym);
     if (ssi) return ssi;
+  } catch {
+    /* continue */
+  }
+  try {
+    if (dnseConfigured()) {
+      const dnse = await fetchDnseDerivativeQuote(sym);
+      if (dnse) return dnse;
+    }
+  } catch {
+    /* continue */
+  }
+  try {
+    if (tcbsConfigured()) {
+      const tcbs = await fetchTcbsDerivativeQuote(sym);
+      if (tcbs) return tcbs;
+    }
   } catch {
     /* continue */
   }
@@ -132,6 +159,28 @@ export async function getDerivativeMarketQuotes(
     try {
       const ssiMap = await fetchSsiDerQuotes(uniq);
       for (const [k, v] of ssiMap) out.set(k, v);
+    } catch {
+      /* soft */
+    }
+  }
+  if (dnseConfigured()) {
+    try {
+      const missing0 = uniq.filter((s) => !out.has(s));
+      if (missing0.length) {
+        const m = await fetchDnseDerivativeQuotes(missing0);
+        for (const [k, v] of m) out.set(k, v);
+      }
+    } catch {
+      /* soft */
+    }
+  }
+  if (tcbsConfigured()) {
+    try {
+      const missing0 = uniq.filter((s) => !out.has(s));
+      if (missing0.length) {
+        const m = await fetchTcbsDerivativeQuotes(missing0);
+        for (const [k, v] of m) out.set(k, v);
+      }
     } catch {
       /* soft */
     }
@@ -172,7 +221,12 @@ export function derivativesLiveConfigured(): boolean {
 }
 
 export function derivativesPaidFeedConfigured(): boolean {
-  return ssiFcConfigured() || Boolean(process.env.DERIVATIVES_QUOTE_URL?.trim());
+  return (
+    ssiFcConfigured() ||
+    dnseConfigured() ||
+    tcbsConfigured() ||
+    Boolean(process.env.DERIVATIVES_QUOTE_URL?.trim())
+  );
 }
 
 export function derivativesSsiConfigured(): boolean {
@@ -204,8 +258,10 @@ export async function fetchDerivativeOhlcv(
         timeoutMs: 10_000,
         retries: 1,
       });
-      const bars = Array.isArray(data) ? data : data?.bars;
-      if (bars?.length) return bars;
+      if (data.ok && data.data) {
+        const bars = Array.isArray(data.data) ? data.data : data.data.bars;
+        if (bars?.length) return bars;
+      }
     } catch {
       /* soft */
     }
