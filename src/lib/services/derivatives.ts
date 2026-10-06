@@ -27,6 +27,13 @@ import {
 } from "../providers/hnx-derivatives";
 import { classifyDerivFlow, flowFromQuotes } from "../engines/derivatives-flow";
 import { buildTermStructure, estimateRollYieldAnnualized, type TermStructureResult } from "../engines/derivatives-curve";
+import { classifyDerivRegime, type DerivRegime } from "../engines/derivatives-regime";
+import {
+  recordDerivSample,
+  getPriorSample,
+  getDerivHistoryPayload,
+  type DerivHistorySample,
+} from "./derivatives-history";
 import {
   MARGIN_SCHEDULE,
   getMarginForProduct,
@@ -34,10 +41,7 @@ import {
   type MarginScheduleEntry,
 } from "../providers/vsdc-margin";
 
-/**
- * Vietnam Derivatives service — P0–P2 Contract Master, flow, term structure, margin.
- * Quant numbers only come from providers or explicit null. No fabricated prices.
- */
+/** Vietnam Derivatives service — P0–P4. No fabricated prices. */
 
 export interface DerivativesCatalog {
   products: DerivativeProduct[];
@@ -65,9 +69,7 @@ async function resolveVn30Spot(): Promise<{ price: number | null; source: string
         ts: row.updatedAt ? Date.parse(row.updatedAt) : (idx.sourceTs ?? Date.now()),
       };
     }
-  } catch {
-    /* try vndirect */
-  }
+  } catch { /* try vndirect */ }
   try {
     const { getVndIndices } = await import("../providers/vndirect");
     const idx = await getVndIndices();
@@ -79,9 +81,7 @@ async function resolveVn30Spot(): Promise<{ price: number | null; source: string
         ts: row.updatedAt ? Date.parse(row.updatedAt) : (idx.sourceTs ?? Date.now()),
       };
     }
-  } catch {
-    /* none */
-  }
+  } catch { /* none */ }
   return { price: null, source: null, ts: null };
 }
 
@@ -93,13 +93,7 @@ export function computeBasis(
   if (!Number.isFinite(futuresLast) || !Number.isFinite(spot) || spot <= 0) return null;
   const basis = futuresLast - spot;
   const basisPct = (basis / spot) * 100;
-  return {
-    basis,
-    basisPct,
-    futuresLast,
-    spot,
-    computedAt: new Date().toISOString(),
-  };
+  return { basis, basisPct, futuresLast, spot, computedAt: new Date().toISOString() };
 }
 
 export async function getDerivativesCatalog(): Promise<{ data: DerivativesCatalog; meta: Meta }> {
@@ -131,7 +125,6 @@ export async function getDerivativeContractDetail(
   const sym = symbol.toUpperCase();
   const contract = getContractBySymbol(sym);
   if (!contract) return null;
-
   const res = await cached(`derivatives:detail:${sym}`, {
     ttlMs: 15_000,
     staleMs: 120_000,
@@ -139,23 +132,12 @@ export async function getDerivativeContractDetail(
       const quote = await getDerivativeMarketQuote(sym);
       const spot = await resolveVn30Spot();
       const basis =
-        contract.underlying === "VN30"
-          ? computeBasis(quote?.last ?? null, spot.price)
-          : null;
+        contract.underlying === "VN30" ? computeBasis(quote?.last ?? null, spot.price) : null;
       return { quote, spot, basis, fetchedAt: Date.now() };
     },
   });
-
-  const row: DerivativeContractRow = {
-    ...contract,
-    quote: res.value.quote,
-    basis: res.value.basis,
-  };
-
-  const srcTs =
-    res.value.quote?.updatedAt
-      ? Date.parse(res.value.quote.updatedAt)
-      : res.value.fetchedAt;
+  const row: DerivativeContractRow = { ...contract, quote: res.value.quote, basis: res.value.basis };
+  const srcTs = res.value.quote?.updatedAt ? Date.parse(res.value.quote.updatedAt) : res.value.fetchedAt;
   const meta = buildMeta({
     source: res.value.quote?.source ?? VSDC,
     sourceTimestampMs: Number.isFinite(srcTs) ? srcTs : res.value.fetchedAt,
@@ -180,7 +162,6 @@ export async function getDerivativesSnapshot(opts?: {
   } else if (opts?.coreOnly !== false) {
     contracts = all.filter((c) => c.underlying === "VN30" && c.status === "ACTIVE");
   }
-
   const symbols = contracts.map((c) => c.symbol);
   const res = await cached(`derivatives:snapshot:${symbols.join(",")}`, {
     ttlMs: 15_000,
@@ -193,16 +174,12 @@ export async function getDerivativesSnapshot(opts?: {
       return { quotes, spot, fetchedAt: Date.now() };
     },
   });
-
   const rows: DerivativeContractRow[] = contracts.map((c) => {
     const quote = res.value.quotes.get(c.symbol) ?? null;
     const basis =
-      c.underlying === "VN30"
-        ? computeBasis(quote?.last ?? null, res.value.spot.price)
-        : null;
+      c.underlying === "VN30" ? computeBasis(quote?.last ?? null, res.value.spot.price) : null;
     return { ...c, quote, basis };
   });
-
   const anyQuote = rows.some((r) => r.quote?.last != null);
   const liveConfigured = derivativesLiveConfigured();
   const data: DerivativesSnapshot = {
@@ -215,7 +192,6 @@ export async function getDerivativesSnapshot(opts?: {
         ? "Live adapter configured but quotes returned empty"
         : "No live quote source — N/A until SSI or DERIVATIVES_QUOTE_URL",
   };
-
   const meta = buildMeta({
     source: anyQuote ? HNX_DERIVATIVES : VSDC,
     sourceTimestampMs: res.value.fetchedAt,
@@ -258,7 +234,6 @@ export async function getDerivativeOhlcv(
   const sym = symbol.toUpperCase();
   const contract = getContractBySymbol(sym);
   if (!contract) return null;
-
   const res = await cached(`derivatives:ohlcv:${sym}:${days}`, {
     ttlMs: 60_000,
     staleMs: 30 * 60_000,
@@ -267,7 +242,6 @@ export async function getDerivativeOhlcv(
       return { bars, fetchedAt: Date.now() };
     },
   });
-
   const last = res.value.bars[res.value.bars.length - 1];
   const meta = buildMeta({
     source: res.value.bars.length ? HNX_DERIVATIVES : VSDC,
@@ -286,7 +260,19 @@ export async function getDerivativeOhlcv(
 
 export function buildFlowForRow(row: DerivativeContractRow): DerivativeFlowSignal {
   const sym = row.symbol.toUpperCase();
-  const prior = priorQuoteMem.get(sym) ?? null;
+  const memPrior = priorQuoteMem.get(sym) ?? null;
+  const histPrior = getPriorSample(sym, 60_000);
+  const prior =
+    memPrior ??
+    (histPrior
+      ? {
+          last: histPrior.last,
+          openInterest: histPrior.openInterest,
+          volume: histPrior.volume,
+          basis: histPrior.basis,
+          at: histPrior.ts,
+        }
+      : null);
   const q = row.quote;
   const signal = flowFromQuotes(
     sym,
@@ -296,14 +282,22 @@ export function buildFlowForRow(row: DerivativeContractRow): DerivativeFlowSigna
       volume: q?.volume ?? null,
       change: q?.change ?? null,
     },
-    prior
-      ? { last: prior.last, openInterest: prior.openInterest, volume: prior.volume }
-      : null,
+    prior ? { last: prior.last, openInterest: prior.openInterest, volume: prior.volume } : null,
     row.basis?.basis ?? null,
     prior?.basis ?? null,
   );
-
-  if (q) rememberQuote(sym, q, row.basis?.basis ?? null);
+  if (q) {
+    rememberQuote(sym, q, row.basis?.basis ?? null);
+    recordDerivSample({
+      symbol: sym,
+      ts: Date.now(),
+      last: q.last ?? null,
+      openInterest: q.openInterest ?? null,
+      volume: q.volume ?? null,
+      basis: row.basis?.basis ?? null,
+      source: q.source ?? null,
+    });
+  }
   return signal as DerivativeFlowSignal;
 }
 
@@ -321,7 +315,7 @@ export async function getDerivativesSnapshotWithFlow(opts?: {
     data: { ...base.data, flow },
     meta: {
       ...base.meta,
-      note: [base.data.note, "Flow Engine P1.5: ΔOI cần 2 snapshot (poll liên tiếp) hoặc OI history."]
+      note: [base.data.note, "Flow Engine P1.5: ΔOI từ process prior hoặc history P3."]
         .filter(Boolean)
         .join(" · "),
     },
@@ -330,7 +324,7 @@ export async function getDerivativesSnapshotWithFlow(opts?: {
 
 export { classifyDerivFlow };
 
-/* --------------------------------- P2 curve / margin ----------------------- */
+/* P2 curve / margin */
 
 export type { TermStructureResult } from "../engines/derivatives-curve";
 export type { MarginScheduleEntry } from "../providers/vsdc-margin";
@@ -345,7 +339,6 @@ export async function getDerivativesTermStructure(opts?: {
     coreOnly: false,
     symbols: symbols.length ? symbols : undefined,
   });
-
   const rows = snap.data.contracts.filter((c) => c.underlying === underlying);
   const inputs = rows.map((c) => ({
     symbol: c.symbol,
@@ -356,10 +349,8 @@ export async function getDerivativesTermStructure(opts?: {
     volume: c.quote?.volume ?? null,
     basis: c.basis?.basis ?? null,
   }));
-
   const spot = underlying === "VN30" ? snap.data.spot.price : null;
   const curve = buildTermStructure(underlying, inputs, spot);
-
   if (curve.spreads.length && curve.points.length >= 2) {
     const a = curve.points[0];
     const b = curve.points[1];
@@ -368,7 +359,6 @@ export async function getDerivativesTermStructure(opts?: {
       curve.rollYieldAnnualizedPct = ry != null ? Math.round(ry * 100) / 100 : null;
     }
   }
-
   const meta = buildMeta({
     source: snap.meta.source,
     sourceTimestampMs: Date.now(),
@@ -378,7 +368,6 @@ export async function getDerivativesTermStructure(opts?: {
     note: curve.note,
     slas: { liveSlaMs: 30_000, freshSlaMs: 120_000, delayedSlaMs: 600_000 },
   });
-
   return { data: curve, meta };
 }
 
@@ -398,4 +387,127 @@ export function getContractMarginEstimate(symbol: string, last?: number | null) 
     productId: c.productId,
     ...estimateInitialMarginVnd(c.productId, last ?? null, c.multiplier ?? null),
   };
+}
+
+/* P3 history / P4 regime */
+
+export type { DerivRegime } from "../engines/derivatives-regime";
+export type { DerivHistorySample };
+
+export async function getDerivativesRegime(opts?: {
+  underlying?: string;
+}): Promise<{
+  data: {
+    underlying: string;
+    regime: DerivRegime;
+    flowKind: string | null;
+    curveShape: string | null;
+    frontBasis: number | null;
+    frontSymbol: string | null;
+  };
+  meta: Meta;
+}> {
+  const underlying = (opts?.underlying ?? "VN30").toUpperCase();
+  const [snap, curve] = await Promise.all([
+    getDerivativesSnapshotWithFlow({
+      coreOnly: false,
+      symbols: buildContractMaster()
+        .filter((c) => c.underlying === underlying)
+        .map((c) => c.symbol),
+    }),
+    getDerivativesTermStructure({ underlying }),
+  ]);
+  const frontSym = curve.data.front?.symbol ?? snap.data.contracts[0]?.symbol ?? null;
+  const flow =
+    snap.data.flow.find((f) => f.symbol === frontSym) ?? snap.data.flow[0] ?? null;
+  const regime = classifyDerivRegime({
+    flowKind: (flow?.kind as import("../engines/derivatives-flow").DerivFlowKind) ?? null,
+    flowConfidence: flow?.confidence ?? null,
+    curveShape: curve.data.shape,
+    frontBasis: curve.data.frontBasis,
+  });
+  const anyData =
+    (flow?.kind != null && flow.kind !== "insufficient") ||
+    curve.data.shape !== "insufficient" ||
+    curve.data.frontBasis != null;
+  const meta = buildMeta({
+    source: snap.meta.source,
+    sourceTimestampMs: Date.now(),
+    cached: snap.meta.cached,
+    stale: snap.meta.stale,
+    partial: !anyData || regime.kind === "insufficient",
+    note: regime.description,
+    slas: { liveSlaMs: 30_000, freshSlaMs: 120_000, delayedSlaMs: 600_000 },
+  });
+  return {
+    data: {
+      underlying,
+      regime,
+      flowKind: flow?.kind ?? null,
+      curveShape: curve.data.shape,
+      frontBasis: curve.data.frontBasis,
+      frontSymbol: frontSym,
+    },
+    meta,
+  };
+}
+
+export async function getDerivativesHistory(symbol: string, limit = 48) {
+  const sym = symbol.toUpperCase();
+  if (!getContractBySymbol(sym)) return null;
+  const payload = await getDerivHistoryPayload(sym, limit);
+  const meta = buildMeta({
+    source: "derivatives-history",
+    sourceTimestampMs: payload.samples.at(-1)?.ts ?? Date.now(),
+    cached: false,
+    stale: false,
+    partial: payload.samples.length === 0,
+    note: payload.note,
+    slas: { liveSlaMs: 60_000, freshSlaMs: 600_000, delayedSlaMs: 3_600_000 },
+  });
+  return { data: payload, meta };
+}
+
+export async function getDerivativesBriefBlock(): Promise<{
+  available: boolean;
+  lines: string[];
+  regime: DerivRegime | null;
+  metaNote: string;
+}> {
+  try {
+    const { data, meta } = await getDerivativesRegime({ underlying: "VN30" });
+    const lines: string[] = [];
+    if (data.regime.kind === "insufficient") {
+      return {
+        available: false,
+        lines: [
+          "VN30F / basis / OI: chưa đủ quote live — block UNAVAILABLE (không suy diễn).",
+        ],
+        regime: data.regime,
+        metaNote: meta.note ?? data.regime.description,
+      };
+    }
+    lines.push(
+      `Regime phái sinh: ${data.regime.titleVi} (${data.regime.kind}) · conf ${Math.round(data.regime.confidence * 100)}%`,
+    );
+    if (data.frontSymbol) {
+      lines.push(
+        `Front: ${data.frontSymbol}` +
+          (data.frontBasis != null
+            ? ` · basis ${data.frontBasis >= 0 ? "+" : ""}${data.frontBasis.toFixed(1)} pts`
+            : "") +
+          (data.flowKind ? ` · flow ${data.flowKind}` : "") +
+          (data.curveShape ? ` · curve ${data.curveShape}` : ""),
+      );
+    }
+    lines.push(data.regime.description);
+    return { available: true, lines, regime: data.regime, metaNote: meta.note ?? "" };
+  } catch {
+    return {
+      available: false,
+      lines: ["VN30F / basis / OI: lỗi pipeline phái sinh — UNAVAILABLE."],
+      regime: null,
+      metaNote: "error",
+    };
+  }
 }
