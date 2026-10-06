@@ -10,7 +10,7 @@ import {
   LayoutDashboard,
   Monitor,
   ShieldCheck,
-  SlidersHorizontal,
+  SliersHorizontal,
   User2,
   Wallet,
   Save,
@@ -20,6 +20,7 @@ import { Badge, Panel } from "@/components/ui";
 import { useApi } from "@/lib/hooks";
 import type { ProviderStatus } from "@/lib/types";
 import { ProfileTab, AppearanceTab } from "@/components/settings-panels-extra";
+import { AppModeSection } from "@/components/personal-finance/app-mode-section";
 import {
   SecurityTab,
   SystemTab,
@@ -99,7 +100,12 @@ export function SettingsPage() {
         </Panel>
 
         <div className="col-span-12 min-w-0 space-y-2 md:col-span-9">
-          {tab === "profile" && <ProfileTab onOpenSecurity={() => selectTab("security")} />}
+          {tab === "profile" && (
+            <>
+              <AppModeSection />
+              <ProfileTab onOpenSecurity={() => selectTab("security")} />
+            </>
+          )}
           {tab === "appearance" && <AppearanceTab />}
           {tab === "dashboard" && <DashboardTab />}
           {tab === "trading" && <TradingTab />}
