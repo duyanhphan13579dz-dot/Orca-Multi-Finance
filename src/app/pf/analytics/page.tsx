@@ -1,10 +1,8 @@
 import type { Metadata } from "next";
-import { PfSection } from "@/components/personal-finance/pf-section";
+import { PfAnalytics } from "@/components/personal-finance/pf-analytics";
 
-export const metadata: Metadata = { title: "Phân tích" };
+export const metadata: Metadata = { title: "Phân tích PF" };
 
 export default function Page() {
-  return (
-    <PfSection title="Phân tích" desc="Cashflow, tỷ lệ cố định, emergency fund, DTI" />
-  );
+  return <PfAnalytics />;
 }

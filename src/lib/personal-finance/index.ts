@@ -1,5 +1,6 @@
 export * from "./types";
 export * from "./storage";
+export * from "./build-snapshot";
 export { calculateCashflow } from "./engines/cashflowEngine";
 export { calculateHealthScore } from "./engines/healthScoreEngine";
 export { calculateNetworth } from "./engines/networthEngine";
