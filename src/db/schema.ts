@@ -276,6 +276,8 @@ export const tradeJournal = pgTable("trade_journal", {
 export const userPreferences = pgTable("user_preferences", {
   userId: uuid("user_id").primaryKey().references(() => users.id, { onDelete: "cascade" }),
   settings: jsonb("settings").notNull(),
+  /** Orca Wallet / personal finance blob */
+  personalFinance: jsonb("personal_finance"),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 });
 
