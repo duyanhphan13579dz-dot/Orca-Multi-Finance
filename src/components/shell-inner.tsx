@@ -15,80 +15,25 @@ import {
 import { markAppNavigating } from "@/lib/hooks";
 import { RouteProgress, signalNavStart } from "@/components/route-progress";
 import {
-  Bot,
-  Boxes,
-  CandlestickChart,
-  ChartNoAxesCombined,
   ChevronsLeft,
   ChevronsRight,
-  Coins,
-  DollarSign,
-  Eye,
-  FlaskConical,
-  Globe2,
-  Grid2x2,
-  Home,
-  Landmark,
-  LayoutDashboard,
   LogOut,
   Menu,
-  Newspaper,
   Settings,
   X,
 } from "lucide-react";
 import { TickerTape } from "@/components/ticker-tape";
 import { GlobalSearch } from "@/components/search";
-import { OrcaWordmark, OrcaMark, OrcaMobileBrand } from "@/components/logo";
+import { OrcaMark, OrcaMobileBrand } from "@/components/logo";
 import { useApi } from "@/lib/hooks";
 import { useSettings } from "@/lib/settings";
+import { NAV_SECTIONS, NAV_SECTIONS_PF } from "@/components/shell-nav";
 import { ErrorBoundary } from "@/components/error-boundary";
 import { NotifBell } from "@/components/notif-bell";
 import { PriceAlertEngine } from "@/components/price-alert-engine";
 
 const SIDEBAR_EXPANDED = 268;
 const SIDEBAR_COLLAPSED = 60;
-
-const NAV_SECTIONS: {
-  title: string;
-  items: {
-    href: string;
-    label: string;
-    icon: ComponentType<{ className?: string }>;
-    core?: boolean;
-  }[];
-}[] = [
-  {
-    title: "THỊ TRƯỜNG",
-    items: [
-      { href: "/", label: "Tổng quan", icon: Home, core: true },
-      { href: "/stocks", label: "Cổ phiếu VN", icon: CandlestickChart, core: true },
-      { href: "/crypto", label: "Tiền mã hóa", icon: Coins, core: true },
-      { href: "/forex", label: "Ngoại hối", icon: DollarSign },
-      { href: "/commodities", label: "Hàng hóa", icon: Boxes },
-      { href: "/derivatives", label: "Phái sinh", icon: CandlestickChart, core: true },
-      { href: "/macro-economic", label: "Kinh tế vĩ mô", icon: ChartNoAxesCombined },
-      { href: "/currency-interest-rate", label: "Lãi suất tiền tệ", icon: Landmark },
-    ],
-  },
-  {
-    title: "CÔNG CỤ",
-    items: [
-      { href: "/heatmap", label: "Bản đồ nhiệt", icon: Grid2x2 },
-      { href: "/screener", label: "Bộ lọc", icon: FlaskConical },
-      { href: "/news", label: "Tin tức", icon: Newspaper, core: true },
-      { href: "/reports", label: "Bản tin", icon: Globe2 },
-      { href: "/agent", label: "Trợ lý AI", icon: Bot },
-    ],
-  },
-  {
-    title: "DANH MỤC",
-    items: [
-      { href: "/portfolio", label: "Danh mục thông minh", icon: LayoutDashboard },
-      { href: "/watchlist", label: "Danh mục theo dõi", icon: Eye },
-      { href: "/settings", label: "Cài đặt", icon: Settings },
-    ],
-  },
-];
 
 function isActivePath(pathname: string, href: string) {
   if (href === "/") return pathname === "/";
@@ -98,6 +43,9 @@ function isActivePath(pathname: string, href: string) {
 export function ShellInner({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
+  const { settings } = useSettings();
+  const appMode = settings.app?.mode ?? "investment";
+  const navSections = appMode === "personal_finance" ? NAV_SECTIONS_PF : NAV_SECTIONS;
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [sideAnimating, setSideAnimating] = useState(false);
@@ -105,8 +53,7 @@ export function ShellInner({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     try {
-      const v = localStorage.getItem("orca:sidebar:collapsed");
-      if (v === "1") setCollapsed(true);
+      if (localStorage.getItem("orca:sidebar:collapsed") === "1") setCollapsed(true);
     } catch {
       /* ignore */
     }
@@ -156,7 +103,6 @@ export function ShellInner({ children }: { children: ReactNode }) {
     [router],
   );
 
-  /** Desktop sidebar: always layout as expanded; outer width clips — no mid-anim reflow */
   const renderDesktopSidebar = () => {
     const NavItem = ({
       href,
@@ -191,16 +137,16 @@ export function ShellInner({ children }: { children: ReactNode }) {
       <div className="orca-sidebar flex h-full flex-col" style={{ width: SIDEBAR_EXPANDED }}>
         <div className="orca-sidebar-header relative flex min-h-[3.25rem] shrink-0 items-center gap-1 border-b border-border-subtle px-2 py-2">
           <Link
-            href="/"
-            onClick={(e) => onNav("/", e)}
+            href={appMode === "personal_finance" ? "/pf" : "/"}
+            onClick={(e) => onNav(appMode === "personal_finance" ? "/pf" : "/", e)}
             className="orca-sidebar-logo grid size-9 shrink-0 place-items-center rounded-lg"
             title="ORCA Financial"
           >
             <OrcaMark size={30} />
           </Link>
           <Link
-            href="/"
-            onClick={(e) => onNav("/", e)}
+            href={appMode === "personal_finance" ? "/pf" : "/"}
+            onClick={(e) => onNav(appMode === "personal_finance" ? "/pf" : "/", e)}
             className="orca-sidebar-brand-text min-w-0 flex-1 overflow-hidden pr-8"
             title="ORCA Financial"
           >
@@ -208,13 +154,13 @@ export function ShellInner({ children }: { children: ReactNode }) {
               ORCA<span className="text-accent-primary"> FINANCIAL</span>
             </span>
             <span className="block truncate text-[9px] font-medium uppercase tracking-[0.06em] text-text-muted">
-              Intelligent Investment
+              {appMode === "personal_finance" ? "Personal Finance" : "Intelligent Investment"}
             </span>
           </Link>
         </div>
 
         <nav className="orca-sidebar-nav min-h-0 flex-1 space-y-2.5 overflow-y-auto overscroll-contain px-2 py-2.5">
-          {NAV_SECTIONS.map((section) => (
+          {navSections.map((section) => (
             <div key={section.title} className="space-y-0.5">
               <div className="orca-sidebar-section-title px-2.5 text-[10px] font-semibold uppercase tracking-wider text-text-muted">
                 {section.title}
@@ -272,9 +218,9 @@ export function ShellInner({ children }: { children: ReactNode }) {
       <div className="flex h-full min-h-0 flex-col overflow-hidden">
         <div className="flex shrink-0 items-center gap-2 border-b border-border-subtle px-3 py-3.5">
           <Link
-            href="/"
+            href={appMode === "personal_finance" ? "/pf" : "/"}
             onClick={(e) => {
-              onNav("/", e);
+              onNav(appMode === "personal_finance" ? "/pf" : "/", e);
               setMobileOpen(false);
             }}
             className="min-w-0 flex-1"
@@ -292,7 +238,7 @@ export function ShellInner({ children }: { children: ReactNode }) {
           </button>
         </div>
         <nav className="orca-sidebar-nav min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain px-2.5 py-3">
-          {NAV_SECTIONS.map((section) => (
+          {navSections.map((section) => (
             <div key={section.title} className="space-y-0.5">
               <div className="mb-1.5 px-2.5 text-[10px] font-semibold uppercase tracking-wider text-text-muted">
                 {section.title}
@@ -335,9 +281,7 @@ export function ShellInner({ children }: { children: ReactNode }) {
             type="button"
             className={
               "orca-sidebar-toggle absolute z-20 grid size-8 place-items-center rounded-md border border-border-subtle/80 bg-surface-base text-text-muted shadow-sm transition-colors hover:bg-surface-elevated hover:text-text-primary " +
-              (collapsed
-                ? "left-1/2 top-[3.35rem] -translate-x-1/2"
-                : "right-2 top-2.5")
+              (collapsed ? "left-1/2 top-[3.35rem] -translate-x-1/2" : "right-2 top-2.5")
             }
             onClick={toggleCollapsed}
             aria-label={collapsed ? "Mở rộng sidebar" : "Thu gọn sidebar"}
@@ -348,16 +292,14 @@ export function ShellInner({ children }: { children: ReactNode }) {
 
         <div
           className={
-            "fixed inset-0 z-50 md:hidden " +
-            (mobileOpen ? "pointer-events-auto" : "pointer-events-none")
+            "fixed inset-0 z-50 md:hidden " + (mobileOpen ? "pointer-events-auto" : "pointer-events-none")
           }
           aria-hidden={!mobileOpen}
         >
           <button
             type="button"
             className={
-              "orca-drawer-backdrop absolute inset-0 bg-black/50 " +
-              (mobileOpen ? "opacity-100" : "opacity-0")
+              "orca-drawer-backdrop absolute inset-0 bg-black/50 " + (mobileOpen ? "opacity-100" : "opacity-0")
             }
             aria-label="Đóng menu"
             onClick={() => setMobileOpen(false)}
