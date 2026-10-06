@@ -1,35 +1,24 @@
-import { ok, unavailable } from "@/lib/envelope";
-import { getCommodityMarket, GROUP_LABELS } from "@/lib/services/commodities";
+import { ok } from "@/lib/envelope";
+import { buildMeta } from "@/lib/freshness";
+import { getPublicCommodityBoard, PUBLIC_COMMODITIES } from "@/lib/providers/public-commodities";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
+/** GET /api/v1/commodities — public global futures board (Yahoo, delayed) */
 export async function GET() {
-  const r = await getCommodityMarket();
-  if (!r) {
-    return unavailable(
-      "commodity-providers",
-      "VietnamBiz Data (data.vietnambiz.vn/goods) không phản hồi — xem /system.",
-    );
-  }
-  const catalog = r.data.catalog.map((c) => ({
-    key: c.key,
-    name: c.name,
-    nameVi: c.nameVi,
-    group: c.group,
-    symbol: c.symbol,
-    unit: c.unit,
-    vnImpact: c.vnImpact ?? null,
-  }));
-  return ok(
-    {
-      rows: r.data.rows,
-      unavailable: r.data.unavailable,
-      sourcesUsed: r.data.sourcesUsed,
-      errors: r.data.errors,
-      catalog,
-      groups: GROUP_LABELS,
-    },
-    r.meta,
-  );
+  const items = await getPublicCommodityBoard();
+  const meta = buildMeta({
+    source: PUBLIC_COMMODITIES,
+    sourceTimestampMs: Date.now(),
+    cached: false,
+    stale: false,
+    partial: items.length === 0,
+    note:
+      items.length === 0
+        ? "Commodity board empty — Yahoo unreachable"
+        : `${items.length} public futures quotes (delayed)`,
+    slas: { liveSlaMs: 120_000, freshSlaMs: 600_000, delayedSlaMs: 3_600_000 },
+  });
+  return ok({ items }, meta);
 }
