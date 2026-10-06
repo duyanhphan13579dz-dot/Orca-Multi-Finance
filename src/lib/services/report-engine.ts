@@ -212,8 +212,8 @@ function composeMorning(ctx: DailyCtx) {
   );
 }
 
-function composeIntraday(ctx: DailyCtx) {
-  return composeIntradayFramework(
+async function composeIntraday(ctx: DailyCtx) {
+  return await composeIntradayFramework(
     {
       snap: ctx.snap,
       sessionState: ctx.sessionState,
@@ -227,8 +227,8 @@ function composeIntraday(ctx: DailyCtx) {
   );
 }
 
-function composeSummary(ctx: DailyCtx) {
-  return composeMarketSummaryFramework(
+async function composeSummary(ctx: DailyCtx) {
+  return await composeMarketSummaryFramework(
     {
       snap: ctx.snap,
       sessionState: ctx.sessionState,
@@ -256,7 +256,9 @@ function composeStrategy(ctx: DailyCtx) {
 
 const COMPOSERS: Record<
   DailyReportType,
-  (ctx: DailyCtx) => { sections: DailyReport["sections"]; assumptions: string[] }
+  (ctx: DailyCtx) =>
+    | { sections: DailyReport["sections"]; assumptions: string[] }
+    | Promise<{ sections: DailyReport["sections"]; assumptions: string[] }>
 > = {
   morning_brief: composeMorning,
   intraday_brief: composeIntraday,
@@ -304,7 +306,7 @@ export async function generateDailyReport(
   type: DailyReportType,
 ): Promise<{ report: DailyReport; meta: Meta }> {
   const ctx = await buildCtx();
-  const composed = COMPOSERS[type](ctx);
+  const composed = await COMPOSERS[type](ctx);
   const phaseLabel = reportPhaseLabelVi(type);
   const sections = composed.sections.map((sec) => ({
     ...sec,
