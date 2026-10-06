@@ -1,5 +1,5 @@
 import { ok } from "@/lib/envelope";
-import { getDerivativesSnapshot } from "@/lib/services/derivatives";
+import { getDerivativesSnapshotWithFlow } from "@/lib/services/derivatives";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -7,6 +7,7 @@ export const runtime = "nodejs";
 /**
  * GET /api/v1/derivatives/snapshot
  * Query: symbols=VN30F1M,VN30F2M  |  core=1 (default VN30 ACTIVE only)
+ * Includes Flow Engine P1.5 signals (ΔOI needs consecutive polls or history).
  */
 export async function GET(req: Request) {
   const url = new URL(req.url);
@@ -15,7 +16,7 @@ export async function GET(req: Request) {
   const symbols = symbolsParam
     ? symbolsParam.split(",").map((s) => s.trim()).filter(Boolean)
     : undefined;
-  const { data, meta } = await getDerivativesSnapshot({
+  const { data, meta } = await getDerivativesSnapshotWithFlow({
     symbols,
     coreOnly: core === "0" || core === "false" ? false : true,
   });
