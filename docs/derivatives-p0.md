@@ -51,3 +51,15 @@ GET /api/v1/derivatives/VN30F1M
 - Flow Engine: Long/Short build-up từ Δprice × ΔOI  
 - Gỡ block `UNAVAILABLE` trong intraday/market-summary composers khi meta FRESH  
 - Margin versioned từ VSDC
+
+
+## P1 — OHLCV
+
+- `GET /api/v1/derivatives/{symbol}/ohlcv?days=60`
+- Provider: SSI DailyOhlc hoặc `DERIVATIVES_OHLCV_URL`
+
+## P1.5 — Flow Engine
+
+- `src/lib/engines/derivatives-flow.ts`
+- Snapshot trả `flow[]`: long_build_up | short_build_up | short_covering | long_liquidation
+- ΔOI: so sánh quote hiện tại với snapshot process trước (poll 30s) hoặc OI history khi có
