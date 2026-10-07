@@ -10,6 +10,7 @@ VNDIRECT_WS_DISABLED=true
 # Secrets (điền giá trị thật local)
 DATABASE_URL=
 JWT_SECRET=
+# cron-job.org auth (Bearer / ?secret=) — openssl rand -hex 24
 CRON_SECRET=
 OPENROUTER_API_KEY=
 GROQ_API_KEY=
