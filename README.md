@@ -206,7 +206,7 @@ Chi tiết đầy đủ: [`docs/api.md`](docs/api.md).
 - **Data:** PostgreSQL + Drizzle ORM, optional Redis mirror/cache
 - **Auth:** scrypt password hashing, JWT HS256 httpOnly cookie, sessions và audit logs
 - **AI:** OpenAI-compatible gateway, role-based model cascade, optional local vLLM/LoRA deployment
-- **Deployment:** standalone Next build; Vercel config có sẵn, Netlify config có sẵn, container/VPS phù hợp hơn cho process dài hạn/WebSocket
+- **Deployment:** Cloudflare Workers qua OpenNext (`wrangler.jsonc`, xem [`CLOUDFLARE.md`](CLOUDFLARE.md)); container/VPS phù hợp hơn cho process dài hạn/WebSocket
 
 ## Getting started
 
@@ -279,21 +279,22 @@ Các test định giá quan trọng:
 
 ## Deployment notes
 
-### Vercel / serverless
+### Cloudflare Workers
 
-`vercel.json` đã cấu hình framework Next.js và region `sin1`. Các process WebSocket/SSE dài hạn không nên được coi là persistent trên serverless; dùng cache/polling và freshness metadata thay thế.
+`wrangler.jsonc` + `open-next.config.ts` đã cấu hình sẵn (adapter `@opennextjs/cloudflare`). Hướng dẫn đầy đủ: [`CLOUDFLARE.md`](CLOUDFLARE.md).
 
-### Netlify
+```bash
+pnpm preview   # build + chạy thử trong runtime Workers cục bộ
+pnpm deploy    # build + deploy lên Cloudflare
+```
 
-`netlify.toml` có sẵn. Khi chạy trên Netlify Functions, nên đặt:
+Workers là serverless: các process WebSocket/SSE dài hạn không persistent. `CLOUDFLARE_WORKERS=1` (đặt trong `wrangler.jsonc`) khiến `ws-policy` mặc định TẮT WebSocket, realtime engine tự fallback về REST/polling. Chỉ bật WebSocket/SSE persistent trên VPS, container hoặc host Node dài hạn:
 
 ```dotenv
 BINANCE_WS_DISABLED=true
 VNDIRECT_WS_DISABLED=true
 SSI_WS_DISABLED=true
 ```
-
-Serverless instance có vòng đời ngắn; realtime engine sẽ tự fallback về REST/polling. Chỉ bật WebSocket/SSE persistent trên VPS, container hoặc host Node dài hạn.
 
 ### Local vLLM / LoRA
 

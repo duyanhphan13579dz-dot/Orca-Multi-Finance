@@ -1,0 +1,6 @@
+# Biến môi trường cho `pnpm preview` (chạy thử trong runtime Workers cục bộ).
+# Sao chép thành `.dev.vars` (đã nằm trong .gitignore). Danh sách khoá đầy đủ: .env.example
+NEXTJS_ENV=development
+DATABASE_URL=
+JWT_SECRET=
+CRON_SECRET=

@@ -1,4 +1,8 @@
 import type { NextConfig } from "next";
+import { initOpenNextCloudflareForDev } from "@opennextjs/cloudflare";
+
+// Cho phép `next dev` truy cập binding Cloudflare (env/vars) giống production.
+initOpenNextCloudflareForDev();
 
 const nextConfig: NextConfig = {
   output: "standalone",
@@ -10,6 +14,12 @@ const nextConfig: NextConfig = {
   },
   // Keep heavy Node-only packages out of the Next server bundle.
   serverExternalPackages: ["pg", "playwright", "playwright-core"],
+  // Cloudflare Workers (OpenNext): `pg` loads `pg-cloudflare` for TCP sockets via the
+  // "workerd" export condition, but Next traces with the default condition and would
+  // copy only `dist/empty.js`. Force the real entry files into the trace.
+  outputFileTracingIncludes: {
+    "/**": ["./node_modules/.pnpm/pg-cloudflare@*/node_modules/pg-cloudflare/{dist,esm}/**/*"],
+  },
   experimental: {
     optimizePackageImports: ["lucide-react", "lightweight-charts"],
     // Giới hạn worker khi "Collecting page data" — môi trường build bị giới hạn ~2GB RAM

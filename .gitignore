@@ -28,11 +28,13 @@ next-env.d.ts
 .env*.local
 !.env.example
 
-# --- Vercel ---
-.vercel
-
-# --- Netlify ---
-.netlify
+# --- Cloudflare (OpenNext / Wrangler) ---
+.open-next/
+.wrangler/
+.dev.vars
+.dev.vars.*
+!.dev.vars.example
+cloudflare-env.d.ts
 
 # --- Testing / coverage ---
 coverage/

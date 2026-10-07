@@ -3,7 +3,7 @@ import { answerQuestion, type AgentHistoryTurn } from "@/lib/services/agent";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
-/** Vercel serverless budget — keep under this for cascade + data-engine */
+/** Serverless budget — keep under this for cascade + data-engine */
 export const maxDuration = 60;
 
 type AgentRequestBody = {

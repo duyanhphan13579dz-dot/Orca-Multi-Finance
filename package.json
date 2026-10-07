@@ -9,6 +9,10 @@
     "dev": "next dev -p 3000 -H 0.0.0.0",
     "build": "next build",
     "start": "next start",
+    "preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
+    "deploy": "opennextjs-cloudflare build && opennextjs-cloudflare deploy",
+    "upload": "opennextjs-cloudflare build && opennextjs-cloudflare upload",
+    "cf-typegen": "wrangler types --env-interface CloudflareEnv cloudflare-env.d.ts",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "node --import tsx --import ./test/test-setup/register-stub.mjs --require ./test/test-setup/patch-server-only.cjs --test src/lib/__tests__/chart-engine.test.ts src/lib/__tests__/divergence.test.ts src/lib/__tests__/candlestick-patterns.test.ts src/lib/__tests__/valuation-phase1.test.ts src/lib/__tests__/valuation-phase2.test.ts src/lib/__tests__/valuation-phase3.test.ts src/lib/__tests__/valuation-phase4.test.ts src/lib/__tests__/valuation-phase5.test.ts src/lib/__tests__/valuation-phase6.test.ts src/lib/__tests__/valuation-pipeline.test.ts",
@@ -17,6 +21,7 @@
     "ssc:crawl": "node --import tsx -e \"const { refreshSscListingIndex } = require('./src/lib/financial/official/ssc-listing-index.ts'); refreshSscListingIndex().then(i => console.log(JSON.stringify({ tickers: i.tickerCount, rows: i.rowCount, at: i.builtAt }, null, 2))).catch(e => { console.error(e); process.exit(1); })\""
   },
   "dependencies": {
+    "@opennextjs/cloudflare": "1.20.1",
     "@tailwindcss/postcss": "4.1.17",
     "@types/node": "22.19.15",
     "@types/pg": "8.18.0",
@@ -44,9 +49,7 @@
   "devDependencies": {
     "drizzle-kit": "0.31.10",
     "eslint": "9.39.4",
-    "eslint-config-next": "16.2.6"
-  },
-  "optionalDependencies": {
-    "playwright": "^1.49.0"
+    "eslint-config-next": "16.2.6",
+    "wrangler": "^4.148.0"
   }
 }

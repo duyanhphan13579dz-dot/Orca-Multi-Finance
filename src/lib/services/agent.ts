@@ -20,7 +20,7 @@ import { buildVnMarketBriefing } from "./market-briefing";
 import { createResponseContext, domainsForRoute, routeQuestion, type AgentResponseContext, type AgentRoute } from "./agent-router";
 import { runInDataHub } from "../data-engine";
 
-/** Hard wall for data-engine calls so agent never hangs past Vercel budget */
+/** Hard wall for data-engine calls so agent never hangs past the serverless budget */
 function withTimeout<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> {
   return new Promise((resolve) => {
     let done = false;

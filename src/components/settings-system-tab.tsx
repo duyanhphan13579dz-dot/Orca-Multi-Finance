@@ -48,7 +48,7 @@ export function SystemTab() {
         <div className="mt-2 flex items-start gap-2 rounded-lg border border-warning/30 bg-warning/5 p-2.5 text-[12px] text-text-secondary">
           <AlertTriangle className="mt-0.5 size-4 shrink-0 text-warning" />
           <span>
-            LLM chua cau hinh — set OPENROUTER_API_KEY tren Vercel roi redeploy.
+            LLM chua cau hinh — set OPENROUTER_API_KEY tren Cloudflare roi redeploy.
           </span>
         </div>
       ) : null}

@@ -8,7 +8,7 @@ export const runtime = "nodejs";
 export const maxDuration = 60;
 
 /**
- * Vercel Cron — auto generate daily reports by VN session clock.
+ * Scheduled cron — auto generate daily reports by VN session clock.
  * GET /api/v1/cron/reports?secret=
  *
  * Windows (Asia/Ho_Chi_Minh, Mon–Fri):

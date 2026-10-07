@@ -1,7 +1,7 @@
-# Cron jobs — cronjob.org (not Vercel Cron)
+# Cron jobs — cronjob.org (not Cloudflare Cron Triggers)
 
 All scheduled work is triggered **externally** via [cronjob.org](https://cronjob.org)
-(or any HTTP cron). Vercel `crons` in `vercel.json` is intentionally empty.
+(or any HTTP cron). No `triggers.crons` block is declared in `wrangler.jsonc` on purpose.
 
 **Important:** many cronjob.org plans cap request timeout at **30 seconds**.
 Heavy warm work is split into **phases** so each job finishes under ~25s.
@@ -14,7 +14,7 @@ Authorization: Bearer $CRON_SECRET
 
 or `?secret=$CRON_SECRET`
 
-Base URL: `https://<your-app>.vercel.app`
+Base URL: `https://<your-app>.workers.dev` (or your custom domain)
 
 ## Recommended schedule (Asia/Ho_Chi_Minh)
 
@@ -57,8 +57,8 @@ https://YOUR_DOMAIN/api/v1/cron/financials?phase=canslim&secret=SECRET
 - `?phase=full` or default → + C/A/I when budget allows
 - L (Leadership): RS = max(universe percentile, sector-peer percentile if ≥4 peers)
 
-## Why not Vercel Cron?
+## Why not Cloudflare Cron Triggers?
 
-- Plan limits on frequency/slots
-- Cold-start coupling
+- Cron Triggers invoke a `scheduled()` handler, not an HTTP route, so the existing `/api/v1/cron/*` routes would need a wrapper Worker
+- Limits on the number of cron triggers per Worker
 - cronjob.org can stagger phase jobs every 2 minutes cleanly

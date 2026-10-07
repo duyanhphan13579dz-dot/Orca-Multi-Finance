@@ -12,7 +12,7 @@ export const metadata: Metadata = {
   metadataBase: new URL(
     process.env.NEXT_PUBLIC_SITE_URL?.startsWith("http")
       ? process.env.NEXT_PUBLIC_SITE_URL
-      : "https://orcamulti.vercel.app",
+      : "https://orca-multi-finance.workers.dev",
   ),
   title: {
     default: "ORCA Financial — Nền tảng đầu tư thông minh",

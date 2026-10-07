@@ -6,7 +6,7 @@ import { getBiquotePublicQuotes, type BiquoteTick } from "../providers/forex";
  * Shared Biquote public tick cache + poll loop.
  *
  * Why poll instead of SignalR on the server?
- * - Vercel serverless cannot keep long-lived SignalR connections across requests
+ * - Cloudflare Workers cannot keep long-lived SignalR connections across requests
  *   (same policy as BINANCE_WS / VNDIRECT_WS via ws-policy).
  * - Public REST `/api/latest` is free, no key, and batches many symbols.
  * - Chart SSE clients receive ticks via eventBus after each poll (~1.2s).

@@ -1,0 +1,30 @@
+{
+  // ==========================================================================
+  // ORCA Financial — Cloudflare Workers config (OpenNext adapter)
+  // Thay thế vercel.json (region sin1) và netlify.toml của dự án gốc.
+  // Secrets KHÔNG đặt ở đây: dùng `wrangler secret put <KEY>` hoặc Dashboard
+  // (Workers & Pages → orca-multi-finance → Settings → Variables and Secrets).
+  // ==========================================================================
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "orca-multi-finance",
+  "main": ".open-next/worker.js",
+  "compatibility_date": "2026-10-06",
+  // nodejs_compat: bắt buộc cho `pg`, `jose`, `node:crypto`, ... (scrypt, JWT)
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS"
+  },
+  // Tương đương region `sin1` của Vercel: đặt Worker gần backend/DB thay vì gần người dùng.
+  "placement": { "mode": "smart" },
+  "observability": { "enabled": true },
+  // Biến không nhạy cảm. `CLOUDFLARE_WORKERS=1` báo cho src/lib/realtime/ws-policy.ts
+  // đây là môi trường serverless (WebSocket mặc định TẮT, giống VERCEL=1 trước đây).
+  "vars": {
+    "CLOUDFLARE_WORKERS": "1",
+    "NEXT_TELEMETRY_DISABLED": "1"
+    // "NEXT_PUBLIC_SITE_URL": "https://<domain-cua-ban>"
+  }
+  // Tuỳ chọn — Postgres qua Hyperdrive (xem CLOUDFLARE.md, mục "Database"):
+  // "hyperdrive": [{ "binding": "HYPERDRIVE", "id": "<hyperdrive-config-id>" }]
+}
