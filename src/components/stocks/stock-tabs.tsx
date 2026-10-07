@@ -1,0 +1,106 @@
+"use client";
+
+import Link from "next/link";
+import { usePathname, useRouter } from "next/navigation";
+import { useEffect, useRef, useState, useTransition } from "react";
+import { RefreshCw } from "lucide-react";
+import { Spinner } from "@/components/ui";
+import { signalNavStart } from "@/components/route-progress";
+import { markAppNavigating } from "@/lib/hooks";
+
+/** Tổng quan → BCTC → Cơ bản → Định giá → Doanh nghiệp */
+const TABS = [
+  { href: "", label: "Tổng quan & Kỹ thuật", short: "Tổng quan", key: "overview" },
+  { href: "/financials", label: "Báo cáo tài chính", short: "BCTC", key: "financials" },
+  { href: "/fundamentals", label: "Phân tích cơ bản", short: "Cơ bản", key: "fundamentals" },
+  { href: "/valuation", label: "Định giá", short: "Định giá", key: "valuation" },
+  { href: "/profile", label: "Doanh nghiệp", short: "DN", key: "profile" },
+] as const;
+
+export function StockTabs({ symbol }: { symbol: string }) {
+  const pathname = usePathname() || "";
+  const router = useRouter();
+  const base = `/stocks/${symbol}`;
+  const navRef = useRef<HTMLElement>(null);
+  const [pending, startTransition] = useTransition();
+  const [pendingHref, setPendingHref] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+
+  useEffect(() => {
+    const active = navRef.current?.querySelector<HTMLElement>("[data-active=true]");
+    active?.scrollIntoView({ inline: "center", block: "nearest", behavior: "smooth" });
+    setPendingHref(null);
+  }, [pathname]);
+
+  const onRefresh = () => {
+    if (refreshing) return;
+    setRefreshing(true);
+    try {
+      window.dispatchEvent(
+        new CustomEvent("orca:stock-refresh", { detail: { symbol, pathname } }),
+      );
+    } catch {
+      /* */
+    }
+    startTransition(() => {
+      router.refresh();
+    });
+    window.setTimeout(() => setRefreshing(false), 1_200);
+  };
+
+  return (
+    <nav
+      ref={navRef}
+      className="stock-tabs-scroll flex items-center border-t border-line"
+      aria-label="Tab cổ phiếu"
+      data-pending={pending ? "true" : undefined}
+    >
+      <div className="flex min-w-0 flex-1 items-center overflow-x-auto">
+        {TABS.map((t) => {
+          const href = `${base}${t.href}`;
+          const active =
+            t.key === "overview"
+              ? pathname === base || pathname === `${base}/`
+              : pathname.startsWith(href);
+          const isTabPending = pending && pendingHref === href;
+          return (
+            <Link
+              key={t.key}
+              href={href}
+              data-active={active ? "true" : undefined}
+              aria-busy={isTabPending || undefined}
+              onClick={(e) => {
+                if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
+                if (active && !pending) return;
+                e.preventDefault();
+                setPendingHref(href);
+                markAppNavigating(280);
+                signalNavStart();
+                startTransition(() => router.push(href));
+              }}
+              className={`inline-flex min-h-11 shrink-0 items-center gap-1.5 rounded-t-md px-3.5 py-2.5 text-[12.5px] font-medium leading-snug transition-colors sm:min-h-0 sm:px-4 sm:py-2.5 ${
+                active
+                  ? "border border-b-0 border-line bg-surface-elevated text-accent-primary"
+                  : "text-text-muted hover:text-text-primary"
+              } ${isTabPending ? "opacity-90" : ""}`}
+            >
+              {isTabPending ? <Spinner size="sm" className="text-accent-primary" /> : null}
+              <span className="sm:hidden">{t.short}</span>
+              <span className="hidden sm:inline">{t.label}</span>
+            </Link>
+          );
+        })}
+      </div>
+      <button
+        type="button"
+        onClick={onRefresh}
+        disabled={refreshing}
+        title="Làm mới dữ liệu tab hiện tại"
+        aria-label="Làm mới dữ liệu"
+        className="ml-1 mr-1 inline-flex size-9 shrink-0 items-center justify-center rounded-md border border-border-subtle text-text-muted transition-colors hover:border-accent-primary/40 hover:text-accent-primary disabled:opacity-60"
+      >
+        <RefreshCw className={`size-3.5 ${refreshing ? "animate-spin" : ""}`} aria-hidden />
+      </button>
+    </nav>
+  );
+}

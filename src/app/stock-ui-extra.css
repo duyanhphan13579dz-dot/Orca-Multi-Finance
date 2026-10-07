@@ -1,0 +1,542 @@
+/* Meta strip (NN mua/bán) — elevated chips with gap */
+.stock-meta-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.4rem;
+  border-top: 1px solid var(--color-border-subtle);
+  padding: 0.4rem 0.85rem 0.45rem;
+}
+.stock-meta-chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.35rem;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 0.4rem;
+  background: color-mix(in srgb, var(--color-surface-elevated) 78%, transparent);
+  padding: 0.28rem 0.5rem;
+  line-height: 1.2;
+}
+.stock-meta-chip-label {
+  color: var(--color-text-muted);
+  font-size: 0.58rem;
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  white-space: nowrap;
+}
+.stock-meta-chip-value {
+  font-size: 0.78rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-primary);
+  white-space: nowrap;
+}
+
+.stock-floor-badge {
+  padding: 0.15rem 0.45rem;
+  border: 1px solid color-mix(in srgb, var(--color-accent-primary) 42%, var(--color-border-subtle));
+  border-radius: 0.4rem;
+  color: var(--color-accent-2);
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+/* Section cards — elevated blocks */
+.stock-section-card {
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 0.85rem;
+  background: color-mix(in srgb, var(--color-surface-primary) 90%, transparent);
+  padding: 0.95rem 1rem 1.05rem;
+  overflow-x: clip;
+  scroll-margin-top: 5.5rem;
+}
+.stock-section-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+.stock-section-kicker {
+  margin: 0 0 0.2rem;
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+.stock-section-heading h2 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--color-text-primary);
+  line-height: 1.3;
+}
+.stock-section-index {
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: var(--color-text-muted);
+  opacity: 0.7;
+  letter-spacing: 0.04em;
+  flex-shrink: 0;
+}
+
+/* Section nav — compact pill group (NOT full-width sticky bar) */
+.stock-section-nav {
+  display: inline-flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 0.35rem;
+  width: auto;
+  max-width: 100%;
+  margin: 0 0 0.75rem;
+  padding: 0.2rem;
+  position: relative;
+  z-index: 5;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--color-border-subtle) 90%, transparent);
+  background: color-mix(in srgb, var(--color-surface-elevated) 70%, transparent);
+  box-shadow: 0 4px 14px color-mix(in srgb, #000 16%, transparent);
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+.stock-section-nav::-webkit-scrollbar { display: none; }
+.stock-section-nav-item {
+  flex-shrink: 0;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 0.4rem 0.9rem;
+  border-radius: 999px;
+  cursor: pointer;
+  line-height: 1.2;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+.stock-section-nav-item:hover {
+  color: var(--color-text-primary);
+  background: color-mix(in srgb, var(--color-surface-primary) 55%, transparent);
+}
+.stock-section-nav-item[data-active="true"],
+.stock-section-nav-item.is-active {
+  border-color: color-mix(in srgb, var(--color-accent-primary) 45%, transparent);
+  background: color-mix(in srgb, var(--color-accent-primary) 16%, transparent);
+  color: var(--color-accent-primary);
+}
+
+/* Decision strip */
+.stock-decision-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.55rem 0.85rem;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 0.75rem;
+  background: color-mix(in srgb, var(--color-surface-elevated) 55%, transparent);
+  padding: 0.55rem 0.85rem;
+  margin-bottom: 0.85rem;
+}
+.stock-decision-strip--up {
+  border-color: color-mix(in srgb, var(--color-up) 40%, var(--color-border-subtle));
+  box-shadow: inset 3px 0 0 var(--color-up);
+}
+.stock-decision-strip--down {
+  border-color: color-mix(in srgb, var(--color-down) 40%, var(--color-border-subtle));
+  box-shadow: inset 3px 0 0 var(--color-down);
+}
+.stock-decision-strip--neutral {
+  box-shadow: inset 3px 0 0 color-mix(in srgb, var(--color-text-muted) 55%, transparent);
+}
+.stock-decision-left {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.45rem 0.65rem;
+  min-width: 0;
+}
+.stock-decision-metrics {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.35rem;
+}
+.stock-signal-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.28rem 0.55rem;
+  border-radius: 0.5rem;
+  font-size: 0.78rem;
+  font-weight: 750;
+  border: 1px solid var(--color-border-subtle);
+  background: color-mix(in srgb, var(--color-surface-elevated) 70%, transparent);
+  color: var(--color-text-secondary);
+  line-height: 1.2;
+}
+.stock-signal-badge--up {
+  border-color: color-mix(in srgb, var(--color-up) 45%, transparent);
+  background: color-mix(in srgb, var(--color-up) 14%, transparent);
+  color: var(--color-up);
+}
+.stock-signal-badge--down {
+  border-color: color-mix(in srgb, var(--color-down) 45%, transparent);
+  background: color-mix(in srgb, var(--color-down) 14%, transparent);
+  color: var(--color-down);
+}
+.stock-signal-badge-conf {
+  font-size: 0.65rem;
+  font-weight: 600;
+  opacity: 0.85;
+  padding-left: 0.25rem;
+  border-left: 1px solid color-mix(in srgb, currentColor 35%, transparent);
+}
+.stock-decision-trend {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.72rem;
+  font-weight: 550;
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+}
+.stock-decision-reason {
+  max-width: min(16rem, 42vw);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.68rem;
+  color: var(--color-text-muted);
+}
+.stock-plan-group {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  padding: 0.15rem;
+  border-radius: 0.5rem;
+  border: 1px dashed color-mix(in srgb, var(--color-accent-primary) 35%, var(--color-border-subtle));
+  background: color-mix(in srgb, var(--color-accent-primary) 6%, transparent);
+}
+.stock-metric-chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.3rem;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 0.45rem;
+  background: color-mix(in srgb, var(--color-surface-elevated) 72%, transparent);
+  padding: 0.28rem 0.5rem;
+}
+.stock-metric-chip--emphasis {
+  border-color: color-mix(in srgb, var(--color-accent-primary) 40%, var(--color-border-subtle));
+  background: color-mix(in srgb, var(--color-accent-primary) 10%, transparent);
+}
+.stock-metric-chip--up {
+  border-color: color-mix(in srgb, var(--color-up) 28%, var(--color-border-subtle));
+}
+.stock-metric-chip--down {
+  border-color: color-mix(in srgb, var(--color-down) 28%, var(--color-border-subtle));
+}
+.stock-metric-chip-label {
+  font-size: 0.6rem;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+.stock-metric-chip-value {
+  font-size: 0.78rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-primary);
+}
+.stock-metric-chip--up .stock-metric-chip-value { color: var(--color-up); }
+.stock-metric-chip--down .stock-metric-chip-value { color: var(--color-down); }
+
+.chart-meta-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem 0.45rem;
+  padding: 0.35rem 0.5rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--color-border-subtle) 80%, transparent);
+}
+.chart-meta-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.2rem 0.45rem;
+  border-radius: 0.4rem;
+  border: 1px solid var(--color-border-subtle);
+  background: color-mix(in srgb, var(--color-surface-elevated) 65%, transparent);
+  font-size: 0.68rem;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+.chart-meta-item-label {
+  font-weight: 650;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  font-size: 0.58rem;
+}
+.chart-meta-item-value {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-primary);
+}
+
+.stock-side-depth,
+.stock-side-breadth {
+  min-width: 0;
+}
+.stock-chart-frame--compact {
+  min-height: 0;
+  width: 100%;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+@media (max-width: 720px) {
+  .stock-decision-strip {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .stock-decision-metrics { justify-content: flex-start; }
+  .stock-decision-reason { max-width: 100%; }
+  .stock-meta-strip { padding-left: 0.7rem; padding-right: 0.7rem; }
+  .stock-section-nav {
+    border-radius: 0.75rem;
+    width: 100%;
+    justify-content: flex-start;
+  }
+}
+
+/* Market breadth card */
+.stock-breadth-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 0.7rem 0.75rem;
+  border-radius: 0.75rem;
+  border: 1px solid color-mix(in srgb, var(--color-border-subtle) 90%, transparent);
+  background: color-mix(in srgb, var(--color-surface-elevated) 55%, transparent);
+  overflow: hidden;
+  height: 100%;
+}
+.stock-breadth-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.15rem;
+  min-width: 0;
+}
+.stock-breadth-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-width: 0;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-secondary);
+}
+.stock-breadth-score {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 0;
+}
+.stock-breadth-score-main {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.35rem 0.55rem;
+  min-width: 0;
+}
+.stock-breadth-score-num {
+  font-size: clamp(1.2rem, 4vw, 1.5rem);
+  font-weight: 750;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+.stock-breadth-score-label {
+  font-size: 0.75rem;
+  font-weight: 650;
+  line-height: 1.2;
+}
+.stock-breadth-score-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.3rem 0.55rem;
+  font-size: 0.6rem;
+  color: var(--color-text-muted);
+}
+.stock-breadth-score-meta > span + span::before {
+  content: "·";
+  margin-right: 0.55rem;
+  opacity: 0.55;
+}
+.stock-breadth-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.3rem;
+  margin-top: 0.45rem;
+  width: 100%;
+}
+.stock-breadth-stat {
+  display: flex;
+  align-items: center;
+  gap: 0.28rem;
+  min-width: 0;
+  padding: 0.32rem 0.35rem;
+  border-radius: 0.45rem;
+  border: 1px solid var(--color-border-subtle);
+  background: color-mix(in srgb, var(--color-surface-primary) 70%, transparent);
+  overflow: hidden;
+}
+.stock-breadth-stat-icon {
+  width: 0.85rem;
+  height: 0.85rem;
+  flex-shrink: 0;
+}
+.stock-breadth-stat-body {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+}
+.stock-breadth-stat--up {
+  color: var(--color-up);
+  border-color: color-mix(in srgb, var(--color-up) 28%, var(--color-border-subtle));
+}
+.stock-breadth-stat--down {
+  color: var(--color-down);
+  border-color: color-mix(in srgb, var(--color-down) 28%, var(--color-border-subtle));
+}
+.stock-breadth-stat--flat {
+  color: var(--color-text-muted);
+}
+.stock-breadth-stat-label {
+  font-size: 0.52rem;
+  font-weight: 650;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.stock-breadth-stat-value {
+  font-size: clamp(0.74rem, 2.8vw, 0.88rem);
+  font-weight: 700;
+  color: var(--color-text-primary);
+  line-height: 1.15;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+@media (max-width: 480px) {
+  .stock-breadth-stat-icon { display: none; }
+}
+
+/* —— Company profile card (Doanh nghiệp) —— */
+.company-profile-card {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  overflow: hidden;
+  border-radius: 0.85rem;
+}
+.company-profile-hero {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding: 0.85rem 1rem 1rem;
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+}
+.company-profile-top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.65rem 1rem;
+  width: 100%;
+  min-width: 0;
+}
+.company-profile-identity {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  min-width: 0;
+  flex: 1 1 12rem;
+  overflow: hidden;
+}
+.company-profile-identity > div.min-w-0,
+.company-profile-identity .min-w-0 {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+}
+.company-profile-summary {
+  margin-top: 0.65rem;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 0.65rem 0.75rem;
+  border-radius: 0.55rem;
+  border: 1px solid color-mix(in srgb, var(--color-border-subtle, #2a3344) 90%, transparent);
+  background: color-mix(in srgb, var(--color-surface-elevated, #121820) 55%, transparent);
+  font-size: 0.78rem;
+  line-height: 1.55;
+  color: var(--color-text-secondary, #a8b3c7);
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  white-space: pre-wrap;
+  overflow: hidden;
+}
+.company-profile-summary--muted {
+  border-style: dashed;
+  color: var(--color-text-muted, #7a8699);
+}
+
+/* Sticky stock hero — stable height to avoid scroll jump when pinning */
+.stock-sticky-sentinel {
+  height: 1px;
+  width: 100%;
+  pointer-events: none;
+  visibility: hidden;
+}
+.stock-sticky-head {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  background: color-mix(in srgb, var(--color-background-primary, #070b16) 92%, transparent);
+  backdrop-filter: blur(8px);
+  transition: box-shadow 0.2s ease;
+}
+.stock-sticky-head[data-stuck="true"] {
+  box-shadow: 0 8px 24px color-mix(in srgb, #000 28%, transparent);
+}
+.stock-sticky-head[data-stuck="true"] .stock-hero-name {
+  display: none;
+}

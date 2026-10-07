@@ -1,0 +1,426 @@
+/* ——— Motion & scroll polish ——— */
+:root {
+  --ease-out-smooth: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-out-soft: cubic-bezier(0.33, 1, 0.68, 1);
+  --ease-spring: cubic-bezier(0.16, 1, 0.3, 1);
+  --dur-fast: 140ms;
+  --dur-med: 240ms;
+  --dur-modal: 280ms;
+  --dur-side: 280ms;
+}
+
+html {
+  scroll-behavior: auto;
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+.orca-sidebar {
+  contain: layout style;
+  transform: translateZ(0);
+  backface-visibility: hidden;
+}
+.orca-sidebar-nav {
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--color-border-default) 70%, transparent) transparent;
+}
+.orca-sidebar-nav::-webkit-scrollbar { width: 5px; }
+.orca-sidebar-nav::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--color-border-default) 80%, transparent);
+  border-radius: 999px;
+}
+.orca-sidebar-nav::-webkit-scrollbar-track { background: transparent; }
+
+/* Sidebar rail: only width animates; inner content stays 268px and is clipped */
+.orca-aside {
+  overflow: hidden;
+  contain: layout style;
+  transform: translateZ(0);
+  backface-visibility: hidden;
+  transition: width 300ms var(--ease-out-smooth);
+}
+.orca-aside.is-collapsing {
+  will-change: width;
+}
+.orca-aside .orca-sidebar {
+  width: 268px;
+  min-width: 268px;
+}
+.orca-sidebar-toggle {
+  transition: top 300ms var(--ease-out-smooth),
+              left 300ms var(--ease-out-smooth),
+              right 300ms var(--ease-out-smooth),
+              background-color var(--dur-fast) var(--ease-out-soft),
+              color var(--dur-fast) var(--ease-out-soft);
+}
+.orca-sidebar-brand-text,
+.orca-sidebar-section-title,
+.orca-aside .orca-nav-item-label {
+  transition: opacity 160ms var(--ease-out-soft);
+}
+.orca-aside.is-collapsed .orca-sidebar-brand-text,
+.orca-aside.is-collapsed .orca-sidebar-section-title,
+.orca-aside.is-collapsed .orca-nav-item-label {
+  opacity: 0;
+}
+/* Collapsed rail: logo stays visible; room for expand toggle under logo */
+.orca-aside.is-collapsed .orca-sidebar-logo {
+  position: relative;
+  z-index: 1;
+}
+.orca-aside.is-collapsed .orca-sidebar-nav {
+  padding-top: 2rem;
+}
+
+.orca-main-scroll {
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
+  transform: translateZ(0);
+  isolation: isolate;
+  touch-action: pan-y;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--color-border-default) 55%, transparent) transparent;
+}
+.orca-main-scroll::-webkit-scrollbar { width: 8px; }
+.orca-main-scroll::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--color-border-default) 70%, transparent);
+  border-radius: 999px;
+}
+.orca-main-scroll::-webkit-scrollbar-track { background: transparent; }
+
+/* ——— Page route enter — soft, no blank flash ——— */
+@keyframes orca-page-in {
+  from {
+    opacity: 0.92;
+    transform: translateY(3px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.orca-page-enter {
+  animation: orca-page-in 180ms var(--ease-out-soft) both;
+}
+
+/* ——— Top route progress (masks RSC latency) ——— */
+.orca-route-progress {
+  pointer-events: none;
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 9999;
+  height: 2px;
+  background: transparent;
+}
+.orca-route-progress-bar {
+  height: 100%;
+  width: 0;
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--color-accent-primary) 85%, #38bdf8),
+    var(--color-accent-primary),
+    color-mix(in srgb, var(--color-accent-primary) 70%, #a78bfa)
+  );
+  box-shadow: 0 0 8px color-mix(in srgb, var(--color-accent-primary) 55%, transparent);
+  transition: width 200ms var(--ease-out-soft);
+  border-radius: 0 1px 1px 0;
+}
+.orca-route-progress[data-active="0"] .orca-route-progress-bar {
+  transition: width 160ms var(--ease-out-smooth), opacity 200ms ease;
+  opacity: 0;
+}
+
+/* ——— Modal / landing overlay ——— */
+@keyframes orca-overlay-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes orca-overlay-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+@keyframes orca-modal-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+@keyframes orca-modal-out {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+}
+
+.orca-modal-root {
+  /* positioning set by component */
+}
+.orca-modal-overlay {
+  animation: orca-overlay-in var(--dur-modal) var(--ease-out-soft) both;
+}
+.orca-modal-overlay.is-leaving {
+  animation: orca-overlay-out 180ms var(--ease-out-soft) both;
+}
+.orca-modal-panel {
+  animation: orca-modal-in var(--dur-modal) var(--ease-spring) both;
+  will-change: transform, opacity;
+}
+.orca-modal-panel.is-leaving {
+  animation: orca-modal-out 180ms var(--ease-out-soft) both;
+}
+
+/* ——— Panels / list polish ——— */
+@keyframes orca-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.orca-fade-up {
+  animation: orca-fade-up var(--dur-med) var(--ease-spring) both;
+}
+
+.panel, .orca-panel {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 120px;
+  transition: border-color var(--dur-fast) var(--ease-out-soft),
+              box-shadow var(--dur-fast) var(--ease-out-soft);
+}
+
+.orca-nav-item {
+  transition: background-color var(--dur-fast) var(--ease-out-soft),
+              color var(--dur-fast) var(--ease-out-soft);
+}
+.orca-nav-item-label {
+  transition: opacity 160ms var(--ease-out-soft);
+}
+
+.orca-drawer {
+  transition: transform var(--dur-side) var(--ease-out-smooth);
+  will-change: transform;
+  transform: translateZ(0);
+  backface-visibility: hidden;
+}
+.orca-drawer-backdrop {
+  transition: opacity var(--dur-med) var(--ease-out-soft);
+}
+
+/* Interactive chips / list rows */
+.orca-interactive {
+  transition: background-color var(--dur-fast) var(--ease-out-soft),
+              border-color var(--dur-fast) var(--ease-out-soft),
+              color var(--dur-fast) var(--ease-out-soft),
+              transform var(--dur-fast) var(--ease-out-soft);
+}
+.orca-interactive:active {
+  transform: scale(0.98);
+}
+
+/* ——— Page loading skeletons ——— */
+@keyframes orca-shimmer {
+  0% { background-position: 120% 0; }
+  100% { background-position: -120% 0; }
+}
+.orca-skeleton {
+  background: linear-gradient(
+    105deg,
+    color-mix(in srgb, var(--color-surface-elevated) 88%, transparent) 0%,
+    color-mix(in srgb, var(--color-border-subtle) 55%, var(--color-surface-elevated)) 45%,
+    color-mix(in srgb, var(--color-surface-elevated) 88%, transparent) 90%
+  );
+  background-size: 220% 100%;
+  animation: orca-shimmer 1.35s var(--ease-out-soft) infinite;
+  border: 1px solid color-mix(in srgb, var(--color-border-subtle) 50%, transparent);
+}
+.orca-skeleton-bar {
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--color-accent-primary) 35%, transparent),
+    var(--color-accent-primary),
+    color-mix(in srgb, var(--color-accent-primary) 35%, transparent)
+  );
+  background-size: 200% 100%;
+  animation: orca-shimmer 1.1s linear infinite;
+}
+.orca-page-loading {
+  animation: orca-page-in 180ms var(--ease-out-soft) both;
+}
+
+/* ——— Spinner & button loading ——— */
+@keyframes orca-spin {
+  to { transform: rotate(360deg); }
+}
+.orca-spinner {
+  display: inline-block;
+  border-radius: 999px;
+  border-style: solid;
+  border-color: currentColor;
+  border-right-color: transparent;
+  animation: orca-spin 0.65s linear infinite;
+  vertical-align: -0.125em;
+  flex-shrink: 0;
+}
+.orca-spinner-sm { width: 0.875rem; height: 0.875rem; border-width: 2px; }
+.orca-spinner-md { width: 1.125rem; height: 1.125rem; border-width: 2px; }
+.orca-spinner-lg { width: 1.5rem; height: 1.5rem; border-width: 2.5px; }
+
+.orca-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  border-radius: 0.5rem;
+  font-weight: 500;
+  transition: background-color var(--dur-fast) var(--ease-out-soft),
+              border-color var(--dur-fast) var(--ease-out-soft),
+              color var(--dur-fast) var(--ease-out-soft),
+              opacity var(--dur-fast) var(--ease-out-soft),
+              transform var(--dur-fast) var(--ease-out-soft);
+}
+.orca-btn:active:not(:disabled) { transform: scale(0.98); }
+.orca-btn:disabled { opacity: 0.65; cursor: not-allowed; }
+.orca-btn-primary {
+  background: var(--color-accent-primary);
+  color: #fff;
+  border: 1px solid color-mix(in srgb, var(--color-accent-primary) 80%, #000);
+}
+.orca-btn-primary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--color-accent-primary) 88%, #000);
+}
+.orca-btn-secondary {
+  background: var(--color-surface-elevated);
+  color: var(--color-text-primary);
+  border: 1px solid var(--color-border-subtle);
+}
+.orca-btn-secondary:hover:not(:disabled) {
+  border-color: var(--color-border-default);
+}
+.orca-btn-ghost {
+  background: transparent;
+  color: var(--color-text-secondary);
+  border: 1px solid transparent;
+}
+.orca-btn-ghost:hover:not(:disabled) {
+  background: var(--color-surface-elevated);
+  color: var(--color-text-primary);
+}
+.orca-btn-sm { min-height: 1.85rem; padding: 0.25rem 0.65rem; font-size: 11.5px; }
+.orca-btn-md { min-height: 2.25rem; padding: 0.4rem 0.9rem; font-size: 13px; }
+.orca-btn-lg { min-height: 2.6rem; padding: 0.55rem 1.15rem; font-size: 14px; }
+
+.orca-tab-loading {
+  position: relative;
+  min-height: 8rem;
+}
+.orca-tab-loading::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: color-mix(in srgb, var(--color-canvas) 55%, transparent);
+  backdrop-filter: blur(1px);
+  border-radius: inherit;
+  pointer-events: none;
+}
+.orca-tab-loading-inner {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.6rem;
+  pointer-events: none;
+}
+
+/* ——— Branded page loading (logo + dots) ——— */
+@keyframes orca-logo-breathe {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.04); opacity: 0.88; }
+}
+@keyframes orca-dot-blink {
+  0%, 80%, 100% { opacity: 0.22; transform: scale(0.85); }
+  40% { opacity: 1; transform: scale(1); }
+}
+.orca-loading-logo-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.35rem;
+  border-radius: 1rem;
+  background: color-mix(in srgb, var(--color-surface-elevated) 70%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-border-subtle) 60%, transparent);
+  box-shadow: 0 8px 28px color-mix(in srgb, var(--color-accent-primary) 8%, transparent);
+}
+.orca-loading-logo {
+  animation: orca-logo-breathe 1.8s var(--ease-out-soft) infinite;
+}
+.orca-loading-dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-top: 0.15rem;
+}
+.orca-loading-dots > span {
+  width: 0.42rem;
+  height: 0.42rem;
+  border-radius: 999px;
+  background: var(--color-accent-primary);
+  animation: orca-dot-blink 1.15s ease-in-out infinite;
+}
+.orca-loading-dots > span:nth-child(2) { animation-delay: 0.18s; }
+.orca-loading-dots > span:nth-child(3) { animation-delay: 0.36s; }
+
+@media (prefers-reduced-motion: reduce) {
+  .orca-page-enter,
+  .orca-modal-overlay,
+  .orca-modal-panel,
+  .orca-fade-up {
+    animation: none !important;
+  }
+  .orca-interactive:active {
+    transform: none;
+  }
+  .orca-route-progress-bar {
+    transition: none !important;
+  }
+  .orca-skeleton,
+  .orca-skeleton-bar {
+    animation: none !important;
+    background: var(--color-surface-elevated);
+  }
+  .orca-spinner { animation: none; border-right-color: currentColor; opacity: 0.5; }
+  .orca-loading-logo { animation: none !important; }
+  .orca-loading-dots > span {
+    animation: none !important;
+    opacity: 0.55;
+  }
+  .orca-aside {
+    transition: none !important;
+  }
+}

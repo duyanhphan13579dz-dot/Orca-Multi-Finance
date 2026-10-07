@@ -1,0 +1,548 @@
+"use client";
+
+import Link from "next/link";
+import { usePathname, useRouter } from "next/navigation";
+import {
+  startTransition,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ComponentType,
+  type ReactNode,
+  type MouseEvent,
+} from "react";
+import { markAppNavigating } from "@/lib/hooks";
+import { RouteProgress, signalNavStart } from "@/components/route-progress";
+import {
+  Bot,
+  Boxes,
+  CandlestickChart,
+  ChartNoAxesCombined,
+  ClipboardList,
+  ChevronsLeft,
+  ChevronsRight,
+  Coins,
+  DollarSign,
+  Eye,
+  FlaskConical,
+  Globe2,
+  Grid2x2,
+  Home,
+  Landmark,
+  LayoutDashboard,
+  LogOut,
+  Menu,
+  Newspaper,
+  PiggyBank,
+  Calculator,
+  HeartPulse,
+  Target,
+  FileText,
+  Settings,
+  X,
+} from "lucide-react";
+import { TickerTape } from "@/components/ticker-tape";
+import { GlobalSearch } from "@/components/search";
+import { OrcaWordmark, OrcaMark, OrcaMobileBrand } from "@/components/logo";
+import { useApi } from "@/lib/hooks";
+import { useSettings } from "@/lib/settings";
+import { ErrorBoundary } from "@/components/error-boundary";
+import { NotifBell } from "@/components/notif-bell";
+import { PriceAlertEngine } from "@/components/price-alert-engine";
+
+const SIDEBAR_EXPANDED = 268;
+const SIDEBAR_COLLAPSED = 60;
+
+const NAV_SECTIONS: {
+  title: string;
+  items: {
+    href: string;
+    label: string;
+    icon: ComponentType<{ className?: string }>;
+    core?: boolean;
+  }[];
+}[] = [
+  {
+    title: "THỊ TRƯỜNG",
+    items: [
+      { href: "/", label: "Tổng quan", icon: Home, core: true },
+      { href: "/stocks", label: "Cổ phiếu VN", icon: CandlestickChart, core: true },
+      { href: "/crypto", label: "Tiền mã hóa", icon: Coins, core: true },
+      { href: "/forex", label: "Ngoại hối", icon: DollarSign },
+      { href: "/commodities", label: "Hàng hóa", icon: Boxes },
+      { href: "/derivatives", label: "Phái sinh", icon: CandlestickChart, core: true },
+      { href: "/macro-economic", label: "Kinh tế vĩ mô", icon: ChartNoAxesCombined },
+      { href: "/currency-interest-rate", label: "Lãi suất tiền tệ", icon: Landmark },
+    ],
+  },
+  {
+    title: "CÔNG CỤ",
+    items: [
+      { href: "/heatmap", label: "Bản đồ nhiệt", icon: Grid2x2 },
+      { href: "/screener", label: "Bộ lọc", icon: FlaskConical },
+      { href: "/news", label: "Tin tức", icon: Newspaper, core: true },
+      { href: "/reports", label: "Bản tin", icon: Globe2 },
+      { href: "/agent", label: "Trợ lý AI", icon: Bot },
+    ],
+  },
+  {
+    title: "DANH MỤC",
+    items: [
+      { href: "/portfolio", label: "Danh mục thông minh", icon: LayoutDashboard },
+      { href: "/watchlist", label: "Danh mục theo dõi", icon: Eye },
+      { href: "/settings", label: "Cài đặt", icon: Settings },
+    ],
+  },
+];
+
+const PERSONAL_FINANCE_NAV: typeof NAV_SECTIONS = [
+  {
+    title: "TÀI CHÍNH CÁ NHÂN",
+    items: [
+      { href: "/personal-finance#dashboard", label: "Tổng quan", icon: Home },
+      { href: "/personal-finance#checkin", label: "Monthly check-in", icon: ClipboardList },
+      { href: "/personal-finance#cashflow_calc", label: "Dòng tiền & thuế", icon: Calculator },
+      { href: "/personal-finance#analytics", label: "Phân tích tài chính", icon: ChartNoAxesCombined },
+      { href: "/personal-finance#planning", label: "Kế hoạch & hưu trí", icon: Target },
+      { href: "/personal-finance#advice", label: "Lời khuyên", icon: HeartPulse },
+      { href: "/personal-finance#report", label: "Báo cáo", icon: FileText },
+      { href: "/personal-finance#privacy", label: "Quyền riêng tư", icon: PiggyBank },
+    ],
+  },
+  { title: "TÀI KHOẢN", items: [{ href: "/settings", label: "Cài đặt", icon: Settings }] },
+];
+
+function isActivePath(pathname: string, href: string, activePersonalTab: string) {
+  const [path, hash] = href.split("#");
+  if (hash) return pathname === path && activePersonalTab === hash;
+  if (path === "/") return pathname === "/";
+  return pathname === path || pathname.startsWith(path + "/");
+}
+
+export function ShellInner({ children }: { children: ReactNode }) {
+  const pathname = usePathname();
+  const router = useRouter();
+  const isPersonalFinanceMode = pathname.startsWith("/personal-finance");
+  const activeNavSections = isPersonalFinanceMode ? PERSONAL_FINANCE_NAV : NAV_SECTIONS;
+  const [activePersonalTab, setActivePersonalTab] = useState("dashboard");
+  const [collapsed, setCollapsed] = useState(false);
+  const [mobileOpen, setMobileOpen] = useState(false);
+  const [sideAnimating, setSideAnimating] = useState(false);
+  const sideAnimTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    try {
+      const v = localStorage.getItem("orca:sidebar:collapsed");
+      // Hydrate the user's persisted preference after the client mounts.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      if (v === "1") setCollapsed(true);
+    } catch {
+      /* ignore */
+    }
+    return () => {
+      if (sideAnimTimer.current) clearTimeout(sideAnimTimer.current);
+    };
+  }, []);
+
+  useEffect(() => {
+    // Close the mobile drawer after route navigation.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setMobileOpen(false);
+  }, [pathname]);
+
+  useEffect(() => {
+    const syncTab = (event?: Event) => {
+      const requestedTab = event instanceof CustomEvent ? event.detail as string : window.location.hash.slice(1);
+      setActivePersonalTab(requestedTab || "dashboard");
+    };
+    syncTab();
+    window.addEventListener("hashchange", syncTab);
+    window.addEventListener("orca:personal-finance-tab", syncTab);
+    return () => {
+      window.removeEventListener("hashchange", syncTab);
+      window.removeEventListener("orca:personal-finance-tab", syncTab);
+    };
+  }, [pathname]);
+
+  const toggleCollapsed = useCallback(() => {
+    setSideAnimating(true);
+    setCollapsed((v) => {
+      const next = !v;
+      try {
+        localStorage.setItem("orca:sidebar:collapsed", next ? "1" : "0");
+      } catch {
+        /* ignore */
+      }
+      return next;
+    });
+    if (sideAnimTimer.current) clearTimeout(sideAnimTimer.current);
+    sideAnimTimer.current = setTimeout(() => setSideAnimating(false), 340);
+  }, []);
+
+  const onNav = useCallback(
+    (href: string, e: MouseEvent<HTMLAnchorElement>) => {
+      if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
+      e.preventDefault();
+      const hashTab = href.split("#")[1];
+      if (hashTab) window.dispatchEvent(new CustomEvent("orca:personal-finance-tab", { detail: hashTab }));
+      markAppNavigating(320);
+      signalNavStart();
+      startTransition(() => router.push(href));
+    },
+    [router],
+  );
+
+  const onHover = useCallback(
+    (href: string) => {
+      try {
+        router.prefetch(href);
+      } catch {
+        /* ignore */
+      }
+    },
+    [router],
+  );
+
+  /** Desktop sidebar: always layout as expanded; outer width clips — no mid-anim reflow */
+  const renderDesktopSidebar = () => {
+    const NavItem = ({
+      href,
+      label,
+      icon: Icon,
+    }: {
+      href: string;
+      label: string;
+      icon: ComponentType<{ className?: string }>;
+    }) => {
+      const active = isActivePath(pathname, href, activePersonalTab);
+      return (
+        <Link
+          href={href}
+          onClick={(e) => onNav(href, e)}
+          onMouseEnter={() => onHover(href)}
+          className={
+            "orca-nav-item group relative flex h-9 shrink-0 items-center gap-2.5 rounded-lg px-2.5 text-[13px] leading-none " +
+            (active
+              ? "bg-accent-primary/15 font-medium text-accent-primary"
+              : "text-text-secondary hover:bg-surface-elevated hover:text-text-primary")
+          }
+          title={label}
+        >
+          <Icon className="size-4 shrink-0 opacity-90" />
+          <span className="orca-nav-item-label min-w-0 flex-1 truncate">{label}</span>
+        </Link>
+      );
+    };
+
+    return (
+      <div className="orca-sidebar flex h-full flex-col" style={{ width: SIDEBAR_EXPANDED }}>
+        <div className="orca-sidebar-header relative flex min-h-[3.25rem] shrink-0 items-center gap-1 border-b border-border-subtle px-2 py-2">
+          <Link
+            href={isPersonalFinanceMode ? "/personal-finance" : "/"}
+            onClick={(e) => onNav(isPersonalFinanceMode ? "/personal-finance" : "/", e)}
+            className="orca-sidebar-logo grid size-9 shrink-0 place-items-center rounded-lg"
+            title={isPersonalFinanceMode ? "ORCA Personal Finance" : "ORCA Financial"}
+          >
+            <OrcaMark size={30} />
+          </Link>
+          <Link
+            href={isPersonalFinanceMode ? "/personal-finance" : "/"}
+            onClick={(e) => onNav(isPersonalFinanceMode ? "/personal-finance" : "/", e)}
+            className="orca-sidebar-brand-text min-w-0 flex-1 overflow-hidden pr-8"
+            title={isPersonalFinanceMode ? "ORCA Personal Finance" : "ORCA Financial"}
+          >
+            <span className="block truncate text-[13px] font-bold tracking-wide text-text-primary">
+              ORCA<span className="text-accent-primary"> {isPersonalFinanceMode ? "PERSONAL" : "FINANCIAL"}</span>
+            </span>
+            <span className="block truncate text-[9px] font-medium uppercase tracking-[0.06em] text-text-muted">
+              {isPersonalFinanceMode ? "Personal Finance" : "Intelligent Investment"}
+            </span>
+          </Link>
+        </div>
+
+        <nav className="orca-sidebar-nav min-h-0 flex-1 space-y-2.5 overflow-y-auto overscroll-contain px-2 py-2.5">
+          {activeNavSections.map((section) => (
+            <div key={section.title} className="space-y-0.5">
+              <div className="orca-sidebar-section-title px-2.5 text-[10px] font-semibold uppercase tracking-wider text-text-muted">
+                {section.title}
+              </div>
+              <div className="flex flex-col gap-0.5">
+                {section.items.map((item) => (
+                  <NavItem key={item.href} href={item.href} label={item.label} icon={item.icon} />
+                ))}
+              </div>
+            </div>
+          ))}
+        </nav>
+
+        <div className="shrink-0 border-t border-border-subtle p-2">
+          <UserMenu collapsed={false} />
+        </div>
+      </div>
+    );
+  };
+
+  const renderMobileSidebar = () => {
+    const NavItem = ({
+      href,
+      label,
+      icon: Icon,
+    }: {
+      href: string;
+      label: string;
+      icon: ComponentType<{ className?: string }>;
+    }) => {
+      const active = isActivePath(pathname, href, activePersonalTab);
+      return (
+        <Link
+          href={href}
+          onClick={(e) => {
+            onNav(href, e);
+            setMobileOpen(false);
+          }}
+          onMouseEnter={() => onHover(href)}
+          className={
+            "orca-nav-item group relative flex min-h-11 shrink-0 items-center gap-2.5 rounded-lg px-3 text-[14px] leading-none " +
+            (active
+              ? "bg-accent-primary/15 font-medium text-accent-primary"
+              : "text-text-secondary hover:bg-surface-elevated hover:text-text-primary")
+          }
+          title={label}
+        >
+          <Icon className="size-4 shrink-0 opacity-90" />
+          <span className="min-w-0 flex-1 truncate">{label}</span>
+        </Link>
+      );
+    };
+
+    return (
+      <div className="flex h-full min-h-0 flex-col overflow-hidden">
+        <div className="flex shrink-0 items-center gap-2 border-b border-border-subtle px-3 py-3.5">
+          <Link
+            href={isPersonalFinanceMode ? "/personal-finance" : "/"}
+            onClick={(e) => {
+              onNav(isPersonalFinanceMode ? "/personal-finance" : "/", e);
+              setMobileOpen(false);
+            }}
+            className="min-w-0 flex-1"
+            title={isPersonalFinanceMode ? "ORCA Personal Finance" : "ORCA Financial"}
+          >
+            <OrcaMobileBrand />
+          </Link>
+          <button
+            type="button"
+            className="grid size-10 shrink-0 place-items-center rounded-lg text-text-muted hover:bg-surface-elevated hover:text-text-primary"
+            onClick={() => setMobileOpen(false)}
+            aria-label="Đóng menu"
+          >
+            <X className="size-5" />
+          </button>
+        </div>
+        <nav className="orca-sidebar-nav min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain px-2.5 py-3">
+          {activeNavSections.map((section) => (
+            <div key={section.title} className="space-y-0.5">
+              <div className="mb-1.5 px-2.5 text-[10px] font-semibold uppercase tracking-wider text-text-muted">
+                {section.title}
+              </div>
+              <div className="flex flex-col gap-1">
+                {section.items.map((item) => (
+                  <NavItem key={item.href} href={item.href} label={item.label} icon={item.icon} />
+                ))}
+              </div>
+            </div>
+          ))}
+        </nav>
+        <div className="shrink-0 border-t border-border-subtle p-3">
+          <UserMenu collapsed={false} />
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <div className="flex h-full min-h-0 flex-col bg-background-primary text-text-primary">
+      <RouteProgress />
+      {!isPersonalFinanceMode && <PriceAlertEngine />}
+      {!isPersonalFinanceMode && <div className="sticky top-0 z-30 shrink-0 border-b border-border-subtle bg-surface-base"><TickerTape /></div>}
+      <div className="relative z-10 flex min-h-0 flex-1">
+        <aside
+          className={
+            "orca-aside relative hidden h-full shrink-0 border-r border-border-subtle bg-surface-base md:block " +
+            (sideAnimating ? "is-collapsing " : "") +
+            (collapsed ? "is-collapsed" : "is-expanded")
+          }
+          style={{
+            width: collapsed ? SIDEBAR_COLLAPSED : SIDEBAR_EXPANDED,
+          }}
+        >
+          {renderDesktopSidebar()}
+          <button
+            type="button"
+            className={
+              "orca-sidebar-toggle absolute z-20 grid size-8 place-items-center rounded-md border border-border-subtle/80 bg-surface-base text-text-muted shadow-sm transition-colors hover:bg-surface-elevated hover:text-text-primary " +
+              (collapsed
+                ? "left-1/2 top-[3.35rem] -translate-x-1/2"
+                : "right-2 top-2.5")
+            }
+            onClick={toggleCollapsed}
+            aria-label={collapsed ? "Mở rộng sidebar" : "Thu gọn sidebar"}
+          >
+            {collapsed ? <ChevronsRight className="size-4" /> : <ChevronsLeft className="size-4" />}
+          </button>
+        </aside>
+
+        <div
+          className={
+            "fixed inset-0 z-50 md:hidden " +
+            (mobileOpen ? "pointer-events-auto" : "pointer-events-none")
+          }
+          aria-hidden={!mobileOpen}
+        >
+          <button
+            type="button"
+            className={
+              "orca-drawer-backdrop absolute inset-0 bg-black/50 " +
+              (mobileOpen ? "opacity-100" : "opacity-0")
+            }
+            aria-label="Đóng menu"
+            onClick={() => setMobileOpen(false)}
+          />
+          <aside
+            className={
+              "orca-drawer absolute left-0 top-0 flex h-full w-[min(320px,94vw)] flex-col overflow-hidden bg-surface-base pb-[env(safe-area-inset-bottom)] pt-[env(safe-area-inset-top)] shadow-2xl " +
+              (mobileOpen ? "translate-x-0" : "-translate-x-full")
+            }
+          >
+            {renderMobileSidebar()}
+          </aside>
+        </div>
+
+        <div className="flex min-w-0 flex-1 flex-col">
+          <header className="flex h-12 shrink-0 items-center gap-2 border-b border-border-subtle px-3">
+            <button
+              type="button"
+              className="grid size-9 place-items-center rounded-lg text-text-secondary transition-colors hover:bg-surface-elevated md:hidden"
+              onClick={() => setMobileOpen(true)}
+              aria-label="Mở menu"
+            >
+              <Menu className="size-4.5" />
+            </button>
+            <div className="flex shrink-0 items-center rounded-lg border border-border-subtle bg-surface-base p-0.5 text-[11px] sm:text-xs">
+              <button type="button" aria-pressed={!isPersonalFinanceMode} onClick={() => router.push("/")}
+                className={!isPersonalFinanceMode ? "rounded-md bg-accent-primary/15 px-2.5 py-1.5 font-semibold text-accent-primary" : "rounded-md px-2.5 py-1.5 text-text-muted hover:text-text-primary"}>
+                Đầu tư
+              </button>
+              <button type="button" aria-pressed={isPersonalFinanceMode} onClick={() => router.push("/personal-finance")}
+                className={isPersonalFinanceMode ? "rounded-md bg-accent-primary/15 px-2.5 py-1.5 font-semibold text-accent-primary" : "rounded-md px-2.5 py-1.5 text-text-muted hover:text-text-primary"}>
+                Tài chính cá nhân
+              </button>
+            </div>
+            {!isPersonalFinanceMode && <div className="min-w-0 flex-1"><GlobalSearch /></div>}
+            {!isPersonalFinanceMode && <NotifBell />}
+            {!isPersonalFinanceMode && <Link href="/settings" className="grid size-9 place-items-center rounded-lg text-text-secondary transition-colors hover:bg-surface-elevated hover:text-text-primary" aria-label="Cài đặt"><Settings className="size-4" /></Link>}
+          </header>
+          <main className="orca-main-scroll min-h-0 flex-1 overflow-y-auto">
+            <ErrorBoundary name="page" resetKey={pathname}>
+              <div className="p-3 sm:p-4">{children}</div>
+            </ErrorBoundary>
+          </main>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function UserMenu({ collapsed }: { collapsed: boolean }) {
+  const router = useRouter();
+  const { settings } = useSettings();
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const { data: me, mutate } = useApi<{ user: { email: string; name: string | null } }>(
+    "/api/v1/auth/me",
+  );
+
+  useEffect(() => {
+    const onDoc = (e: Event) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, []);
+
+  const displayName =
+    settings.profile.displayName || me?.user?.name || me?.user?.email?.split("@")[0] || "";
+  const initials = displayName.slice(0, 2).toUpperCase() || "?";
+
+  const logout = async () => {
+    try {
+      await fetch("/api/v1/auth/logout", { method: "POST" });
+    } catch {
+      /* ignore */
+    }
+    void mutate();
+    router.push("/login");
+  };
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left hover:bg-surface-elevated"
+      >
+        <span className="grid size-8 shrink-0 place-items-center overflow-hidden rounded-md border border-border-subtle bg-surface-elevated text-[11px] font-bold">
+          {settings.profile.avatarUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={settings.profile.avatarUrl} alt="" className="size-full object-cover" />
+          ) : settings.profile.avatarStyle === "orca" && me?.user ? (
+            <OrcaMark size={28} className="rounded-md" />
+          ) : me?.user ? (
+            initials
+          ) : (
+            "?"
+          )}
+        </span>
+        {!collapsed ? (
+          <span className="min-w-0 flex-1 truncate text-[12px] text-text-secondary">
+            {me?.user ? displayName || me.user.email : "Đăng nhập"}
+          </span>
+        ) : null}
+      </button>
+      {open ? (
+        <div className="absolute bottom-full left-0 z-50 mb-1 w-52 overflow-hidden rounded-xl border border-border-default bg-surface-modal shadow-2xl">
+          {me?.user ? (
+            <>
+              <div className="border-b border-border-subtle px-3 py-2.5">
+                <div className="truncate text-[12.5px] font-semibold">{displayName || me.user.email}</div>
+                <div className="truncate text-[10.5px] text-text-muted">{me.user.email}</div>
+              </div>
+              <Link
+                href="/settings"
+                onClick={() => setOpen(false)}
+                className="flex items-center gap-2 px-3 py-2.5 text-[12.5px] text-text-secondary hover:bg-surface-elevated"
+              >
+                <Settings className="size-3.5" /> Cài đặt
+              </Link>
+              <button
+                type="button"
+                onClick={() => void logout()}
+                className="flex w-full items-center gap-2 px-3 py-2.5 text-[12.5px] text-negative hover:bg-surface-elevated"
+              >
+                <LogOut className="size-3.5" /> Đăng xuất
+              </button>
+            </>
+          ) : (
+            <Link
+              href="/login"
+              onClick={() => setOpen(false)}
+              className="block px-3 py-2.5 text-[12.5px] text-accent-primary hover:bg-surface-elevated"
+            >
+              Đăng nhập
+            </Link>
+          )}
+        </div>
+      ) : null}
+    </div>
+  );
+}

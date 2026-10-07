@@ -1,0 +1,84 @@
+/**
+ * Vietnam market + financial provider layout.
+ *
+ * - Market data (indices, board, quotes, OHLCV, universe): VNDIRECT primary,
+ *   SSI Flashconnect fallback when SSI_API_KEY / SSI_API_SECRET (or SSI_FC_CONSUMER_*) is configured.
+ * - Financial statements (BCTC / analysis): VNDirect primary; optional VNStock API fallback
+ *   is enabled only when both VNSTOCK_BASE_URL and VNSTOCK_API_KEY are configured. SSI is
+ *   market-only and never used for financial statements.
+ */
+import { env } from "../env";
+import { ssiFcConfigured } from "../providers/ssi-fcdata";
+
+export function vnProviderLayout() {
+  const ssiLive = ssiFcConfigured();
+  return {
+    market: { primary: "vndirect", fallback: ssiLive ? "ssi-fcdata" : "vndirect" },
+    financial: {
+      primary: "vndirect",
+      fallback: env.vnstockApiKey && env.vnstockBaseUrl ? "vnstock-financial" : "vndirect",
+    },
+  } as const;
+}
+
+export { getFinancialPackage, getFinancialsForSymbol } from "./service";
+export { listFinancialProviders } from "./providers-registry";
+export { runSourceRouter } from "./provider";
+export type { FinancialProvider, RouterOutcome } from "./provider";
+export { decideFallback, applyFallbackToMeta } from "./fallback";
+export type { FallbackDecision, FallbackLevel } from "./fallback";
+export { getFinancialSourceHealth, getMarketSourceHealth } from "./source-health";
+export { getFinancialMonitorSnapshot } from "./monitor";
+export {
+  scoreFinancialQuality,
+  crossValidatePeriods,
+  internalConsistencyValidate,
+  runFullCrossValidation,
+} from "./validation";
+export { appendValidationLog, getValidationLogs, getValidationAnalytics } from "./validation-log";
+export { getOfficialFilingsForSymbol, runOfficialDocumentPipeline } from "./official/pipeline";
+export {
+  normalizeIncomeMetrics,
+  normalizeBalanceMetrics,
+  normalizeCashflowMetrics,
+  normalizePeriodMetrics,
+  normalizePeriods,
+  periodsToStatementTables,
+} from "./statements";
+export { buildTtmPeriod, computeGrowth, sortPeriodsNewestFirst } from "./normalize";
+export { getIndustryProfile, listIndustryProfiles, profileIdFromSector } from "./industry-profiles";
+export {
+  METRIC_DICTIONARY,
+  getMetricDef,
+  labelForMetric,
+  metricKeyFromItemCode,
+  metricKeyFromAlias,
+  metricProfileForSymbol,
+  labeledMetricsForPeriod,
+  orderedKeysForProfile,
+  INCOME_METRIC_ORDER,
+  BALANCE_METRIC_ORDER,
+  CASHFLOW_METRIC_ORDER,
+} from "./metric-dictionary";
+export {
+  getFinancialPackagesBulk,
+  getFundamentalSnapshots,
+  warmFundamentalSnapshots,
+  buildSnapshotFromBundle,
+  normalizeSymbols,
+  mapPool,
+} from "./snapshots";
+export type { FundamentalSnapshot, PackageBundle } from "./snapshots";
+export { buildSnapshotMetrics, formatMetric } from "./fundamental-metrics";
+export type { MetricCell, SnapshotBundle, Band } from "./fundamental-metrics";
+
+export {
+  computeDetailedRatios,
+  pickMetricsFromPeriods,
+} from "./ratio-engine";
+export type {
+  RatioItem,
+  RatioEngineResult,
+  RatioCategory,
+  RatioEngineInput,
+} from "./ratio-engine";

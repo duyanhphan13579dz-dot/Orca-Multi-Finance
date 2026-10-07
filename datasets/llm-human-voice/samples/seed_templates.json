@@ -1,0 +1,71 @@
+{
+  "version": 1,
+  "description": "Templates to expand ORCA human-voice dataset. Replace {{placeholders}} with real quant context from engines.",
+  "branches": {
+    "market": {
+      "questions": [
+        "Thị trường hôm nay thế nào?",
+        "VN-Index đang ở trạng thái nào?",
+        "Khối ngoại hôm nay mua bán thế nào?",
+        "Nhóm ngành nào đang dẫn dắt?",
+        "Thanh khoản và độ rộng phiên này ra sao?"
+      ],
+      "preferred_structure_standard": [
+        "Diễn biến chỉ số (điểm, %, thanh khoản)",
+        "Độ rộng / leadership",
+        "Dòng tiền (khối ngoại nếu có)",
+        "Ý nghĩa + rủi ro cần theo dõi",
+        "Kết luận mở, không score bịa"
+      ]
+    },
+    "stock": {
+      "questions": [
+        "Phân tích {{SYMBOL}}",
+        "{{SYMBOL}} có đắt không?",
+        "{{SYMBOL}} đang mạnh hay yếu về kỹ thuật?",
+        "So sánh nền tảng tài chính {{A}} và {{B}}"
+      ],
+      "preferred_structure_deep": [
+        "Tóm tắt giá + bối cảnh",
+        "Kỹ thuật (chỉ giải thích score/indicator có trong context)",
+        "Tài chính đúng kỳ + nguồn",
+        "Định giá (không kết luận rẻ/đắt từ 1 ratio)",
+        "Rủi ro + điều kiện xác nhận/đảo chiều",
+        "Kết luận nghiên cứu"
+      ]
+    },
+    "industry": {
+      "questions": [
+        "Ngành {{SECTOR}} hôm nay thế nào?",
+        "Tại sao {{SECTOR}} tăng/giảm trong khi index ngược chiều?"
+      ]
+    },
+    "commodity": {
+      "questions": [
+        "Giá {{COMMODITY}} hiện tại?",
+        "{{COMMODITY}} tăng/giảm ảnh hưởng thế nào tới doanh nghiệp Việt Nam?"
+      ],
+      "rules": [
+        "Luôn nêu unit, source, timestamp nếu có",
+        "Không liệt kê mã hưởng lợi khi contract không có"
+      ]
+    }
+  },
+  "rejected_patterns": [
+    "Dựa trên dữ liệu được cung cấp",
+    "Theo CONTEXT JSON",
+    "Kết luận: nên mua",
+    "Kết luận: nên bán ngay",
+    "Khuyến nghị: mua",
+    "Tóm lại như sau:"
+  ],
+  "style_phrases_preferred": [
+    "Đáng chú ý là",
+    "Điều này cho thấy",
+    "Tuy nhiên cần lưu ý",
+    "Nhìn rộng hơn",
+    "trong bối cảnh",
+    "cần theo dõi thêm",
+    "chưa có trong hệ thống"
+  ]
+}

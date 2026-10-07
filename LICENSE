@@ -1,0 +1,35 @@
+PROPRIETARY SOFTWARE LICENSE
+
+Copyright (c) 2025 Orca Financial. All Rights Reserved.
+
+This software and associated documentation files (the "Software") are the
+exclusive property of Orca Financial.
+
+1. OWNERSHIP. The Software, including all source code, object code, designs,
+   data schemas, provider adapters, quantitative engines, documentation and
+   all modifications, is and remains the property of Orca Financial.
+
+2. RESTRICTIONS. Unless explicitly authorized in writing by Orca Financial,
+   you may not:
+   (a) copy, reproduce, or duplicate the Software, in whole or in part;
+   (b) redistribute, publish, sublicense, sell, rent, lease, or lend the
+       Software to any third party;
+   (c) use the Software for any commercial purpose or as part of a service
+       offered to third parties;
+   (d) modify, translate, adapt, or create derivative works based on the
+       Software, except for internal evaluation purposes;
+   (e) remove or alter any proprietary notices or labels on the Software.
+
+3. CONFIDENTIALITY. Any non-public architecture notes, provider contracts,
+   and operational details contained herein are confidential.
+
+4. NO WARRANTY. THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY
+   KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+   MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+
+5. LIMITATION OF LIABILITY. IN NO EVENT SHALL ORCA FINANCIAL BE LIABLE FOR
+   ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+   TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE
+   OR THE USE OR OTHER DEALINGS IN THE SOFTWARE. FINANCIAL DATA AND ANALYSIS
+   PRODUCED BY THE SOFTWARE ARE FOR INFORMATIONAL AND RESEARCH PURPOSES ONLY
+   AND DO NOT CONSTITUTE INVESTMENT ADVICE.

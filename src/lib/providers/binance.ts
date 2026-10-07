@@ -1,0 +1,229 @@
+import "server-only";
+import { env } from "../env";
+import { httpJson } from "../http";
+import type { OhlcvBar } from "../types";
+
+export class ProviderError extends Error {
+  constructor(
+    message: string,
+    readonly provider: string,
+    readonly cause2?: unknown,
+  ) {
+    super(message);
+    this.name = "ProviderError";
+  }
+}
+
+const SPOT_HOSTS = [
+  "https://data-api.binance.vision",
+  env.binanceBaseUrl,
+  "https://api1.binance.com",
+  "https://api2.binance.com",
+  "https://api.binance.com",
+].filter((h): h is string => Boolean(h));
+
+const FUTURES_HOSTS = [env.binanceFapiBaseUrl, "https://fapi.binance.com", "https://fapi1.binance.com"].filter(
+  (h): h is string => Boolean(h),
+);
+
+let lastGoodSpot = 0;
+let lastGoodFutures = 0;
+
+export interface BinanceTicker24h {
+  symbol: string;
+  priceChange: string;
+  priceChangePercent: string;
+  weightedAvgPrice: string;
+  prevClosePrice?: string;
+  lastPrice: string;
+  openPrice: string;
+  highPrice: string;
+  lowPrice: string;
+  volume: string;
+  quoteVolume: string;
+  openTime?: number;
+  closeTime?: number;
+  count?: number;
+}
+
+export interface FundingInfo {
+  symbol: string;
+  markPrice: number;
+  indexPrice: number;
+  fundingRate: number;
+  nextFundingTime: number;
+}
+
+export const BINANCE_SPOT = "binance-spot";
+export const BINANCE_FUTURES = "binance-futures";
+
+async function getFromHosts<T>(hosts: string[], startIdx: number, path: string, provider: string): Promise<{ data: T; hostIdx: number }> {
+  let lastErr = "unreachable";
+  const n = hosts.length;
+  const order = Array.from({ length: n }, (_, i) => (startIdx + i) % n);
+
+  const tryOne = async (idx: number) => {
+    const url = `${hosts[idx]}${path}`;
+    const res = await httpJson<T>(url, { provider, timeoutMs: 10_000, retries: 1, backoffBaseMs: 280 });
+    if (res.ok && res.data != null) return { data: res.data as T, hostIdx: idx };
+    lastErr = res.error ?? "unreachable";
+    return null;
+  };
+
+  // Race first 2 hosts in parallel — faster than pure sequential failover
+  const wave = await Promise.all(order.slice(0, Math.min(2, n)).map((i) => tryOne(i)));
+  for (const hit of wave) {
+    if (hit) return hit;
+  }
+  for (const i of order.slice(2)) {
+    const hit = await tryOne(i);
+    if (hit) return hit;
+  }
+  throw new ProviderError(`${provider}: all hosts failed (${lastErr})`, provider);
+}
+
+export async function getAllSpotTickers(): Promise<BinanceTicker24h[]> {
+  const { data, hostIdx } = await getFromHosts<BinanceTicker24h[]>(SPOT_HOSTS, lastGoodSpot, `/api/v3/ticker/24hr`, BINANCE_SPOT);
+  lastGoodSpot = hostIdx;
+  return data;
+}
+
+export async function getSpotTicker(symbol: string): Promise<BinanceTicker24h> {
+  const { data, hostIdx } = await getFromHosts<BinanceTicker24h>(
+    SPOT_HOSTS,
+    lastGoodSpot,
+    `/api/v3/ticker/24hr?symbol=${encodeURIComponent(symbol)}`,
+    BINANCE_SPOT,
+  );
+  lastGoodSpot = hostIdx;
+  return data;
+}
+
+type RawKline = [number, string, string, string, string, string, number, string, number, string, string, string];
+
+export async function getKlines(
+  symbol: string,
+  interval: string,
+  limit = 200,
+  opts?: { endTime?: number; startTime?: number },
+): Promise<OhlcvBar[]> {
+  const qs = new URLSearchParams({
+    symbol,
+    interval,
+    limit: String(Math.min(Math.max(limit, 1), 1000)),
+  });
+  if (opts?.endTime != null) qs.set("endTime", String(opts.endTime));
+  if (opts?.startTime != null) qs.set("startTime", String(opts.startTime));
+  const { data, hostIdx } = await getFromHosts<RawKline[]>(
+    SPOT_HOSTS,
+    lastGoodSpot,
+    `/api/v3/klines?${qs.toString()}`,
+    BINANCE_SPOT,
+  );
+  lastGoodSpot = hostIdx;
+  return data.map((k) => ({
+    time: k[0],
+    open: Number(k[1]),
+    high: Number(k[2]),
+    low: Number(k[3]),
+    close: Number(k[4]),
+    volume: Number(k[5]),
+  }));
+}
+
+export async function getKlinesDeep(symbol: string, interval: string, limit = 1000): Promise<OhlcvBar[]> {
+  const target = Math.min(Math.max(limit, 50), 5000);
+  const out: OhlcvBar[] = [];
+  let endTime: number | undefined;
+  let guard = 0;
+  while (out.length < target && guard < 6) {
+    guard += 1;
+    const batch = Math.min(1000, target - out.length);
+    const page = await getKlines(symbol, interval, batch, endTime != null ? { endTime } : undefined);
+    if (!page.length) break;
+    out.unshift(...page);
+    endTime = page[0].time - 1;
+    if (page.length < batch) break;
+  }
+  const map = new Map<number, OhlcvBar>();
+  for (const b of out) map.set(b.time, b);
+  return [...map.values()].sort((a, b) => a.time - b.time).slice(-target);
+}
+
+export async function getFundingRate(symbol: string): Promise<FundingInfo> {
+  type Premium = { symbol: string; markPrice: string; indexPrice: string; lastFundingRate: string; nextFundingTime: number };
+  const { data, hostIdx } = await getFromHosts<Premium>(
+    FUTURES_HOSTS,
+    lastGoodFutures,
+    `/fapi/v1/premiumIndex?symbol=${encodeURIComponent(symbol)}`,
+    BINANCE_FUTURES,
+  );
+  lastGoodFutures = hostIdx;
+  return {
+    symbol: data.symbol,
+    markPrice: Number(data.markPrice),
+    indexPrice: Number(data.indexPrice),
+    fundingRate: Number(data.lastFundingRate),
+    nextFundingTime: data.nextFundingTime,
+  };
+}
+
+export async function getOpenInterest(symbol: string): Promise<{ openInterest: number; time: number }> {
+  type OI = { openInterest: string; symbol: string; time: number };
+  const { data, hostIdx } = await getFromHosts<OI>(
+    FUTURES_HOSTS,
+    lastGoodFutures,
+    `/fapi/v1/openInterest?symbol=${encodeURIComponent(symbol)}`,
+    BINANCE_FUTURES,
+  );
+  lastGoodFutures = hostIdx;
+  return { openInterest: Number(data.openInterest), time: data.time };
+}
+
+export interface OrderBookSnapshot {
+  lastUpdateId: number;
+  bids: { price: number; qty: number }[];
+  asks: { price: number; qty: number }[];
+}
+
+export async function getOrderBook(symbol: string, limit = 20): Promise<OrderBookSnapshot> {
+  type Raw = { lastUpdateId: number; bids: [string, string][]; asks: [string, string][] };
+  const { data, hostIdx } = await getFromHosts<Raw>(
+    SPOT_HOSTS,
+    lastGoodSpot,
+    `/api/v3/depth?symbol=${encodeURIComponent(symbol)}&limit=${limit}`,
+    BINANCE_SPOT,
+  );
+  lastGoodSpot = hostIdx;
+  return {
+    lastUpdateId: data.lastUpdateId,
+    bids: data.bids.map(([p, q]) => ({ price: Number(p), qty: Number(q) })),
+    asks: data.asks.map(([p, q]) => ({ price: Number(p), qty: Number(q) })),
+  };
+}
+
+export interface AggTrade {
+  id: number;
+  price: number;
+  qty: number;
+  time: number;
+  isBuyerMaker: boolean;
+}
+
+export async function getAggTrades(symbol: string, limit = 80): Promise<AggTrade[]> {
+  type Raw = { a: number; p: string; q: string; f: number; l: number; T: number; m: boolean };
+  const { data, hostIdx } = await getFromHosts<Raw[]>(
+    SPOT_HOSTS,
+    lastGoodSpot,
+    `/api/v3/aggTrades?symbol=${encodeURIComponent(symbol)}&limit=${limit}`,
+    BINANCE_SPOT,
+  );
+  lastGoodSpot = hostIdx;
+  return data.map((t) => ({
+    id: t.a,
+    price: Number(t.p),
+    qty: Number(t.q),
+    time: t.T,
+    isBuyerMaker: t.m,
+  }));
+}

@@ -1,0 +1,383 @@
+"use client";
+
+import Link from "next/link";
+import { useMemo, useState } from "react";
+import { useApi } from "@/lib/hooks";
+import { VN_SECTOR_MAP, DEFAULT_VN_WATCHLIST, sectorOf } from "@/lib/vn/master";
+import type { IndexQuote, Quote } from "@/lib/types";
+import { Badge, Chg, fmtCompact, fmtNum, FreshnessDot, Loading, MetaLine, Panel, Unavailable } from "@/components/ui";
+import { AddToWatchlist } from "@/components/watchlist-button";
+import { CandlestickChart, KeyRound, LayoutGrid, Search, Table2 } from "lucide-react";
+import { BangDienBoard } from "@/components/stocks/bang-dien-board";
+
+type StocksData = {
+  indices: IndexQuote[] | null;
+  quotes: Quote[] | null;
+  universe?: { symbol: string; name: string | null; exchange: string | null; industry: string | null }[];
+  sessionDate?: string;
+  count?: number;
+};
+
+function hitsBand(price: number | null | undefined, band: number | null | undefined): boolean {
+  if (price == null || band == null || Number.isNaN(price) || Number.isNaN(band)) return false;
+  return Math.abs(price - band) <= 0.051;
+}
+
+export default function VnMarketCenterPage() {
+  const { res, data, meta, isLoading } = useApi<StocksData>(`/api/v1/stocks?board=full`, {
+    refreshInterval: 45_000,
+  });
+  const [q, setQ] = useState("");
+  const [sector, setSector] = useState("");
+  const [viewMode, setViewMode] = useState<"dien" | "table">("dien");
+
+  const quotes = useMemo(() => {
+    let list = data?.quotes ?? [];
+    if (q) {
+      const qq = q.toUpperCase();
+      list = list.filter(
+        (x) => x.symbol.includes(qq) || (x.name ?? "").toUpperCase().includes(qq),
+      );
+    }
+    if (sector) list = list.filter((x) => sectorOf(x.symbol) === sector);
+    return list;
+  }, [data, q, sector]);
+
+  const bandStats = useMemo(() => {
+    let atCeiling = 0;
+    let atFloor = 0;
+    for (const qu of quotes) {
+      if (hitsBand(qu.price, qu.ceilingPrice)) atCeiling += 1;
+      else if (hitsBand(qu.price, qu.floorPrice)) atFloor += 1;
+    }
+    return { atCeiling, atFloor };
+  }, [quotes]);
+
+  if (isLoading && !res) return <Loading rows={12} />;
+
+  return (
+    <div className="stock-workspace">
+      <Panel pad={false}>
+        <div className="stock-hero flex flex-wrap items-center gap-2">
+          <h1 className="flex items-center gap-2 text-base font-semibold sm:text-lg">
+            <CandlestickChart className="size-5 shrink-0 text-accent-primary" />
+            Bảng điện VN
+          </h1>
+          <Badge tone="accent">HOSE · HNX · UPCoM</Badge>
+          <Link
+            href="/stocks/sectors"
+            className="rounded-md border border-accent-primary/30 bg-accent-primary/10 px-2 py-1 text-[11px] font-medium text-accent-primary hover:bg-accent-primary/20"
+          >
+            Xu hướng ngành
+          </Link>
+          {data?.sessionDate ? (
+            <Badge tone="neutral">{`Phiên ${data.sessionDate}`}</Badge>
+          ) : null}
+          {data?.count != null ? (
+            <Badge tone="neutral">{`${data.count} mã`}</Badge>
+          ) : null}
+          <div className="flex items-center rounded-md border border-border-subtle p-0.5">
+            <button
+              type="button"
+              onClick={() => setViewMode("dien")}
+              className={`inline-flex items-center gap-1 rounded px-2 py-1 text-[11px] ${
+                viewMode === "dien"
+                  ? "bg-accent-primary/15 font-medium text-accent-primary"
+                  : "text-text-muted hover:text-text-primary"
+              }`}
+            >
+              <LayoutGrid className="size-3.5" />
+              Bảng điện
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode("table")}
+              className={`inline-flex items-center gap-1 rounded px-2 py-1 text-[11px] ${
+                viewMode === "table"
+                  ? "bg-accent-primary/15 font-medium text-accent-primary"
+                  : "text-text-muted hover:text-text-primary"
+              }`}
+            >
+              <Table2 className="size-3.5" />
+              Bảng đầy đủ
+            </button>
+          </div>
+          <span className="ml-auto flex items-center gap-2">
+            <FreshnessDot status={meta?.freshness} ageMs={meta?.ageMs} />
+            <span className="hidden sm:inline">
+              <MetaLine meta={meta} />
+            </span>
+          </span>
+        </div>
+        {data?.indices?.length && viewMode === "table" ? (
+          <div className="grid grid-cols-2 gap-2 px-3 pb-3 sm:px-4 sm:pb-4 md:grid-cols-4 xl:gap-3">
+            {data.indices.slice(0, 4).map((i, big) => (
+              <div
+                key={i.code}
+                className={`rounded-lg border p-2.5 sm:p-3 ${
+                  big === 0
+                    ? "border-accent-primary/40 bg-accent-primary/5"
+                    : "border-border-subtle bg-surface-elevated"
+                }`}
+              >
+                <div className="flex items-center justify-between text-[11px] text-text-secondary">
+                  <span className={big === 0 ? "font-semibold text-accent-primary" : ""}>{i.code}</span>
+                  <Chg value={i.changePercent} arrow={false} />
+                </div>
+                <div className="num mt-1 text-[17px] font-semibold sm:text-[19px]">{fmtNum(i.value, 2)}</div>
+                {i.volume != null ? (
+                  <div className="num text-[10px] text-text-muted">KL {fmtCompact(i.volume)}</div>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        ) : null}
+      </Panel>
+
+      {!res?.success ? (
+        <Unavailable
+          title="Chưa kéo được dữ liệu thị trường VN"
+          note={
+            res && !res.success
+              ? res.error.message
+              : "Nguồn VNDirect/VNStock tạm không phản hồi — thử lại sau hoặc kiểm tra /system."
+          }
+        />
+      ) : (
+        <>
+          {viewMode === "dien" ? (
+            <Panel title="Bảng điện thông minh" pad={false}>
+              <div className="p-2 sm:p-3">
+                <BangDienBoard
+                  quotes={data?.quotes ?? []}
+                  indices={data?.indices ?? []}
+                />
+              </div>
+            </Panel>
+          ) : null}
+
+          {viewMode === "table" ? (
+          <Panel
+            title={
+              <span className="flex flex-wrap items-center gap-2">
+                Bảng giá toàn thị trường
+                <span className="text-[10px] font-normal text-text-muted">{quotes.length} mã</span>
+                {bandStats.atCeiling > 0 ? (
+                  <span className="inline-flex items-center gap-1 rounded-md border border-violet-500/40 bg-violet-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-violet-300">
+                    {bandStats.atCeiling} chạm trần
+                  </span>
+                ) : null}
+                {bandStats.atFloor > 0 ? (
+                  <span className="inline-flex items-center gap-1 rounded-md border border-sky-400/40 bg-sky-400/15 px-1.5 py-0.5 text-[10px] font-semibold text-sky-300">
+                    {bandStats.atFloor} chạm sàn
+                  </span>
+                ) : null}
+              </span>
+            }
+          >
+            <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+              <div className="relative min-w-0 flex-1">
+                <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-text-muted" />
+                <input
+                  value={q}
+                  onChange={(e) => setQ(e.target.value)}
+                  placeholder="Tìm mã / tên…"
+                  inputMode="search"
+                  autoComplete="off"
+                  className="w-full rounded-lg border border-border-subtle bg-surface-elevated py-2.5 pl-8 pr-3 text-[13px] outline-none focus:border-accent-primary/50 sm:py-1.5 sm:text-[12px]"
+                />
+              </div>
+              <select
+                value={sector}
+                onChange={(e) => setSector(e.target.value)}
+                className="min-h-10 w-full rounded-lg border border-border-subtle bg-surface-elevated px-2 py-2 text-[13px] sm:min-h-0 sm:w-auto sm:py-1.5 sm:text-[12px]"
+              >
+                <option value="">Tất cả ngành</option>
+                {VN_SECTOR_MAP.map((s) => (
+                  <option key={s.name} value={s.name}>
+                    {s.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="space-y-1.5 md:hidden">
+              {quotes.length === 0 ? (
+                <p className="py-6 text-center text-[12px] text-text-muted">Không có mã khớp bộ lọc.</p>
+              ) : (
+                quotes.map((qu) => {
+                  const atCeil = hitsBand(qu.price, qu.ceilingPrice);
+                  const atFloor = !atCeil && hitsBand(qu.price, qu.floorPrice);
+                  return (
+                  <Link
+                    key={qu.symbol}
+                    href={`/stocks/${qu.symbol}`}
+                    className={`flex items-center gap-3 rounded-lg border px-3 py-2.5 active:bg-surface-elevated ${
+                      atCeil
+                        ? "border-violet-500/50 bg-violet-500/10"
+                        : atFloor
+                          ? "border-sky-400/50 bg-sky-400/10"
+                          : "border-border-subtle bg-surface-elevated/60"
+                    }`}
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className="font-semibold text-accent-primary">{qu.symbol}</span>
+                        {atCeil ? (
+                          <span className="rounded border border-violet-500/40 bg-violet-500/20 px-1 text-[9px] font-bold uppercase text-violet-300">
+                            Trần
+                          </span>
+                        ) : null}
+                        {atFloor ? (
+                          <span className="rounded border border-sky-400/40 bg-sky-400/20 px-1 text-[9px] font-bold uppercase text-sky-300">
+                            Sàn
+                          </span>
+                        ) : null}
+                        <AddToWatchlist assetType="stock" symbol={qu.symbol} />
+                      </div>
+                      {qu.name ? <div className="truncate text-[11px] text-text-muted">{qu.name}</div> : null}
+                      <div className="mt-0.5 flex flex-wrap gap-x-3 gap-y-0.5 text-[10px] text-text-muted">
+                        <span className="num">KL {fmtCompact(qu.volume)}</span>
+                        <span className="num">GT {fmtCompact(qu.quoteVolume)}</span>
+                        {qu.ceilingPrice != null ? (
+                          <span className="num text-violet-300">Trần {fmtNum(qu.ceilingPrice, 2)}</span>
+                        ) : null}
+                        {qu.floorPrice != null ? (
+                          <span className="num text-sky-300">Sàn {fmtNum(qu.floorPrice, 2)}</span>
+                        ) : null}
+                      </div>
+                    </div>
+                    <div className="shrink-0 text-right">
+                      <div
+                        className={`num text-[15px] font-semibold ${
+                          atCeil ? "text-violet-300" : atFloor ? "text-sky-300" : ""
+                        }`}
+                      >
+                        {fmtNum(qu.price, 2)}
+                      </div>
+                      <Chg value={qu.changePercent} arrow={false} className="text-[12px]" />
+                    </div>
+                  </Link>
+                  );
+                })
+              )}
+            </div>
+
+            <div className="table-scroll hidden max-h-[min(70vh,720px)] w-full md:block">
+              <table className="stock-table w-full table-fixed text-left">
+                <colgroup>
+                  <col className="w-[16%]" />
+                  <col className="w-[9%]" />
+                  <col className="w-[9%]" />
+                  <col className="w-[9%]" />
+                  <col className="w-[9%]" />
+                  <col className="w-[9%]" />
+                  <col className="w-[11%]" />
+                  <col className="w-[12%]" />
+                  <col className="w-[16%]" />
+                </colgroup>
+                <thead className="sticky top-0 z-10 bg-background-secondary text-[10px] uppercase tracking-wider text-text-muted">
+                  <tr>
+                    <th className="pl-2 text-left sm:pl-3">Mã</th>
+                    <th className="text-right">Giá</th>
+                    <th className="text-right">%</th>
+                    <th className="text-right">TC</th>
+                    <th className="text-right text-violet-300">Trần</th>
+                    <th className="text-right text-sky-300">Sàn</th>
+                    <th className="text-right">KL</th>
+                    <th className="text-right">GT</th>
+                    <th className="pr-2 text-right sm:pr-3">Theo dõi</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {quotes.map((qu) => {
+                    const atCeil = hitsBand(qu.price, qu.ceilingPrice);
+                    const atFloor = !atCeil && hitsBand(qu.price, qu.floorPrice);
+                    return (
+                    <tr
+                      key={qu.symbol}
+                      className={`border-t border-border-subtle/70 hover:bg-surface-elevated/50 ${
+                        atCeil ? "bg-violet-500/10" : atFloor ? "bg-sky-400/10" : ""
+                      }`}
+                    >
+                      <td className="py-2 pl-2 sm:pl-3">
+                        <div className="flex items-center gap-1.5">
+                          <Link
+                            href={`/stocks/${qu.symbol}`}
+                            className="font-semibold text-accent-primary hover:underline"
+                          >
+                            {qu.symbol}
+                          </Link>
+                          {atCeil ? (
+                            <span className="shrink-0 rounded border border-violet-500/40 bg-violet-500/20 px-1 text-[9px] font-bold uppercase text-violet-300" title="Giá chạm trần">
+                              Trần
+                            </span>
+                          ) : null}
+                          {atFloor ? (
+                            <span className="shrink-0 rounded border border-sky-400/40 bg-sky-400/20 px-1 text-[9px] font-bold uppercase text-sky-300" title="Giá chạm sàn">
+                              Sàn
+                            </span>
+                          ) : null}
+                        </div>
+                        {qu.name ? (
+                          <div className="truncate text-[10px] text-text-muted" title={qu.name}>
+                            {qu.name}
+                          </div>
+                        ) : null}
+                      </td>
+                      <td className={`num py-2 text-right font-medium ${atCeil ? "text-violet-300" : atFloor ? "text-sky-300" : ""}`}>
+                        {fmtNum(qu.price, 2)}
+                      </td>
+                      <td className="py-2 text-right">
+                        <Chg value={qu.changePercent} arrow={false} />
+                      </td>
+                      <td className="num py-2 text-right text-text-muted">
+                        {qu.referencePrice != null ? fmtNum(qu.referencePrice, 2) : "—"}
+                      </td>
+                      <td className="num py-2 text-right text-violet-300">
+                        {qu.ceilingPrice != null ? fmtNum(qu.ceilingPrice, 2) : "—"}
+                      </td>
+                      <td className="num py-2 text-right text-sky-300">
+                        {qu.floorPrice != null ? fmtNum(qu.floorPrice, 2) : "—"}
+                      </td>
+                      <td className="num py-2 text-right text-text-secondary">{fmtCompact(qu.volume)}</td>
+                      <td className="num py-2 text-right text-text-secondary">{fmtCompact(qu.quoteVolume)}</td>
+                      <td className="py-2 pr-2 text-right sm:pr-3">
+                        <AddToWatchlist assetType="stock" symbol={qu.symbol} />
+                      </td>
+                    </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </Panel>
+          ) : null}
+
+          <Panel title="Ngành chứng khoán Việt Nam" pad={false}>
+            <div className="grid grid-cols-2 gap-1.5 p-3 sm:grid-cols-3 md:grid-cols-4">
+              {VN_SECTOR_MAP.slice(0, 16).map((s) => (
+                <Link
+                  key={s.name}
+                  href="/stocks/sectors"
+                  className="flex min-h-11 items-center justify-between rounded-md border border-border-subtle bg-surface-elevated px-2.5 py-2 active:bg-surface-elevated/80"
+                >
+                  <span className="truncate text-[12px] text-text-secondary">{s.name}</span>
+                  <span className="num shrink-0 text-[10px] text-text-muted">{s.symbols.length} mã</span>
+                </Link>
+              ))}
+            </div>
+          </Panel>
+        </>
+      )}
+
+      <p className="flex items-start gap-2 text-[11px] text-text-muted sm:items-center">
+        <KeyRound className="mt-0.5 size-3.5 shrink-0 text-warning sm:mt-0" />
+        <span>
+          Danh mục theo dõi mặc định (ưu tiên VN): {DEFAULT_VN_WATCHLIST.slice(2, 8).join(", ")}… (tùy biến tại mục
+          Danh mục theo dõi)
+        </span>
+      </p>
+    </div>
+  );
+}

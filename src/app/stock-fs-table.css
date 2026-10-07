@@ -1,0 +1,124 @@
+/* BCTC table — full width + mobile-friendly sticky metric column */
+.stock-fs-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  table-layout: fixed;
+}
+
+.stock-fs-table .stock-fs-col-metric {
+  width: 18%;
+  min-width: 9.5rem;
+}
+
+.stock-fs-table .stock-fs-col-period {
+  width: auto;
+  min-width: 4.75rem;
+}
+
+.stock-fs-table th,
+.stock-fs-table td {
+  vertical-align: middle;
+}
+
+.stock-fs-table thead th {
+  white-space: nowrap;
+}
+
+/* Sticky metric column (desktop + mobile) */
+.stock-fs-table th.stock-fs-sticky,
+.stock-fs-table td.stock-fs-sticky {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  background-color: var(--color-bg-2, #0f1419);
+  box-shadow: 4px 0 8px -4px rgba(0, 0, 0, 0.45);
+}
+
+.stock-fs-table thead th.stock-fs-sticky {
+  z-index: 3;
+}
+
+.stock-fs-scroll {
+  width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
+  scrollbar-width: thin;
+}
+
+/* Mobile layout */
+@media (max-width: 768px) {
+  .stock-fs-table {
+    font-size: 11px;
+  }
+
+  .stock-fs-table .stock-fs-col-metric {
+    width: 38%;
+    min-width: 7.25rem;
+    max-width: 42vw;
+  }
+
+  .stock-fs-table .stock-fs-col-period {
+    min-width: 4.25rem;
+  }
+
+  .stock-fs-table th.stock-fs-sticky,
+  .stock-fs-table td.stock-fs-sticky {
+    max-width: 42vw;
+    white-space: normal;
+    line-height: 1.25;
+    word-break: break-word;
+    padding-right: 0.5rem !important;
+  }
+
+  .stock-fs-table td.num,
+  .stock-fs-table th.num {
+    padding-left: 0.35rem;
+    padding-right: 0.35rem;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .stock-fs-tabs {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.35rem;
+    width: 100%;
+  }
+
+  .stock-fs-tabs button {
+    width: 100%;
+    text-align: center;
+    padding: 0.45rem 0.5rem;
+    font-size: 11px;
+    line-height: 1.2;
+  }
+
+  .stock-fs-meta {
+    flex-direction: column;
+    align-items: flex-start !important;
+    gap: 0.25rem !important;
+  }
+
+  .stock-fs-status {
+    grid-template-columns: 1fr 1fr !important;
+    gap: 0.65rem !important;
+  }
+
+  .stock-fs-hint {
+    font-size: 10px;
+    line-height: 1.35;
+  }
+}
+
+@media (max-width: 400px) {
+  .stock-fs-table .stock-fs-col-metric {
+    width: 36%;
+    min-width: 6.5rem;
+  }
+
+  .stock-fs-table .stock-fs-col-period {
+    min-width: 3.85rem;
+  }
+}

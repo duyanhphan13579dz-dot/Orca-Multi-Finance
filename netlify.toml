@@ -1,0 +1,49 @@
+# ==========================================================================
+# ORCA Financial — Netlify build configuration
+# ==========================================================================
+# NOTE ON PRECEDENCE: Netlify site settings configured in the UI override the
+# `command` / `publish` / `base` keys below (your build log shows
+# `commandOrigin: ui`). Environment variables declared here still apply as long
+# as the UI does not define a variable with the same name.
+#
+# The `@netlify/plugin-nextjs` plugin is intentionally NOT declared here — it is
+# already installed from the UI (build log: `origin: ui`). Declaring it twice
+# would install it twice.
+#
+# WHY NPM_FLAGS IS SET:
+#   Netlify installs dependencies with NODE_ENV=production, which makes npm omit
+#   devDependencies. That is what produced:
+#     Error: Cannot find module '@tailwindcss/postcss'
+#     Import trace: ./src/app/globals.css → ./src/app/layout.tsx
+#   Two layers of protection are now in place:
+#     1. Build-critical packages (tailwindcss, @tailwindcss/postcss, postcss,
+#        typescript, @types/*) were moved to `dependencies` in package.json.
+#     2. `--include=dev` below forces devDependencies to install anyway.
+#   A committed package-lock.json also makes Netlify use `npm ci` (reproducible).
+
+[build]
+  command = "npm run build"
+  publish = ".next"
+
+[build.environment]
+  NPM_FLAGS = "--include=dev"
+  NEXT_TELEMETRY_DISABLED = "1"
+  NODE_ENV = "production"
+
+  # -----------------------------------------------------------------------
+  # Serverless caveat — READ BEFORE ENABLING THE WEBSOCKET ENGINE
+  # -----------------------------------------------------------------------
+  # Netlify Functions are short-lived. The centralized Binance WebSocket engine
+  # (src/lib/realtime/binance-ws.ts), the SSE chart stream
+  # (/api/v1/chart/stream) and the 60s report scheduler
+  # (src/lib/realtime/scheduler.ts) all keep state in process memory, so on this
+  # host they reconnect on every cold start and lose state between invocations.
+  # The platform already degrades honestly to REST polling (12s cache) when the
+  # WS engine is off — freshness labels switch from LIVE to DELAYED/FRESH and
+  # `meta.source` drops the "binance-ws" prefix.
+  #
+  # Recommended while deployed on Netlify (uncomment to apply):
+  # BINANCE_WS_DISABLED = "true"
+  #
+  # Keep it enabled only when running on a long-lived Node host (VPS/container)
+  # where a persistent WebSocket and SSE are actually viable.

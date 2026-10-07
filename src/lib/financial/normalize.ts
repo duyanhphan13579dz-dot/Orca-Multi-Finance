@@ -1,0 +1,256 @@
+import "server-only";
+import type { NormalizedMetrics, NormalizedPeriod, PeriodType } from "./types";
+import { normalizePeriodMetrics } from "./statements";
+
+/** Metrics summed across quarters for TTM (flow metrics). */
+const FLOW_KEYS: (keyof NormalizedMetrics)[] = [
+  "revenue",
+  "netRevenue",
+  "cogs",
+  "grossProfit",
+  "operatingProfit",
+  "ebit",
+  "ebitda",
+  "interestExpense",
+  "profitBeforeTax",
+  "taxExpense",
+  "netIncome",
+  "netIncomeParent",
+  "operatingCashFlow",
+  "investingCashFlow",
+  "financingCashFlow",
+  "capex",
+  "freeCashFlow",
+];
+
+/** Point-in-time metrics — take latest quarter value for TTM snapshot. */
+const STOCK_KEYS: (keyof NormalizedMetrics)[] = [
+  "cash",
+  "shortTermInvestments",
+  "receivables",
+  "inventory",
+  "currentAssets",
+  "fixedAssets",
+  "longTermAssets",
+  "totalAssets",
+  "shortTermDebt",
+  "longTermDebt",
+  "currentLiabilities",
+  "totalLiabilities",
+  "equity",
+  "retainedEarnings",
+  "cashBegin",
+  "cashEnd",
+];
+
+function isQuarter(p: NormalizedPeriod): boolean {
+  return p.periodType === "quarter" && p.year != null && p.quarter != null;
+}
+
+function sumNullable(values: (number | null | undefined)[]): number | null {
+  if (!values.length || values.some((value) => value == null || !Number.isFinite(value))) return null;
+  return (values as number[]).reduce((sum, value) => sum + value, 0);
+}
+
+/** Last 4 complete quarters → TTM period (does not fabricate missing quarters). */
+export function buildTtmPeriod(periods: NormalizedPeriod[]): NormalizedPeriod | null {
+  const quarters = periods.filter(isQuarter).sort((a, b) => {
+    const ay = a.year ?? 0;
+    const by = b.year ?? 0;
+    if (ay !== by) return by - ay;
+    return (b.quarter ?? 0) - (a.quarter ?? 0);
+  });
+
+  const seen = new Set<string>();
+  const unique: NormalizedPeriod[] = [];
+  for (const q of quarters) {
+    if (seen.has(q.period)) continue;
+    seen.add(q.period);
+    unique.push(q);
+  }
+
+  if (unique.length < 4) return null;
+  const window = unique.slice(0, 4);
+  const contiguous = window.every((period, index) => {
+    if (index === 0) return true;
+    const current = (period.year! * 4) + period.quarter!;
+    const previous = (window[index - 1]!.year! * 4) + window[index - 1]!.quarter!;
+    return previous - current === 1;
+  });
+  if (!contiguous) return null;
+  const head = window[0];
+  const metrics: NormalizedMetrics = {};
+
+  for (const k of FLOW_KEYS) {
+    const s = sumNullable(window.map((p) => p.metrics[k]));
+    if (s != null) metrics[k] = s;
+  }
+  for (const k of STOCK_KEYS) {
+    const v = head.metrics[k];
+    if (v != null) metrics[k] = v;
+  }
+
+  const normalized = normalizePeriodMetrics(metrics);
+
+  return {
+    period: `TTM-${head.period}`,
+    periodType: "ttm" as PeriodType,
+    fiscalDate: head.fiscalDate,
+    year: head.year,
+    quarter: head.quarter,
+    statementScope: head.statementScope,
+    auditStatus: head.auditStatus,
+    currency: "VND",
+    source: head.source,
+    sourceUrl: head.sourceUrl,
+    sourceUrls: head.sourceUrls,
+    unit: head.unit,
+    confidence: Math.min(...window.map((w) => w.confidence)),
+    metrics: normalized,
+  };
+}
+
+export type GrowthMetricKey =
+  | "revenue"
+  | "netRevenue"
+  | "grossProfit"
+  | "operatingProfit"
+  | "netIncome"
+  | "operatingCashFlow"
+  | "freeCashFlow"
+  | "totalAssets"
+  | "equity"
+  | "totalLiabilities";
+
+export interface GrowthCell {
+  metric: GrowthMetricKey;
+  current: number | null;
+  prior: number | null;
+  changePct: number | null;
+  currentPeriod: string | null;
+  priorPeriod: string | null;
+}
+
+export interface GrowthSnapshot {
+  yoy: GrowthCell[];
+  qoq: GrowthCell[];
+  latestPeriod: string | null;
+  priorYearPeriod: string | null;
+  priorQuarterPeriod: string | null;
+}
+
+const GROWTH_METRICS: GrowthMetricKey[] = [
+  "revenue",
+  "netRevenue",
+  "grossProfit",
+  "operatingProfit",
+  "netIncome",
+  "operatingCashFlow",
+  "freeCashFlow",
+  "totalAssets",
+  "equity",
+  "totalLiabilities",
+];
+
+function pctChange(cur: number | null, prior: number | null): number | null {
+  if (cur == null || prior == null || prior === 0) return null;
+  return (cur - prior) / Math.abs(prior);
+}
+
+function metricOf(p: NormalizedPeriod | undefined, k: GrowthMetricKey): number | null {
+  if (!p) return null;
+  const v = p.metrics[k] ?? (k === "revenue" ? p.metrics.netRevenue : null);
+  return v ?? null;
+}
+
+function findPriorYear(quarters: NormalizedPeriod[], head: NormalizedPeriod): NormalizedPeriod | undefined {
+  const year = head.year;
+  const quarter = head.quarter;
+  if (year == null || quarter == null) return undefined;
+  return quarters.find((p) => p.year === year - 1 && p.quarter === quarter);
+}
+
+function findPriorQuarter(quarters: NormalizedPeriod[], head: NormalizedPeriod): NormalizedPeriod | undefined {
+  const year = head.year;
+  const quarter = head.quarter;
+  if (year == null || quarter == null) return undefined;
+  const pq = quarter === 1 ? 4 : quarter - 1;
+  const py = quarter === 1 ? year - 1 : year;
+  return quarters.find((p) => p.year === py && p.quarter === pq);
+}
+
+function cells(
+  head: NormalizedPeriod | undefined,
+  prior: NormalizedPeriod | undefined,
+): GrowthCell[] {
+  return GROWTH_METRICS.map((metric) => {
+    const current = metricOf(head, metric);
+    const prev = metricOf(prior, metric);
+    return {
+      metric,
+      current,
+      prior: prev,
+      changePct: pctChange(current, prev),
+      currentPeriod: head?.period ?? null,
+      priorPeriod: prior?.period ?? null,
+    };
+  });
+}
+
+/** YoY / QoQ on latest quarter; annual YoY when only annuals exist. */
+export function computeGrowth(periods: NormalizedPeriod[]): GrowthSnapshot {
+  const quarters = periods
+    .filter(isQuarter)
+    .sort((a, b) => {
+      const ay = a.year ?? 0;
+      const by = b.year ?? 0;
+      if (ay !== by) return by - ay;
+      return (b.quarter ?? 0) - (a.quarter ?? 0);
+    });
+
+  const seen = new Set<string>();
+  const uniqueQ: NormalizedPeriod[] = [];
+  for (const q of quarters) {
+    if (seen.has(q.period)) continue;
+    seen.add(q.period);
+    uniqueQ.push(q);
+  }
+
+  if (uniqueQ.length) {
+    const head = uniqueQ[0];
+    const yoyPrior = findPriorYear(uniqueQ, head);
+    const qoqPrior = findPriorQuarter(uniqueQ, head);
+    return {
+      yoy: cells(head, yoyPrior),
+      qoq: cells(head, qoqPrior),
+      latestPeriod: head.period,
+      priorYearPeriod: yoyPrior?.period ?? null,
+      priorQuarterPeriod: qoqPrior?.period ?? null,
+    };
+  }
+
+  const annuals = periods
+    .filter((p) => p.periodType === "year")
+    .sort((a, b) => (b.year ?? 0) - (a.year ?? 0));
+  const headA = annuals[0];
+  const priorA = annuals[1];
+  return {
+    yoy: cells(headA, priorA),
+    qoq: [],
+    latestPeriod: headA?.period ?? null,
+    priorYearPeriod: priorA?.period ?? null,
+    priorQuarterPeriod: null,
+  };
+}
+
+/** Sort periods: TTM first (optional), then newest fiscal first. */
+export function sortPeriodsNewestFirst(periods: NormalizedPeriod[]): NormalizedPeriod[] {
+  return [...periods].sort((a, b) => {
+    if (a.periodType === "ttm" && b.periodType !== "ttm") return -1;
+    if (b.periodType === "ttm" && a.periodType !== "ttm") return 1;
+    const ay = a.year ?? 0;
+    const by = b.year ?? 0;
+    if (ay !== by) return by - ay;
+    return (b.quarter ?? 0) - (a.quarter ?? 0);
+  });
+}

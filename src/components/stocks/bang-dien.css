@@ -1,0 +1,89 @@
+/* bang-dien perf — isolated paint, cheap hover, reduced shadows */
+.bd-col {
+  display: flex;
+  width: 220px;
+  flex-shrink: 0;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: 0.75rem;
+  border: 1px solid color-mix(in oklab, var(--border-subtle, #334155) 100%, transparent);
+  background: color-mix(in oklab, var(--surface-elevated, #1e293b) 100%, transparent);
+  contain: content;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 400px;
+}
+.bd-col-head {
+  border-bottom: 1px solid color-mix(in oklab, var(--border-subtle, #334155) 80%, transparent);
+  padding: 0.55rem 0.75rem;
+}
+.bd-col-head-up { background: color-mix(in oklab, #10b981 12%, transparent); }
+.bd-col-head-down { background: color-mix(in oklab, #f43f5e 12%, transparent); }
+.bd-col-labels {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) auto auto auto;
+  gap: 0 0.5rem;
+  border-bottom: 1px solid color-mix(in oklab, var(--border-subtle, #334155) 60%, transparent);
+  background: color-mix(in oklab, var(--surface-base, #0f172a) 50%, transparent);
+  padding: 0.3rem 0.75rem;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: color-mix(in oklab, var(--text-muted, #94a3b8) 100%, transparent);
+}
+.bd-col-rows {
+  max-height: min(62vh, 480px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+}
+.bd-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) auto auto auto;
+  align-items: center;
+  gap: 0 0.5rem;
+  border-bottom: 1px solid color-mix(in oklab, var(--border-subtle, #334155) 25%, transparent);
+  padding: 5px 0.75rem;
+  font-size: 12.5px;
+  text-decoration: none;
+  color: inherit;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 28px;
+}
+.bd-row:hover { filter: none; background: color-mix(in oklab, #fff 6%, transparent); }
+.bd-up-strong { background: color-mix(in oklab, #10b981 22%, transparent); color: #d1fae5; }
+.bd-up { background: color-mix(in oklab, #10b981 10%, transparent); color: #a7f3d0; }
+.bd-down-strong { background: color-mix(in oklab, #f43f5e 22%, transparent); color: #ffe4e6; }
+.bd-down { background: color-mix(in oklab, #f43f5e 10%, transparent); color: #fecdd3; }
+.bd-flat { background: transparent; color: color-mix(in oklab, var(--text-secondary, #cbd5e1) 100%, transparent); }
+.bd-ceil { background: color-mix(in oklab, #8b5cf6 28%, transparent); color: #ede9fe; }
+.bd-floor { background: color-mix(in oklab, #38bdf8 28%, transparent); color: #e0f2fe; }
+
+.bd-scroll-rail {
+  position: relative;
+  margin-left: -0.25rem;
+  margin-right: -0.25rem;
+}
+.bd-scroll-scroller {
+  display: flex;
+  gap: 0.75rem;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scroll-behavior: auto;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-x;
+  padding: 0.25rem 0.5rem 0.5rem;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(148, 163, 184, 0.4) transparent;
+  will-change: scroll-position;
+}
+.bd-scroll-scroller > * {
+  scroll-snap-align: start;
+}
+@media (pointer: fine) {
+  .bd-scroll-scroller { scroll-snap-type: none; }
+}
+@media (pointer: coarse) {
+  .bd-scroll-scroller { scroll-snap-type: x mandatory; }
+}
