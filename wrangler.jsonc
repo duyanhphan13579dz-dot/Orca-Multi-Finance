@@ -1,54 +1,44 @@
 {
   // ==========================================================================
   // ORCA Financial — Cloudflare Workers config (OpenNext adapter)
-  // Thay thế vercel.json (region sin1) và netlify.toml của dự án gốc.
-  // Secrets KHÔNG đặt ở đây: dùng `wrangler secret put <KEY>` hoặc Dashboard
-  // (Workers & Pages → Settings → Variables and Secrets).
+  // Secrets KHÔNG đặt ở đây: `wrangler secret put <KEY>` hoặc Dashboard Secret.
+  // Plain vars dưới đây phải khớp Dashboard → Variables (không nhạy cảm).
   // ==========================================================================
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "orca-multi-finance",
   "main": ".open-next/worker.js",
   "compatibility_date": "2026-10-06",
-  // nodejs_compat: bắt buộc cho `pg`, `jose`, `node:crypto`, ... (scrypt, JWT)
   "compatibility_flags": ["nodejs_compat"],
   "assets": {
     "directory": ".open-next/assets",
     "binding": "ASSETS"
   },
-  // Tương đương region `sin1` của Vercel: đặt Worker gần backend/DB thay vì gần người dùng.
   "placement": { "mode": "smart" },
   "observability": { "enabled": true },
-  // Biến không nhạy cảm (plain Variables trên Dashboard).
-  // Secrets → wrangler secret put / Dashboard Secret:
-  //   DATABASE_URL, DATABASE_URL_UNPOOLED, JWT_SECRET, CRON_SECRET (cron-job.org),
+  // Secrets (Dashboard / wrangler secret put) — không commit giá trị:
+  //   DATABASE_URL, DATABASE_URL_UNPOOLED, JWT_SECRET, CRON_SECRET,
   //   OPENROUTER_API_KEY, GROQ_API_KEY, SSI_*, UPSTASH_REDIS_*
   "vars": {
-    "CLOUDFLARE_WORKERS": "1",
-    "NEXT_TELEMETRY_DISABLED": "1",
-    "NODE_ENV": "production",
-    "VNDIRECT_WS_DISABLED": "true",
-    "MULTI_SOURCE_MODE": "parallel",
-
-    // --- LLM model routing (OpenRouter-first + Groq last-resort) ---
-    "OPENROUTER_MODEL": "qwen/qwen3.8-27b:free",
+    "AI_LLM_CASCADE_MODE": "race",
+    "AI_LLM_FALLBACK_BACKEND": "groq",
+    "AI_LLM_MAX_CASCADE": "3",
     "AI_MODEL_ANALYSIS": "qwen/qwen3.8-27b:free",
     "AI_MODEL_ANALYSIS_FALLBACKS": "inclusionai/ling-3.0-flash-fin:free",
-    "AI_MODEL_REPORT": "qwen/qwen3.8-27b:free",
-    "AI_MODEL_REPORT_FALLBACKS": "inclusionai/ling-3.0-flash-fin:free",
     "AI_MODEL_REASONING": "inclusionai/ling-3.0-flash-fin:free",
     "AI_MODEL_REASONING_FALLBACKS": "qwen/qwen3.8-27b:free",
+    "AI_MODEL_REPORT": "qwen/qwen3.8-27b:free",
+    "AI_MODEL_REPORT_FALLBACKS": "inclusionai/ling-3.0-flash-fin:free",
+    "CLOUDFLARE_WORKERS": "1",
     "GROQ_MODEL": "llama-3.3-70b-versatile",
-    "AI_LLM_CASCADE_MODE": "race",
-    "AI_LLM_MAX_CASCADE": "3",
-    "AI_LLM_FALLBACK_BACKEND": "groq",
-
-    // --- Reports schedule (giờ VN) ---
+    "MULTI_SOURCE_MODE": "parallel",
+    "NEXT_TELEMETRY_DISABLED": "1",
+    "NODE_ENV": "production",
+    "OPENROUTER_MODEL": "qwen/qwen3.8-27b:free",
     "REPORT_AUTO_DAILY": "true",
     "REPORT_MORNING_TIME": "08:20",
-    "REPORT_SUMMARY_TIME": "15:50"
-
+    "REPORT_SUMMARY_TIME": "15:50",
+    "VNDIRECT_WS_DISABLED": "true"
     // "NEXT_PUBLIC_SITE_URL": "https://<domain-cua-ban>"
   }
-  // Tuỳ chọn — Postgres qua Hyperdrive (xem CLOUDFLARE.md, mục "Database"):
   // "hyperdrive": [{ "binding": "HYPERDRIVE", "id": "<hyperdrive-config-id>" }]
 }
