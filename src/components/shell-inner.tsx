@@ -19,6 +19,7 @@ import {
   Boxes,
   CandlestickChart,
   ChartNoAxesCombined,
+  ClipboardList,
   ChevronsLeft,
   ChevronsRight,
   Coins,
@@ -33,6 +34,11 @@ import {
   LogOut,
   Menu,
   Newspaper,
+  PiggyBank,
+  Calculator,
+  HeartPulse,
+  Target,
+  FileText,
   Settings,
   X,
 } from "lucide-react";
@@ -90,14 +96,36 @@ const NAV_SECTIONS: {
   },
 ];
 
-function isActivePath(pathname: string, href: string) {
-  if (href === "/") return pathname === "/";
-  return pathname === href || pathname.startsWith(href + "/");
+const PERSONAL_FINANCE_NAV: typeof NAV_SECTIONS = [
+  {
+    title: "TÀI CHÍNH CÁ NHÂN",
+    items: [
+      { href: "/personal-finance#dashboard", label: "Tổng quan", icon: Home },
+      { href: "/personal-finance#checkin", label: "Monthly check-in", icon: ClipboardList },
+      { href: "/personal-finance#cashflow_calc", label: "Dòng tiền & thuế", icon: Calculator },
+      { href: "/personal-finance#analytics", label: "Phân tích tài chính", icon: ChartNoAxesCombined },
+      { href: "/personal-finance#planning", label: "Kế hoạch & hưu trí", icon: Target },
+      { href: "/personal-finance#advice", label: "Lời khuyên", icon: HeartPulse },
+      { href: "/personal-finance#report", label: "Báo cáo", icon: FileText },
+      { href: "/personal-finance#privacy", label: "Quyền riêng tư", icon: PiggyBank },
+    ],
+  },
+  { title: "TÀI KHOẢN", items: [{ href: "/settings", label: "Cài đặt", icon: Settings }] },
+];
+
+function isActivePath(pathname: string, href: string, activePersonalTab: string) {
+  const [path, hash] = href.split("#");
+  if (hash) return pathname === path && activePersonalTab === hash;
+  if (path === "/") return pathname === "/";
+  return pathname === path || pathname.startsWith(path + "/");
 }
 
 export function ShellInner({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
+  const isPersonalFinanceMode = pathname.startsWith("/personal-finance");
+  const activeNavSections = isPersonalFinanceMode ? PERSONAL_FINANCE_NAV : NAV_SECTIONS;
+  const [activePersonalTab, setActivePersonalTab] = useState("dashboard");
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [sideAnimating, setSideAnimating] = useState(false);
@@ -106,6 +134,8 @@ export function ShellInner({ children }: { children: ReactNode }) {
   useEffect(() => {
     try {
       const v = localStorage.getItem("orca:sidebar:collapsed");
+      // Hydrate the user's persisted preference after the client mounts.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       if (v === "1") setCollapsed(true);
     } catch {
       /* ignore */
@@ -116,7 +146,23 @@ export function ShellInner({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
+    // Close the mobile drawer after route navigation.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setMobileOpen(false);
+  }, [pathname]);
+
+  useEffect(() => {
+    const syncTab = (event?: Event) => {
+      const requestedTab = event instanceof CustomEvent ? event.detail as string : window.location.hash.slice(1);
+      setActivePersonalTab(requestedTab || "dashboard");
+    };
+    syncTab();
+    window.addEventListener("hashchange", syncTab);
+    window.addEventListener("orca:personal-finance-tab", syncTab);
+    return () => {
+      window.removeEventListener("hashchange", syncTab);
+      window.removeEventListener("orca:personal-finance-tab", syncTab);
+    };
   }, [pathname]);
 
   const toggleCollapsed = useCallback(() => {
@@ -138,6 +184,8 @@ export function ShellInner({ children }: { children: ReactNode }) {
     (href: string, e: MouseEvent<HTMLAnchorElement>) => {
       if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
       e.preventDefault();
+      const hashTab = href.split("#")[1];
+      if (hashTab) window.dispatchEvent(new CustomEvent("orca:personal-finance-tab", { detail: hashTab }));
       markAppNavigating(320);
       signalNavStart();
       startTransition(() => router.push(href));
@@ -167,7 +215,7 @@ export function ShellInner({ children }: { children: ReactNode }) {
       label: string;
       icon: ComponentType<{ className?: string }>;
     }) => {
-      const active = isActivePath(pathname, href);
+      const active = isActivePath(pathname, href, activePersonalTab);
       return (
         <Link
           href={href}
@@ -191,30 +239,30 @@ export function ShellInner({ children }: { children: ReactNode }) {
       <div className="orca-sidebar flex h-full flex-col" style={{ width: SIDEBAR_EXPANDED }}>
         <div className="orca-sidebar-header relative flex min-h-[3.25rem] shrink-0 items-center gap-1 border-b border-border-subtle px-2 py-2">
           <Link
-            href="/"
-            onClick={(e) => onNav("/", e)}
+            href={isPersonalFinanceMode ? "/personal-finance" : "/"}
+            onClick={(e) => onNav(isPersonalFinanceMode ? "/personal-finance" : "/", e)}
             className="orca-sidebar-logo grid size-9 shrink-0 place-items-center rounded-lg"
-            title="ORCA Financial"
+            title={isPersonalFinanceMode ? "ORCA Personal Finance" : "ORCA Financial"}
           >
             <OrcaMark size={30} />
           </Link>
           <Link
-            href="/"
-            onClick={(e) => onNav("/", e)}
+            href={isPersonalFinanceMode ? "/personal-finance" : "/"}
+            onClick={(e) => onNav(isPersonalFinanceMode ? "/personal-finance" : "/", e)}
             className="orca-sidebar-brand-text min-w-0 flex-1 overflow-hidden pr-8"
-            title="ORCA Financial"
+            title={isPersonalFinanceMode ? "ORCA Personal Finance" : "ORCA Financial"}
           >
             <span className="block truncate text-[13px] font-bold tracking-wide text-text-primary">
-              ORCA<span className="text-accent-primary"> FINANCIAL</span>
+              ORCA<span className="text-accent-primary"> {isPersonalFinanceMode ? "PERSONAL" : "FINANCIAL"}</span>
             </span>
             <span className="block truncate text-[9px] font-medium uppercase tracking-[0.06em] text-text-muted">
-              Intelligent Investment
+              {isPersonalFinanceMode ? "Personal Finance" : "Intelligent Investment"}
             </span>
           </Link>
         </div>
 
         <nav className="orca-sidebar-nav min-h-0 flex-1 space-y-2.5 overflow-y-auto overscroll-contain px-2 py-2.5">
-          {NAV_SECTIONS.map((section) => (
+          {activeNavSections.map((section) => (
             <div key={section.title} className="space-y-0.5">
               <div className="orca-sidebar-section-title px-2.5 text-[10px] font-semibold uppercase tracking-wider text-text-muted">
                 {section.title}
@@ -245,7 +293,7 @@ export function ShellInner({ children }: { children: ReactNode }) {
       label: string;
       icon: ComponentType<{ className?: string }>;
     }) => {
-      const active = isActivePath(pathname, href);
+      const active = isActivePath(pathname, href, activePersonalTab);
       return (
         <Link
           href={href}
@@ -272,13 +320,13 @@ export function ShellInner({ children }: { children: ReactNode }) {
       <div className="flex h-full min-h-0 flex-col overflow-hidden">
         <div className="flex shrink-0 items-center gap-2 border-b border-border-subtle px-3 py-3.5">
           <Link
-            href="/"
+            href={isPersonalFinanceMode ? "/personal-finance" : "/"}
             onClick={(e) => {
-              onNav("/", e);
+              onNav(isPersonalFinanceMode ? "/personal-finance" : "/", e);
               setMobileOpen(false);
             }}
             className="min-w-0 flex-1"
-            title="ORCA Financial"
+            title={isPersonalFinanceMode ? "ORCA Personal Finance" : "ORCA Financial"}
           >
             <OrcaMobileBrand />
           </Link>
@@ -292,7 +340,7 @@ export function ShellInner({ children }: { children: ReactNode }) {
           </button>
         </div>
         <nav className="orca-sidebar-nav min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain px-2.5 py-3">
-          {NAV_SECTIONS.map((section) => (
+          {activeNavSections.map((section) => (
             <div key={section.title} className="space-y-0.5">
               <div className="mb-1.5 px-2.5 text-[10px] font-semibold uppercase tracking-wider text-text-muted">
                 {section.title}
@@ -315,10 +363,8 @@ export function ShellInner({ children }: { children: ReactNode }) {
   return (
     <div className="flex h-full min-h-0 flex-col bg-background-primary text-text-primary">
       <RouteProgress />
-      <PriceAlertEngine />
-      <div className="sticky top-0 z-30 shrink-0 border-b border-border-subtle bg-surface-base">
-        <TickerTape />
-      </div>
+      {!isPersonalFinanceMode && <PriceAlertEngine />}
+      {!isPersonalFinanceMode && <div className="sticky top-0 z-30 shrink-0 border-b border-border-subtle bg-surface-base"><TickerTape /></div>}
       <div className="relative z-10 flex min-h-0 flex-1">
         <aside
           className={
@@ -382,17 +428,19 @@ export function ShellInner({ children }: { children: ReactNode }) {
             >
               <Menu className="size-4.5" />
             </button>
-            <div className="min-w-0 flex-1">
-              <GlobalSearch />
+            <div className="flex shrink-0 items-center rounded-lg border border-border-subtle bg-surface-base p-0.5 text-[11px] sm:text-xs">
+              <button type="button" aria-pressed={!isPersonalFinanceMode} onClick={() => router.push("/")}
+                className={!isPersonalFinanceMode ? "rounded-md bg-accent-primary/15 px-2.5 py-1.5 font-semibold text-accent-primary" : "rounded-md px-2.5 py-1.5 text-text-muted hover:text-text-primary"}>
+                Đầu tư
+              </button>
+              <button type="button" aria-pressed={isPersonalFinanceMode} onClick={() => router.push("/personal-finance")}
+                className={isPersonalFinanceMode ? "rounded-md bg-accent-primary/15 px-2.5 py-1.5 font-semibold text-accent-primary" : "rounded-md px-2.5 py-1.5 text-text-muted hover:text-text-primary"}>
+                Tài chính cá nhân
+              </button>
             </div>
-            <NotifBell />
-            <Link
-              href="/settings"
-              className="grid size-9 place-items-center rounded-lg text-text-secondary transition-colors hover:bg-surface-elevated hover:text-text-primary"
-              aria-label="Cài đặt"
-            >
-              <Settings className="size-4" />
-            </Link>
+            {!isPersonalFinanceMode && <div className="min-w-0 flex-1"><GlobalSearch /></div>}
+            {!isPersonalFinanceMode && <NotifBell />}
+            {!isPersonalFinanceMode && <Link href="/settings" className="grid size-9 place-items-center rounded-lg text-text-secondary transition-colors hover:bg-surface-elevated hover:text-text-primary" aria-label="Cài đặt"><Settings className="size-4" /></Link>}
           </header>
           <main className="orca-main-scroll min-h-0 flex-1 overflow-y-auto">
             <ErrorBoundary name="page" resetKey={pathname}>
