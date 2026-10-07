@@ -10,11 +10,10 @@ import {
 import type { CommodityRow, Meta } from "../types";
 
 /**
- * Commodity domain — VietnamBiz Data portal ONLY.
- * Performance:
- *  - TTL 10m (Next data JSON ~12KB; cron still force-refreshes)
- *  - persistQuotes only on refresh (not every GET)
- *  - single batch DB insert
+ * Commodity domain — public multi-source:
+ *  Primary: VietnamBiz Data (data.vietnambiz.vn/goods) — VN board, no API key
+ *  Enrichment (parallel, best-effort): Yahoo Finance futures (GC=F, CL=F, …) for cross-check
+ * Performance: TTL 10m · persistQuotes on refresh · single batch DB insert
  */
 
 export interface CommodityUnavailable {
@@ -51,15 +50,75 @@ function groupRank(g: string): number {
   return i < 0 ? 99 : i;
 }
 
+/** Yahoo public tickers for cross-check (no API key). */
+const YAHOO_ENRICH: Array<{ match: RegExp; yahoo: string; label: string }> = [
+  { match: /vàng|gold|xau/i, yahoo: "GC=F", label: "yahoo:GC=F" },
+  { match: /bạc|silver|xag/i, yahoo: "SI=F", label: "yahoo:SI=F" },
+  { match: /dầu.*wti|wti|crude/i, yahoo: "CL=F", label: "yahoo:CL=F" },
+  { match: /brent/i, yahoo: "BZ=F", label: "yahoo:BZ=F" },
+  { match: /khí|natgas|natural gas/i, yahoo: "NG=F", label: "yahoo:NG=F" },
+  { match: /đồng|copper/i, yahoo: "HG=F", label: "yahoo:HG=F" },
+];
+
 async function fetchAll(): Promise<CommodityMarket> {
-  const snap = await fetchVietnambizGoods();
+  const [snap, yahooMap] = await Promise.all([
+    fetchVietnambizGoods(),
+    (async () => {
+      const out = new Map<string, { price: number; ts: number }>();
+      try {
+        const { getYahooQuote } = await import("../providers/yahoo");
+        const uniq = [...new Set(YAHOO_ENRICH.map((x) => x.yahoo))];
+        const settled = await Promise.allSettled(
+          uniq.map(async (y) => {
+            const q = await Promise.race([
+              getYahooQuote(y),
+              new Promise<null>((r) => setTimeout(() => r(null), 6_000)),
+            ]);
+            return { y, q };
+          }),
+        );
+        for (const s of settled) {
+          if (s.status !== "fulfilled" || !s.value.q) continue;
+          const price = Number(s.value.q.price);
+          if (!(price > 0)) continue;
+          out.set(s.value.y, { price, ts: Date.now() });
+        }
+      } catch {
+        /* optional enrichment */
+      }
+      return out;
+    })(),
+  ]);
+
   const fetchPath = snap.path ?? "unknown";
   const rows: CommodityRow[] = new Array(snap.items.length);
   const catalog: CommodityDef[] = new Array(snap.items.length);
+  const sourcesUsed = new Set<string>([`VietnamBiz Data (data.vietnambiz.vn/goods · ${fetchPath})`]);
 
   for (let i = 0; i < snap.items.length; i++) {
     const { def, quote } = snap.items[i];
     catalog[i] = def;
+    const records: CommodityRow["sourceRecords"] = [
+      {
+        source: quote.source,
+        price: quote.price,
+        timestamp: quote.timestamp ? new Date(quote.timestamp).toISOString() : null,
+        url: quote.url ?? "https://data.vietnambiz.vn/goods",
+      },
+    ];
+    const blob = `${def.nameVi} ${def.name} ${def.symbol} ${def.key}`;
+    for (const rule of YAHOO_ENRICH) {
+      if (!rule.match.test(blob)) continue;
+      const hit = yahooMap.get(rule.yahoo);
+      if (!hit) continue;
+      records.push({
+        source: rule.label,
+        price: hit.price,
+        timestamp: new Date(hit.ts).toISOString(),
+        url: `https://finance.yahoo.com/quote/${encodeURIComponent(rule.yahoo)}`,
+      });
+      sourcesUsed.add(`Yahoo Finance public (${rule.yahoo})`);
+    }
     rows[i] = {
       commodity: def.key,
       symbol: def.symbol,
@@ -74,14 +133,7 @@ async function fetchAll(): Promise<CommodityMarket> {
       unit: quote.unit ?? def.unit,
       currency: quote.currency ?? def.currency,
       updatedAt: quote.timestamp ? new Date(quote.timestamp).toISOString() : null,
-      sourceRecords: [
-        {
-          source: quote.source,
-          price: quote.price,
-          timestamp: quote.timestamp ? new Date(quote.timestamp).toISOString() : null,
-          url: quote.url ?? "https://data.vietnambiz.vn/goods",
-        },
-      ],
+      sourceRecords: records,
     };
   }
 
@@ -99,7 +151,7 @@ async function fetchAll(): Promise<CommodityMarket> {
   return {
     rows,
     unavailable: [],
-    sourcesUsed: [`VietnamBiz Data (data.vietnambiz.vn/goods · ${fetchPath})`],
+    sourcesUsed: [...sourcesUsed],
     errors: [],
     catalog,
   };
@@ -119,7 +171,7 @@ export async function getCommodityMarket(): Promise<{ data: CommodityMarket; met
       if (t > (latestTs ?? 0)) latestTs = t;
     }
     const meta = buildMeta({
-      source: "VietnamBiz Data · data.vietnambiz.vn/goods",
+      source: "VietnamBiz+Yahoo public",
       sourceTimestampMs: latestTs,
       cached: res.cached,
       stale: res.stale,
