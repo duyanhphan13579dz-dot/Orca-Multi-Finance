@@ -1,6 +1,37 @@
-# Biến môi trường cho `pnpm preview` (chạy thử trong runtime Workers cục bộ).
-# Sao chép thành `.dev.vars` (đã nằm trong .gitignore). Danh sách khoá đầy đủ: .env.example
+# Biến môi trường cho `pnpm preview` (runtime Workers cục bộ).
+# Sao chép thành `.dev.vars` (đã nằm trong .gitignore).
+# Danh sách đầy đủ + chú thích: .env.example
 NEXTJS_ENV=development
+NODE_ENV=development
+CLOUDFLARE_WORKERS=1
+NEXT_TELEMETRY_DISABLED=1
+VNDIRECT_WS_DISABLED=true
+
+# Secrets (điền giá trị thật local)
 DATABASE_URL=
 JWT_SECRET=
 CRON_SECRET=
+OPENROUTER_API_KEY=
+GROQ_API_KEY=
+UPSTASH_REDIS_URL=
+UPSTASH_REDIS_REST_TOKEN=
+SSI_CONSUMER_ID=
+SSI_CONSUMER_SECRET=
+SSI_PRIVATE_KEY=
+
+# LLM models (khớp production)
+OPENROUTER_MODEL=qwen/qwen3.8-27b:free
+GROQ_MODEL=llama-3.3-70b-versatile
+AI_MODEL_ANALYSIS=qwen/qwen3.8-27b:free
+AI_MODEL_ANALYSIS_FALLBACKS=inclusionai/ling-3.0-flash-fin:free
+AI_MODEL_REPORT=qwen/qwen3.8-27b:free
+AI_MODEL_REPORT_FALLBACKS=inclusionai/ling-3.0-flash-fin:free
+AI_MODEL_REASONING=inclusionai/ling-3.0-flash-fin:free
+AI_MODEL_REASONING_FALLBACKS=qwen/qwen3.8-27b:free
+AI_LLM_CASCADE_MODE=race
+AI_LLM_MAX_CASCADE=3
+AI_LLM_FALLBACK_BACKEND=groq
+
+REPORT_AUTO_DAILY=true
+REPORT_MORNING_TIME=08:20
+REPORT_SUMMARY_TIME=15:50

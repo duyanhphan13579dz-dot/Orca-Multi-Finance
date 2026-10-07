@@ -3,7 +3,7 @@
   // ORCA Financial — Cloudflare Workers config (OpenNext adapter)
   // Thay thế vercel.json (region sin1) và netlify.toml của dự án gốc.
   // Secrets KHÔNG đặt ở đây: dùng `wrangler secret put <KEY>` hoặc Dashboard
-  // (Workers & Pages → orca-multi-finance → Settings → Variables and Secrets).
+  // (Workers & Pages → Settings → Variables and Secrets).
   // ==========================================================================
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "orca-multi-finance",
@@ -18,11 +18,32 @@
   // Tương đương region `sin1` của Vercel: đặt Worker gần backend/DB thay vì gần người dùng.
   "placement": { "mode": "smart" },
   "observability": { "enabled": true },
-  // Biến không nhạy cảm. `CLOUDFLARE_WORKERS=1` báo cho src/lib/realtime/ws-policy.ts
-  // đây là môi trường serverless (WebSocket mặc định TẮT, giống VERCEL=1 trước đây).
+  // Biến không nhạy cảm (plain Variables trên Dashboard).
+  // Secrets (DATABASE_URL, JWT_SECRET, *_API_KEY, SSI_*, UPSTASH_*) → wrangler secret put
   "vars": {
     "CLOUDFLARE_WORKERS": "1",
-    "NEXT_TELEMETRY_DISABLED": "1"
+    "NEXT_TELEMETRY_DISABLED": "1",
+    "NODE_ENV": "production",
+    "VNDIRECT_WS_DISABLED": "true",
+
+    // --- LLM model routing (OpenRouter-first + Groq last-resort) ---
+    "OPENROUTER_MODEL": "qwen/qwen3.8-27b:free",
+    "AI_MODEL_ANALYSIS": "qwen/qwen3.8-27b:free",
+    "AI_MODEL_ANALYSIS_FALLBACKS": "inclusionai/ling-3.0-flash-fin:free",
+    "AI_MODEL_REPORT": "qwen/qwen3.8-27b:free",
+    "AI_MODEL_REPORT_FALLBACKS": "inclusionai/ling-3.0-flash-fin:free",
+    "AI_MODEL_REASONING": "inclusionai/ling-3.0-flash-fin:free",
+    "AI_MODEL_REASONING_FALLBACKS": "qwen/qwen3.8-27b:free",
+    "GROQ_MODEL": "llama-3.3-70b-versatile",
+    "AI_LLM_CASCADE_MODE": "race",
+    "AI_LLM_MAX_CASCADE": "3",
+    "AI_LLM_FALLBACK_BACKEND": "groq",
+
+    // --- Reports schedule (giờ VN) ---
+    "REPORT_AUTO_DAILY": "true",
+    "REPORT_MORNING_TIME": "08:20",
+    "REPORT_SUMMARY_TIME": "15:50"
+
     // "NEXT_PUBLIC_SITE_URL": "https://<domain-cua-ban>"
   }
   // Tuỳ chọn — Postgres qua Hyperdrive (xem CLOUDFLARE.md, mục "Database"):
