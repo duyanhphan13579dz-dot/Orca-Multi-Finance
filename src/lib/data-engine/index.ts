@@ -43,7 +43,8 @@ export {
 export type { SourceDomain, SourceCatalogEntry } from "./catalog";
 export { sourcesByDomain } from "./catalog";
 
-export { firstHealthy, withTimeout, rankSourceIds } from "./resilience";
+export { firstHealthy, raceHealthy, gatherHealthy, withTimeout, rankSourceIds } from "./resilience";
+export type { FallbackAttempt, FallbackResult } from "./resilience";
 export type { SourceSyncReport, SyncProbe } from "./source-sync";
 
 export {

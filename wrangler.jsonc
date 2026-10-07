@@ -27,6 +27,7 @@
     "NEXT_TELEMETRY_DISABLED": "1",
     "NODE_ENV": "production",
     "VNDIRECT_WS_DISABLED": "true",
+    "MULTI_SOURCE_MODE": "parallel",
 
     // --- LLM model routing (OpenRouter-first + Groq last-resort) ---
     "OPENROUTER_MODEL": "qwen/qwen3.8-27b:free",
