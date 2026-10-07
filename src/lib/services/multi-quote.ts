@@ -4,22 +4,28 @@ import * as vndirect from "../providers/vndirect";
 import { getVpsQuotes } from "../providers/vps";
 import { getVietcapQuotes } from "../providers/vietcap";
 import { getSsiIboardQuotes } from "../providers/ssi-iboard";
-import { getSsiQuotes, ssiFcConfigured } from "../providers/ssi-fcdata";
 import { getPublicQuotes } from "../providers/public-vn-feed";
 import { recordMarketSource, type MarketSourceId } from "../realtime/market-source-monitor";
 import { isCircuitOpen } from "../health";
 
 /**
- * Multi-source VN quotes — parallel tiers + priority merge (never average prices).
+ * Multi-source VN quotes — **chỉ nguồn công khai (public, không API key)**.
  *
- * Tier 1 (primary, song song): SSI FastConnect (nếu có credential) + VNDirect
- * Tier 2 (fallback, song song): VPS · SSI iBoard · Vietcap · public-vn
- *   — chỉ chạy khi coverage tier-1 < PRIMARY_COVERAGE_OK
- *   — early-exit khi coverage ≥ 0.98 hoặc hết budget
+ * | Source        | Endpoint (public)                                      |
+ * |---------------|--------------------------------------------------------|
+ * | vndirect      | api-finfo.vndirect.com.vn / finfo-api.vndirect.com.vn  |
+ * | vps           | bgapidatafeed.vps.com.vn/getliststockdata              |
+ * | ssi-iboard    | iboard-query.ssi.com.vn/stock/exchange/{hose|hnx|…}    |
+ * | vietcap       | iq.vietcap.com.vn/api/iq-insight-service (public)      |
+ * | public-vn     | gộp VPS + iBoard + Vietcap + Yahoo indices             |
  *
- * Mode env (optional):
- *   MULTI_SOURCE_MODE=parallel   (default) — tier parallel
- *   MULTI_SOURCE_MODE=aggressive — luôn fan-out tier-2 (bù gap + cross-check conflict)
+ * Không dùng SSI FastConnect (SSI_CONSUMER_* / SSI_FC_*) — API có credential,
+ * không thuộc nhóm public. Credential SSI vẫn dùng ở orderbook/derivatives riêng.
+ *
+ * Tier 1 (song song): VNDirect + VPS + SSI iBoard
+ * Tier 2 (song song, khi coverage thấp): Vietcap + public-vn
+ *
+ * MULTI_SOURCE_MODE=parallel|aggressive
  */
 
 export type MultiQuoteResult = {
@@ -30,20 +36,17 @@ export type MultiQuoteResult = {
   conflicts: number;
 };
 
-/** Higher = preferred when two sources quote the same symbol. */
 const PRICE_PRIORITY: Record<string, number> = {
-  "ssi-fcdata": 110,
   vndirect: 100,
-  vps: 90,
-  "ssi-iboard": 80,
-  vietcap: 40,
+  vps: 95,
+  "ssi-iboard": 90,
+  vietcap: 50,
   "public-vn": 30,
 };
 
 const rank = (src: string) => PRICE_PRIORITY[src] ?? 0;
 const CONFLICT_PCT = 0.015;
 const CONFLICT_ABS = 200;
-/** Fan-out tier-2 when tier-1 covers less than this fraction. */
 const PRIMARY_COVERAGE_OK = 0.85;
 const TIER1_TIMEOUT_MS = 4_500;
 const TIER2_TIMEOUT_MS = 5_500;
@@ -97,9 +100,8 @@ async function runSource(
     return { src, quotes, latencyMs, ok };
   } catch (e) {
     const latencyMs = Math.round(performance.now() - t0);
-    const msg = e instanceof Error ? e.message : String(e);
     recordMarketSource(src as MarketSourceId, false, latencyMs);
-    void msg;
+    void e;
     return { src, quotes: [], latencyMs, ok: false };
   }
 }
@@ -204,7 +206,6 @@ function finish(
   };
 }
 
-/** Run many source tasks in parallel; merge as each completes; early-exit on coverage. */
 async function runParallelTier(
   tasks: { src: string; p: Promise<SourceBatch> }[],
   bySym: Map<string, TaggedQuote>,
@@ -264,27 +265,21 @@ export async function getMultiQuotes(symbols: string[]): Promise<MultiQuoteResul
   let conflicts = 0;
   const mode = multiSourceMode();
 
-  // ── Tier 1: primary sources in PARALLEL ──────────────────────────────────
+  // Tier 1: PUBLIC primary — song song, không API key
   const tier1: { src: string; p: Promise<SourceBatch> }[] = [
     {
       src: "vndirect",
       p: runSource("vndirect", () => vndirect.getVndQuotes(uniq), TIER1_TIMEOUT_MS),
     },
+    {
+      src: "vps",
+      p: runSource("vps", () => asPack(() => getVpsQuotes(uniq)), TIER1_TIMEOUT_MS),
+    },
+    {
+      src: "ssi-iboard",
+      p: runSource("ssi-iboard", () => asPack(() => getSsiIboardQuotes(uniq)), TIER1_TIMEOUT_MS),
+    },
   ];
-  if (ssiFcConfigured()) {
-    tier1.unshift({
-      src: "ssi-fcdata",
-      p: runSource(
-        "ssi-fcdata",
-        async () => {
-          const r = await getSsiQuotes(uniq);
-          if (Array.isArray(r)) return { quotes: r, sourceTs: r.length ? Date.now() : null };
-          return r as QuotePack;
-        },
-        TIER1_TIMEOUT_MS,
-      ),
-    });
-  }
 
   conflicts += await runParallelTier(tier1, bySym, uniq, usedSources, latencies, batches, {
     budgetMs: TIER1_TIMEOUT_MS + 500,
@@ -298,16 +293,11 @@ export async function getMultiQuotes(symbols: string[]): Promise<MultiQuoteResul
     return finish(bySym, usedSources, latencies, batches, conflicts);
   }
 
-  // ── Tier 2: fallback sources in PARALLEL (fill gaps) ─────────────────────
+  // Tier 2: PUBLIC secondary
   const missing = uniq.filter((s) => !bySym.has(s));
   const target = mode === "aggressive" || missing.length === 0 ? uniq : missing;
 
   const tier2: { src: string; p: Promise<SourceBatch> }[] = [
-    { src: "vps", p: runSource("vps", () => asPack(() => getVpsQuotes(target)), TIER2_TIMEOUT_MS) },
-    {
-      src: "ssi-iboard",
-      p: runSource("ssi-iboard", () => asPack(() => getSsiIboardQuotes(target)), TIER2_TIMEOUT_MS),
-    },
     {
       src: "vietcap",
       p: runSource("vietcap", () => getVietcapQuotes(target), TIER2_TIMEOUT_MS),
