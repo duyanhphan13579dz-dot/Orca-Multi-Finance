@@ -3,44 +3,26 @@ import { cached } from "../cache";
 import { buildMeta } from "../freshness";
 import * as binance from "../providers/binance";
 import { binanceWs, ensureBinanceWsStarted } from "../realtime/binance-ws";
-import { candleAggregator } from "../realtime/candles";
-import { eventBus } from "../events";
-import { logQualityEvent, validateQuote } from "../quality";
 import { analyzeSeries, detectPatterns } from "../technical";
-import type { CandlePattern, CryptoMarketRow, Meta, OhlcvBar, TechnicalSnapshot } from "../types";
+import { validateQuote, logQualityEvent } from "../quality";
+import { candleAggregator } from "../realtime/candle-aggregator";
+import { eventBus } from "../realtime/event-bus";
+import type { Meta, OhlcvBar, TechnicalSnapshot, CandlePattern } from "../types";
 
-const LEVERAGED_RE = /(UP|DOWN|BULL|BEAR)USDT$/i;
-const EXCLUDED_BASES = new Set(["USDC", "FDUSD", "TUSD", "BUSD", "DAI", "EUR", "GBP", "TRY", "BRL"]);
-
-interface AllMarket {
-  rows: CryptoMarketRow[];
-  fetchedAt: number;
-  overlaid: number;
-  invalid: number;
-  suspect: number;
-}
-
-function toRow(t: binance.BinanceTicker24h): CryptoMarketRow | null {
-  if (!t.symbol.endsWith("USDT") || LEVERAGED_RE.test(t.symbol)) return null;
-  const base = t.symbol.replace(/USDT$/, "");
-  if (EXCLUDED_BASES.has(base)) return null;
-  const price = Number(t.lastPrice);
-  if (!Number.isFinite(price) || price <= 0) return null;
-  return {
-    symbol: t.symbol,
-    baseAsset: base,
-    assetClass: "crypto",
-    price,
-    change: Number(t.priceChange),
-    changePercent: Number(t.priceChangePercent),
-    open: Number(t.openPrice),
-    high: Number(t.highPrice),
-    low: Number(t.lowPrice),
-    volume: Number(t.volume),
-    quoteVolume: Number(t.quoteVolume),
-    trades24h: t.count ?? null,
-    updatedAt: t.closeTime ? new Date(t.closeTime).toISOString() : null,
-  };
+export interface CryptoMarketRow {
+  symbol: string;
+  baseAsset: string;
+  assetClass: "crypto";
+  price: number;
+  change: number | null;
+  changePercent: number | null;
+  open: number | null;
+  high: number | null;
+  low: number | null;
+  volume: number | null;
+  quoteVolume: number | null;
+  trades24h: number | null;
+  updatedAt: string | null;
 }
 
 export interface CryptoSummary {
@@ -52,6 +34,36 @@ export interface CryptoSummary {
   btcChangePercent: number | null;
   ethChangePercent: number | null;
   fetchedAt: string;
+}
+
+type AllMarket = {
+  rows: CryptoMarketRow[];
+  fetchedAt: number;
+  overlaid: number;
+  invalid: number;
+  suspect: number;
+};
+
+function toRow(t: binance.BinanceTicker24h): CryptoMarketRow | null {
+  const price = Number(t.lastPrice);
+  if (!(price > 0)) return null;
+  const symbol = String(t.symbol ?? "").toUpperCase();
+  if (!symbol.endsWith("USDT")) return null;
+  return {
+    symbol,
+    baseAsset: symbol.replace(/USDT$/, ""),
+    assetClass: "crypto",
+    price,
+    change: Number(t.priceChange) || null,
+    changePercent: Number(t.priceChangePercent) || null,
+    open: Number(t.openPrice) || null,
+    high: Number(t.highPrice) || null,
+    low: Number(t.lowPrice) || null,
+    volume: Number(t.volume) || null,
+    quoteVolume: Number(t.quoteVolume) || null,
+    trades24h: Number(t.count) || null,
+    updatedAt: t.closeTime ? new Date(t.closeTime).toISOString() : null,
+  };
 }
 
 export async function getCryptoMarkets(): Promise<{ rows: CryptoMarketRow[]; summary: CryptoSummary; meta: Meta } | null> {
@@ -115,15 +127,19 @@ export async function getCryptoMarkets(): Promise<{ rows: CryptoMarketRow[]; sum
     const { rows, fetchedAt } = res.value;
     const advancers = rows.filter((r) => (r.changePercent ?? 0) > 0).length;
     const decliners = rows.filter((r) => (r.changePercent ?? 0) < 0).length;
-    const avg = rows.reduce((a, r) => a + (r.changePercent ?? 0), 0) / Math.max(rows.length, 1);
+    const avg = rows.length
+      ? rows.reduce((a, r) => a + (r.changePercent ?? 0), 0) / rows.length
+      : 0;
+    const btc = rows.find((r) => r.symbol === "BTCUSDT");
+    const eth = rows.find((r) => r.symbol === "ETHUSDT");
     const summary: CryptoSummary = {
       marketCount: rows.length,
       advancers,
       decliners,
       avgChangePercent: avg,
       totalQuoteVolume: rows.reduce((a, r) => a + (r.quoteVolume ?? 0), 0),
-      btcChangePercent: rows.find((r) => r.baseAsset === "BTC")?.changePercent ?? null,
-      ethChangePercent: rows.find((r) => r.baseAsset === "ETH")?.changePercent ?? null,
+      btcChangePercent: btc?.changePercent ?? null,
+      ethChangePercent: eth?.changePercent ?? null,
       fetchedAt: new Date(fetchedAt).toISOString(),
     };
     const meta = buildMeta({
@@ -131,9 +147,10 @@ export async function getCryptoMarkets(): Promise<{ rows: CryptoMarketRow[]; sum
       sourceTimestampMs: fetchedAt,
       cached: res.cached,
       stale: res.stale,
-      note: res.value.invalid > 0 || res.value.suspect > 0
-        ? `Data quality: ${res.value.invalid} record INVALID (đã loại), ${res.value.suspect} SUSPECT (đã ghi log)`
-        : undefined,
+      note:
+        res.value.invalid > 0 || res.value.suspect > 0
+          ? `Data quality: ${res.value.invalid} record INVALID (đã loại), ${res.value.suspect} SUSPECT (đã ghi log)`
+          : undefined,
       slas: { liveSlaMs: 30_000, freshSlaMs: 120_000, delayedSlaMs: 600_000 },
     });
     meta.qualityStatus = res.value.invalid > 0 || res.value.suspect > 0 ? "SUSPECT" : "VALID";
@@ -206,27 +223,92 @@ export interface CryptoDetail {
 export async function getCryptoKlines(symbol: string, interval = "1h", limit = 200): Promise<{ bars: OhlcvBar[]; meta: Meta } | null> {
   const sym = symbol.toUpperCase();
   try {
-    const res = await cached(`crypto:klines:${sym}:${interval}:${limit}`, {
+    const res = await cached(`crypto:klines:ms:${sym}:${interval}:${limit}`, {
       ttlMs: 25_000,
       staleMs: 15 * 60_000,
-      producer: async () => ({ bars: await binance.getKlines(sym, interval, limit), fetchedAt: Date.now() }),
+      producer: async () => {
+        type Cand = { bars: OhlcvBar[]; source: string };
+        const jobs: Promise<Cand | null>[] = [
+          (async () => {
+            try {
+              const bars = await Promise.race([
+                binance.getKlines(sym, interval, limit),
+                new Promise<null>((r) => setTimeout(() => r(null), 10_000)),
+              ]);
+              if (bars?.length) return { bars, source: "binance" };
+            } catch {
+              /* */
+            }
+            return null;
+          })(),
+          (async () => {
+            try {
+              const { getYahooChart, yahooCryptoSymbol, yahooIntervalFor } = await import("../providers/yahoo");
+              const ySym = yahooCryptoSymbol(sym);
+              const tf =
+                interval === "1m" || interval === "5m" || interval === "15m" || interval === "30m"
+                  ? interval
+                  : interval === "1h" || interval === "4h"
+                    ? interval
+                    : "1d";
+              const cfg = yahooIntervalFor(tf);
+              if (!cfg) return null;
+              const y = await Promise.race([
+                getYahooChart(ySym, cfg.interval, cfg.range),
+                new Promise<null>((r) => setTimeout(() => r(null), 10_000)),
+              ]);
+              const candles = y?.candles ?? [];
+              if (candles.length >= 10) {
+                const bars: OhlcvBar[] = candles.slice(-limit).map((c) => ({
+                  time: c.time,
+                  open: c.open,
+                  high: c.high,
+                  low: c.low,
+                  close: c.close,
+                  volume: c.volume ?? 0,
+                }));
+                return { bars, source: "yahoo-crypto" };
+              }
+            } catch {
+              /* */
+            }
+            return null;
+          })(),
+        ];
+        const settled = await Promise.all(jobs);
+        const ok = settled.filter((x): x is Cand => Boolean(x?.bars?.length));
+        if (!ok.length) throw new Error(`crypto klines empty ${sym}`);
+        ok.sort((a, b) => {
+          const aOk = a.bars.length >= 20 ? 1 : 0;
+          const bOk = b.bars.length >= 20 ? 1 : 0;
+          if (aOk !== bOk) return bOk - aOk;
+          if (a.source === "binance" && b.source !== "binance") return -1;
+          if (b.source === "binance" && a.source !== "binance") return 1;
+          return b.bars.length - a.bars.length;
+        });
+        return {
+          bars: ok[0]!.bars,
+          source: ok.map((x) => x.source).join("+"),
+          fetchedAt: Date.now(),
+        };
+      },
     });
-    const lastBar = res.value.bars[res.value.bars.length - 1];
-    const meta = buildMeta({
-      source: "binance",
-      sourceTimestampMs: lastBar ? lastBar.time : res.value.fetchedAt,
-      cached: res.cached,
-      stale: res.stale,
-      slas: { liveSlaMs: 120_000, freshSlaMs: 300_000, delayedSlaMs: 3_600_000 },
-    });
-    return { bars: res.value.bars, meta };
+    return {
+      bars: res.value.bars,
+      meta: buildMeta({
+        source: (res.value as { source?: string }).source ?? "binance",
+        sourceTimestampMs: res.value.bars[res.value.bars.length - 1]?.time ?? Date.now(),
+        cached: res.cached,
+        stale: res.stale,
+      }),
+    };
   } catch {
     return null;
   }
 }
 
 export async function getCryptoDetail(symbol: string, interval = "1h"): Promise<{ detail: CryptoDetail; meta: Meta } | null> {
-  const sym = symbol.toUpperCase().endsWith("USDT") ? symbol.toUpperCase() : `${symbol.toUpperCase()}USDT`;
+  const sym = symbol.toUpperCase();
   const [tickerRes, klinesRes, fundingRes, oiRes] = await Promise.allSettled([
     binance.getSpotTicker(sym),
     getCryptoKlines(sym, interval, 200),
@@ -269,9 +351,9 @@ export async function getCryptoDetail(symbol: string, interval = "1h"): Promise<
     fundingStatus: funding ? "ok" : "unavailable",
   };
   const meta = buildMeta({
-    source: "binance",
+    source: klinesRes.status === "fulfilled" && klinesRes.value?.meta?.source ? String(klinesRes.value.meta.source) : "binance",
     sourceTimestampMs: t.closeTime ?? Date.now(),
-    note: funding ? undefined : "Dữ liệu futures (funding/OI) tạm thờ không khả dụng từ vị trí máy chủ",
+    note: funding ? undefined : "Dữ liệu futures (funding/OI) tạm thời không khả dụng từ vị trí máy chủ",
     partial: !funding,
   });
   return { detail, meta };
