@@ -1,1 +1,2 @@
-PATCHED
+import "server-only";
+export {};
