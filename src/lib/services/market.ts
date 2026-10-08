@@ -90,11 +90,11 @@ const ASIA_YAHOO: { yahoo: string; code: string; label: string }[] = [
 const US_SYMBOLS = ["SPY", "QQQ", "DIA", "IWM"] as const;
 const FOREX_MAJORS = new Set(["EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCNH", "USDCHF", "USDCAD"]);
 
-const BUDGET_VN_MS = 2_200;
-const BUDGET_ASIA_MS = 2_400;
-const BUDGET_US_MS = 2_400;
-const BUDGET_FX_MS = 2_200;
-const BUDGET_CRYPTO_MS = 1_800;
+const BUDGET_VN_MS = 4_500;
+const BUDGET_ASIA_MS = 3_200;
+const BUDGET_US_MS = 3_200;
+const BUDGET_FX_MS = 3_000;
+const BUDGET_CRYPTO_MS = 2_500;
 
 const SNAP_TTL_MS = 25_000;
 const SNAP_STALE_MS = 180_000;
@@ -127,12 +127,10 @@ type PartialPack = {
 
 async function loadVn(): Promise<PartialPack> {
   const empty: PartialPack = { indices: [], sources: [] };
-  try {
-    const { getVnIndices } = await import("@/lib/services/stocks");
-    const pack = await getVnIndices();
-    if (!pack?.items?.length) return empty;
-    const priority = ["VNINDEX", "VN30", "HNX", "HNXINDEX", "UPCOM", "HNX30", "VN100"];
-    const sorted = [...pack.items].sort((a, b) => {
+  const priority = ["VNINDEX", "VN30", "HNX", "HNXINDEX", "UPCOM", "HNX30", "VN100"];
+
+  const toRows = (items: Array<{ code: string; value: number; change?: number | null; changePercent?: number | null }>, source: string): PartialPack => {
+    const sorted = [...items].sort((a, b) => {
       const ia = priority.indexOf(a.code);
       const ib = priority.indexOf(b.code);
       return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
@@ -145,12 +143,31 @@ async function loadVn(): Promise<PartialPack> {
         label: vnLabel(i.code),
         region: "vn",
         value: i.value,
-        change: (i as { change?: number }).change ?? null,
+        change: i.change ?? null,
         changePercent: i.changePercent ?? null,
         href: vnHref(i.code),
       });
     }
-    return { indices, sources: [String(pack.meta?.source ?? "vndirect")] };
+    return { indices, sources: indices.length ? [source] : [] };
+  };
+
+  try {
+    const { getVnIndices, getVnMarketBoard } = await import("@/lib/services/stocks");
+    // Primary: multi-source indices (SSI / VNDirect / public)
+    const pack = await getVnIndices();
+    if (pack?.items?.length) {
+      return toRows(pack.items as any, String(pack.meta?.source ?? "vndirect"));
+    }
+    // Soft fallback: market board (indices + liquid quotes) so dashboard never blank
+    try {
+      const board = await getVnMarketBoard();
+      if (board?.indices?.length) {
+        return toRows(board.indices as any, String(board.meta?.source ?? "board"));
+      }
+    } catch {
+      /* board soft-fail */
+    }
+    return empty;
   } catch {
     return empty;
   }
@@ -293,20 +310,56 @@ async function loadForex(): Promise<PartialPack> {
 
 async function loadCryptoTip(): Promise<PartialPack> {
   const empty: PartialPack = { indices: [], sources: [], cryptoTip: [] };
+  // Parallel public sources: CoinGecko + Binance 24h ticker (BTC/ETH)
+  const cgP = (async (): Promise<GlobalPulseRow[]> => {
+    try {
+      const { getCoinGeckoSimplePrices } = await import("@/lib/providers/coingecko");
+      const cg = await getCoinGeckoSimplePrices();
+      return (cg.rows ?? [])
+        .filter((r) => r.symbol === "BTCUSDT" || r.symbol === "ETHUSDT")
+        .map((r) => ({
+          symbol: r.baseAsset,
+          price: r.price,
+          changePercent: r.changePercent,
+          source: "coingecko",
+        }));
+    } catch {
+      return [];
+    }
+  })();
+  const bnP = (async (): Promise<GlobalPulseRow[]> => {
+    try {
+      const { getAllSpotTickers } = await import("@/lib/providers/binance");
+      const tickers = await getAllSpotTickers();
+      const want = new Set(["BTCUSDT", "ETHUSDT"]);
+      const rows: GlobalPulseRow[] = [];
+      for (const t of tickers ?? []) {
+        if (!want.has(t.symbol)) continue;
+        const price = Number(t.lastPrice);
+        if (!(price > 0)) continue;
+        rows.push({
+          symbol: t.symbol.replace(/USDT$/, ""),
+          price,
+          changePercent: Number(t.priceChangePercent) || null,
+          source: "binance",
+        });
+      }
+      return rows;
+    } catch {
+      return [];
+    }
+  })();
   try {
-    const { getCoinGeckoSimplePrices } = await import("@/lib/providers/coingecko");
-    const cg = await getCoinGeckoSimplePrices();
-    const cryptoTip: GlobalPulseRow[] = cg.rows
-      .filter((r) => r.symbol === "BTCUSDT" || r.symbol === "ETHUSDT")
-      .map((r) => ({
-        symbol: r.baseAsset,
-        price: r.price,
-        changePercent: r.changePercent,
-        source: "coingecko",
-      }));
+    const [cgRows, bnRows] = await Promise.all([cgP, bnP]);
+    // Prefer CoinGecko when present; fill gaps from Binance
+    const by = new Map<string, GlobalPulseRow>();
+    for (const r of bnRows) by.set(r.symbol, r);
+    for (const r of cgRows) by.set(r.symbol, r); // cg wins
+    const cryptoTip = [...by.values()];
+    const sources = [...new Set(cryptoTip.map((r) => r.source))];
     return {
       indices: [],
-      sources: cryptoTip.length ? ["coingecko"] : [],
+      sources,
       cryptoTip,
     };
   } catch {
