@@ -21,7 +21,7 @@
     "ssc:crawl": "node --import tsx -e \"const { refreshSscListingIndex } = require('./src/lib/financial/official/ssc-listing-index.ts'); refreshSscListingIndex().then(i => console.log(JSON.stringify({ tickers: i.tickerCount, rows: i.rowCount, at: i.builtAt }, null, 2))).catch(e => { console.error(e); process.exit(1); })\""
   },
   "dependencies": {
-    "@opennextjs/cloudflare": "1.20.1",
+    "@opennextjs/cloudflare": "1.20.9",
     "@tailwindcss/postcss": "4.1.17",
     "@types/node": "22.19.15",
     "@types/pg": "8.18.0",
@@ -35,9 +35,9 @@
     "lightweight-charts": "^5.2.1",
     "lucide-react": "^0.545.0",
     "mammoth": "^1.13.0",
-    "next": "16.2.6",
+    "next": "16.3.8",
     "pg": "8.20.0",
-    "postcss": "8.5.8",
+    "postcss": "8.5.29",
     "react": "19.2.6",
     "react-dom": "19.2.6",
     "server-only": "^0.0.1",
@@ -49,7 +49,7 @@
   "devDependencies": {
     "drizzle-kit": "0.31.10",
     "eslint": "9.39.4",
-    "eslint-config-next": "16.2.6",
+    "eslint-config-next": "16.3.8",
     "wrangler": "^4.148.0"
   }
 }
