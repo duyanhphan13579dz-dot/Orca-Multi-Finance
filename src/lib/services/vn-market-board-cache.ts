@@ -125,7 +125,9 @@ export async function loadVnMarketBoardByExchange(
         .map((r) => r.symbol),
     );
     if (codes.size) {
-      const quotes = board.quotes.filter((q) => codes.has(String(q.symbol ?? "").toUpperCase()));
+      let quotes = board.quotes.filter((q) => codes.has(String(q.symbol ?? "").toUpperCase()));
+      const limit = Number(opts?.limit ?? 0);
+      if (Number.isFinite(limit) && limit > 0) quotes = quotes.slice(0, Math.floor(limit));
       return { ...board, quotes, universeSize: quotes.length };
     }
   } catch {

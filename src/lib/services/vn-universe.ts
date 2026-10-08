@@ -1,6 +1,6 @@
 import "server-only";
 import { cached } from "../cache";
-import { fetchVndFullUniverse, type VndUniverseItem } from "../providers/vndirect-universe";
+import { fetchVndFullUniverseWithMeta, type VndUniverseItem } from "../providers/vndirect-universe";
 import { getSsiIboardUniverse } from "../providers/ssi-iboard";
 import { LIQUID_BOARD } from "../providers/public-vn-feed";
 
@@ -9,6 +9,7 @@ import { LIQUID_BOARD } from "../providers/public-vn-feed";
  *
  * Chain (public, no API key):
  *  1. VNDirect DStock /v4/stocks (LISTED + recent listings) merged with SSI iBoard boards
+ *     inside the provider (`fetchVndFullUniverse`)
  *  2. SSI iBoard HOSE/HNX/UPCoM boards alone
  *  3. LIQUID_BOARD fallback (clearly labelled partial)
  *
@@ -52,6 +53,7 @@ function dedupe(rows: VnUniverseRow[]): VnUniverseRow[] {
     const prev = bySym.get(symbol);
     bySym.set(symbol, {
       symbol,
+      // First non-null wins: the provider lists the richest row first.
       name: prev?.name ?? r.name ?? null,
       exchange: prev?.exchange ?? r.exchange ?? null,
       industry: prev?.industry ?? r.industry ?? null,
@@ -63,13 +65,24 @@ function dedupe(rows: VnUniverseRow[]): VnUniverseRow[] {
 }
 
 async function produceUniverse(): Promise<VnUniversePack> {
+  // `fetchVndFullUniverse()` already merges SSI iBoard inside the provider, so this
+  // branch is "VNDirect listing ∥ iBoard" and never re-fetches iBoard on its own.
   try {
-    const rows = await fetchVndFullUniverse();
-    if (rows.length) {
-      const deduped = dedupe(rows);
+    const pack = await fetchVndFullUniverseWithMeta();
+    if (pack.rows.length) {
+      const deduped = dedupe(pack.rows);
+      // Label what actually answered: the IPO seed alone must never look like a
+      // successful VNDirect + iBoard crawl.
+      const source = pack.fetchedFromVndirect
+        ? pack.fetchedFromIboard
+          ? "vndirect+ssi-iboard"
+          : "vndirect"
+        : pack.fetchedFromIboard
+          ? "ssi-iboard"
+          : "seed-only";
       return {
         rows: deduped,
-        source: deduped.length >= MIN_FULL_UNIVERSE ? "vndirect+ssi-iboard" : "vndirect-partial",
+        source,
         partial: deduped.length < MIN_FULL_UNIVERSE,
       };
     }

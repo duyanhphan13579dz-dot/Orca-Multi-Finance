@@ -47,7 +47,7 @@ export async function GET(req: Request) {
       ? await loadVnMarketBoardByExchange(exchange, { limit })
       : await loadVnMarketBoardCached();
     if (full && (full.quotes.length || full.indices.length)) {
-      const pack = limit && !exchange ? filterVnMarketBoard(full, { limit }) : full;
+      const pack = limit ? filterVnMarketBoard(full, { limit }) : full;
       return ok(
         {
           indices: pack.indices,

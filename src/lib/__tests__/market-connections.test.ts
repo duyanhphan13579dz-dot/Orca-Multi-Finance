@@ -6,6 +6,7 @@
  *  - public OHLCV candidate selection (entrade / VPS-hist / Yahoo VN)
  *  - Yahoo VN symbol mapping (`.VN` tickers, `^` indices)
  *  - market source monitor id mapping
+ *  - universe merge (VNDirect listing ∥ SSI iBoard) with stubbed providers
  *  - universe filter + source catalog integrity / probe coverage
  *
  * Run: pnpm test
@@ -24,13 +25,14 @@ import {
 import { selectBestOhlcv, type PublicOhlcvPack } from "../providers/public-vn-feed";
 import { yahooSymbolForVnEquity, isVnIndexYahooSymbol } from "../providers/yahoo";
 import { marketSourceIdFor } from "../realtime/market-source-monitor";
-import { filterVnUniverse, liquidBoardUniverse, type VnUniverseRow } from "../services/vn-universe";
+import { filterVnUniverse, getVnUniverse, liquidBoardUniverse, type VnUniverseRow } from "../services/vn-universe";
 import { tfsFor, vnStockChartPlan } from "../chart-const";
 import { normalizeQuoteScale, samePriceUnit } from "../quote-normalize";
 import { filterVnMarketBoard, type VnMarketBoard } from "../services/vn-market-board-cache";
 import { SOURCE_CATALOG, catalogSummary } from "../data-engine/catalog";
 import { probedSourceIds, probeEnvRequirement } from "../data-engine/source-sync";
 import { PUBLIC_SOURCE_CATALOG } from "../providers/public-source-catalog";
+import { clearSsiBoardMemo } from "../providers/ssi-iboard";
 
 const quote = (symbol: string, price: number, extra: Partial<Quote> = {}): Quote => ({
   symbol,
@@ -268,5 +270,99 @@ test("connectivity probes: env-gated sources are probed with their real credenti
     assert.ok(probeEnvRequirement("polygon").length > 0);
   } finally {
     process.env = env;
+  }
+});
+
+/** Minimal fetch stub: routes by URL substring, counts hits per route. */
+function stubFetch(routes: Array<[string, unknown]>): { calls: Map<string, number>; restore: () => void } {
+  const calls = new Map<string, number>();
+  const original = globalThis.fetch;
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+    for (const [needle, payload] of routes) {
+      if (url.includes(needle)) {
+        calls.set(needle, (calls.get(needle) ?? 0) + 1);
+        return new Response(JSON.stringify(payload), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+    }
+    throw new Error(`unexpected fetch: ${url}`);
+  }) as typeof fetch;
+  return { calls, restore: () => { globalThis.fetch = original; } };
+}
+
+test("getVnUniverse: VNDirect listing merged with SSI iBoard floor codes", async () => {
+  const vndListed = {
+    data: [
+      { code: "VCB", companyName: "Vietcombank", floor: null, industryName: "Ngân hàng", status: "LISTED" },
+      { code: "HPG", companyName: "Hoà Phát", floor: "HOSE", industryName: "Thép", status: "LISTED" },
+    ],
+    totalPages: 1,
+  };
+  const stub = stubFetch([
+    ["q=type:STOCK~status:LISTED", vndListed],
+    ["q=type:STOCK&size=200", { data: [], totalPages: 1 }],
+    ["/stock/exchange/hose", { data: [{ stockSymbol: "VCB", stockName: "Vietcombank" }, { stockSymbol: "TCX", stockName: "Techcombank Securities" }] }],
+    ["/stock/exchange/hnx", { data: [{ stockSymbol: "SHS", stockName: "Sài Gòn Hà Nội" }] }],
+    ["/stock/exchange/upcom", { data: [{ stockSymbol: "UP1", stockName: "Mã UPCOM" }] }],
+  ]);
+  clearSsiBoardMemo();
+  try {
+    const pack = await getVnUniverse({ skipCache: true });
+    assert.equal(pack.source, "vndirect+ssi-iboard");
+    assert.equal(pack.partial, true); // stub rows + IPO seed < MIN_FULL_UNIVERSE (200)
+    const bySym = new Map(pack.rows.map((r) => [r.symbol, r]));
+    // iBoard fills the exchange gap the listing row left empty…
+    assert.equal(bySym.get("VCB")?.exchange, "HOSE");
+    // …while the richer VNDirect metadata is preserved.
+    assert.equal(bySym.get("VCB")?.industry, "Ngân hàng");
+    assert.equal(bySym.get("HPG")?.exchange, "HOSE");
+    // …and iBoard-only listings still land in the universe.
+    assert.ok(bySym.has("TCX"));
+    assert.ok(bySym.has("SHS"));
+    assert.equal(bySym.get("SHS")?.exchange, "HNX");
+    // sorted, no duplicates
+    const symbols = pack.rows.map((r) => r.symbol);
+    assert.deepEqual(symbols, [...symbols].sort((a, b) => a.localeCompare(b)));
+    assert.equal(new Set(symbols).size, symbols.length);
+  } finally {
+    stub.restore();
+  }
+});
+
+test("getVnUniverse: iBoard-only when the listing endpoint is down", async () => {
+  // The iBoard boards are memoised for 8s, so a fresh scenario must clear it first.
+  clearSsiBoardMemo();
+  const stub = stubFetch([
+    ["/stock/exchange/hose", { data: [{ stockSymbol: "VIC", stockName: "Vingroup" }] }],
+    ["/stock/exchange/hnx", { data: [] }],
+    ["/stock/exchange/upcom", { data: [] }],
+  ]);
+  try {
+    const pack = await getVnUniverse({ skipCache: true });
+    // Honest label: the listing endpoint never answered, so this must not claim "vndirect".
+    assert.equal(pack.source, "ssi-iboard");
+    const bySym = new Map(pack.rows.map((r) => [r.symbol, r]));
+    assert.equal(bySym.get("VIC")?.exchange, "HOSE");
+    assert.ok(pack.partial);
+  } finally {
+    stub.restore();
+    clearSsiBoardMemo();
+  }
+});
+
+test("getVnUniverse: seed-only label when every crawl source is down", async () => {
+  clearSsiBoardMemo();
+  const stub = stubFetch([["/never-matched", { data: [] }]]);
+  try {
+    const pack = await getVnUniverse({ skipCache: true });
+    assert.equal(pack.source, "seed-only");
+    assert.ok(pack.partial);
+    assert.ok(pack.rows.length > 0, "IPO seed keeps the universe non-empty");
+  } finally {
+    stub.restore();
+    clearSsiBoardMemo();
   }
 });
