@@ -1,7 +1,14 @@
 /* Shared domain types + data-freshness model used across the whole platform. */
 import type { MoneyFlowAnalysis } from "./engines/money-flow";
 
-export type FreshnessStatus = "LIVE" | "FRESH" | "DELAYED" | "STALE" | "DEGRADED" | "UNAVAILABLE";
+export type FreshnessStatus =
+  | "LIVE"
+  | "FRESH"
+  | "DELAYED"
+  | "STALE"
+  | "DEGRADED"
+  | "UNAVAILABLE"
+  | "LATEST_AVAILABLE";
 export type AssetClass = "stock" | "crypto" | "forex" | "commodity" | "index" | "derivative";
 export type QualityStatus = "VALID" | "SUSPECT" | "INVALID" | "STALE";
 
@@ -9,11 +16,11 @@ export interface Meta {
   source: string;
   sourceTimestamp: string | null;
   providerReceivedAt?: string | null;
-  ingestedAt: string;
+  ingestedAt?: string;
   freshness: FreshnessStatus;
   ageMs: number | null;
-  cached: boolean;
-  stale: boolean;
+  cached?: boolean;
+  stale?: boolean;
   latencyMs?: number;
   qualityStatus?: QualityStatus;
   note?: string;
@@ -24,8 +31,18 @@ export interface Meta {
   outputValidation?: { validated: boolean; unsupportedClaims: number; recovered?: string };
 }
 
-export interface ApiOk<T> { success: true; data: T; meta: Meta; }
-export interface ApiErr { success: false; error: { code: string; message: string }; meta?: Meta; }
+export interface ApiOk<T> {
+  success: true;
+  data: T;
+  meta: Meta;
+  error?: undefined;
+}
+export interface ApiErr {
+  success: false;
+  error: { code: string; message: string };
+  data?: undefined;
+  meta?: Meta;
+}
 export type ApiResponse<T> = ApiOk<T> | ApiErr;
 
 export interface Quote {
@@ -100,6 +117,7 @@ export interface AlphaBetaSnapshot {
   residualVol: number | null;
   sampleDays: number;
   profile: AlphaBetaProfile;
+  [key: string]: unknown;
 }
 
 export interface MoneyFlowSnapshot {
@@ -116,10 +134,10 @@ export interface CandlePattern {
   name: string;
   nameVi?: string;
   description?: string;
-  direction: "bullish" | "bearish" | "neutral";
+  direction?: "bullish" | "bearish" | "neutral" | string;
   strength?: number | string | null;
   at?: number;
-  type?: string;
+  type?: "bullish" | "bearish" | "neutral" | string;
   category?: string;
   reliability?: Reliability | string;
   score?: number;
@@ -129,6 +147,7 @@ export interface CandlePattern {
   time?: number;
   label?: string;
   candles?: number;
+  [key: string]: unknown;
 }
 
 export type DivergenceKind =
@@ -169,7 +188,8 @@ export interface DivergenceSignal {
 }
 
 export interface TradeSignal {
-  action?: "buy" | "sell" | "hold" | "wait" | string;
+  action?: "buy" | "sell" | "hold" | "wait" | "watch" | string;
+  actionVi?: string;
   confidence?: number;
   reasons?: string[];
   stopLoss?: number | null;
@@ -211,6 +231,7 @@ export interface TechnicalSnapshot {
   tradeSignal?: TradeSignal | null;
   candlePatterns?: CandlePattern[];
   candleClusters?: unknown[];
+  alphaBeta?: unknown;
   dataQuality?: {
     bars?: number;
     latestBarTime?: number | null;
@@ -226,8 +247,14 @@ export interface CryptoMarketRow extends Quote {
   baseAsset?: string | null;
   trades24h?: number | null;
 }
-export interface ForexRow extends Quote { pair?: string; }
-export interface ForexMarket { rows: ForexRow[]; updatedAt?: string | null; }
+export interface ForexRow extends Quote {
+  pair?: string;
+  group?: string | null;
+}
+export interface ForexMarket {
+  rows: ForexRow[];
+  updatedAt?: string | null;
+}
 export interface CommodityRow extends Quote {
   unit?: string | null;
   currency?: string | null;
@@ -242,11 +269,26 @@ export interface CommodityRow extends Quote {
   }[];
 }
 
-export interface BulletinOverview { narrative?: string; riskGauge?: number; }
-export interface BulletinFlow { foreignNet?: number | null; }
-export interface BulletinTopMover { symbol: string; changePercent: number; }
-export interface BulletinSectors { leaders?: string[]; laggards?: string[]; }
-export interface BulletinTechnical { symbol: string; trend?: string; rsi?: number | null; }
+export interface BulletinOverview {
+  narrative?: string;
+  riskGauge?: number;
+}
+export interface BulletinFlow {
+  foreignNet?: number | null;
+}
+export interface BulletinTopMover {
+  symbol: string;
+  changePercent: number;
+}
+export interface BulletinSectors {
+  leaders?: string[];
+  laggards?: string[];
+}
+export interface BulletinTechnical {
+  symbol: string;
+  trend?: string;
+  rsi?: number | null;
+}
 export interface MarketBulletin {
   overview?: BulletinOverview;
   flow?: BulletinFlow;
@@ -268,7 +310,12 @@ export interface ProviderStatus {
   consecutiveFailures: number;
   circuit: "closed" | "open" | "half-open";
   lastError: string | null;
-  recentEvents: { at: string; event: string; message: string | null; latencyMs: number | null }[];
+  recentEvents: {
+    at: string;
+    event: string;
+    message: string | null;
+    latencyMs: number | null;
+  }[];
   id?: string;
   ok?: boolean;
   latencyMs?: number | null;
@@ -292,26 +339,48 @@ export interface DerivativeProduct {
   settlementMethod?: string | null;
   positionLimit?: number | null;
   source?: string | null;
+  sourceUrl?: string | null;
+  [key: string]: any;
+}
+
+export interface DerivativeQuote {
+  symbol: string;
+  price?: number;
+  last?: number;
+  change?: number | null;
+  changePercent?: number | null;
+  open?: number | null;
+  high?: number | null;
+  low?: number | null;
+  volume?: number | null;
+  openInterest?: number | null;
+  basis?: number | null;
+  source?: string | null;
+  updatedAt?: string | null;
+  ceiling?: number | null;
+  floor?: number | null;
+  reference?: number | null;
+  settlement?: number | null;
+  mark?: number | null;
+  [key: string]: unknown;
 }
 
 export interface DerivativeContract {
-  code: string;
-  productId: string;
-  underlying: string;
-  status: DerivativeContractStatus;
-  expiry: string | null;
-  lastTradingDate?: string | null;
-  settlementDate?: string | null;
-  openInterest?: number | null;
-  volume?: number | null;
-  lastPrice?: number | null;
-  change?: number | null;
-  changePercent?: number | null;
-  basis?: number | null;
+  code?: string;
+  productId?: string;
+  underlying?: string;
+  status?: DerivativeContractStatus | string;
+  expiry?: string | null;
+  [key: string]: any;
+}
+
+export type DerivativeContractRow = DerivativeContract;
+
+export interface DerivativeBasis {
+  value?: number | null;
+  percent?: number | null;
   fairValue?: number | null;
-  symbol?: string | null;
-  priority?: number | null;
-  source?: string | null;
+  [key: string]: unknown;
 }
 
 export interface DerivativeCurvePoint {
@@ -339,4 +408,10 @@ export interface DerivativeFlowSnapshot {
   volume: number | null;
   basisChange: number | null;
   tone: "positive" | "negative" | "warning" | "muted";
+  symbol?: string | null;
+  kind?: string;
+  confidence?: number;
+  [key: string]: unknown;
 }
+
+export type DerivativeFlowSignal = DerivativeFlowSnapshot;
