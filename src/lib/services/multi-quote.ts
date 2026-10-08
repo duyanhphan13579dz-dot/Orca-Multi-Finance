@@ -4,16 +4,29 @@ import * as vndirect from "../providers/vndirect";
 import { getVpsQuotes } from "../providers/vps";
 import { getVietcapQuotes } from "../providers/vietcap";
 import { getSsiIboardQuotes } from "../providers/ssi-iboard";
-import { getSsiQuotes, ssiFcConfigured } from "../providers/ssi-fcdata";
 import { getPublicQuotes } from "../providers/public-vn-feed";
-import { recordMarketSource } from "../realtime/market-source-monitor";
+import { recordMarketSource, type MarketSourceId } from "../realtime/market-source-monitor";
 import { isCircuitOpen } from "../health";
 
 /**
- * Multi-source VN quotes — primary-first then selective fan-out.
- * 1) VNDirect alone (fast path) when coverage ≥ PRIMARY_COVERAGE_OK
- * 2) Only then open VPS / SSI / Vietcap / public to fill gaps
- * Priority merge: never average prices.
+ * Multi-source VN quotes — **chỉ nguồn công khai (public, không API key)**.
+ *
+ * | Source        | Endpoint (public)                                      |
+ * |---------------|--------------------------------------------------------|
+ * | vndirect      | api-finfo.vndirect.com.vn / finfo-api.vndirect.com.vn  |
+ * | vps           | bgapidatafeed.vps.com.vn/getliststockdata              |
+ * | ssi-iboard    | iboard-query.ssi.com.vn/stock/exchange/{hose|hnx|…}    |
+ * | vietcap       | iq.vietcap.com.vn/api/iq-insight-service (public)      |
+ * | public-vn     | gộp VPS + iBoard + Vietcap + Yahoo indices             |
+ *
+ * Không dùng SSI FastConnect (SSI_CONSUMER_* / SSI_FC_*) — API có credential,
+ * không thuộc nhóm public. Credential SSI vẫn dùng ở orderbook/derivatives riêng.
+ *
+ * Tier 1 (song song): VNDirect + VPS + SSI iBoard
+ * Tier 2 (song song, khi coverage thấp): Vietcap + public-vn
+ * Tier 3 (last-resort gap): public-vn small batches
+ *
+ * MULTI_SOURCE_MODE=parallel|aggressive
  */
 
 export type MultiQuoteResult = {
@@ -26,26 +39,76 @@ export type MultiQuoteResult = {
 
 const PRICE_PRIORITY: Record<string, number> = {
   vndirect: 100,
-  vps: 90,
-  "ssi-iboard": 80,
-  "ssi-fcdata": 70,
-  vietcap: 40,
+  vps: 95,
+  "ssi-iboard": 90,
+  vietcap: 50,
   "public-vn": 30,
 };
 
 const rank = (src: string) => PRICE_PRIORITY[src] ?? 0;
 const CONFLICT_PCT = 0.015;
 const CONFLICT_ABS = 200;
-/** Fan-out when primary covers less than this fraction (lower = more multi-source fills). */
-const PRIMARY_COVERAGE_OK = 0.55;
+const PRIMARY_COVERAGE_OK = 0.75;
+const TIER1_TIMEOUT_MS = 4_500;
+const TIER2_TIMEOUT_MS = 5_500;
+const TIER2_BUDGET_MS = 7_000;
+const TIER3_TIMEOUT_MS = 6_000;
+/** Max symbols per provider call — large lists are chunked & run in parallel. */
+const CHUNK_SIZE = 40;
 
 type TaggedQuote = Quote & { _src: string; _latencyMs: number };
 type SourceBatch = { src: string; quotes: Quote[]; latencyMs: number; ok: boolean };
 type QuotePack = { quotes: Quote[]; sourceTs: number | null };
 
+function multiSourceMode(): "parallel" | "aggressive" {
+  const m = (process.env.MULTI_SOURCE_MODE ?? "parallel").toLowerCase().trim();
+  return m === "aggressive" ? "aggressive" : "parallel";
+}
+
 async function asPack(fn: () => Promise<Quote[]>): Promise<QuotePack> {
   const quotes = await fn();
   return { quotes: quotes ?? [], sourceTs: quotes?.length ? Date.now() : null };
+}
+
+function chunkSymbols(syms: string[], size = CHUNK_SIZE): string[][] {
+  if (syms.length <= size) return [syms];
+  const out: string[][] = [];
+  for (let i = 0; i < syms.length; i += size) out.push(syms.slice(i, i + size));
+  return out;
+}
+
+/** Run a quote provider across symbol chunks in parallel, then merge. */
+async function runChunkedSource(
+  src: string,
+  symbols: string[],
+  fetchChunk: (chunk: string[]) => Promise<QuotePack>,
+  timeoutMs: number,
+  chunkSize = CHUNK_SIZE,
+): Promise<SourceBatch> {
+  const chunks = chunkSymbols(symbols, chunkSize);
+  if (chunks.length <= 1) {
+    return runSource(src, () => fetchChunk(symbols), timeoutMs);
+  }
+  const t0 = performance.now();
+  const parts = await Promise.all(
+    chunks.map((ch) =>
+      runSource(`${src}:chunk`, () => fetchChunk(ch), timeoutMs).then((b) => b.quotes),
+    ),
+  );
+  const merged: Quote[] = [];
+  const seen = new Set<string>();
+  for (const qs of parts) {
+    for (const q of qs) {
+      const s = String(q.symbol ?? "").toUpperCase();
+      if (!s || seen.has(s) || !(Number(q.price) > 0)) continue;
+      seen.add(s);
+      merged.push(q);
+    }
+  }
+  const latencyMs = Math.round(performance.now() - t0);
+  const ok = merged.length > 0;
+  recordMarketSource(src as MarketSourceId, ok, latencyMs);
+  return { src, quotes: merged, latencyMs, ok };
 }
 
 function withDeadline<T>(p: Promise<T>, ms: number): Promise<T> {
@@ -76,103 +139,84 @@ async function runSource(
   try {
     const r = await withDeadline(fn(), timeoutMs);
     const latencyMs = Math.round(performance.now() - t0);
-    const quotes = (r.quotes ?? []).filter((q) => q?.symbol && Number(q.price) > 0);
-    try {
-      recordMarketSource(src, quotes.length > 0, latencyMs);
-    } catch {
-      /* */
-    }
-    return { src, quotes, latencyMs, ok: quotes.length > 0 };
-  } catch {
+    const quotes = (r.quotes ?? []).filter((q) => q && Number(q.price) > 0);
+    const ok = quotes.length > 0;
+    recordMarketSource(src as MarketSourceId, ok, latencyMs);
+    return { src, quotes, latencyMs, ok };
+  } catch (e) {
     const latencyMs = Math.round(performance.now() - t0);
-    try {
-      recordMarketSource(src, false, latencyMs);
-    } catch {
-      /* */
-    }
+    recordMarketSource(src as MarketSourceId, false, latencyMs);
+    void e;
     return { src, quotes: [], latencyMs, ok: false };
   }
 }
 
-function priceConflict(a: number, b: number): boolean {
-  if (!(a > 0) || !(b > 0)) return false;
-  const diff = Math.abs(a - b);
-  return diff > CONFLICT_ABS || diff / Math.max(a, b) > CONFLICT_PCT;
-}
-
-function pickPrice(
-  prev: TaggedQuote | undefined,
-  next: Quote,
-  src: string,
-  latencyMs: number,
-): TaggedQuote {
-  const tagged: TaggedQuote = { ...next, _src: src, _latencyMs: latencyMs };
-  if (!prev) return tagged;
-  const pr = rank(prev._src);
-  const nr = rank(src);
-  if (nr > pr) return tagged;
-  if (nr < pr) {
-    return {
-      ...prev,
-      volume: prev.volume ?? next.volume,
-      quoteVolume: prev.quoteVolume ?? next.quoteVolume,
-      open: prev.open ?? next.open,
-      high: prev.high ?? next.high,
-      low: prev.low ?? next.low,
-      name: prev.name ?? next.name,
-      referencePrice: prev.referencePrice ?? next.referencePrice,
-      ceilingPrice: prev.ceilingPrice ?? next.ceilingPrice,
-      floorPrice: prev.floorPrice ?? next.floorPrice,
+function applyBatch(bySym: Map<string, TaggedQuote>, batch: SourceBatch): number {
+  let conflicts = 0;
+  for (const q of batch.quotes) {
+    const sym = String(q.symbol ?? "").toUpperCase();
+    if (!sym || !(Number(q.price) > 0)) continue;
+    const tagged: TaggedQuote = {
+      ...q,
+      symbol: sym,
+      _src: batch.src,
+      _latencyMs: batch.latencyMs,
     };
-  }
-  return {
-    ...prev,
-    volume: prev.volume ?? next.volume,
-    quoteVolume: prev.quoteVolume ?? next.quoteVolume,
-    open: prev.open ?? next.open,
-    high: prev.high ?? next.high,
-    low: prev.low ?? next.low,
-    name: prev.name ?? next.name,
-  };
-}
-
-function countConflicts(batches: SourceBatch[]): number {
-  const bySym = new Map<string, number[]>();
-  for (const b of batches) {
-    for (const q of b.quotes) {
-      const sym = String(q.symbol).toUpperCase();
-      const arr = bySym.get(sym) ?? [];
-      if (q.price > 0) arr.push(q.price);
-      bySym.set(sym, arr);
+    const prev = bySym.get(sym);
+    if (!prev) {
+      bySym.set(sym, tagged);
+      continue;
+    }
+    const prevP = Number(prev.price);
+    const nextP = Number(q.price);
+    if (prevP > 0 && nextP > 0) {
+      const diff = Math.abs(nextP - prevP);
+      if (diff >= CONFLICT_ABS || diff / prevP >= CONFLICT_PCT) conflicts += 1;
+    }
+    if (rank(batch.src) >= rank(prev._src)) {
+      bySym.set(sym, {
+        ...prev,
+        ...tagged,
+        name: tagged.name ?? prev.name,
+        volume: tagged.volume ?? prev.volume,
+        quoteVolume: tagged.quoteVolume ?? prev.quoteVolume,
+        open: tagged.open ?? prev.open,
+        high: tagged.high ?? prev.high,
+        low: tagged.low ?? prev.low,
+        change: tagged.change ?? prev.change,
+        changePercent: tagged.changePercent ?? prev.changePercent,
+        referencePrice: tagged.referencePrice ?? prev.referencePrice,
+        ceilingPrice: tagged.ceilingPrice ?? prev.ceilingPrice,
+        floorPrice: tagged.floorPrice ?? prev.floorPrice,
+        _src: batch.src,
+        _latencyMs: batch.latencyMs,
+      });
+    } else {
+      bySym.set(sym, {
+        ...tagged,
+        ...prev,
+        name: prev.name ?? tagged.name,
+        volume: prev.volume ?? tagged.volume,
+        quoteVolume: prev.quoteVolume ?? tagged.quoteVolume,
+        open: prev.open ?? tagged.open,
+        high: prev.high ?? tagged.high,
+        low: prev.low ?? tagged.low,
+        change: prev.change ?? tagged.change,
+        changePercent: prev.changePercent ?? tagged.changePercent,
+        referencePrice: prev.referencePrice ?? tagged.referencePrice,
+        ceilingPrice: prev.ceilingPrice ?? tagged.ceilingPrice,
+        floorPrice: prev.floorPrice ?? tagged.floorPrice,
+      });
     }
   }
-  let n = 0;
-  for (const prices of bySym.values()) {
-    if (prices.length < 2) continue;
-    const base = prices[0];
-    for (let i = 1; i < prices.length; i++) {
-      if (priceConflict(base, prices[i]!)) {
-        n++;
-        break;
-      }
-    }
-  }
-  return n;
+  return conflicts;
 }
 
 function coverageOf(bySym: Map<string, TaggedQuote>, wanted: string[]): number {
   if (!wanted.length) return 1;
   let hit = 0;
-  for (const s of wanted) if (bySym.has(s)) hit++;
+  for (const s of wanted) if (bySym.has(s)) hit += 1;
   return hit / wanted.length;
-}
-
-function applyBatch(bySym: Map<string, TaggedQuote>, batch: SourceBatch) {
-  for (const q of batch.quotes) {
-    const sym = String(q.symbol).toUpperCase();
-    const prev = bySym.get(sym);
-    bySym.set(sym, pickPrice(prev, { ...q, symbol: sym }, batch.src, batch.latencyMs));
-  }
 }
 
 function finish(
@@ -180,104 +224,68 @@ function finish(
   usedSources: string[],
   latencies: Record<string, number>,
   batches: SourceBatch[],
+  conflicts: number,
 ): MultiQuoteResult {
-  const conflicts = countConflicts(batches);
-  const quotes: Quote[] = [...bySym.values()]
-    .map(({ _src, _latencyMs, ...rest }) => rest)
-    .sort((a, b) => a.symbol.localeCompare(b.symbol));
-
+  const quotes: Quote[] = [];
+  let sourceTs: number | null = null;
+  for (const t of bySym.values()) {
+    const { _src: _s, _latencyMs: _l, ...rest } = t;
+    quotes.push(rest);
+    const ts = typeof rest.timestamp === "number" ? rest.timestamp : null;
+    if (ts && (sourceTs == null || ts > sourceTs)) sourceTs = ts;
+  }
+  if (sourceTs == null) {
+    for (const b of batches) {
+      if (b.ok && b.quotes.length) {
+        sourceTs = Date.now();
+        break;
+      }
+    }
+  }
   return {
     quotes,
-    sources: [...new Set(usedSources)].sort((a, b) => rank(b) - rank(a)),
-    sourceTs: quotes.length ? Date.now() : null,
+    sources: [...new Set(usedSources)],
+    sourceTs,
     latencies,
     conflicts,
   };
 }
 
-/** Parallel multi-source quote fetch with primary-first progressive merge. */
-export async function getMultiQuotes(symbols: string[]): Promise<MultiQuoteResult> {
-  const uniq = [...new Set(symbols.map((s) => s.trim().toUpperCase()).filter(Boolean))].slice(0, 80);
-  if (!uniq.length) {
-    return { quotes: [], sources: [], sourceTs: null, latencies: {}, conflicts: 0 };
-  }
-
-  const bySym = new Map<string, TaggedQuote>();
-  const latencies: Record<string, number> = {};
-  const usedSources: string[] = [];
-  const batches: SourceBatch[] = [];
-
-  const primary = await runSource("vndirect", () => vndirect.getVndQuotes(uniq), 4_500);
-  latencies.vndirect = primary.latencyMs;
-  batches.push(primary);
-  if (primary.ok || primary.quotes.length) {
-    usedSources.push("vndirect");
-    applyBatch(bySym, primary);
-  }
-
-  if (coverageOf(bySym, uniq) >= PRIMARY_COVERAGE_OK) {
-    return finish(bySym, usedSources, latencies, batches);
-  }
-
-  const fallbackTasks: { src: string; p: Promise<SourceBatch> }[] = [
-    { src: "vps", p: runSource("vps", () => asPack(() => getVpsQuotes(uniq)), 5_500) },
-    {
-      src: "ssi-iboard",
-      p: runSource("ssi-iboard", () => asPack(() => getSsiIboardQuotes(uniq)), 5_500),
-    },
-    { src: "vietcap", p: runSource("vietcap", () => getVietcapQuotes(uniq), 5_000) },
-    {
-      src: "public-vn",
-      p: runSource(
-        "public-vn",
-        async () => {
-          const r = await getPublicQuotes(uniq);
-          return { quotes: r.quotes ?? [], sourceTs: r.sourceTs ?? Date.now() };
-        },
-        5_500,
-      ),
-    },
-  ];
-
-  if (ssiFcConfigured()) {
-    fallbackTasks.push({
-      src: "ssi-fcdata",
-      p: runSource(
-        "ssi-fcdata",
-        async () => {
-          const r = await getSsiQuotes(uniq);
-          if (Array.isArray(r)) return { quotes: r, sourceTs: r.length ? Date.now() : null };
-          return r as QuotePack;
-        },
-        5_500,
-      ),
-    });
-  }
+async function runParallelTier(
+  tasks: { src: string; p: Promise<SourceBatch> }[],
+  bySym: Map<string, TaggedQuote>,
+  wanted: string[],
+  usedSources: string[],
+  latencies: Record<string, number>,
+  batches: SourceBatch[],
+  opts: { budgetMs: number; exitCoverage: number },
+): Promise<number> {
+  let conflicts = 0;
+  if (!tasks.length) return 0;
 
   await new Promise<void>((resolve) => {
-    let pending = fallbackTasks.length;
-    if (!pending) {
-      resolve();
-      return;
-    }
-    const hardStop = setTimeout(() => resolve(), 7_000);
+    let pending = tasks.length;
     let settled = false;
+    const hardStop = setTimeout(() => {
+      settled = true;
+      resolve();
+    }, opts.budgetMs);
 
-    for (const { src, p } of fallbackTasks) {
+    for (const { src, p } of tasks) {
       void p.then((batch) => {
         batches.push(batch);
         latencies[src] = batch.latencyMs;
         if (batch.ok || batch.quotes.length) {
-          usedSources.push(src);
-          applyBatch(bySym, batch);
+          if (!usedSources.includes(src)) usedSources.push(src);
+          conflicts += applyBatch(bySym, batch);
         }
         pending -= 1;
-        if (!settled && coverageOf(bySym, uniq) >= 0.98) {
+        if (!settled && coverageOf(bySym, wanted) >= opts.exitCoverage) {
           settled = true;
           clearTimeout(hardStop);
           resolve();
         }
-        if (pending <= 0) {
+        if (!settled && pending <= 0) {
           settled = true;
           clearTimeout(hardStop);
           resolve();
@@ -286,5 +294,131 @@ export async function getMultiQuotes(symbols: string[]): Promise<MultiQuoteResul
     }
   });
 
-  return finish(bySym, usedSources, latencies, batches);
+  return conflicts;
+}
+
+export async function getMultiQuotes(symbols: string[]): Promise<MultiQuoteResult> {
+  try {
+  const uniq = [...new Set(symbols.map((s) => s.toUpperCase()).filter(Boolean))];
+  if (!uniq.length) {
+    return { quotes: [], sources: [], sourceTs: null, latencies: {}, conflicts: 0 };
+  }
+
+  const bySym = new Map<string, TaggedQuote>();
+  const latencies: Record<string, number> = {};
+  const usedSources: string[] = [];
+  const batches: SourceBatch[] = [];
+  let conflicts = 0;
+  const mode = multiSourceMode();
+
+  // Tier 1: PUBLIC primary — song song + chunked (không API key)
+  const tier1: { src: string; p: Promise<SourceBatch> }[] = [
+    {
+      src: "vndirect",
+      p: runChunkedSource(
+        "vndirect",
+        uniq,
+        (ch) => vndirect.getVndQuotes(ch),
+        TIER1_TIMEOUT_MS,
+      ),
+    },
+    {
+      src: "vps",
+      p: runChunkedSource(
+        "vps",
+        uniq,
+        (ch) => asPack(() => getVpsQuotes(ch)),
+        TIER1_TIMEOUT_MS,
+      ),
+    },
+    {
+      src: "ssi-iboard",
+      p: runChunkedSource(
+        "ssi-iboard",
+        uniq,
+        (ch) => asPack(() => getSsiIboardQuotes(ch)),
+        TIER1_TIMEOUT_MS,
+      ),
+    },
+  ];
+
+  conflicts += await runParallelTier(tier1, bySym, uniq, usedSources, latencies, batches, {
+    budgetMs: TIER1_TIMEOUT_MS + 800,
+    // Early-exit when we have full coverage from any combination of tier1
+    exitCoverage: 1,
+  });
+
+  // Always fill missing symbols — even when overall coverage looks "good"
+  const missingAfterT1 = uniq.filter((s) => !bySym.has(s));
+  const needBroadFallback =
+    mode === "aggressive" || coverageOf(bySym, uniq) < PRIMARY_COVERAGE_OK;
+
+  if (missingAfterT1.length > 0 || needBroadFallback) {
+    // Tier 2: PUBLIC secondary — fill gaps (or full refresh in aggressive mode)
+    const target =
+      mode === "aggressive" || needBroadFallback
+        ? uniq
+        : missingAfterT1;
+
+    const tier2: { src: string; p: Promise<SourceBatch> }[] = [
+      {
+        src: "vietcap",
+        p: runChunkedSource(
+          "vietcap",
+          target,
+          (ch) => getVietcapQuotes(ch),
+          TIER2_TIMEOUT_MS,
+          20,
+        ),
+      },
+      {
+        src: "public-vn",
+        p: runChunkedSource(
+          "public-vn",
+          target,
+          async (ch) => {
+            const r = await getPublicQuotes(ch);
+            return { quotes: r.quotes ?? [], sourceTs: r.sourceTs ?? Date.now() };
+          },
+          TIER2_TIMEOUT_MS,
+        ),
+      },
+    ];
+
+    conflicts += await runParallelTier(tier2, bySym, uniq, usedSources, latencies, batches, {
+      budgetMs: TIER2_BUDGET_MS,
+      exitCoverage: 0.98,
+    });
+  }
+
+  // Tier 3: last-resort for still-missing — public-vn only, small batches
+  const stillMissing = uniq.filter((s) => !bySym.has(s));
+  if (stillMissing.length > 0 && stillMissing.length <= 80) {
+    try {
+      const batch = await runChunkedSource(
+        "public-vn-gap",
+        stillMissing,
+        async (ch) => {
+          const r = await getPublicQuotes(ch);
+          return { quotes: r.quotes ?? [], sourceTs: r.sourceTs ?? Date.now() };
+        },
+        TIER3_TIMEOUT_MS,
+      );
+      // Normalize source id for ranking
+      batch.src = "public-vn";
+      batches.push(batch);
+      latencies["public-vn-gap"] = batch.latencyMs;
+      if (batch.ok) {
+        usedSources.push("public-vn");
+        conflicts += applyBatch(bySym, batch);
+      }
+    } catch {
+      /* soft-fail */
+    }
+  }
+
+  return finish(bySym, usedSources, latencies, batches, conflicts);
+  } catch {
+    return { quotes: [], sources: [], sourceTs: null, latencies: {}, conflicts: 0 };
+  }
 }
