@@ -185,7 +185,7 @@ export async function getVnOhlcv(
     if (ssiFcConfigured() && !isIndex) {
       tasks.push(
         withTimeout(
-          getSsiDailyOhlc(sym, limit)
+          getSsiDailyOhlc(sym, { pageSize: limit })
             .then((bars) => (bars?.length ? { bars, source: "ssi-fcdata" } : null))
             .catch(() => null),
           7_000,
