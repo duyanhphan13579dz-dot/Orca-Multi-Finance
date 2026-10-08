@@ -148,7 +148,7 @@ type MetaLineValue =
   | null
   | undefined;
 
-export function MetaLine(_props: { meta: MetaLineValue }) {
+export function MetaLine(_props: { meta: MetaLineValue; className?: string }) {
   return null;
 }
 
