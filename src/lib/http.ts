@@ -98,7 +98,35 @@ export async function httpText(url: string, opts: HttpOptions): Promise<HttpResu
   return httpRequest<never>(url, { ...opts, parse: "text" });
 }
 
-async function httpRequest<T>(url: string, opts: HttpOptions): Promise<HttpResult<T>> {
+/**
+ * Gộp các GET giống hệt đang chạy cùng lúc (cùng provider + url + header) thành một lượt gọi upstream.
+ * Trang dashboard thường gọi cùng một nguồn từ nhiều service song song → giảm tải và độ trễ.
+ */
+const inflightGets = new Map<string, Promise<HttpResult<unknown>>>();
+
+function httpRequest<T>(url: string, opts: HttpOptions): Promise<HttpResult<T>> {
+  const method = (opts.method ?? "GET").toUpperCase();
+  if (method !== "GET" || opts.body) return httpRequestOnce<T>(url, opts);
+  const key = `${opts.provider}|${opts.parse ?? "json"}|${url}|${JSON.stringify(opts.headers ?? {})}`;
+  const existing = inflightGets.get(key);
+  if (existing) return existing as Promise<HttpResult<T>>;
+  const p = httpRequestOnce<T>(url, opts).finally(() => inflightGets.delete(key));
+  inflightGets.set(key, p as Promise<HttpResult<unknown>>);
+  return p;
+}
+
+/** 4xx do yêu cầu sai/không tồn tại (mã không có dữ liệu…) không phải lỗi của provider → không tính vào circuit breaker. */
+const CLIENT_ERRORS_NOT_COUNTED = new Set([400, 404, 410, 422]);
+/** Lỗi tạm thời đáng thử lại. */
+const RETRYABLE_STATUS = new Set([429, 502, 503, 504]);
+
+function retryDelayMs(res: Response, attempt: number, backoffBase: number): number {
+  const ra = Number(res.headers.get("retry-after"));
+  if (Number.isFinite(ra) && ra > 0) return Math.min(2_000, ra * 1_000);
+  return backoffBase * 2 ** attempt + Math.random() * 80;
+}
+
+async function httpRequestOnce<T>(url: string, opts: HttpOptions): Promise<HttpResult<T>> {
   const provider = opts.provider;
   const timeoutMs = resolveProviderTimeout(provider, opts.timeoutMs);
   // Default 1 retry (was 2) — fail-fast for realtime; callers can raise retries
@@ -139,12 +167,18 @@ async function httpRequest<T>(url: string, opts: HttpOptions): Promise<HttpResul
         cache: "no-store",
       });
       lastStatus = res.status;
+      // Timeout bao cả lúc đọc body (trước đây chỉ bao headers → body treo sẽ chặn vô hạn).
       const text = await res.text();
       clearTimeout(timer);
       if (!res.ok) {
         lastError = `http_${res.status}`;
-        recordFailure(provider, lastError);
-        if (attempt < retries && res.status >= 500) {
+        const retryable = attempt < retries && RETRYABLE_STATUS.has(res.status);
+        if (!CLIENT_ERRORS_NOT_COUNTED.has(res.status) && !retryable) recordFailure(provider, lastError);
+        if (retryable) {
+          await sleep(retryDelayMs(res, attempt, backoffBase));
+          continue;
+        }
+        if (res.status >= 500 && attempt < retries) {
           await sleep(backoffBase * 2 ** attempt + Math.random() * 80);
           continue;
         }
