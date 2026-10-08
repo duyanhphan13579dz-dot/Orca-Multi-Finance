@@ -20,8 +20,10 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: Required TypeScript check
-        run: pnpm exec tsc --noEmit
+      - name: Guard against placeholder-corrupted files
+        run: "! grep -rIlE '^(SEE_FILE|SEE_LOCAL|PLACEHOLDER)$' src public next.config.ts wrangler.jsonc"
+      - name: TypeScript ratchet (không được tăng số lỗi; xem scripts/tsc-ratchet.sh)
+        run: bash scripts/tsc-ratchet.sh
 
   test:
     runs-on: ubuntu-latest

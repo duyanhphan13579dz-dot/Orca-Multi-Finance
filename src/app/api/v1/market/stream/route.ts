@@ -4,6 +4,7 @@
  * GET /api/v1/market/stream?symbols=VCB,FPT,BTCUSDT&asset=stock|crypto|auto
  */
 import { eventBus } from "@/lib/events";
+import { prefersJsonPoll, pollHeaders, sseHeaders } from "@/lib/realtime/stream-mode";
 import { ensureVndirectWsStarted, vndirectWs } from "@/lib/realtime/vndirect-ws";
 import { ensureSsiWsStarted, ssiWs } from "@/lib/realtime/ssi-ws";
 import { ensureBinanceWsStarted, binanceWs } from "@/lib/realtime/binance-ws";
@@ -54,6 +55,60 @@ export async function GET(req: Request) {
     assetParam === "crypto" ? [] : symbols.filter((s) => assetParam === "stock" || !isCryptoSym(s));
   const cryptoSyms =
     assetParam === "stock" ? [] : symbols.filter((s) => assetParam === "crypto" || isCryptoSym(s));
+
+  // Chế độ poll (Workers): trả snapshot JSON một lần, client gọi lại mỗi vài giây.
+  if (url.searchParams.get("mode") === "poll" || prefersJsonPoll(req)) {
+    const quotes: Record<string, StreamQuote> = {};
+    if (stockSyms.length) {
+      try {
+        const { getVnQuotes } = await import("@/lib/services/stocks");
+        const result = await getVnQuotes(stockSyms);
+        for (const q of result?.quotes ?? []) {
+          if (!q?.symbol || !Number.isFinite(q.price)) continue;
+          const sym = String(q.symbol).toUpperCase();
+          quotes[sym] = {
+            symbol: sym,
+            price: Number(q.price),
+            changePercent: q.changePercent ?? null,
+            ceiling: (q as { ceilingPrice?: number | null }).ceilingPrice ?? null,
+            floor: (q as { floorPrice?: number | null }).floorPrice ?? null,
+            volume: q.volume ?? null,
+            ts: Date.now(),
+            source: result?.meta?.source ?? "rest",
+          };
+        }
+      } catch {
+        /* trả những gì có */
+      }
+    }
+    if (cryptoSyms.length) {
+      try {
+        const { getCryptoMarkets } = await import("@/lib/services/crypto");
+        const m = await getCryptoMarkets();
+        const want = new Set(cryptoSyms);
+        for (const r of m?.rows ?? []) {
+          const sym2 = String(r.symbol ?? "").toUpperCase();
+          const price = Number(r.price);
+          if (!want.has(sym2) || !Number.isFinite(price)) continue;
+          quotes[sym2] = {
+            symbol: sym2,
+            price,
+            changePercent: r.changePercent ?? null,
+            ceiling: null,
+            floor: null,
+            volume: r.volume ?? null,
+            ts: Date.now(),
+            source: "binance-rest",
+          };
+        }
+      } catch {
+        /* */
+      }
+    }
+    return new Response(JSON.stringify({ success: true, data: { quotes, at: Date.now() } }), {
+      headers: pollHeaders(),
+    });
+  }
 
   if (stockSyms.length) {
     ensureVndirectWsStarted();
@@ -254,11 +309,6 @@ export async function GET(req: Request) {
   });
 
   return new Response(stream, {
-    headers: {
-      "Content-Type": "text/event-stream; charset=utf-8",
-      "Cache-Control": "no-cache, no-transform",
-      Connection: "keep-alive",
-      "X-Accel-Buffering": "no",
-    },
+    headers: sseHeaders(),
   });
 }
