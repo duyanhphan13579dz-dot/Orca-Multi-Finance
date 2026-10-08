@@ -40,7 +40,7 @@ export async function fetchOhlcvResilient(
     const hit = await raceHealthy(attempts, { perAttemptMs: 6_500, label: `screener-ohlcv:${sym}` });
     return {
       bars: hit.value,
-      pack: { bars: hit.value, meta: { source: hit.sourceId, sourceTimestampMs: Date.now() } } as OhlcvPack,
+      pack: { bars: hit.value, meta: { source: hit.sourceId, sourceTimestampMs: Date.now() } } as any,
     };
   } catch {
     const pack = await getVnOhlcv(sym, bars).catch(() => null);
