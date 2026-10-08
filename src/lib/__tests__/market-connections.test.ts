@@ -29,7 +29,7 @@ import { tfsFor, vnStockChartPlan } from "../chart-const";
 import { normalizeQuoteScale, samePriceUnit } from "../quote-normalize";
 import { filterVnMarketBoard, type VnMarketBoard } from "../services/vn-market-board-cache";
 import { SOURCE_CATALOG, catalogSummary } from "../data-engine/catalog";
-import { probedSourceIds } from "../data-engine/source-sync";
+import { probedSourceIds, probeEnvRequirement } from "../data-engine/source-sync";
 import { PUBLIC_SOURCE_CATALOG } from "../providers/public-source-catalog";
 
 const quote = (symbol: string, price: number, extra: Partial<Quote> = {}): Quote => ({
@@ -245,4 +245,28 @@ test("source catalog: unique ids, wired candidates and probe coverage", () => {
   const wired = new Set(ids);
   const dangling = PUBLIC_SOURCE_CATALOG.filter((c) => c.providerId && !wired.has(c.providerId));
   assert.deepEqual(dangling.map((c) => c.id), []);
+});
+
+test("connectivity probes: env-gated sources are probed with their real credentials", () => {
+  const probed = probedSourceIds();
+  // Regression: polygon + vnstock sat in PROBE_ENV without a probe URL, so the
+  // self-test silently skipped them and reported a smaller `probed` count.
+  assert.ok(probed.includes("polygon"), "polygon must have a probe URL");
+  assert.ok(probed.includes("vnstock-financial"), "vnstock must have a probe URL");
+
+  assert.deepEqual(probeEnvRequirement("vnstock-financial"), ["VNSTOCK_BASE_URL", "VNSTOCK_API_KEY"]);
+  // Polygon works with either a key (default host) or a proxy base URL only.
+  assert.deepEqual(probeEnvRequirement("polygon"), ["POLYGON_API_KEY|POLYGON_API_BASE_URL"]);
+  assert.deepEqual(probeEnvRequirement("binance-spot"), []);
+
+  const env = process.env;
+  try {
+    delete process.env.POLYGON_API_KEY;
+    delete process.env.POLYGON_API_BASE_URL;
+    assert.equal(probeEnvRequirement("polygon").length, 1);
+    process.env.POLYGON_API_BASE_URL = "https://proxy.internal/polygon";
+    assert.ok(probeEnvRequirement("polygon").length > 0);
+  } finally {
+    process.env = env;
+  }
 });

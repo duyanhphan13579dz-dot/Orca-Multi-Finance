@@ -46,8 +46,10 @@ phơi ra tại `GET /api/v1/system/connectivity` (probe thật từng nguồn) +
   mặc định 2.5s), trả `status=ok|fail|circuit_open|not_configured`, latency, `routes[domain]` (thứ tự
   fallback theo health + latency) và danh sách nguồn công khai chưa nối adapter.
 - `?force=1` bỏ cache 20s; `?timeout=5000` nới budget probe.
-- Nguồn cần env (`VNSTOCK_BASE_URL`+`VNSTOCK_API_KEY`, `POLYGON_API_KEY`, `BIQUOTE_BASE_URL`,
-  `DERIVATIVES_QUOTE_URL`) được đánh `not_configured` thay vì báo lỗi sai.
+- Nguồn cần env (`VNSTOCK_BASE_URL`+`VNSTOCK_API_KEY`, `POLYGON_API_KEY` *hoặc*
+  `POLYGON_API_BASE_URL`, `BIQUOTE_BASE_URL`, `DERIVATIVES_QUOTE_URL`) được đánh `not_configured`
+  thay vì báo lỗi sai — nhưng khi env đã có thì probe chạy thật tới endpoint runtime dùng
+  (`/v1/market/indices`, `/v2/snapshot/.../tickers/AAPL`) kèm header/key tương ứng.
 - UI: panel “Kiểm tra kết nối nguồn dữ liệu” trong `/system`.
 
 ## Interface conventions

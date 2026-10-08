@@ -104,24 +104,59 @@ const PROBE_URL: Record<string, ProbeUrl> = {
 
   // Rates / derivatives
   "hnx-derivatives": () => process.env.DERIVATIVES_QUOTE_URL ?? "https://www.hnx.vn/",
+
+  // Optional deployments — URL is built from env, so an unset env is reported
+  // as `not_configured` before any request is made.
+  vnstock: () => {
+    const base = (process.env.VNSTOCK_BASE_URL ?? "").replace(/\/$/, "");
+    return `${base}/v1/market/indices`;
+  },
+  polygon: () => {
+    const base = (process.env.POLYGON_API_BASE_URL?.trim() || "https://api.polygon.io").replace(/\/$/, "");
+    const key = process.env.POLYGON_API_KEY?.trim();
+    return `${base}/v2/snapshot/locale/us/markets/stocks/tickers/AAPL${key ? `?apiKey=${encodeURIComponent(key)}` : ""}`;
+  },
 };
 
-/** Sources that are only probed when their deployment env is present. */
+/** Auth headers for the few probes whose upstream requires credentials. */
+const PROBE_HEADERS: Record<string, () => Record<string, string>> = {
+  vnstock: () => {
+    const key = process.env.VNSTOCK_API_KEY?.trim();
+    return key ? { Authorization: `Bearer ${key}`, "x-api-key": key } : {};
+  },
+};
+
+/**
+ * Sources that are only probed when their deployment env is present.
+ * A `|` inside an entry means "any one of these keys is enough"; entries are
+ * combined with AND, so `["A", "B|C"]` = A and (B or C).
+ */
 const PROBE_ENV: Record<string, string[]> = {
   vnstock: ["VNSTOCK_BASE_URL", "VNSTOCK_API_KEY"],
-  polygon: ["POLYGON_API_KEY"],
+  polygon: ["POLYGON_API_KEY|POLYGON_API_BASE_URL"],
   "biquote-forex": ["BIQUOTE_BASE_URL"],
   "hnx-derivatives": [],
 };
 
 function envConfigured(keys: string[]): boolean {
-  return keys.every((k) => Boolean(process.env[k] && String(process.env[k]).trim()));
+  return keys.every((group) =>
+    group
+      .split("|")
+      .map((k) => k.trim())
+      .filter(Boolean)
+      .some((k) => Boolean(process.env[k] && String(process.env[k]).trim())),
+  );
 }
 
 const CACHE_TTL_MS = 20_000;
 let cached: { at: number; report: SourceSyncReport } | null = null;
 
-async function probeUrl(id: string, url: string, timeoutMs: number): Promise<{ ok: boolean; ms: number; error: string | null }> {
+async function probeUrl(
+  id: string,
+  url: string,
+  timeoutMs: number,
+  extraHeaders?: Record<string, string>,
+): Promise<{ ok: boolean; ms: number; error: string | null }> {
   const t0 = performance.now();
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
@@ -131,7 +166,7 @@ async function probeUrl(id: string, url: string, timeoutMs: number): Promise<{ o
       signal: ctrl.signal,
       cache: "no-store",
       redirect: "follow",
-      headers: { Accept: "*/*", "User-Agent": "Orca-SourceSync/1.0" },
+      headers: { Accept: "*/*", "User-Agent": "Orca-SourceSync/1.0", ...(extraHeaders ?? {}) },
     });
     try {
       await res.arrayBuffer();
@@ -184,7 +219,7 @@ export async function syncAllSources(opts?: {
           error: null,
           circuitOpen: false,
           configured: false,
-          note: `not_configured (missing ${required.join(", ")})`,
+          note: `not_configured (missing ${required.map((g) => g.replace("|", " or ")).join(", ")})`,
         };
       }
       let url: string;
@@ -216,7 +251,8 @@ export async function syncAllSources(opts?: {
       if (circuitOpen) {
         return { ...base, ok: false, latencyMs: null, error: "circuit_open", circuitOpen: true };
       }
-      const r = await probeUrl(s.id, url, timeoutMs);
+      const extraHeaders = PROBE_HEADERS[key]?.();
+      const r = await probeUrl(s.id, url, timeoutMs, extraHeaders);
       return {
         ...base,
         ok: r.ok,
