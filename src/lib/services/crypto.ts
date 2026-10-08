@@ -42,6 +42,8 @@ export interface CryptoDetail {
   bars: OhlcvBar[];
   technical: TechnicalSnapshot | null;
   patterns: CandlePattern[];
+  funding: binance.FundingInfo | null;
+  openInterest: { openInterest: number; time: number } | null;
 }
 
 export interface CryptoScreenerParams {
@@ -80,11 +82,7 @@ function toRow(t: binance.BinanceTicker24h): CryptoMarketRow | null {
   };
 }
 
-export async function getCryptoMarkets(): Promise<{
-  rows: CryptoMarketRow[];
-  summary: CryptoSummary;
-  meta: Meta;
-} | null> {
+export async function getCryptoMarkets(): Promise<{ rows: CryptoMarketRow[]; summary: CryptoSummary; meta: Meta } | null> {
   try {
     const res = await cached<AllMarket>("crypto:all", {
       ttlMs: 12_000,
@@ -95,7 +93,7 @@ export async function getCryptoMarkets(): Promise<{
         } catch {
           /* */
         }
-        const tickers = await binance.getAllUsdtTickers();
+        const tickers = await binance.getAllSpotTickers();
         if (!tickers?.length) throw new Error("binance empty");
 
         const rows: CryptoMarketRow[] = [];
@@ -128,22 +126,31 @@ export async function getCryptoMarkets(): Promise<{
 
         let overlaid = 0;
         try {
-          for (const row of rows) {
-            const sym = row.symbol;
-            const last = binanceWs.getLastPrice?.(sym) ?? null;
-            if (last != null && last > 0) {
-              row.price = last;
-              overlaid += 1;
-              eventBus.emit(`tick:${sym}`, {
-                symbol: sym,
-                price: last,
-                ts: Date.now(),
-                source: "binance",
-              });
+          const live = binanceWs.getTickers(10_000);
+          if (live?.length) {
+            const bySym = new Map(live.map((x) => [String(x.symbol).toUpperCase(), x]));
+            for (const row of rows) {
+              const l = bySym.get(row.symbol);
+              if (l?.price && l.price > 0) {
+                row.price = l.price;
+                overlaid += 1;
+                eventBus.emit(`tick:${row.symbol}`, {
+                  symbol: row.symbol,
+                  price: l.price,
+                  ts: Date.now(),
+                  source: "binance",
+                });
+              }
             }
           }
         } catch {
           /* soft */
+        }
+
+        try {
+          candleAggregator.subscribedSymbols();
+        } catch {
+          /* */
         }
 
         rows.sort((a, b) => (b.quoteVolume ?? 0) - (a.quoteVolume ?? 0));
@@ -248,12 +255,14 @@ export async function getCryptoDetail(
   const pair = sym.endsWith("USDT") ? sym : `${sym}USDT`;
 
   try {
-    const [markets, klines] = await Promise.all([
+    const [markets, klinesPack, funding, oi] = await Promise.all([
       getCryptoMarkets().catch(() => null),
       getCryptoKlines(pair, interval, 200).catch(() => null),
+      binance.getFundingRate(pair).catch(() => null),
+      binance.getOpenInterest(pair).catch(() => null),
     ]);
     const quote = markets?.rows.find((r) => r.symbol === pair) ?? null;
-    const bars = klines?.bars ?? [];
+    const bars = klinesPack?.bars ?? [];
     let technical: TechnicalSnapshot | null = null;
     let patterns: CandlePattern[] = [];
     if (bars.length >= 20) {
@@ -264,12 +273,20 @@ export async function getCryptoDetail(
         /* */
       }
     }
+    try {
+      const mark = binanceWs.getMark?.(pair, 120_000);
+      if (mark?.price && quote) quote.price = mark.price;
+    } catch {
+      /* */
+    }
     const detail: CryptoDetail = {
       symbol: pair,
       quote,
       bars,
       technical,
       patterns,
+      funding,
+      openInterest: oi,
     };
     return {
       detail,
