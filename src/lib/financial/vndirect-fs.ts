@@ -7,10 +7,11 @@ import { metricKeyFromItemCode, metricProfileForSymbol, type MetricProfile } fro
 const VND = "vndirect-fs";
 
 const DSTOCK_HEADERS: Record<string, string> = {
-  Accept: "application/json",
+  Accept: "application/json, text/plain, */*",
   Origin: "https://dstock.vndirect.com.vn",
   Referer: "https://dstock.vndirect.com.vn/",
-  "User-Agent": "OrcaFinancial/1.0 (+dstock-api-finfo)",
+  "User-Agent":
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
 };
 
 const BS: Record<number, keyof NormalizedMetrics> = {
@@ -138,12 +139,12 @@ const CF_BANK: Record<number, keyof NormalizedMetrics> = {
 };
 
 const MODEL_TYPES: Record<1 | 2 | 3, string> = {
-  1: "1,89,101,111,413",
+  1: "1,89,101,111,411,413",
   2: "2,90,102,112,412",
   3: "3,91,92,103,104,113,414",
 };
 
-const BS_MODELS = new Set([1, 89, 101, 111, 413]);
+const BS_MODELS = new Set([1, 89, 101, 111, 411, 413]);
 const IS_MODELS = new Set([2, 90, 102, 112, 412]);
 const CF_MODELS = new Set([3, 91, 92, 103, 104, 113, 414]);
 
@@ -162,10 +163,10 @@ interface RawRow {
   sourceUrl?: string;
 }
 
-const STATEMENT_SOURCE_URLS = {
-  income: (symbol: string) => `https://dstock.vndirect.com.vn/bao-cao-ket-qua-kinh-doanh/${symbol}`,
-  cashflow: (symbol: string) => `https://dstock.vndirect.com.vn/bao-cao-luu-chuyen-tien-te/${symbol}`,
-  balance: (symbol: string) => `https://dstock.vndirect.com.vn/bang-can-doi-ke-toan/${symbol}`,
+export const STATEMENT_SOURCE_URLS = {
+  income: (symbol: string) => `https://dstock.vndirect.com.vn/bao-cao-ket-qua-kinh-doanh/${symbol.toUpperCase()}`,
+  cashflow: (symbol: string) => `https://dstock.vndirect.com.vn/bao-cao-luu-chuyen-tien-te/${symbol.toUpperCase()}`,
+  balance: (symbol: string) => `https://dstock.vndirect.com.vn/bang-can-doi-ke-toan/${symbol.toUpperCase()}`,
 } as const;
 
 function sourceUrlForModel(modelType: number, symbol: string): string {
@@ -323,28 +324,75 @@ async function fetchStatementPage(
   modelKind: 1 | 2 | 3,
   reportType: "QUARTER" | "ANNUAL",
   size: number,
-  timeoutMs = 9_000,
+  timeoutMs = 9_500,
 ): Promise<RawRow[]> {
   const modelType = MODEL_TYPES[modelKind];
-  const q = `code:${symbol}~reportType:${reportType}~modelType:${modelType}`;
-  const path = `/v4/financial_statements?q=${encodeURIComponent(q)}&size=${size}&sort=${encodeURIComponent("fiscalDate:desc")}`;
-  try {
-    const res = await vndirectJson<{ data?: RawRow[] }>(path, {
-      provider: VND,
-      timeoutMs,
-      retries: 0,
-      headers: DSTOCK_HEADERS,
-      accept: (payload) => Array.isArray(payload.data) && payload.data.length > 0,
-    });
-    const rows = res.data.data ?? [];
-    return rows.map((row) => ({
-      ...row,
-      unit: row.unit ?? "VND",
-      sourceUrl: sourceUrlForModel(Number(row.modelType), symbol),
-    }));
-  } catch {
-    return [];
+  const sym = symbol.toUpperCase();
+  const specificReferer =
+    modelKind === 1
+      ? STATEMENT_SOURCE_URLS.balance(sym)
+      : modelKind === 2
+        ? STATEMENT_SOURCE_URLS.income(sym)
+        : STATEMENT_SOURCE_URLS.cashflow(sym);
+
+  const fetchWithReportType = async (rt: string): Promise<RawRow[]> => {
+    const q = `code:${sym}~reportType:${rt}~modelType:${modelType}`;
+    const path = `/v4/financial_statements?q=${encodeURIComponent(q)}&size=${size}&sort=${encodeURIComponent("fiscalDate:desc")}`;
+    try {
+      const res = await vndirectJson<{ data?: RawRow[] }>(path, {
+        provider: VND,
+        timeoutMs,
+        retries: 1,
+        headers: {
+          ...DSTOCK_HEADERS,
+          Referer: specificReferer,
+        },
+        accept: (payload) => Array.isArray(payload.data) && payload.data.length > 0,
+      });
+      const rows = res.data.data ?? [];
+      return rows.map((row) => ({
+        ...row,
+        unit: row.unit ?? "VND",
+        sourceUrl: specificReferer,
+      }));
+    } catch {
+      return [];
+    }
+  };
+
+  let rows = await fetchWithReportType(reportType);
+  if (!rows.length && reportType === "ANNUAL") {
+    rows = await fetchWithReportType("YEAR");
   }
+  if (!rows.length) {
+    try {
+      const q = `code:${sym}~reportType:${reportType}`;
+      const path = `/v4/financial_statements?q=${encodeURIComponent(q)}&size=${size}&sort=${encodeURIComponent("fiscalDate:desc")}`;
+      const res = await vndirectJson<{ data?: RawRow[] }>(path, {
+        provider: VND,
+        timeoutMs,
+        retries: 1,
+        headers: {
+          ...DSTOCK_HEADERS,
+          Referer: specificReferer,
+        },
+        accept: (payload) => Array.isArray(payload.data) && payload.data.length > 0,
+      });
+      const allRows = res.data.data ?? [];
+      const modelSet = modelKind === 1 ? BS_MODELS : modelKind === 2 ? IS_MODELS : CF_MODELS;
+      const filtered = allRows.filter((r) => modelSet.has(Number(r.modelType)));
+      if (filtered.length) {
+        return filtered.map((row) => ({
+          ...row,
+          unit: row.unit ?? "VND",
+          sourceUrl: specificReferer,
+        }));
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+  return rows;
 }
 
 /** Fast VNDirect FS — parallel quarter+annual, long cache. */

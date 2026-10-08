@@ -67,6 +67,11 @@ export async function GET(_req: Request, ctx: { params: Promise<{ symbol: string
               reportTypeLabel:
                 direct.periods[0]?.periodType === "year" ? "Báo cáo năm" : "Báo cáo quý",
               statementScope: "legacy-direct",
+              sourceUrls: {
+                balance: `https://dstock.vndirect.com.vn/bang-can-doi-ke-toan/${sym}`,
+                income: `https://dstock.vndirect.com.vn/bao-cao-ket-qua-kinh-doanh/${sym}`,
+                cashflow: `https://dstock.vndirect.com.vn/bao-cao-luu-chuyen-tien-te/${sym}`,
+              },
             },
             growth: null,
             ttm: null,

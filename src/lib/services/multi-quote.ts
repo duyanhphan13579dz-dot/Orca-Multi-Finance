@@ -1,17 +1,11 @@
 import "server-only";
 import type { Quote } from "../types";
 import * as vndirect from "../providers/vndirect";
-import {
-  getVndMarketSnapshot,
-  pickQuotesFromSnapshot,
-  VND_SNAPSHOT_MIN_SYMBOLS,
-} from "../providers/vndirect-market-quotes";
 import { getVpsQuotes } from "../providers/vps";
 import { getVietcapQuotes } from "../providers/vietcap";
 import { getSsiIboardQuotes } from "../providers/ssi-iboard";
 import { getPublicQuotes } from "../providers/public-vn-feed";
 import { recordMarketSource, type MarketSourceId } from "../realtime/market-source-monitor";
-import { normalizeQuoteScale } from "../quote-normalize";
 import { isCircuitOpen } from "../health";
 
 /**
@@ -30,10 +24,6 @@ import { isCircuitOpen } from "../health";
  *
  * Tier 1 (song song): VNDirect + VPS + SSI iBoard
  * Tier 2 (song song, luôn fill gap / coverage thấp): Vietcap + public-vn
- *
- * VNDirect dùng 2 transport tùy kích thước request:
- *  - < 20 mã  → query per-symbol (batch 40, concurrency 4)
- *  - ≥ 20 mã  → snapshot toàn board (cache 8s trong phiên, dừng sớm khi đủ coverage)
  *
  * MULTI_SOURCE_MODE=parallel|aggressive
  */
@@ -59,9 +49,6 @@ const CONFLICT_PCT = 0.015;
 const CONFLICT_ABS = 200;
 const PRIMARY_COVERAGE_OK = 0.75;
 const TIER1_TIMEOUT_MS = 4_500;
-/** The whole-board snapshot needs more room on a cold cache (page 1 + batched pages). */
-const SNAPSHOT_TIMEOUT_MS = 6_500;
-const SNAPSHOT_TIER_BUDGET_MS = 7_000;
 const TIER2_TIMEOUT_MS = 5_500;
 const TIER2_BUDGET_MS = 7_000;
 
@@ -77,25 +64,6 @@ function multiSourceMode(): "parallel" | "aggressive" {
 async function asPack(fn: () => Promise<Quote[]>): Promise<QuotePack> {
   const quotes = await fn();
   return { quotes: quotes ?? [], sourceTs: quotes?.length ? Date.now() : null };
-}
-
-/**
- * VNDirect quote pack — the transport adapts to request size:
- *  - small symbol sets → per-symbol /v4/stock_prices queries
- *  - large symbol sets → one whole-board snapshot (≤8 page requests, cached, early exit)
- */
-async function vndirectPack(symbols: string[]): Promise<QuotePack> {
-  if (symbols.length >= VND_SNAPSHOT_MIN_SYMBOLS) {
-    try {
-      const snap = await getVndMarketSnapshot({ wanted: symbols });
-      const quotes = pickQuotesFromSnapshot(snap.quotes, symbols);
-      if (quotes.length) return { quotes, sourceTs: snap.sourceTs ?? Date.now() };
-    } catch {
-      /* fall back to per-symbol queries */
-    }
-  }
-  const pack = await vndirect.getVndQuotes(symbols);
-  return { quotes: pack?.quotes ?? [], sourceTs: pack?.sourceTs ?? null };
 }
 
 function withDeadline<T>(p: Promise<T>, ms: number): Promise<T> {
@@ -140,18 +108,16 @@ async function runSource(
 
 function applyBatch(bySym: Map<string, TaggedQuote>, batch: SourceBatch): number {
   let conflicts = 0;
-  for (const raw of batch.quotes) {
-    const sym = String(raw.symbol ?? "").toUpperCase();
-    if (!sym || !(Number(raw.price) > 0)) continue;
-    const prev = bySym.get(sym);
-    // Feeds mix nghìn VND and VND đầy đủ — align units before comparing/merging.
-    const q = prev ? normalizeQuoteScale(raw, prev) : raw;
+  for (const q of batch.quotes) {
+    const sym = String(q.symbol ?? "").toUpperCase();
+    if (!sym || !(Number(q.price) > 0)) continue;
     const tagged: TaggedQuote = {
       ...q,
       symbol: sym,
       _src: batch.src,
       _latencyMs: batch.latencyMs,
     };
+    const prev = bySym.get(sym);
     if (!prev) {
       bySym.set(sym, tagged);
       continue;
@@ -299,17 +265,11 @@ export async function getMultiQuotes(symbols: string[]): Promise<MultiQuoteResul
   let conflicts = 0;
   const mode = multiSourceMode();
 
-  const snapshotMode = uniq.length >= VND_SNAPSHOT_MIN_SYMBOLS;
-
   // Tier 1: PUBLIC primary — song song, không API key
   const tier1: { src: string; p: Promise<SourceBatch> }[] = [
     {
       src: "vndirect",
-      p: runSource(
-        "vndirect",
-        () => vndirectPack(uniq),
-        snapshotMode ? SNAPSHOT_TIMEOUT_MS : TIER1_TIMEOUT_MS,
-      ),
+      p: runSource("vndirect", () => vndirect.getVndQuotes(uniq), TIER1_TIMEOUT_MS),
     },
     {
       src: "vps",
@@ -322,7 +282,7 @@ export async function getMultiQuotes(symbols: string[]): Promise<MultiQuoteResul
   ];
 
   conflicts += await runParallelTier(tier1, bySym, uniq, usedSources, latencies, batches, {
-    budgetMs: snapshotMode ? SNAPSHOT_TIER_BUDGET_MS : TIER1_TIMEOUT_MS + 500,
+    budgetMs: TIER1_TIMEOUT_MS + 500,
     exitCoverage: 1,
   });
 

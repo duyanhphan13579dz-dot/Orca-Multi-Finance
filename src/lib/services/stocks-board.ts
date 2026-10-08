@@ -8,18 +8,15 @@ import {
   ssiFcConfigured,
 } from "../providers/ssi-fcdata";
 import type { IndexQuote, Meta, OhlcvBar, Quote } from "../types";
-import {
-  marketSourceIdFor,
-  recordMarketSource,
-} from "../realtime/market-source-monitor";
 import { getMultiQuotes } from "./multi-quote";
 import {
   getPublicIndices,
   getPublicQuotes,
-  getPublicOhlcvPack,
+  getPublicOhlcv,
   LIQUID_BOARD,
 } from "../providers/public-vn-feed";
-import { getVnUniverse } from "./vn-universe";
+import { fetchVndDchartHistory } from "../providers/vndirect-dchart";
+import { loadVnMarketBoardCached } from "./vn-market-board-cache";
 
 const INDEX_PRIORITY = ["VNINDEX", "VN30", "HNX", "UPCOM", "HNX30", "VN100"];
 
@@ -99,65 +96,73 @@ export async function getVnQuotes(symbols: string[]): Promise<{ quotes: Quote[];
 
 export async function getVnIndices(): Promise<{ items: IndexQuote[]; meta: Meta } | null> {
   try {
-    const tasks: Promise<{ items: IndexQuote[]; source: string; ts?: number } | null>[] = [];
-    if (ssiFcConfigured()) {
-      tasks.push(
-        withTimeout(
-          getSsiIndices().then((r) =>
-            r?.items?.length ? { items: r.items, source: "ssi-fcdata", ts: Date.now() } : null,
+    const res = await cached<{ items: IndexQuote[]; meta: Meta } | null>("vn:indices:live:v4", {
+      ttlMs: 12_000,
+      staleMs: 300_000,
+      softSwr: true,
+      producer: async () => {
+        const tasks: Promise<{ items: IndexQuote[]; source: string; ts?: number } | null>[] = [];
+        if (ssiFcConfigured()) {
+          tasks.push(
+            withTimeout(
+              getSsiIndices().then((r) =>
+                r?.items?.length ? { items: r.items, source: "ssi-fcdata", ts: Date.now() } : null,
+              ),
+              4_000,
+            ),
+          );
+        }
+        tasks.push(
+          withTimeout(
+            vndirect.getVndIndices().then((r) =>
+              r?.items?.length
+                ? { items: r.items, source: "vndirect", ts: r.sourceTs ?? Date.now() }
+                : null,
+            ),
+            5_000,
           ),
-          4_000,
-        ),
-      );
-    }
-    tasks.push(
-      withTimeout(
-        vndirect.getVndIndices().then((r) =>
-          r?.items?.length
-            ? { items: r.items, source: "vndirect", ts: r.sourceTs ?? Date.now() }
-            : null,
-        ),
-        5_000,
-      ),
-    );
-    tasks.push(
-      withTimeout(
-        getPublicIndices().then((pub) => {
-          const items = Array.isArray(pub) ? pub : pub?.items;
-          return items?.length
-            ? {
-                items,
-                source: "public-indices",
-                ts: (pub as { sourceTs?: number })?.sourceTs ?? Date.now(),
-              }
-            : null;
-        }),
-        5_000,
-      ),
-    );
-    const settled = await Promise.all(tasks);
-    const byCode = new Map<string, IndexQuote>();
-    const sources: string[] = [];
-    let newest = Date.now();
-    for (const pack of settled) {
-      if (!pack?.items?.length) continue;
-      sources.push(pack.source);
-      if (pack.ts) newest = Math.max(newest, pack.ts);
-      for (const it of pack.items) {
-        const code = String(it.code ?? "").toUpperCase();
-        if (!code) continue;
-        const prev = byCode.get(code);
-        if (!prev || (it.value != null && it.value > 0)) byCode.set(code, it);
-      }
-    }
-    if (!byCode.size) return null;
-    return {
-      items: sortIndices([...byCode.values()]),
-      meta: buildMeta({
-        source: sources.join("+") || "indices",
-        sourceTimestampMs: newest,
-      }),
-    };
+        );
+        tasks.push(
+          withTimeout(
+            getPublicIndices().then((pub) => {
+              const items = Array.isArray(pub) ? pub : pub?.items;
+              return items?.length
+                ? {
+                    items,
+                    source: "public-indices",
+                    ts: (pub as { sourceTs?: number })?.sourceTs ?? Date.now(),
+                  }
+                : null;
+            }),
+            5_000,
+          ),
+        );
+        const settled = await Promise.all(tasks);
+        const byCode = new Map<string, IndexQuote>();
+        const sources: string[] = [];
+        let newest = Date.now();
+        for (const pack of settled) {
+          if (!pack?.items?.length) continue;
+          sources.push(pack.source);
+          if (pack.ts) newest = Math.max(newest, pack.ts);
+          for (const it of pack.items) {
+            const code = String(it.code ?? "").toUpperCase();
+            if (!code) continue;
+            const prev = byCode.get(code);
+            if (!prev || (it.value != null && it.value > 0)) byCode.set(code, it);
+          }
+        }
+        if (!byCode.size) throw new Error("empty indices");
+        return {
+          items: sortIndices([...byCode.values()]),
+          meta: buildMeta({
+            source: sources.join("+") || "indices",
+            sourceTimestampMs: newest,
+          }),
+        };
+      },
+    });
+    return res.value;
   } catch {
     return null;
   }
@@ -175,64 +180,38 @@ export async function getVnOhlcv(
     type Cand = { bars: OhlcvBar[]; source: string };
     const tasks: Promise<Cand | null>[] = [
       withTimeout(
+        fetchVndDchartHistory(sym, "D", limit)
+          .then((bars) => (bars?.length ? { bars, source: "vndirect-dchart" } : null))
+          .catch(() => null),
+        6_000,
+      ),
+      withTimeout(
         (isIndex ? vndirect.getVndIndexOhlcv(sym, limit) : vndirect.getVndOhlcv(sym, limit))
           .then((bars) => (bars?.length ? { bars, source: "vndirect" } : null))
           .catch(() => null),
-        7_000,
+        6_500,
       ),
       withTimeout(
-        getPublicOhlcvPack(sym, limit, kind)
-          .then((pack) => (pack?.bars?.length ? { bars: pack.bars, source: `public:${pack.source}` } : null))
+        getPublicOhlcv(sym, limit, kind)
+          .then((bars) => (bars?.length ? { bars, source: "public" } : null))
           .catch(() => null),
-        7_000,
+        6_500,
       ),
     ];
-    // dchart lives on a different VNDirect host than api-finfo, so it survives an
-    // api-finfo outage and adds intraday-grade candles to the race.
-    tasks.push(
-      withTimeout(
-        import("../providers/vndirect-dchart")
-          .then((m) => m.fetchVndDchartHistory(sym, "D", limit))
-          .then((bars) => (bars?.length ? { bars, source: "vndirect-dchart" } : null))
-          .catch(() => null),
-        7_000,
-      ),
-    );
-    if (ssiFcConfigured()) {
+    if (ssiFcConfigured() && !isIndex) {
       tasks.push(
         withTimeout(
-          (isIndex
-            ? import("../providers/ssi-market-catalog")
-                .then((m) => m.getSsiIndexHistory(sym, { pageSize: Math.max(limit, 200) }))
-                .then((rows) =>
-                  rows
-                    .filter((r) => !r.synthetic)
-                    .map((r) => ({
-                      time: r.time,
-                      open: r.open,
-                      high: r.high,
-                      low: r.low,
-                      close: r.close,
-                      volume: r.volume ?? 0,
-                    })),
-                )
-            : getSsiDailyOhlc(sym, { pageSize: limit })
-          )
+          getSsiDailyOhlc(sym, { pageSize: limit })
             .then((bars) => (bars?.length ? { bars, source: "ssi-fcdata" } : null))
             .catch(() => null),
-          7_000,
+          6_500,
         ),
       );
     }
     const settled = await Promise.all(tasks);
     const ok = settled.filter((x): x is Cand => Boolean(x?.bars?.length));
     if (!ok.length) return null;
-    ok.sort((a, b) => {
-      const aOk = a.bars.length >= 20 ? 1 : 0;
-      const bOk = b.bars.length >= 20 ? 1 : 0;
-      if (aOk !== bOk) return bOk - aOk;
-      return b.bars.length - a.bars.length;
-    });
+    ok.sort((a, b) => b.bars.length - a.bars.length);
     return ok[0]!;
   };
 
@@ -243,8 +222,6 @@ export async function getVnOhlcv(
       producer: async () => {
         const pack = await raceBars();
         if (!pack?.bars?.length) throw new Error(`ohlcv empty ${sym}`);
-        const monitorId = marketSourceIdFor(pack.source);
-        if (monitorId) recordMarketSource(monitorId, true, 0);
         return pack;
       },
     });
@@ -282,6 +259,23 @@ export async function getVnMarketBoard(): Promise<{
   universeSize?: number;
   sessionDate?: string | null;
 } | null> {
+  // Tier 1: Prefer full cached market board from VNDirect (500+ stocks)
+  try {
+    const fullBoard = await loadVnMarketBoardCached();
+    if (fullBoard && fullBoard.quotes.length >= 10) {
+      return {
+        indices: fullBoard.indices,
+        quotes: fullBoard.quotes,
+        universeSize: fullBoard.universeSize,
+        sessionDate: fullBoard.sessionDate,
+        meta: fullBoard.meta,
+      };
+    }
+  } catch {
+    /* fallback to multi-source liquid board below */
+  }
+
+  // Tier 2: Multi-source liquid board fallback
   const loadOnce = async () => {
     const [idx, q] = await Promise.all([
       getVnIndices().catch(() => null),
@@ -340,41 +334,7 @@ export async function getVnMarketBoard(): Promise<{
   }
 }
 
-/**
- * Full listed-equity universe (VNDirect + SSI iBoard, cached 6h).
- * Falls back to board quotes and finally LIQUID_BOARD — always labelled via meta.source.
- */
-export async function getVnUniverseList(opts?: {
-  exchange?: string | null;
-  limit?: number | null;
-}): Promise<{ symbols: string[]; meta: Meta } | null> {
-  const exchange = (opts?.exchange ?? "").trim().toUpperCase();
-  try {
-    const universe = await getVnUniverse();
-    let rows = universe.rows;
-    if (exchange && exchange !== "ALL") {
-      rows = rows.filter((r) => String(r.exchange ?? "").toUpperCase().includes(exchange));
-    }
-    const limit = Number(opts?.limit ?? 0);
-    if (Number.isFinite(limit) && limit > 0) rows = rows.slice(0, Math.floor(limit));
-    const symbols = rows.map((r) => r.symbol);
-    if (symbols.length >= 20) {
-      return {
-        symbols,
-        meta: buildMeta({
-          source: universe.source,
-          sourceTimestampMs: universe.producedAt,
-          cached: universe.cached,
-          stale: universe.stale,
-          partial: universe.partial,
-          note: `${symbols.length} mã niêm yết${exchange && exchange !== "ALL" ? ` · ${exchange}` : ""}`,
-        }),
-      };
-    }
-  } catch {
-    /* fall through to board quotes */
-  }
-
+export async function getVnUniverseList(): Promise<{ symbols: string[]; meta: Meta } | null> {
   try {
     const board = await getVnMarketBoard();
     const symbols = [...new Set((board?.quotes ?? []).map((q) => q.symbol).filter(Boolean))];
@@ -386,7 +346,7 @@ export async function getVnUniverseList(opts?: {
     }
     return {
       symbols,
-      meta: board?.meta ?? buildMeta({ source: "board", sourceTimestampMs: Date.now(), partial: true }),
+      meta: board?.meta ?? buildMeta({ source: "board", sourceTimestampMs: Date.now() }),
     };
   } catch {
     return {

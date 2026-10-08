@@ -65,6 +65,8 @@ const VND_HEADERS: Record<string, string> = {
   Accept: "application/json, text/plain, */*",
   Origin: "https://dstock.vndirect.com.vn",
   Referer: "https://dstock.vndirect.com.vn/",
+  "User-Agent":
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
   "X-Requested-With": "XMLHttpRequest",
 };
 
@@ -140,32 +142,64 @@ export async function getVndLatestSessionDate(): Promise<string> {
 }
 
 export async function getVndIndices(): Promise<{ items: IndexQuote[]; sourceTs: number | null }> {
-  const codes = ["VNINDEX", "VN30", "HNX", "HNX30", "UPCOM"];
-  const items: IndexQuote[] = [];
+  const codes = ["VNINDEX", "VN30", "HNX", "HNX30", "UPCOM", "VN100"];
+  const byCode = new Map<string, IndexQuote>();
   let newest: number | null = null;
-  const results = await Promise.allSettled(
-    codes.map((code) =>
-      vndGet<Page<VndPriceRow>>(`/v4/vnmarket_prices?q=code:${code}&size=1&sort=date:desc`, 6_000),
-    ),
-  );
-  for (let i = 0; i < codes.length; i++) {
-    const settled = results[i];
-    if (!settled || settled.status !== "fulfilled") continue;
-    const r = settled.value.data?.[0];
-    if (!r?.close) continue;
-    const code = codes[i]!;
-    const ts = r.date ? Date.parse(`${r.date}T15:00:00+07:00`) : null;
-    if (ts != null && Number.isFinite(ts) && (newest == null || ts > newest)) newest = ts;
-    items.push({
-      code,
-      name: code,
-      value: r.close,
-      change: num(r.change) ?? 0,
-      changePercent: num(r.changePercent) ?? num(r.changeRatio) ?? num(r.pctChange) ?? 0,
-      volume: num(r.nmVolume),
-      updatedAt: r.date ?? null,
-    });
+
+  // Tier 1: Single batch query for all index codes (~300ms)
+  try {
+    const batchPayload = await vndGet<Page<VndPriceRow>>(
+      `/v4/vnmarket_prices?q=code:${codes.join(",")}&size=15&sort=date:desc`,
+      5_000,
+    );
+    for (const r of batchPayload.data ?? []) {
+      const code = String(r.code ?? "").toUpperCase();
+      if (!code || !r.close || byCode.has(code)) continue;
+      const ts = r.date ? Date.parse(`${r.date}T15:00:00+07:00`) : null;
+      if (ts != null && Number.isFinite(ts) && (newest == null || ts > newest)) newest = ts;
+      byCode.set(code, {
+        code,
+        name: code,
+        value: r.close,
+        change: num(r.change) ?? 0,
+        changePercent: num(r.changePercent) ?? num(r.changeRatio) ?? num(r.pctChange) ?? 0,
+        volume: num(r.nmVolume),
+        updatedAt: r.date ?? null,
+      });
+    }
+  } catch {
+    /* fallback to per-code below */
   }
+
+  // Tier 2: Fill any missing index codes individually
+  const missing = codes.filter((c) => !byCode.has(c));
+  if (missing.length > 0) {
+    const results = await Promise.allSettled(
+      missing.map((code) =>
+        vndGet<Page<VndPriceRow>>(`/v4/vnmarket_prices?q=code:${code}&size=1&sort=date:desc`, 4_500),
+      ),
+    );
+    for (let i = 0; i < missing.length; i++) {
+      const settled = results[i];
+      if (!settled || settled.status !== "fulfilled") continue;
+      const r = settled.value.data?.[0];
+      if (!r?.close) continue;
+      const code = missing[i]!;
+      const ts = r.date ? Date.parse(`${r.date}T15:00:00+07:00`) : null;
+      if (ts != null && Number.isFinite(ts) && (newest == null || ts > newest)) newest = ts;
+      byCode.set(code, {
+        code,
+        name: code,
+        value: r.close,
+        change: num(r.change) ?? 0,
+        changePercent: num(r.changePercent) ?? num(r.changeRatio) ?? num(r.pctChange) ?? 0,
+        volume: num(r.nmVolume),
+        updatedAt: r.date ?? null,
+      });
+    }
+  }
+
+  const items = [...byCode.values()];
   if (!items.length) throw new ProviderError("vndirect: empty indices", VNDIRECT);
   return { items, sourceTs: newest };
 }
@@ -177,26 +211,20 @@ export async function getVndMarketQuotes(
   return fetchVndMarketQuotesParallel(sessionDate);
 }
 
-/** Symbols per /v4/stock_prices call (transport batch size). */
-const QUOTE_BATCH_SIZE = 40;
-/** Concurrent batches — keeps large lists inside the caller deadline without a thundering herd. */
-const QUOTE_BATCH_CONCURRENCY = 4;
+export async function getVndQuotes(symbols: string[]): Promise<{ quotes: Quote[]; sourceTs: number | null }> {
+  const uniq = [...new Set(symbols.map((s) => s.toUpperCase()).filter(Boolean))].slice(0, 80);
+  if (!uniq.length) return { quotes: [], sourceTs: null };
 
-async function fetchQuoteBatch(symbols: string[], date: string): Promise<Quote[]> {
-  const quotes: Quote[] = [];
-  const results = await Promise.allSettled(
-    symbols.map((s) =>
-      vndGet<Page<VndPriceRow>>(`/v4/stock_prices?q=code:${s}~date:${date}&size=1&sort=date:desc`, 6_000),
-    ),
-  );
-  for (const r of results) {
-    if (r.status !== "fulfilled") continue;
-    const row = r.value.data?.[0];
-    if (!row) continue;
+  const bySym = new Map<string, Quote>();
+  let newest: number | null = null;
+
+  const ingestRow = (row: VndPriceRow) => {
     const symbol = String(row.code ?? "").toUpperCase();
     const price = num(row.close);
-    if (!symbol || price == null) continue;
-    quotes.push({
+    if (!symbol || price == null || bySym.has(symbol)) return;
+    const t = row.date ? Date.parse(`${row.date}T15:00:00+07:00`) : null;
+    if (t != null && Number.isFinite(t) && (newest == null || t > newest)) newest = t;
+    bySym.set(symbol, {
       symbol,
       assetClass: "stock",
       price,
@@ -212,35 +240,52 @@ async function fetchQuoteBatch(symbols: string[], date: string): Promise<Quote[]
       floorPrice: num(row.floorPrice),
       updatedAt: row.date ?? null,
     });
-  }
-  return quotes;
-}
+  };
 
-/**
- * Per-symbol quotes. Batches of 40 with bounded concurrency — no silent truncation,
- * so callers may pass the full board (prefer getVndMarketSnapshot for large sets).
- */
-export async function getVndQuotes(symbols: string[]): Promise<{ quotes: Quote[]; sourceTs: number | null }> {
-  const uniq = [...new Set(symbols.map((s) => s.toUpperCase().trim()).filter(Boolean))];
-  if (!uniq.length) return { quotes: [], sourceTs: null };
-  const date = await getVndLatestSessionDate();
+  // Tier 1: Fast multi-symbol batching in chunks of 25 (1-3 requests total instead of 80)
+  const CHUNK_SIZE = 25;
   const chunks: string[][] = [];
-  for (let i = 0; i < uniq.length; i += QUOTE_BATCH_SIZE) chunks.push(uniq.slice(i, i + QUOTE_BATCH_SIZE));
+  for (let i = 0; i < uniq.length; i += CHUNK_SIZE) {
+    chunks.push(uniq.slice(i, i + CHUNK_SIZE));
+  }
 
-  const quotes: Quote[] = [];
-  let newest: number | null = null;
-  for (let i = 0; i < chunks.length; i += QUOTE_BATCH_CONCURRENCY) {
-    const group = chunks.slice(i, i + QUOTE_BATCH_CONCURRENCY);
-    const settled = await Promise.allSettled(group.map((batch) => fetchQuoteBatch(batch, date)));
-    for (const s of settled) {
-      if (s.status !== "fulfilled") continue;
-      for (const q of s.value) {
-        quotes.push(q);
-        const t = q.updatedAt ? Date.parse(`${q.updatedAt}T15:00:00+07:00`) : null;
-        if (t != null && Number.isFinite(t) && (newest == null || t > newest)) newest = t;
+  await Promise.allSettled(
+    chunks.map(async (chunk) => {
+      try {
+        const payload = await vndGet<Page<VndPriceRow>>(
+          `/v4/stock_prices?q=code:${chunk.join(",")}~type:STOCK&size=${chunk.length * 3}&sort=date:desc`,
+          5_500,
+        );
+        for (const row of payload.data ?? []) {
+          ingestRow(row);
+        }
+      } catch {
+        /* fallback per symbol below */
       }
+    }),
+  );
+
+  // Tier 2: Check any symbols still missing
+  const missing = uniq.filter((s) => !bySym.has(s));
+  if (missing.length > 0 && missing.length <= 15) {
+    try {
+      const date = await getVndLatestSessionDate().catch(() => null);
+      await Promise.allSettled(
+        missing.map(async (s) => {
+          const dateParam = date ? `~date:${date}` : "";
+          const payload = await vndGet<Page<VndPriceRow>>(
+            `/v4/stock_prices?q=code:${s}${dateParam}&size=1&sort=date:desc`,
+            4_000,
+          );
+          if (payload.data?.[0]) ingestRow(payload.data[0]);
+        }),
+      );
+    } catch {
+      /* ignore */
     }
   }
+
+  const quotes = [...bySym.values()];
   if (!quotes.length) throw new ProviderError("vndirect: empty quotes batch", VNDIRECT);
   return { quotes, sourceTs: newest };
 }
