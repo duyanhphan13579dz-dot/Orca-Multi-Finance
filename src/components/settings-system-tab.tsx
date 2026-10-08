@@ -6,13 +6,22 @@ import { Section } from "@/components/settings-panels-extra";
 import { AlertTriangle, Database, Server } from "lucide-react";
 
 export function SystemTab() {
-  const { data, isLoading } = useApi<Record<string, unknown>>("/api/v1/system/info", {
+  const { data, isLoading, error } = useApi<Record<string, unknown>>("/api/v1/system/info", {
     refreshInterval: 15_000,
   });
   if (isLoading && !data) {
     return (
       <Panel>
         <p className="text-[12px] text-text-muted">Dang tai thong tin he thong...</p>
+      </Panel>
+    );
+  }
+  if (error && !data) {
+    return (
+      <Panel>
+        <p className="text-[12px] text-text-muted">
+          Khong tai duoc thong tin he thong — can dang nhap bang tai khoan quan tri.
+        </p>
       </Panel>
     );
   }
