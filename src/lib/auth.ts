@@ -12,7 +12,33 @@ import { env } from "./env";
  * cookie, DB-backed session records (revocable, listed in Security settings).
  */
 
-const key = new TextEncoder().encode(env.jwtSecret);
+/** Khóa chỉ dùng cho `next dev` / test cục bộ. KHÔNG bao giờ được dùng ở production. */
+const DEV_ONLY_SECRET = "orca-local-dev-only-secret-never-use-in-production";
+const MIN_SECRET_LEN = 32;
+
+let cachedKey: Uint8Array | null = null;
+
+/**
+ * Lấy khóa ký JWT, tính lười (lúc có request) để `next build` không bị ảnh hưởng.
+ * Production mà thiếu JWT_SECRET (hoặc ngắn hơn 32 ký tự) → ném lỗi, tức là từ chối đăng nhập
+ * thay vì âm thầm ký bằng một khóa công khai trong mã nguồn.
+ */
+function getKey(): Uint8Array {
+  if (cachedKey) return cachedKey;
+  const secret = env.jwtSecret;
+  if (env.nodeEnv === "production") {
+    if (!secret || secret.length < MIN_SECRET_LEN || secret === DEV_ONLY_SECRET) {
+      throw new Error(
+        "JWT_SECRET chưa được cấu hình đúng trên server (cần chuỗi ngẫu nhiên >= 32 ký tự, tạo bằng: openssl rand -hex 32)",
+      );
+    }
+    cachedKey = new TextEncoder().encode(secret);
+  } else {
+    cachedKey = new TextEncoder().encode(secret ?? DEV_ONLY_SECRET);
+  }
+  return cachedKey;
+}
+
 const COOKIE = "orca_session";
 const SESSION_DAYS = 7;
 
@@ -49,7 +75,7 @@ export async function createSessionCookie(userId: string) {
     .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()
     .setExpirationTime(`${SESSION_DAYS}d`)
-    .sign(key);
+    .sign(getKey());
   const jar = await cookies();
   jar.set(COOKIE, token, {
     httpOnly: true,
@@ -91,7 +117,7 @@ export async function getSessionUser(): Promise<SessionUser | null> {
     const jar = await cookies();
     const token = jar.get(COOKIE)?.value;
     if (!token) return null;
-    const { payload } = await jwtVerify(token, key);
+    const { payload } = await jwtVerify(token, getKey());
     if (!payload.sub) return null;
     const hash = sha256(token);
     const [row] = await db

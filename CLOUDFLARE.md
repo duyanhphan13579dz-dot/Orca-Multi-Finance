@@ -64,3 +64,14 @@ Build variables vì chúng được nhúng lúc build.
   không có mạng ra ngoài.
 - **SSC headless crawler (Playwright):** không chạy được trên Workers. Cần dùng thì chạy cục bộ:
   `pnpm add -D playwright && pnpm ssc:install-browser && pnpm ssc:crawl`.
+
+## 6. Bảo mật — bắt buộc trước khi chạy production
+
+- **`JWT_SECRET` là bắt buộc** (>= 32 ký tự, `openssl rand -hex 32`). Thiếu hoặc quá ngắn thì đăng nhập/đăng ký trả lỗi 500
+  thay vì ký bằng khóa mặc định như trước. Ở `next dev` vẫn có khóa cục bộ để chạy thử.
+- **`CRON_SECRET` là bắt buộc** (`openssl rand -hex 24`). Thiếu thì mọi route `/api/v1/cron/*` trả 503 ở production.
+  Có secret thì gọi bằng `Authorization: Bearer <secret>` hoặc `?secret=<secret>`.
+- **Rate limit** theo IP (`src/lib/rate-limit.ts`, khai báo `ratelimits` trong `wrangler.jsonc`):
+  `RL_AI` cho `/agent`, `/journal/analyze`, `/backtest` và `RL_AUTH` cho `/auth/login`, `/auth/register`, mỗi nhóm 10 lần / 60 giây.
+  Binding giới hạn theo từng datacenter và nhất quán dần, không phải bộ đếm chính xác. Muốn chặt hơn, thêm quy tắc
+  Rate Limiting trong Cloudflare Dashboard → Security → WAF. `namespace_id` (71001, 71002) phải duy nhất trong tài khoản Cloudflare.

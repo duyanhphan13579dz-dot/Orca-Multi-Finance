@@ -1,5 +1,6 @@
 import { ok } from "@/lib/envelope";
 import { runServerAlertMonitor } from "@/lib/services/alert-engine";
+import { cronUnauthorized } from "@/lib/cron-auth";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -9,20 +10,8 @@ export const maxDuration = 60;
  * External cron (cronjob.org) — price alerts + candlestick + divergence + warm cache.
  */
 export async function GET(req: Request) {
-  const cronSecret = process.env.CRON_SECRET?.trim();
-  if (cronSecret) {
-    const auth = req.headers.get("authorization") ?? "";
-    const querySecret = new URL(req.url).searchParams.get("secret") ?? "";
-    if (auth !== `Bearer ${cronSecret}` && querySecret !== cronSecret) {
-      return new Response(
-        JSON.stringify({
-          success: false,
-          error: { code: "UNAUTHORIZED", message: "Invalid cron secret" },
-        }),
-        { status: 401, headers: { "Content-Type": "application/json" } },
-      );
-    }
-  }
+  const denied = cronUnauthorized(req);
+  if (denied) return denied;
 
   const t0 = Date.now();
   const result = await runServerAlertMonitor();

@@ -5,6 +5,7 @@ import { DEFAULT_SYMBOLS } from "@/lib/services/valuation-screener";
 import { resolveListedEquityUniverse, listedEquityUniverseSync } from "@/lib/financial/equity-universe";
 import { warmCanslimDefault, CANSLIM_DEFAULT_CAP } from "@/lib/services/canslim-screener";
 import { batchVnOhlcv } from "@/lib/services/ohlcv-batch";
+import { cronUnauthorized } from "@/lib/cron-auth";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -33,17 +34,8 @@ function parsePhase(raw: string | null): Phase {
  *   16:18  .../financials?phase=canslim
  */
 export async function GET(req: Request) {
-  const cronSecret = process.env.CRON_SECRET?.trim();
-  if (cronSecret) {
-    const auth = req.headers.get("authorization") ?? "";
-    const querySecret = new URL(req.url).searchParams.get("secret") ?? "";
-    if (auth !== `Bearer ${cronSecret}` && querySecret !== cronSecret) {
-      return new Response(
-        JSON.stringify({ success: false, error: { code: "UNAUTHORIZED", message: "Invalid cron secret" } }),
-        { status: 401, headers: { "Content-Type": "application/json" } },
-      );
-    }
-  }
+  const denied = cronUnauthorized(req);
+  if (denied) return denied;
 
   const t0 = Date.now();
   const url = new URL(req.url);

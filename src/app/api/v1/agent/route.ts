@@ -1,5 +1,6 @@
 import { ok, badRequest, fail } from "@/lib/envelope";
 import { answerQuestion, type AgentHistoryTurn } from "@/lib/services/agent";
+import { rateLimit } from "@/lib/rate-limit";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -32,6 +33,8 @@ async function parseAgentRequestBody(req: Request): Promise<AgentRequestBody | n
  * Always returns JSON (never hangs naked): degraded answer if LLM/data fails.
  */
 export async function POST(req: Request) {
+  const limited = await rateLimit(req, { name: "agent", binding: "RL_AI", limit: 10, windowSec: 60 });
+  if (limited) return limited;
   const body = await parseAgentRequestBody(req);
   if (!body) return badRequest("Body JSON không hợp lệ");
 
