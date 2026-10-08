@@ -2,6 +2,7 @@ import { ok } from "@/lib/envelope";
 import { generateDailyReport, type DailyReportType } from "@/lib/services/report-engine";
 import { detectIntradaySlot } from "@/lib/services/intraday-brief-composer";
 import { dispatchReportReadyNotify } from "@/lib/services/report-notify";
+import { cronUnauthorized } from "@/lib/cron-auth";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -65,17 +66,8 @@ async function alreadyToday(type: string, date: string, slot?: string): Promise<
 }
 
 export async function GET(req: Request) {
-  const cronSecret = process.env.CRON_SECRET?.trim();
-  if (cronSecret) {
-    const auth = req.headers.get("authorization") ?? "";
-    const querySecret = new URL(req.url).searchParams.get("secret") ?? "";
-    if (auth !== `Bearer ${cronSecret}` && querySecret !== cronSecret) {
-      return new Response(
-        JSON.stringify({ success: false, error: { code: "UNAUTHORIZED", message: "Invalid cron secret" } }),
-        { status: 401, headers: { "Content-Type": "application/json" } },
-      );
-    }
-  }
+  const denied = cronUnauthorized(req);
+  if (denied) return denied;
 
   const force = new URL(req.url).searchParams.get("force");
   const forceType = force as DailyReportType | null;

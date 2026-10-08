@@ -69,7 +69,8 @@ export const env = {
 
   redisUrl: redisIsTcp ? redisCandidate : undefined,
   redisNote,
-  jwtSecret: opt(process.env.JWT_SECRET) ?? "orca-dev-insecure-secret-change-in-production",
+  /** Không còn khóa mặc định: auth.ts tự quyết định (production thiếu → từ chối, dev → khóa cục bộ). */
+  jwtSecret: opt(process.env.JWT_SECRET),
 
   openrouterApiKey: opt(process.env.OPENROUTER_API_KEY),
   openrouterModel: opt(process.env.OPENROUTER_MODEL),

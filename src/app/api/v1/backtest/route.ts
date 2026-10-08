@@ -5,6 +5,7 @@ import {
   type JournalTradeBt,
   type StrategyId,
 } from "@/lib/services/backtest";
+import { rateLimit } from "@/lib/rate-limit";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -16,6 +17,8 @@ export const maxDuration = 30;
  *   { mode: "symbol", symbol: "VCB", strategy?: "sma_cross"|"buy_hold", fast?, slow?, limit? }
  */
 export async function POST(req: Request) {
+  const limited = await rateLimit(req, { name: "backtest", binding: "RL_AI", limit: 10, windowSec: 60 });
+  if (limited) return limited;
   try {
     const body = (await req.json()) as {
       mode?: string;

@@ -3,6 +3,7 @@ import {
   analyzeJournalPortfolio,
   type JournalTradeInput,
 } from "@/lib/services/journal-analysis";
+import { rateLimit } from "@/lib/rate-limit";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -14,6 +15,8 @@ export const maxDuration = 45;
  * Đánh giá danh mục từ nhật ký lệnh (stats + LLM nếu có key).
  */
 export async function POST(req: Request) {
+  const limited = await rateLimit(req, { name: "journal", binding: "RL_AI", limit: 10, windowSec: 60 });
+  if (limited) return limited;
   try {
     const body = (await req.json().catch(() => null)) as { trades?: JournalTradeInput[]; portfolioContext?: Record<string, unknown> } | null;
     const trades = Array.isArray(body?.trades) ? body!.trades : null;

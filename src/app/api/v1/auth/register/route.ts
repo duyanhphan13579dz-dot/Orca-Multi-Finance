@@ -3,11 +3,14 @@ import { users, auditLogs } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { fail, badRequest, ok } from "@/lib/envelope";
 import { createSessionCookie, hashPassword, isValidEmail } from "@/lib/auth";
+import { rateLimit } from "@/lib/rate-limit";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 export async function POST(req: Request) {
+  const limited = await rateLimit(req, { name: "register", binding: "RL_AUTH", limit: 10, windowSec: 60 });
+  if (limited) return limited;
   try {
     const body = (await req.json().catch(() => null)) as { email?: string; password?: string; name?: string } | null;
     const email = body?.email?.trim().toLowerCase();
