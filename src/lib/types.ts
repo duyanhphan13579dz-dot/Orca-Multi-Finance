@@ -18,7 +18,6 @@ export interface Meta {
   qualityStatus?: QualityStatus;
   note?: string;
   partial?: boolean;
-  /** Soft flag used by some API routes when payload is empty-but-ok */
   hasData?: boolean;
   sections?: Record<string, FreshnessStatus>;
   discrepancies?: { check: string; message: string }[];
@@ -81,8 +80,6 @@ export interface IndexQuote {
   updatedAt?: string | null;
 }
 
-/* ------------------------------ Alpha / Beta (CAPM) ----------------------- */
-
 export type AlphaBetaProfile =
   | "alpha_high_beta_low"
   | "alpha_high_beta_high"
@@ -106,46 +103,121 @@ export interface AlphaBetaSnapshot {
 }
 
 export interface MoneyFlowSnapshot {
-  cmf20: number | null;
-  obvTrend: string | null;
-  volumeRatio20: number | null;
-  pressure: number | null;
-  label: string | null;
+  cmf20?: number | null;
+  obvTrend?: string | null;
+  volumeRatio20?: number | null;
+  pressure?: number | null;
+  label?: string | null;
+}
+
+export type Reliability = "very_high" | "high" | "medium" | "low";
+
+export interface CandlePattern {
+  name: string;
+  nameVi?: string;
+  description?: string;
+  direction: "bullish" | "bearish" | "neutral";
+  strength?: number | string | null;
+  at?: number;
+  type?: string;
+  category?: string;
+  reliability?: Reliability | string;
+  score?: number;
+  volumeConfirmed?: boolean | null;
+  ageBars?: number | null;
+  index?: number;
+  time?: number;
+  label?: string;
+  candles?: number;
+}
+
+export type DivergenceKind =
+  | "regular_bullish"
+  | "regular_bearish"
+  | "hidden_bullish"
+  | "hidden_bearish"
+  | string;
+export type DivergenceOscillator = "rsi" | "macd_hist" | "macd_line" | "stoch" | string;
+export type DivergenceStrength = "A" | "B" | "C" | string;
+
+export interface DivergencePivot {
+  index: number;
+  time: number;
+  value: number;
+  price: number;
+}
+
+export interface DivergenceSignal {
+  kind: DivergenceKind;
+  oscillator: DivergenceOscillator;
+  strength: DivergenceStrength | number | string;
+  confidence: number;
+  barsBetween: number;
+  timeframe: string | null;
+  pricePivots: DivergencePivot[];
+  oscPivots: DivergencePivot[];
+  structure: string;
+  volumeConfirmed: boolean | null;
+  volumeRatio?: number | null;
+  detectedAt: number;
+  type?: string;
+  direction?: "bullish" | "bearish" | string;
+  indicator?: string;
+  at?: number;
+  label?: string;
+  score?: number;
+}
+
+export interface TradeSignal {
+  action?: "buy" | "sell" | "hold" | "wait" | string;
+  confidence?: number;
+  reasons?: string[];
+  stopLoss?: number | null;
+  takeProfit?: number | null;
+  takeProfit1?: number | null;
+  takeProfit2?: number | null;
+  takeProfit3?: number | null;
+  plan?: any;
+  [key: string]: unknown;
 }
 
 export interface TechnicalSnapshot {
   last: number;
   rsi14: number | null;
-  macd: { macd: number | null; signal: number | null; hist: number | null };
+  macd: {
+    macd: number | null;
+    signal: number | null;
+    hist: number | null;
+    histogram?: number | null;
+  } | null;
   sma: { sma20: number | null; sma50: number | null; sma200: number | null };
   ema: { ema12: number | null; ema26: number | null };
   bollinger: { upper: number | null; mid: number | null; lower: number | null } | null;
   atr14: number | null;
-  moneyFlow?: MoneyFlowSnapshot;
-  moneyFlowAnalysis?: MoneyFlowAnalysis;
+  moneyFlow?: MoneyFlowSnapshot | null;
+  moneyFlowAnalysis?: MoneyFlowAnalysis | null;
   volatility30d?: number | null;
   maxDrawdown?: number | null;
   returns?: { d7?: number | null; d30?: number | null; ytd?: number | null; y1?: number | null };
   high52w?: number | null;
   low52w?: number | null;
-  support?: number | null;
-  resistance?: number | null;
-  trend?: string | null;
-}
-
-export interface CandlePattern {
-  name: string;
-  direction: "bullish" | "bearish" | "neutral";
-  strength?: number;
-  at?: number;
-}
-
-export interface DivergenceSignal {
-  type: string;
-  direction: "bullish" | "bearish";
-  indicator: string;
-  strength?: number;
-  at?: number;
+  support?: number | number[] | null;
+  resistance?: number | number[] | null;
+  supportLevels?: number[];
+  resistanceLevels?: number[];
+  trend?: { score: number; label: string } | null;
+  divergences?: DivergenceSignal[];
+  signals?: unknown[] | string[];
+  tradeSignal?: TradeSignal | null;
+  candlePatterns?: CandlePattern[];
+  candleClusters?: unknown[];
+  dataQuality?: {
+    bars?: number;
+    latestBarTime?: number | null;
+    ageMs?: number | null;
+    stale?: boolean;
+    deduplicated?: number | boolean;
+  };
 }
 
 export interface CryptoMarketRow extends Quote {
@@ -160,7 +232,14 @@ export interface CommodityRow extends Quote {
   unit?: string | null;
   currency?: string | null;
   commodity?: string | null;
-  sourceRecords?: { source: string; price?: number | null; changePercent?: number | null }[];
+  group?: string | null;
+  sourceRecords?: {
+    source: string;
+    price?: number | null;
+    changePercent?: number | null;
+    timestamp?: number | string | null;
+    url?: string | null;
+  }[];
 }
 
 export interface BulletinOverview { narrative?: string; riskGauge?: number; }
@@ -177,23 +256,23 @@ export interface MarketBulletin {
 }
 
 export interface ProviderStatus {
-  id: string;
-  ok: boolean;
-  latencyMs: number | null;
+  provider: string;
+  domain: string;
+  status: "healthy" | "degraded" | "down" | "unknown" | string;
+  lastSuccessAt: string | null;
+  lastFailureAt: string | null;
+  lastLatencyMs: number | null;
+  avgLatencyMs: number | null;
+  successCount: number;
+  failureCount: number;
   consecutiveFailures: number;
   circuit: "closed" | "open" | "half-open";
   lastError: string | null;
   recentEvents: { at: string; event: string; message: string | null; latencyMs: number | null }[];
-  status?: "up" | "down" | "degraded" | "unknown" | string;
-  provider?: string;
-  domain?: string;
-  lastLatencyMs?: number | null;
-  avgLatencyMs?: number | null;
-  successCount?: number;
-  failureCount?: number;
+  id?: string;
+  ok?: boolean;
+  latencyMs?: number | null;
 }
-
-/* ------------------------ Vietnam Derivatives (P0) ------------------------ */
 
 export type DerivativeContractStatus = "ACTIVE" | "EXPIRED" | "SUSPENDED" | "MONITORING";
 export type DerivativeContractType = "INDEX_FUTURE" | "BOND_FUTURE" | "COMMODITY_FUTURE" | "OPTION";
@@ -212,6 +291,7 @@ export interface DerivativeProduct {
   settlementType?: string | null;
   settlementMethod?: string | null;
   positionLimit?: number | null;
+  source?: string | null;
 }
 
 export interface DerivativeContract {
@@ -229,6 +309,9 @@ export interface DerivativeContract {
   changePercent?: number | null;
   basis?: number | null;
   fairValue?: number | null;
+  symbol?: string | null;
+  priority?: number | null;
+  source?: string | null;
 }
 
 export interface DerivativeCurvePoint {
