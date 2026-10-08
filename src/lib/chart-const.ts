@@ -138,14 +138,17 @@ export interface ChartIndicators {
   vwap: IndicatorPoint[];
   atr: IndicatorPoint[];
   levels?: { support: number[]; resistance: number[] };
+  srLevels?: { support: number[]; resistance: number[] };
 }
 
 export interface ChartSignalMarker {
   time: number;
-  position: "aboveBar" | "belowBar";
-  shape: "arrowUp" | "arrowDown" | "circle";
-  color: string;
+  type?: string;
+  position?: "aboveBar" | "belowBar" | "inBar" | string;
+  shape?: "arrowUp" | "arrowDown" | "circle" | string;
+  color?: string;
   text?: string;
+  title?: string;
 }
 
 export interface ChartMarketData {
