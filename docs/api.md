@@ -30,6 +30,7 @@ Envelope chuẩn cho mọi endpoint:
 | `GET /api/v1/reports/morning-brief` | Morning Brief analyst-style (freshness gate) | engine |
 | `POST /api/v1/agent` `{question}` | AI Agent: intent → fetch data → answer + meta | engine (+LLM opt.) |
 | `GET /api/v1/system/providers` | Provider health, circuit, latency, cache stats | ops |
+| `GET /api/v1/system/connectivity?force=1&timeout=2500` | Self-test kết nối từng nguồn (ok/fail/circuit_open/not_configured) + route fallback theo domain | ops |
 | `POST /api/v1/auth/register` `{email,password,name?}` | Đăng ký (scrypt; JWT cookie) | auth |
 | `POST /api/v1/auth/login` `{email,password}` | Đăng nhập | auth |
 | `POST /api/v1/auth/logout` | Xóa phiên | auth |

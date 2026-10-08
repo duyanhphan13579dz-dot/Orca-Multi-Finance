@@ -1,5 +1,10 @@
 import { ok, unavailable } from "@/lib/envelope";
 import { getVnIndices, getVnMarketBoard, getVnQuotes } from "@/lib/services/stocks";
+import {
+  filterVnMarketBoard,
+  loadVnMarketBoardByExchange,
+  loadVnMarketBoardCached,
+} from "@/lib/services/vn-market-board-cache";
 import { ensureHeartbeatStarted } from "@/lib/realtime/heartbeat";
 import { ensureSessionPollerStarted } from "@/lib/realtime/session-poller";
 import { getVnSession } from "@/lib/vn/sessions";
@@ -23,13 +28,53 @@ export async function GET(req: Request) {
   const url = new URL(req.url);
   const symbolsParam = (url.searchParams.get("symbols") ?? "").trim();
   const board = (url.searchParams.get("board") ?? "").toLowerCase();
+  const universeMode = url.searchParams.get("universe") === "all" || board === "universe";
   const wantFull =
     board === "full" ||
+    universeMode ||
     symbolsParam === "" ||
     symbolsParam.toLowerCase() === "all" ||
     symbolsParam === "*";
 
   const session = getVnSession();
+
+  // Full listed board (all HOSE/HNX/UPCoM symbols) from the shared snapshot cache —
+  // opt-in via ?universe=all (or ?board=universe) with optional exchange/limit filters.
+  if (universeMode) {
+    const exchange = (url.searchParams.get("exchange") ?? "").trim();
+    const limit = Number(url.searchParams.get("limit") ?? 0) || null;
+    const full = exchange
+      ? await loadVnMarketBoardByExchange(exchange, { limit })
+      : await loadVnMarketBoardCached();
+    if (full && (full.quotes.length || full.indices.length)) {
+      const pack = limit && !exchange ? filterVnMarketBoard(full, { limit }) : full;
+      return ok(
+        {
+          indices: pack.indices,
+          quotes: pack.quotes,
+          universeSize: pack.universeSize,
+          sessionDate: pack.sessionDate || null,
+          session,
+          count: pack.quotes.length,
+          mode: "universe",
+          exchange: exchange || "ALL",
+        },
+        {
+          source: pack.meta.source,
+          sourceTimestampMs: pack.meta.sourceTimestamp ? Date.parse(pack.meta.sourceTimestamp) : Date.now(),
+          cached: pack.meta.cached,
+          stale: pack.meta.stale,
+          partial: pack.meta.partial,
+          note: pack.meta.note,
+        },
+        {
+          "Cache-Control": pack.meta.stale
+            ? "private, max-age=5, stale-while-revalidate=30"
+            : "private, max-age=8, stale-while-revalidate=25",
+        },
+      );
+    }
+  }
 
   if (wantFull) {
     try {

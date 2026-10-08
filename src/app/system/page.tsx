@@ -4,6 +4,7 @@ import { useApi } from "@/lib/hooks";
 import type { ProviderStatus } from "@/lib/types";
 import { Badge, FreshnessDot, Loading, Panel } from "@/components/ui";
 import { Activity, Cpu, Database, RefreshCw, Server, Zap } from "lucide-react";
+import { ConnectivityPanel } from "@/components/connectivity-panel";
 
 interface StreamState {
   state: "open" | "connecting" | "closed" | "blocked" | "disabled" | "retrying";
@@ -66,6 +67,8 @@ export default function SystemPage() {
           </div>
         )}
       </Panel>
+
+      <ConnectivityPanel />
 
       {d?.realtime && (
         <Panel
