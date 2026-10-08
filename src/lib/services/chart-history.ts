@@ -126,3 +126,142 @@ async function cryptoCandles(symbol: string, tf: string, limit: number): Promise
     source: ok.map((x) => x.source).filter((s, i, a) => a.indexOf(s) === i).join("+"),
   };
 }
+
+async function stockCandles(symbol: string, tf: string, limit: number): Promise<CandleSeriesResult> {
+  const want = Math.min(Math.max(limit, 40), 2000);
+  const native = vndDchartResolution(tf);
+
+  let resolution: "D" | "1" | "5" | "15" | "30" | "60" = "D";
+  let fetchBars = want;
+  if (native) {
+    resolution = native;
+    fetchBars = want;
+  } else if (tf === "4h") {
+    resolution = "60";
+    fetchBars = Math.min(want * 4, 1_500);
+  } else {
+    resolution = "D";
+    const mult = tf === "1w" ? 6 : tf === "1M" ? 24 : 280;
+    fetchBars = Math.min(want * mult, 2_000);
+  }
+
+  /**
+   * Parallel public OHLCV race (no API key):
+   *  1) VNDirect dchart (intraday + daily)
+   *  2) Entrade + VPS hist via getPublicOhlcv (daily)
+   *  3) getVnOhlcv multi-source daily board
+   * Prefer longest valid series (≥20 bars); never invent prices.
+   */
+  let bars: OhlcvBar[] = [];
+  let source = "public-ohlcv";
+  let usedDailyFallback = false;
+
+  type Cand = { bars: OhlcvBar[]; source: string; dailyOnly: boolean };
+  const tasks: Promise<Cand | null>[] = [];
+
+  tasks.push(
+    (async () => {
+      try {
+        const { fetchVndDchartHistory } = await import("../providers/vndirect-dchart");
+        const raw = await Promise.race([
+          fetchVndDchartHistory(symbol, resolution, fetchBars),
+          new Promise<null>((r) => setTimeout(() => r(null), 8_000)),
+        ]);
+        if (raw?.length) return { bars: raw, source: "vndirect-dchart", dailyOnly: resolution === "D" };
+      } catch {
+        /* */
+      }
+      return null;
+    })(),
+  );
+
+  if (resolution === "D" || !native) {
+    tasks.push(
+      (async () => {
+        try {
+          const { getPublicOhlcv } = await import("../providers/public-vn-feed");
+          const isIdx = /^(VNINDEX|VN30|HNX|HNX30|UPCOM|VN100)$/i.test(symbol);
+          const raw = await Promise.race([
+            getPublicOhlcv(symbol, Math.min(fetchBars, 800), isIdx ? "index" : "stock"),
+            new Promise<null>((r) => setTimeout(() => r(null), 8_000)),
+          ]);
+          if (raw?.length) return { bars: raw, source: "entrade+vps-hist", dailyOnly: true };
+        } catch {
+          /* */
+        }
+        return null;
+      })(),
+    );
+  }
+
+  tasks.push(
+    (async () => {
+      try {
+        const res = await Promise.race([
+          getVnOhlcv(symbol, Math.min(want, 500)),
+          new Promise<null>((r) => setTimeout(() => r(null), 9_000)),
+        ]);
+        const b = res?.bars ?? [];
+        if (b.length)
+          return {
+            bars: b,
+            source: (res?.meta as { source?: string } | undefined)?.source ?? "vn-ohlcv-public",
+            dailyOnly: true,
+          };
+      } catch {
+        /* */
+      }
+      return null;
+    })(),
+  );
+
+  const settled = await Promise.all(tasks);
+  const ok = settled.filter((x): x is Cand => Boolean(x?.bars?.length));
+  if (ok.length) {
+    const needIntraday = Boolean(native && native !== "D") || tf === "4h";
+    ok.sort((a, b) => {
+      if (needIntraday) {
+        const aIn = a.dailyOnly ? 0 : 1;
+        const bIn = b.dailyOnly ? 0 : 1;
+        if (aIn !== bIn) return bIn - aIn;
+      }
+      const aOk = a.bars.length >= 20 ? 1 : 0;
+      const bOk = b.bars.length >= 20 ? 1 : 0;
+      if (aOk !== bOk) return bOk - aOk;
+      return b.bars.length - a.bars.length;
+    });
+    bars = ok[0]!.bars;
+    source = ok.map((x) => x.source).filter((s, i, a) => a.indexOf(s) === i).join("+");
+    usedDailyFallback = ok[0]!.dailyOnly && needIntraday;
+  }
+
+  let candles: ChartCandle[] = (bars ?? []).map((b) => toCandle(b));
+  candles = scaleVnStockToFullVnd(candles);
+
+  if (!native && !usedDailyFallback) {
+    const tfMs = TF_MS[tf];
+    if (tfMs && candles.length) candles = aggregateCandles(candles, tfMs);
+  } else if (!native && usedDailyFallback) {
+    if (tf === "1w" || tf === "1M" || tf === "12M") {
+      const tfMs = TF_MS[tf];
+      if (tfMs && candles.length) candles = aggregateCandles(candles, tfMs);
+    }
+  }
+
+  if (usedDailyFallback && ((native && native !== "D") || tf === "4h")) {
+    return {
+      candles: [],
+      source,
+      note: `intraday ${tf} chưa có — dchart đang gián đoạn (không dùng daily giả)`,
+    };
+  }
+
+  const idx = canonicalIndexSymbol(symbol);
+  if (idx) {
+    const v = validateIndexCandles(symbol, candles);
+    candles = v.valid;
+  }
+
+  if (candles.length > want) candles = candles.slice(-want);
+  return { candles, source };
+}
