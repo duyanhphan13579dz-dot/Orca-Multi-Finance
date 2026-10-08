@@ -63,7 +63,13 @@ async function requestMeta(): Promise<{ userAgent: string | null; ip: string | n
     const h = await headers();
     return {
       userAgent: h.get("user-agent"),
-      ip: h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
+      // Cloudflare edge IP is authoritative; x-forwarded-for is spoofable.
+      ip:
+        h.get("cf-connecting-ip")?.trim() ||
+        h.get("true-client-ip")?.trim() ||
+        h.get("x-real-ip")?.trim() ||
+        h.get("x-forwarded-for")?.split(",")[0]?.trim() ||
+        null,
     };
   } catch {
     return { userAgent: null, ip: null };
