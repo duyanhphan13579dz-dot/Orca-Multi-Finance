@@ -62,6 +62,20 @@ const same = hubFinancialPackagePeek(symbol); // undefined nếu chưa ai load
 | `hubMacro(id)` | `macro:id` | economic-data |
 | `hubLoad(key, producer)` | arbitrary | custom |
 
+## Kiểm tra kết nối nguồn
+
+| Endpoint | Vai trò |
+|----------|---------|
+| `GET /api/v1/system/connectivity` | Probe thật mọi nguồn trong catalog (ok/fail/circuit_open/not_configured), latency, `routes[domain]` |
+| `GET /api/v1/ops/data-engine` | Catalog + hub stats + health market/financial |
+| `/system` (UI) | Panel “Kiểm tra kết nối nguồn dữ liệu” — chạy probe và xem thứ tự fallback |
+
+Nguồn cần env (SSI, VNSTOCK, POLYGON, BIQUOTE, DERIVATIVES_QUOTE_URL) trả `not_configured`
+thay vì báo lỗi — nhờ vậy trạng thái "chưa khai báo key" tách khỏi "nguồn đang chết".
+
+Market/stock dùng **một** snapshot toàn board (`vn:mkt:snapshot:v2`) cho mọi request ≥ 20 mã,
+nên hub + multi-quote + board đều chia sẻ cùng một lần fetch.
+
 ## Liên kết sẵn có (giữ nguyên)
 
 - `src/lib/cache.ts` — TTL + SWR + Redis (cross-request)

@@ -98,10 +98,25 @@ export async function lookupVndSymbol(symbol: string): Promise<VndUniverseItem |
   }
 }
 
-export async function fetchVndFullUniverse(): Promise<VndUniverseItem[]> {
+export type VndFullUniversePack = {
+  rows: VndUniverseItem[];
+  /** Rows that actually came back from the VNDirect /v4/stocks listing endpoint. */
+  fetchedFromVndirect: number;
+  /** Rows that came back from SSI iBoard boards. */
+  fetchedFromIboard: number;
+};
+
+/**
+ * Full VN listed universe: VNDirect /v4/stocks (LISTED pages + recent listings) merged
+ * with SSI iBoard HOSE/HNX/UPCoM boards, plus the hard-coded 2025-2026 IPO seed.
+ * The returned counters let callers label the result honestly when a source is down.
+ */
+export async function fetchVndFullUniverseWithMeta(): Promise<VndFullUniversePack> {
   const pageSize = 500;
   let page = 1;
   let totalPages = 1;
+  let fetchedFromVndirect = 0;
+  let fetchedFromIboard = 0;
   const bySym = new Map<string, VndUniverseItem>();
 
   for (const s of IPO_SEED_2025_2026) bySym.set(s.symbol, s);
@@ -116,7 +131,10 @@ export async function fetchVndFullUniverse(): Promise<VndUniverseItem[]> {
       totalPages = Math.max(1, Number(payload.totalPages) || 1);
       for (const r of data) {
         const item = mapRow(r);
-        if (item) bySym.set(item.symbol, item);
+        if (item) {
+          bySym.set(item.symbol, item);
+          fetchedFromVndirect += 1;
+        }
       }
       if (!data.length) break;
       page += 1;
@@ -136,6 +154,7 @@ export async function fetchVndFullUniverse(): Promise<VndUniverseItem[]> {
         if (st.includes("delist")) continue;
         const item = mapRow(r);
         if (!item) continue;
+        fetchedFromVndirect += 1;
         const prev = bySym.get(item.symbol);
         if (!prev) bySym.set(item.symbol, item);
         else if (!prev.listedDate && item.listedDate) {
@@ -153,6 +172,7 @@ export async function fetchVndFullUniverse(): Promise<VndUniverseItem[]> {
     const { getSsiIboardUniverse } = await import("./ssi-iboard");
     const ssi = await getSsiIboardUniverse();
     for (const row of ssi) {
+      fetchedFromIboard += 1;
       const prev = bySym.get(row.symbol);
       if (!prev) {
         bySym.set(row.symbol, {
@@ -163,8 +183,14 @@ export async function fetchVndFullUniverse(): Promise<VndUniverseItem[]> {
           listedDate: row.listedDate,
           status: "listed",
         });
-      } else if (!prev.name && row.name) {
-        bySym.set(row.symbol, { ...prev, name: row.name, exchange: prev.exchange ?? row.exchange });
+      } else {
+        // iBoard knows the floor code for every symbol it lists, so it fills the gaps
+        // left by listing rows (VNDirect occasionally returns no `floor`).
+        bySym.set(row.symbol, {
+          ...prev,
+          name: prev.name ?? row.name,
+          exchange: prev.exchange ?? row.exchange,
+        });
       }
     }
   } catch {
@@ -178,7 +204,15 @@ export async function fetchVndFullUniverse(): Promise<VndUniverseItem[]> {
     }),
   );
 
-  return [...bySym.values()].sort((a, b) => a.symbol.localeCompare(b.symbol));
+  return {
+    rows: [...bySym.values()].sort((a, b) => a.symbol.localeCompare(b.symbol)),
+    fetchedFromVndirect,
+    fetchedFromIboard,
+  };
+}
+
+export async function fetchVndFullUniverse(): Promise<VndUniverseItem[]> {
+  return (await fetchVndFullUniverseWithMeta()).rows;
 }
 
 export async function fetchVndRecentListings(withinDays = 365): Promise<VndUniverseItem[]> {
