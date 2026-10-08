@@ -100,6 +100,15 @@ export const SOURCE_CATALOG: SourceCatalogEntry[] = [
     description: "Company profile enrichment",
   },
   {
+    id: "vndirect-events",
+    domain: "financial",
+    role: "enrichment",
+    module: "providers/vndirect-events.ts",
+    description: "Corporate events / dividends (DStock /v4/events)",
+    timeoutMs: 10_000,
+    ttlMs: 30 * 60_000,
+  },
+  {
     id: "ssc-official",
     domain: "official",
     role: "primary",
@@ -174,6 +183,15 @@ export const SOURCE_CATALOG: SourceCatalogEntry[] = [
     role: "primary",
     module: "economic-data.ts",
     description: "Structured macro series",
+  },
+  {
+    id: "worldbank",
+    domain: "macro",
+    role: "secondary",
+    module: "providers/worldbank.ts",
+    description: "World Bank structured annual macro (VN-first, no API key)",
+    timeoutMs: 10_000,
+    ttlMs: 6 * 60 * 60_000,
   },
 ];
 
