@@ -57,41 +57,35 @@ function hitsBand(price: number | null | undefined, band: number | null | undefi
   return Math.abs(price - band) <= 0.051;
 }
 
-function rowTone(qu: Quote): string {
-  if (hitsBand(qu.price, qu.ceilingPrice)) return "bd-ceil";
-  if (hitsBand(qu.price, qu.floorPrice)) return "bd-floor";
-  const p = qu.changePercent;
-  if (p == null || !Number.isFinite(p)) return "bd-flat";
-  if (p > 0.15) return "bd-up-strong";
-  if (p > 0) return "bd-up";
-  if (p < -0.15) return "bd-down-strong";
-  if (p < 0) return "bd-down";
+function pctLabel(p: number | null | undefined): string {
+  if (p == null || !Number.isFinite(p)) return "—";
+  const sign = p > 0 ? "+" : "";
+  return `${sign}${p.toFixed(2)}%`;
+}
+
+function rowTone(q: Quote): string {
+  if (hitsBand(q.price, q.ceilingPrice)) return "bd-ceil";
+  if (hitsBand(q.price, q.floorPrice)) return "bd-floor";
+  const p = q.changePercent;
+  if (p == null) return "bd-flat";
+  if (p >= 2) return "bd-up-strong";
+  if (p > 0.05) return "bd-up";
+  if (p <= -2) return "bd-down-strong";
+  if (p < -0.05) return "bd-down";
   return "bd-flat";
 }
 
-function pctLabel(p: number | null | undefined): string {
-  if (p == null || !Number.isFinite(p)) return "—";
-  const s = p > 0 ? "+" : "";
-  return `${s}${p.toFixed(2)}%`;
-}
-
 function ratingVi(r?: string): string {
-  switch (r) {
-    case "BULLISH":
-      return "Lạc quan";
-    case "MODERATELY BULLISH":
-      return "Nghiêng mua";
-    case "NEUTRAL":
-      return "Trung tính";
-    case "MIXED":
-      return "Trộn lẫn";
-    case "MODERATELY BEARISH":
-      return "Nghiêng bán";
-    case "BEARISH":
-      return "Bi quan";
-    default:
-      return r || "—";
-  }
+  if (!r) return "Trung lập";
+  const map: Record<string, string> = {
+    BULLISH: "Tích cực",
+    "MODERATELY BULLISH": "Hơi tích cực",
+    NEUTRAL: "Trung lập",
+    MIXED: "Trộn lẫn",
+    "MODERATELY BEARISH": "Hơi tiêu cực",
+    BEARISH: "Tiêu cực",
+  };
+  return map[r] ?? r;
 }
 
 function volumeImbalance(rows: Quote[]): {
@@ -127,6 +121,8 @@ type SectorCol = {
   imbalance: number | null;
   buyVol: number;
   sellVol: number;
+  /** Priority sectors get elevated glow */
+  featured?: boolean;
 };
 
 function buildColumns(quotes: Quote[]): SectorCol[] {
@@ -136,35 +132,38 @@ function buildColumns(quotes: Quote[]): SectorCol[] {
     .filter((q): q is Quote => Boolean(q))
     .sort((a, b) => (b.changePercent ?? -999) - (a.changePercent ?? -999));
   const cols: SectorCol[] = [];
-  const pushCol = (name: string, rows: Quote[], limit: number) => {
+  /** Show every ticker in the sector (vertical scroll) — no artificial row cap. */
+  const pushCol = (name: string, rows: Quote[], featured = false) => {
     if (rows.length < 2) return;
-    const slice = rows.slice(0, limit);
-    const withPct = slice.filter((q) => q.changePercent != null);
+    const sorted = [...rows].sort((a, b) => (b.changePercent ?? -999) - (a.changePercent ?? -999));
+    const withPct = sorted.filter((q) => q.changePercent != null);
     const avg = withPct.length
       ? withPct.reduce((s, q) => s + (q.changePercent ?? 0), 0) / withPct.length
       : null;
-    const imb = volumeImbalance(slice);
+    const imb = volumeImbalance(sorted);
     cols.push({
       name,
       avgPct: avg,
-      rows: slice,
+      rows: sorted,
       imbalance: imb.imbalance,
       buyVol: imb.buyVol,
       sellVol: imb.sellVol,
+      featured,
     });
   };
-  if (vn30Rows.length) pushCol("VN30", vn30Rows, 18);
+  if (vn30Rows.length) pushCol("VN30", vn30Rows, true);
   const sectorOrder = [
     ...PRIORITY_SECTORS,
     ...VN_SECTOR_MAP.map((s) => s.name).filter((n) => !PRIORITY_SECTORS.includes(n)),
   ];
   for (const name of sectorOrder) {
-    if (cols.length >= 12) break;
+    if (cols.length >= 16) break;
     const rows = quotes
       .filter((q) => sectorOf(q.symbol) === name)
       .sort((a, b) => (b.changePercent ?? -999) - (a.changePercent ?? -999));
-    if (rows.length < 3) continue;
-    pushCol(name, rows, 16);
+    if (rows.length < 2) continue;
+    const featured = PRIORITY_SECTORS.includes(name);
+    pushCol(name, rows, featured);
   }
   return cols;
 }
@@ -238,51 +237,48 @@ function ImbalanceBar({ imbalance, buyVol, sellVol, compact }: { imbalance: numb
   const tone = imbalance == null ? "text-text-muted" : imbalance > 0.15 ? "text-up" : imbalance < -0.15 ? "text-down" : "text-amber-300";
   return (
     <div className={compact ? "px-0 pt-1.5" : ""}>
-      <div className={`mb-1 flex items-center justify-between gap-1 ${compact ? "text-[11px]" : "text-[12px]"}`}>
+      <div className="mb-0.5 flex items-center justify-between gap-2 text-[9px]">
         <span className={`truncate font-medium ${tone}`}>{label}</span>
-        <span className={`num shrink-0 font-semibold tabular-nums ${tone}`}>{imbalance != null ? `${imbalance > 0 ? "+" : ""}${(imbalance * 100).toFixed(0)}%` : ""}</span>
+        <span className="num shrink-0 text-text-muted">{tot > 0 ? `${buyPct.toFixed(0)}% mua` : ""}</span>
       </div>
-      <div className={`flex overflow-hidden rounded-full bg-surface-base/80 ${compact ? "h-1.5" : "h-2"}`}>
-        <div className="bg-up/80 transition-all" style={{ width: `${buyPct}%` }} />
-        <div className="bg-down/80 transition-all" style={{ width: `${100 - buyPct}%` }} />
+      <div className="flex h-1 overflow-hidden rounded-full bg-surface-base/80">
+        <div className="bg-up/70 transition-all" style={{ width: `${buyPct}%` }} />
+        <div className="bg-down/70 transition-all" style={{ width: `${100 - buyPct}%` }} />
       </div>
     </div>
   );
 }
 
 function IndexStrip({ indices, quotes }: { indices: IndexQuote[]; quotes: Quote[] }) {
-  const breadth = useMemo(() => {
-    let up = 0, down = 0, flat = 0;
-    for (const q of quotes) {
-      const p = q.changePercent;
-      if (p == null) continue;
-      if (p > 0.05) up++; else if (p < -0.05) down++; else flat++;
-    }
-    return { up, down, flat };
-  }, [quotes]);
   const list = indices.slice(0, 4);
-  if (!list.length) return null;
+  if (!list.length && !quotes.length) return null;
+  let up = 0, down = 0, flat = 0;
+  for (const q of quotes) {
+    const p = q.changePercent;
+    if (p == null) continue;
+    if (p > 0.05) up++; else if (p < -0.05) down++; else flat++;
+  }
   return (
-    <div className="grid grid-cols-2 gap-1.5 md:grid-cols-4 xl:gap-2">
-      {list.map((i, idx) => {
-        const up = (i.changePercent ?? 0) >= 0;
+    <div className="flex flex-wrap gap-2">
+      {list.map((idx) => {
+        const upIdx = (idx.changePercent ?? 0) >= 0;
         return (
-          <div key={i.code} className={`rounded-lg border px-2.5 py-2 ${idx === 0 ? "border-accent-primary/35 bg-accent-primary/5" : "border-border-subtle bg-surface-elevated/50"}`}>
-            <div className="flex items-center justify-between gap-1">
-              <span className={`text-[10px] font-semibold uppercase tracking-wide ${idx === 0 ? "text-accent-primary" : "text-text-muted"}`}>{i.code}</span>
-              <Chg value={i.changePercent} arrow={false} className="text-[11px]" />
+          <div
+            key={idx.code}
+            className="min-w-[120px] flex-1 rounded-lg border border-border-subtle bg-surface-elevated/50 px-2.5 py-1.5 shadow-sm"
+          >
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[11px] font-semibold text-text-secondary">{idx.code}</span>
+              <Chg value={idx.changePercent} arrow={false} className="text-[11px]" />
             </div>
-            <div className={`num mt-0.5 text-[16px] font-semibold sm:text-[18px] ${up ? "text-up" : "text-down"}`}>{fmtNum(i.value, 2)}</div>
-            <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] text-text-muted">
-              {i.volume != null ? <span className="num">GT {fmtCompact(i.volume)}</span> : null}
-              {idx === 0 ? (
-                <span className="flex items-center gap-1.5">
-                  <span className="text-up">▲ {breadth.up}</span>
-                  <span className="text-amber-300">● {breadth.flat}</span>
-                  <span className="text-down">▼ {breadth.down}</span>
-                </span>
-              ) : null}
-            </div>
+            <div className="num mt-0.5 text-[15px] font-semibold tabular-nums">{fmtNum(idx.value, 2)}</div>
+            {idx === list[0] ? (
+              <div className="mt-1 flex flex-wrap gap-x-2 text-[9px] text-text-muted">
+                <span className="text-up">▲ {up}</span>
+                <span className="text-amber-300">● {flat}</span>
+                <span className="text-down">▼ {down}</span>
+              </div>
+            ) : null}
           </div>
         );
       })}
@@ -295,31 +291,34 @@ const SectorColumn = memo(
     const avgUp = (col.avgPct ?? 0) >= 0;
     const headerCls = avgUp ? "bd-col-head bd-col-head-up" : "bd-col-head bd-col-head-down";
     return (
-      <div className="bd-col">
+      <div className={`bd-col${col.featured ? " bd-col-featured" : ""}`}>
         <div className={headerCls}>
           <div className="flex items-start justify-between gap-2">
             <span className="line-clamp-2 text-[13px] font-bold leading-snug text-text-primary" title={col.name}>
               {col.name}
             </span>
-            <span className={`num shrink-0 rounded px-1.5 py-0.5 text-[12px] font-bold tabular-nums ${avgUp ? "bg-up/15 text-up" : "bg-down/15 text-down"}`}>
-              {pctLabel(col.avgPct)}
-            </span>
+            <div className="flex shrink-0 flex-col items-end gap-0.5">
+              <span className={`num rounded px-1.5 py-0.5 text-[12px] font-bold tabular-nums ${avgUp ? "bg-up/15 text-up" : "bg-down/15 text-down"}`}>
+                {pctLabel(col.avgPct)}
+              </span>
+              <span className="text-[9px] font-medium text-text-muted">{col.rows.length} mã</span>
+            </div>
           </div>
           <ImbalanceBar imbalance={col.imbalance} buyVol={col.buyVol} sellVol={col.sellVol} compact />
         </div>
         <div className="bd-col-labels">
           <span>Mã</span>
           <span className="text-right">Giá</span>
-          <span className="min-w-[3.4rem] text-right">+/-</span>
-          <span className="min-w-[2.6rem] text-right">KL</span>
+          <span className="text-right">+/-</span>
+          <span className="text-right">KL</span>
         </div>
         <div className="bd-col-rows">
           {col.rows.map((q) => (
-            <a key={q.symbol} href={`/stocks/${q.symbol}`} className={`bd-row ${rowTone(q)}`}>
-              <span className="truncate font-bold tracking-tight">{q.symbol}</span>
+            <a key={q.symbol} href={`/stocks/${q.symbol}`} className={`bd-row ${rowTone(q)}`} title={`${q.symbol}${q.name ? ` · ${q.name}` : ""}`}>
+              <span className="bd-sym">{q.symbol}</span>
               <span className="num text-right font-medium tabular-nums">{fmtNum(q.price, 2)}</span>
-              <span className="num min-w-[3.4rem] text-right font-semibold tabular-nums">{pctLabel(q.changePercent)}</span>
-              <span className="num min-w-[2.6rem] text-right text-[11px] opacity-80">{q.volume != null ? fmtCompact(q.volume) : "—"}</span>
+              <span className="num text-right font-semibold tabular-nums">{pctLabel(q.changePercent)}</span>
+              <span className="num text-right text-[11px] opacity-80">{q.volume != null ? fmtCompact(q.volume) : "—"}</span>
             </a>
           ))}
         </div>
@@ -329,11 +328,11 @@ const SectorColumn = memo(
   (prev, next) => {
     const a = prev.col;
     const b = next.col;
-    if (a.name !== b.name || a.avgPct !== b.avgPct || a.imbalance !== b.imbalance) return false;
+    if (a.name !== b.name || a.avgPct !== b.avgPct || a.imbalance !== b.imbalance || a.featured !== b.featured) return false;
     if (a.rows.length !== b.rows.length) return false;
     for (let i = 0; i < a.rows.length; i++) {
-      const ra = a.rows[i];
-      const rb = b.rows[i];
+      const ra = a.rows[i]!;
+      const rb = b.rows[i]!;
       if (ra.symbol !== rb.symbol || ra.price !== rb.price || ra.changePercent !== rb.changePercent || ra.volume !== rb.volume) {
         return false;
       }
@@ -383,7 +382,7 @@ export function BangDienBoard({ quotes, indices }: { quotes: Quote[]; indices: I
       <SentimentGauge intel={fallbackIntel} />
       <SectorCompareChart cols={columns} />
       <div className="flex items-center justify-between gap-2 px-0.5">
-        <p className="text-[11px] text-text-muted">Bảng điện theo ngành · cuộn ngang · click mã mở chi tiết</p>
+        <p className="text-[11px] text-text-muted">Bảng điện theo ngành · cuộn ngang · click mã mở chi tiết · cột nổi = ngành ưu tiên</p>
         <span className="hidden shrink-0 text-[11px] text-text-muted sm:inline">{quotes.length} mã · {columns.length} ngành</span>
       </div>
       <SectorScrollRail itemCount={columns.length}>
