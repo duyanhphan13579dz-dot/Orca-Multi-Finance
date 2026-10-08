@@ -40,6 +40,8 @@
   "exclude": [
     "node_modules",
     "drizzle.config.ts",
-    "open-next.config.ts"
+    "open-next.config.ts",
+    "src/lib/__tests__",
+    "**/*.test.ts"
   ]
 }
