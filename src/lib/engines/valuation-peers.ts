@@ -97,7 +97,7 @@ export async function collectPeerMetrics(
       );
 
       const settled = await Promise.all(
-        symbols.map((s) => metricForSymbol(s, priceBySym.get(s))),
+        symbols.map((s) => metricForSymbol(s, Number(priceBySym.get(s) ?? NaN))),
       );
       return settled.filter((p): p is PeerMetricRow => p != null);
     },

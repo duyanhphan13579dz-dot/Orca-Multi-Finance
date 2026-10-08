@@ -177,7 +177,7 @@ function pairAdjacent(
     confidence = Math.max(0.2, Math.min(0.95, confidence));
 
     const strength: DivergenceStrength =
-      confidence >= 0.72 ? "strong" : confidence >= 0.55 ? "moderate" : "weak";
+      confidence >= 0.72 ? "A" : confidence >= 0.55 ? "B" : "C";
 
     signals.push({
       kind,

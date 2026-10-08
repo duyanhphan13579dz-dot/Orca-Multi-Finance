@@ -1,10 +1,11 @@
 import "server-only";
 import { httpJson } from "../http";
 import type { IndexQuote, Quote, OhlcvBar } from "../types";
-import { getYahooQuote } from "./yahoo";
+import { getYahooDailyBars, getYahooQuote, isVnIndexYahooSymbol } from "./yahoo";
 import { getVpsQuotes } from "./vps";
 import { getSsiIboardQuotes } from "./ssi-iboard";
 import { getVietcapQuotes } from "./vietcap";
+import { normalizeQuoteScale } from "../quote-normalize";
 import { ProviderError } from "./binance";
 
 export const PUBLIC_VN = "public-vn";
@@ -27,10 +28,12 @@ function mergeQuotes(
     if (batch.sourceTs != null) {
       newest = newest == null ? batch.sourceTs : Math.max(newest, batch.sourceTs);
     }
-    for (const q of batch.quotes) {
-      const sym = String(q.symbol ?? "").toUpperCase();
-      if (!sym || !(Number(q.price) > 0)) continue;
+    for (const raw of batch.quotes) {
+      const sym = String(raw.symbol ?? "").toUpperCase();
+      if (!sym || !(Number(raw.price) > 0)) continue;
       const prev = bySym.get(sym);
+      // Feeds mix nghìn VND / VND đầy đủ — align to the first-seen source's unit.
+      const q = prev ? normalizeQuoteScale(raw, prev) : raw;
       if (!prev) {
         bySym.set(sym, { ...q, symbol: sym });
         used.add(batch.source);
@@ -236,34 +239,71 @@ async function fetchVpsHistOhlcv(
   return bars.slice(-limit);
 }
 
+export type PublicOhlcvPack = { bars: OhlcvBar[]; source: string };
+
+/**
+ * Pick the best public OHLCV candidate: prefer series with a usable history
+ * (≥20 bars) and then the longest series. Pure helper — unit tested.
+ */
+export function selectBestOhlcv(candidates: PublicOhlcvPack[], limit: number): PublicOhlcvPack | null {
+  const ok = (candidates ?? []).filter((c) => (c?.bars?.length ?? 0) > 0);
+  if (!ok.length) return null;
+  ok.sort((a, b) => {
+    const aOk = a.bars.length >= 20 ? 1 : 0;
+    const bOk = b.bars.length >= 20 ? 1 : 0;
+    if (aOk !== bOk) return bOk - aOk;
+    return b.bars.length - a.bars.length;
+  });
+  const best = ok[0]!;
+  return { bars: best.bars.slice(-limit), source: best.source };
+}
+
+/**
+ * Public VN OHLCV (no API key): entrade ∥ VPS TradingView history ∥ Yahoo Finance daily.
+ * Yahoo covers HOSE/HNX/UPCoM tickers (`.VN`) and VN indices (`^VNINDEX`, `^VN30`, …),
+ * so index history still resolves when the VN-only hosts are unreachable.
+ */
+export async function getPublicOhlcvPack(
+  symbol: string,
+  limit = 250,
+  kind: "stock" | "index" = "stock",
+): Promise<PublicOhlcvPack> {
+  const sym = symbol.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  const now = Math.floor(Date.now() / 1000);
+  const from = Math.floor(now - Math.max(limit, 30) * 86400 * 1.6);
+  const wantYahoo = kind === "index" || isVnIndexYahooSymbol(sym) || /^[A-Z0-9]{2,12}$/.test(sym);
+
+  const settled = await Promise.allSettled([
+    fetchEntradeOhlcv(sym, from, now, kind, limit).then((bars): PublicOhlcvPack => ({
+      bars,
+      source: "entrade",
+    })),
+    fetchVpsHistOhlcv(sym, from, now, limit).then((bars): PublicOhlcvPack => ({
+      bars,
+      source: "vps-hist",
+    })),
+    wantYahoo
+      ? getYahooDailyBars(sym, limit).then((bars): PublicOhlcvPack => ({ bars, source: "yahoo" }))
+      : Promise.reject(new Error("yahoo n/a")),
+  ]);
+
+  const candidates: PublicOhlcvPack[] = [];
+  for (const s of settled) {
+    if (s.status === "fulfilled" && s.value.bars.length) candidates.push(s.value);
+  }
+  const best = selectBestOhlcv(candidates, limit);
+  if (!best) throw new ProviderError(`public ohlcv empty: ${sym}`, PUBLIC_VN);
+  return best;
+}
+
+/** Backwards-compatible accessor: bars only. */
 export async function getPublicOhlcv(
   symbol: string,
   limit = 250,
   kind: "stock" | "index" = "stock",
 ): Promise<OhlcvBar[]> {
-  const sym = symbol.toUpperCase().replace(/[^A-Z0-9]/g, "");
-  const now = Math.floor(Date.now() / 1000);
-  const from = Math.floor(now - Math.max(limit, 30) * 86400 * 1.6);
-
-  const settled = await Promise.allSettled([
-    fetchEntradeOhlcv(sym, from, now, kind, limit),
-    fetchVpsHistOhlcv(sym, from, now, limit),
-  ]);
-
-  const candidates: OhlcvBar[][] = [];
-  for (const s of settled) {
-    if (s.status === "fulfilled" && s.value.length) candidates.push(s.value);
-  }
-  if (!candidates.length) {
-    throw new ProviderError(`public ohlcv empty: ${sym}`, PUBLIC_VN);
-  }
-  candidates.sort((a, b) => {
-    const aOk = a.length >= 20 ? 1 : 0;
-    const bOk = b.length >= 20 ? 1 : 0;
-    if (aOk !== bOk) return bOk - aOk;
-    return b.length - a.length;
-  });
-  return candidates[0]!.slice(-limit);
+  const pack = await getPublicOhlcvPack(symbol, limit, kind);
+  return pack.bars;
 }
 
 /** Liquid universe for board fallback (not full HOSE). */

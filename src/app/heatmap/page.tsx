@@ -38,7 +38,12 @@ export default function HeatmapPage() {
   const [width, setWidth] = useState(390);
   const [mapHeight, setMapHeight] = useState(640);
 
-  const vnApi = useApi<VnBoardData>("/api/v1/stocks?board=full", { refreshInterval: 20_000 });
+  // "liquid" = bảng thanh khoản (board=full) · "all" = toàn bộ mã niêm yết từ cache snapshot dùng chung.
+  const [scope, setScope] = useState<"liquid" | "all">("liquid");
+  const vnApi = useApi<VnBoardData>(
+    scope === "all" ? "/api/v1/stocks?universe=all" : "/api/v1/stocks?board=full",
+    { refreshInterval: scope === "all" ? 30_000 : 20_000 },
+  );
   const cryptoApi = useApi<CryptoMarketsData>("/api/v1/crypto/markets?limit=60", {
     refreshInterval: 30_000,
   });
@@ -120,7 +125,7 @@ export default function HeatmapPage() {
           </div>
         </div>
 
-        <div className="flex gap-1.5 px-3 pb-3">
+        <div className="flex flex-wrap items-center gap-1.5 px-3 pb-3">
           {(["vn", "crypto"] as TabId[]).map((id) => {
             const count =
               id === "vn"
@@ -144,12 +149,31 @@ export default function HeatmapPage() {
               </button>
             );
           })}
+          {tab === "vn" ? (
+            <div className="ml-auto flex items-center gap-1 rounded-md bg-panel-2 p-0.5">
+              {([["liquid", "Nhóm thanh khoản"], ["all", "Toàn thị trường"]] as const).map(([id, label]) => (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => setScope(id)}
+                  title={id === "all" ? "Lấy toàn bộ mã niêm yết HOSE/HNX/UPCoM rồi hiển thị 80 mã thanh khoản cao nhất" : "Bảng thanh khoản VN (board=full)"}
+                  className={`rounded px-2.5 py-1 text-[11px] font-medium transition ${
+                    scope === id ? "bg-white/10 text-text-primary ring-1 ring-white/15" : "text-text-muted hover:text-text-primary"
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          ) : null}
         </div>
       </Panel>
 
       <p className="px-1 text-[11.5px] leading-snug text-text-muted">
         {tab === "vn"
-          ? "Ô lớn = thanh khoản cao (KL × giá) · Màu = % phiên · Chạm để mở mã · VNDirect/SSI"
+          ? `Ô lớn = thanh khoản cao (KL × giá) · Màu = % phiên · Chạm để mở mã · VNDirect/SSI${
+              scope === "all" ? " · phạm vi: toàn thị trường (80 mã thanh khoản cao nhất)" : ""
+            }`
           : "Ô lớn = volume 24h · Màu = % 24h · Binance realtime"}
       </p>
 

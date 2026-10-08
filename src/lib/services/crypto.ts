@@ -105,21 +105,19 @@ export async function getCryptoMarkets(): Promise<{ rows: CryptoMarketRow[]; sum
             invalid += 1;
             continue;
           }
-          const q = validateQuote({
-            symbol: row.symbol,
-            price: row.price,
-            changePercent: row.changePercent,
-            volume: row.volume,
-            quoteVolume: row.quoteVolume,
-          });
-          if (!q.ok) {
+          const q = validateQuote(
+            { price: row.price, open: row.open, high: row.high, low: row.low,
+              changePercent: row.changePercent, volume: row.volume, updatedAt: row.updatedAt },
+            { assetClass: "crypto", sourceTimestampMs: t.closeTime || null },
+          );
+          if (q.status === "INVALID") {
             invalid += 1;
-            logQualityEvent({ kind: "quote_invalid", symbol: row.symbol, detail: q.reason });
+            void logQualityEvent("binance", `crypto quote ${row.symbol}`, q);
             continue;
           }
-          if (q.suspect) {
+          if (q.status === "SUSPECT" || q.status === "STALE") {
             suspect += 1;
-            logQualityEvent({ kind: "quote_suspect", symbol: row.symbol, detail: q.reason });
+            void logQualityEvent("binance", `crypto quote ${row.symbol}`, q);
           }
           rows.push(row);
         }
@@ -127,8 +125,8 @@ export async function getCryptoMarkets(): Promise<{ rows: CryptoMarketRow[]; sum
         let overlaid = 0;
         try {
           const live = binanceWs.getTickers(10_000);
-          if (live?.length) {
-            const bySym = new Map(live.map((x) => [String(x.symbol).toUpperCase(), x]));
+          if (live.size) {
+            const bySym = new Map(Array.from(live.values(), (x) => [String(x.symbol).toUpperCase(), x]));
             for (const row of rows) {
               const l = bySym.get(row.symbol);
               if (l?.price && l.price > 0) {
@@ -227,7 +225,7 @@ export async function getCryptoKlines(
     const klines = await binance.getKlines(pair, interval, limit);
     if (!klines?.length) return null;
     const bars: OhlcvBar[] = klines.map((k) => ({
-      time: k.openTime,
+      time: k.time,
       open: k.open,
       high: k.high,
       low: k.low,
@@ -275,7 +273,7 @@ export async function getCryptoDetail(
     }
     try {
       const mark = binanceWs.getMark?.(pair, 120_000);
-      if (mark?.price && quote) quote.price = mark.price;
+      if (mark?.markPrice && quote) quote.price = mark.markPrice;
     } catch {
       /* */
     }

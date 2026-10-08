@@ -29,12 +29,21 @@ export interface VnStockDetail {
   profile: VndCompanyProfile | null;
   orderBook: VnOrderBook | null;
   foreignFlow: { latest: unknown; history: unknown } | null;
-  financials: unknown;
+  financials: {
+    income?: Record<string, unknown>[] | null;
+    balance?: Record<string, unknown>[] | null;
+    cashflow?: Record<string, unknown>[] | null;
+    [key: string]: unknown;
+  } | null;
   financialHealth: FinancialHealthResult | null;
   financialMeta: FinancialPackageMeta | null;
   financialGrowth: GrowthSnapshot | null;
   financialTtm: NormalizedPeriod | null;
-  detailedRatios: unknown;
+  detailedRatios: {
+    marketCap?: number | null;
+    flat?: { key: string; value: number | null; [k: string]: unknown }[] | null;
+    [key: string]: unknown;
+  } | null;
   ratioMap: Record<string, unknown>;
   metricsSources: string[];
   notes: string[];
@@ -84,7 +93,7 @@ async function produceVnStockDetail(sym: string): Promise<{ detail: VnStockDetai
 
   const equity = equityRes ?? null;
   const profile = profileRes ?? null;
-  const orderBook = bookRes ?? null;
+  const orderBook = bookRes?.book ?? null;
   const foreignFlow = foreignRes
     ? { latest: foreignRes.latest ?? null, history: foreignRes.history ?? null }
     : null;

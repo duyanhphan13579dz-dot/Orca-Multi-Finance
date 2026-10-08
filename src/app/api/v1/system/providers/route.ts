@@ -8,10 +8,13 @@ import { getMarketSourceHealth, getFinancialSourceHealth } from "@/lib/financial
  * Ops/observability endpoint — provider status, latency, circuit breakers,
  * cache stats, realtime WS engine state. Powers the /system dashboard.
  */
+import { requireInternalSession } from "@/lib/internal-api-auth";
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 export async function GET() {
+  const unauthorized = await requireInternalSession();
+  if (unauthorized) return unauthorized;
   const providers = getProviderHealth();
   const stats = cacheStats();
   const marketHealth = getMarketSourceHealth();

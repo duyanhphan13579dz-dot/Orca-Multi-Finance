@@ -48,5 +48,7 @@
     "VNDIRECT_WS_DISABLED": "true"
     // "NEXT_PUBLIC_SITE_URL": "https://<domain-cua-ban>"
   }
+  // Provision with `wrangler hyperdrive create orca-postgres --connection-string="$DATABASE_URL"`,
+  // then uncomment and set the returned id. Worker DB code prefers this request-scoped binding.
   // "hyperdrive": [{ "binding": "HYPERDRIVE", "id": "<hyperdrive-config-id>" }]
 }

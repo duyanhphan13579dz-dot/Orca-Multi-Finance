@@ -2,21 +2,18 @@ import "server-only";
 import { env } from "./env";
 
 /**
- * Multi-tier TTL cache with:
- *  - in-memory hot cache (always available)
- *  - optional Redis mirror when REDIS_URL is configured
- *  - stale-while-revalidate: last valid value is served as STALE on producer failure
- *  - soft SWR: expired-but-within-stale returns immediately + background revalidate
- *  - in-flight request deduplication (single producer per key)
- *
- * Cached data is NEVER silently treated as live — callers check `stale`.
+ * Multi-tier TTL cache:
+ *  - in-memory hot (per isolate)
+ *  - Upstash Redis REST mirror (Workers-safe shared)
+ *  - optional Redis TCP (Node only)
+ *  - stale-while-revalidate + in-flight dedupe
  */
 
 interface Entry {
   value: unknown;
-  expiresAt: number; // fresh until
-  staleUntil: number; // serve as stale until
-  producedAt: number; // when the value was produced
+  expiresAt: number;
+  staleUntil: number;
+  producedAt: number;
 }
 
 const mem = new Map<string, Entry>();
@@ -24,8 +21,6 @@ const inflight = new Map<string, Promise<unknown>>();
 let hits = 0;
 let staleServed = 0;
 let bgRefresh = 0;
-
-/* ------------------------------ Redis (optional) ----------------------------- */
 
 type RedisLike = { get(k: string): Promise<string | null>; set(k: string, v: string, ...a: unknown[]): Promise<unknown> };
 let redis: RedisLike | null = null;
@@ -43,7 +38,6 @@ async function getRedis(): Promise<RedisLike | null> {
       connectTimeout: 1_200,
       enableOfflineQueue: false,
       enableReadyCheck: false,
-      // Fail fast — never block quote/OHLCV path on Redis
       commandTimeout: 800,
     });
     client.on("error", () => {});
@@ -51,12 +45,15 @@ async function getRedis(): Promise<RedisLike | null> {
       client.connect().catch(() => undefined),
       new Promise<void>((r) => setTimeout(r, 1_200)),
     ]);
-    // Only adopt client if still usable
     const status = (client as { status?: string }).status;
     if (status === "ready" || status === "connect" || status === "connecting") {
       redis = client as unknown as RedisLike;
     } else {
-      try { client.disconnect(false); } catch { /* */ }
+      try {
+        client.disconnect(false);
+      } catch {
+        /* */
+      }
       redis = null;
     }
   } catch {
@@ -65,7 +62,90 @@ async function getRedis(): Promise<RedisLike | null> {
   return redis;
 }
 
-/* --------------------------------- API ------------------------------------- */
+type UpstashRest = {
+  get(key: string): Promise<string | null>;
+  set(key: string, value: string, opts?: { px?: number }): Promise<void>;
+  del(key: string): Promise<void>;
+};
+
+let upstash: UpstashRest | null = null;
+let upstashTried = false;
+
+async function getUpstash(): Promise<UpstashRest | null> {
+  if (upstash || upstashTried) return upstash;
+  upstashTried = true;
+  const base = env.upstashRestUrl?.replace(/\/$/, "");
+  const token = env.upstashRestToken;
+  if (!base || !token) return null;
+
+  async function cmd(args: unknown[]): Promise<unknown> {
+    const res = await fetch(`${base}`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(args),
+      signal: AbortSignal.timeout(1_500),
+    });
+    if (!res.ok) throw new Error(`upstash ${res.status}`);
+    const json = (await res.json()) as { result?: unknown };
+    return json.result ?? null;
+  }
+
+  upstash = {
+    async get(key: string) {
+      const r = await cmd(["GET", key]);
+      return typeof r === "string" ? r : r == null ? null : String(r);
+    },
+    async set(key: string, value: string, opts?: { px?: number }) {
+      if (opts?.px && opts.px > 0) await cmd(["SET", key, value, "PX", opts.px]);
+      else await cmd(["SET", key, value]);
+    },
+    async del(key: string) {
+      await cmd(["DEL", key]);
+    },
+  };
+  return upstash;
+}
+
+async function mirrorGet(key: string): Promise<string | null> {
+  const u = await getUpstash();
+  if (u) {
+    try {
+      return await u.get(`orca:${key}`);
+    } catch {
+      /* */
+    }
+  }
+  const r = await getRedis();
+  if (!r) return null;
+  try {
+    return await r.get(`orca:${key}`);
+  } catch {
+    return null;
+  }
+}
+
+async function mirrorSet(key: string, payload: string, ttlMs: number, staleMs: number): Promise<void> {
+  const px = Math.max(ttlMs + staleMs, 1_000);
+  const u = await getUpstash();
+  if (u) {
+    try {
+      await u.set(`orca:${key}`, payload, { px });
+      return;
+    } catch {
+      /* */
+    }
+  }
+  const r = await getRedis();
+  if (!r) return;
+  try {
+    await r.set(`orca:${key}`, payload, "PX", px);
+  } catch {
+    /* */
+  }
+}
 
 export interface CacheResult<T> {
   value: T;
@@ -82,9 +162,7 @@ function storeEntry(key: string, value: unknown, ttlMs: number, staleMs: number)
     producedAt: Date.now(),
   };
   mem.set(key, entry);
-  void getRedis().then((r) => {
-    if (r) void r.set(`orca:${key}`, JSON.stringify(entry), "PX", Math.max(ttlMs, staleMs)).catch(() => undefined);
-  });
+  void mirrorSet(key, JSON.stringify(entry), ttlMs, staleMs).catch(() => undefined);
   return entry;
 }
 
@@ -112,28 +190,22 @@ async function runProducer<T>(
 
 export async function cached<T>(
   key: string,
-  opts: {
-    ttlMs: number;
-    staleMs: number;
-    producer: () => Promise<T>;
-    skipCache?: boolean;
-    /** Soft SWR: if expired but within stale window, return stale immediately and refresh in background. Default true. */
-    softSwr?: boolean;
-  },
+  opts: { ttlMs: number; staleMs: number; softSwr?: boolean; skipCache?: boolean; producer: () => Promise<T> },
 ): Promise<CacheResult<T>> {
-  const now = Date.now();
   const { ttlMs, staleMs, producer } = opts;
   const softSwr = opts.softSwr !== false;
+  if (opts.skipCache) {
+    return runProducer(key, ttlMs, staleMs, producer);
+  }
+  const now = Date.now();
+  const e = mem.get(key);
 
-  if (!opts.skipCache) {
-    const e = mem.get(key);
-    if (e && now < e.expiresAt) {
+  if (e) {
+    if (now < e.expiresAt) {
       hits++;
       return { value: e.value as T, cached: true, stale: false, producedAt: e.producedAt };
     }
-
-    // Soft SWR: serve stale immediately, revalidate in background (deduped)
-    if (softSwr && e && now < e.staleUntil) {
+    if (softSwr && now < e.staleUntil) {
       hits++;
       staleServed++;
       if (!inflight.has(key)) {
@@ -144,35 +216,30 @@ export async function cached<T>(
       }
       return { value: e.value as T, cached: true, stale: true, producedAt: e.producedAt };
     }
-
-    // redis mirror (only fills memory, never authoritative)
-    const r = await getRedis();
-    if (r) {
-      try {
-        const raw = await r.get(`orca:${key}`);
-        if (raw) {
-          const parsed = JSON.parse(raw) as Entry & { value: T };
-          if (Date.now() < parsed.expiresAt) {
-            mem.set(key, parsed);
-            hits++;
-            return { value: parsed.value, cached: true, stale: false, producedAt: parsed.producedAt };
-          }
-          if (softSwr && Date.now() < parsed.staleUntil) {
-            mem.set(key, parsed);
-            hits++;
-            staleServed++;
-            if (!inflight.has(key)) {
-              bgRefresh++;
-              const task = runProducer(key, ttlMs, staleMs, producer);
-              inflight.set(key, task as Promise<unknown>);
-              void task.catch(() => undefined);
-            }
-            return { value: parsed.value, cached: true, stale: true, producedAt: parsed.producedAt };
-          }
+    try {
+      const raw = await mirrorGet(key);
+      if (raw) {
+        const parsed = JSON.parse(raw) as Entry & { value: T };
+        if (Date.now() < parsed.expiresAt) {
+          mem.set(key, parsed);
+          hits++;
+          return { value: parsed.value, cached: true, stale: false, producedAt: parsed.producedAt };
         }
-      } catch {
-        /* ignore */
+        if (softSwr && Date.now() < parsed.staleUntil) {
+          mem.set(key, parsed);
+          hits++;
+          staleServed++;
+          if (!inflight.has(key)) {
+            bgRefresh++;
+            const task = runProducer(key, ttlMs, staleMs, producer);
+            inflight.set(key, task as Promise<unknown>);
+            void task.catch(() => undefined);
+          }
+          return { value: parsed.value, cached: true, stale: true, producedAt: parsed.producedAt };
+        }
       }
+    } catch {
+      /* */
     }
   }
 
@@ -197,25 +264,49 @@ export function cacheStats() {
     staleServed,
     bgRefresh,
     inflight: inflight.size,
-    redisEnabled: Boolean(env.redisUrl),
+    redisEnabled: Boolean(env.redisUrl || (env.upstashRestUrl && env.upstashRestToken)),
     redisNote: env.redisNote,
+    upstashRest: Boolean(env.upstashRestUrl && env.upstashRestToken),
   };
 }
 
-export async function redisStatus(): Promise<{ configured: boolean; connected: boolean; note?: string }> {
+export async function redisStatus(): Promise<{
+  configured: boolean;
+  connected: boolean;
+  note?: string;
+  backend?: string;
+}> {
+  if (env.upstashRestUrl && env.upstashRestToken) {
+    const u = await getUpstash();
+    return {
+      configured: true,
+      connected: u !== null,
+      backend: "upstash-rest",
+      note: u ? "Upstash REST ready (Workers-safe)." : "Upstash REST configured but probe failed — in-memory only.",
+    };
+  }
   if (!env.redisUrl) return { configured: false, connected: false, note: env.redisNote };
   const r = await getRedis();
   return {
     configured: true,
     connected: r !== null,
-    note: r ? undefined : "Không kết nối được Redis (sai URL/chặn mạng) — cache vẫn chạy in-memory.",
+    backend: "redis-tcp",
+    note: r ? undefined : "Không kết nối được Redis TCP — dùng UPSTASH_REDIS_REST_* trên Workers.",
   };
 }
 
-/** Drop memory + Redis entry so next read re-produces. */
 export async function invalidate(key: string): Promise<void> {
   mem.delete(key);
   inflight.delete(key);
+  try {
+    const u = await getUpstash();
+    if (u) {
+      await u.del(`orca:${key}`);
+      return;
+    }
+  } catch {
+    /* */
+  }
   const r = await getRedis();
   if (r) {
     try {
@@ -223,13 +314,16 @@ export async function invalidate(key: string): Promise<void> {
       if (typeof client.del === "function") await client.del(`orca:${key}`);
       else await r.set(`orca:${key}`, "", "PX", 1);
     } catch {
-      /* ignore */
+      /* */
     }
   }
 }
 
-/** periodic GC to bound memory */
-if (typeof setInterval !== "undefined") {
+const isWorkersRuntime =
+  process.env.CLOUDFLARE_WORKERS === "1" ||
+  process.env.NEXT_RUNTIME === "edge" ||
+  typeof (globalThis as { WebSocketPair?: unknown }).WebSocketPair !== "undefined";
+if (typeof setInterval !== "undefined" && !isWorkersRuntime) {
   const t = setInterval(() => {
     const now = Date.now();
     for (const [k, e] of mem) if (now > e.staleUntil) mem.delete(k);

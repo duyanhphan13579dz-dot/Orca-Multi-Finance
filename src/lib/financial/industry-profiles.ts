@@ -205,3 +205,11 @@ export function industryFairMultiples(symbol: string): {
     labelVi: p.labelVi,
   };
 }
+
+/** Enumerate available scoring profiles for settings and API consumers. */
+export function listIndustryProfiles(): IndustryProfile[] { return Object.values(PROFILES); }
+
+/** Resolve a known Vietnamese sector label to its scoring profile. */
+export function profileIdFromSector(sector: string | null | undefined): IndustryProfileId {
+  return sector ? SECTOR_TO_PROFILE[sector] ?? "GENERAL" : "GENERAL";
+}

@@ -4,6 +4,7 @@ import { buildMeta } from "../freshness";
 import * as binance from "../providers/binance";
 import { getYahooChart, yahooIntervalFor, yahooSymbolForPair, yahooCryptoSymbol } from "../providers/yahoo";
 import { getBiquotePublicOhlc, biquoteIntervalFor } from "../providers/forex";
+import { fetchVndDchartHistory } from "../providers/vndirect-dchart";
 import { getVnOhlcv } from "./stocks";
 import { validateBars, detectGaps } from "../quality";
 import {
@@ -11,7 +12,7 @@ import {
   binanceInterval,
   TF_MS,
   tfsFor,
-  vndDchartResolution,
+  vnStockChartPlan,
   type ChartAssetType,
   type ChartCandle,
 } from "../chart-const";
@@ -214,7 +215,7 @@ export async function getChartHistory(
   args: ChartArgs,
 ): Promise<{ data: ChartMarketData; meta: Meta } | null> {
   const symbol = String(args.symbol ?? "").trim().toUpperCase();
-  const tf = String(args.timeframe ?? args.interval ?? "1d");
+  const tf = String(args.timeframe ?? "1d");
   if (!symbol) return null;
   const maxL = maxHistoryLimit(args.assetType);
   const limit = Math.min(Math.max(args.limit ?? 500, 40), maxL);
@@ -235,13 +236,45 @@ export async function getChartHistory(
         if (args.assetType === "crypto") {
           series = await cryptoCandles(symbol, tf, limit);
         } else if (args.assetType === "stock") {
-          // simplified stock path — use getVnOhlcv daily
-          const r = await getVnOhlcv(symbol, Math.min(limit, 500));
-          const bars = r?.bars ?? [];
-          series = {
-            candles: bars.map((b) => toCandle(b)),
-            source: (r?.meta as { source?: string } | undefined)?.source ?? "vn-ohlcv",
-          };
+          // VN stocks: honour the requested timeframe instead of always serving daily bars.
+          //  - 1m/5m/15m/30m/1h → native VNDirect dchart resolution
+          //  - 4h               → 1h dchart candles aggregated
+          //  - 1w/1M/12M        → daily candles (multi-source race) aggregated
+          const plan = vnStockChartPlan(tf, limit);
+          if (plan.mode === "daily") {
+            const r = await getVnOhlcv(symbol, plan.want);
+            const bars = r?.bars ?? [];
+            series = {
+              candles: bars.map((b) => toCandle(b)),
+              source: (r?.meta as { source?: string } | undefined)?.source ?? "vn-ohlcv",
+            };
+          } else if (plan.mode === "dchart") {
+            const bars = await fetchVndDchartHistory(symbol, plan.resolution, plan.want);
+            series = {
+              candles: bars.map((b) => toCandle(b)),
+              source: "vndirect-dchart",
+              note: `intraday ${tf} (dchart resolution ${plan.resolution})`,
+            };
+          } else {
+            let baseCandles: ChartCandle[] = [];
+            let baseSource = "none";
+            if (plan.from === "1h") {
+              const bars = await fetchVndDchartHistory(symbol, plan.resolution, plan.want);
+              baseCandles = bars.map((b) => toCandle(b));
+              baseSource = "vndirect-dchart-1h";
+            } else {
+              const r = await getVnOhlcv(symbol, plan.want);
+              baseCandles = (r?.bars ?? []).map((b) => toCandle(b));
+              baseSource = (r?.meta as { source?: string } | undefined)?.source ?? "vn-ohlcv";
+            }
+            series = baseCandles.length
+              ? {
+                  candles: aggregateCandles(baseCandles, plan.tfMs),
+                  source: `${baseSource}+agg`,
+                  note: `${tf} tổng hợp từ ${plan.from}`,
+                }
+              : { candles: [], source: "none", note: `no base candles for ${tf}` };
+          }
           series.candles = scaleVnStockToFullVnd(series.candles);
         } else if (args.assetType === "forex" || args.assetType === "commodity") {
           series = await forexCandles(symbol, tf, limit);

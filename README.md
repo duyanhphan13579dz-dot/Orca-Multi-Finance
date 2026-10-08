@@ -67,12 +67,16 @@ Nếu thiếu dữ liệu, phương pháp liên quan trả về `null`/`incomple
 
 | Domain | Primary | Fallback / điều kiện |
 | --- | --- | --- |
-| VN quotes, indices, universe, OHLCV | **VNDirect** | SSI FastConnect nếu có credentials; VPS/Vietcap/Yahoo/Entrade/public feeds tùy endpoint |
+| VN quotes, indices, universe, OHLCV | **VNDirect** (snapshot toàn board cho request ≥ 20 mã) | VPS `getliststockdata` · SSI iBoard · Vietcap · SSI FastConnect nếu có credentials |
+| VN OHLCV theo timeframe | VNDirect `stock_prices` (1d) + **dchart** (1m–1h) | Entrade · VPS TradingView history · Yahoo `.VN`/`^VNINDEX` (1d); 4h/1w/1M tổng hợp từ 1h/1d |
+| VN universe niêm yết | **VNDirect `/v4/stocks`** (cache 6h) | SSI iBoard HOSE/HNX/UPCoM · `LIQUID_BOARD` (partial, có nhãn) |
 | VN financial statements, ratios, equity snapshot | **VNDirect DStock / api-finfo** | VNStock API chỉ bật khi có đồng thời `VNSTOCK_BASE_URL` và `VNSTOCK_API_KEY` |
 | Crypto spot | **Binance REST** với host failover | Binance futures cho funding/OI; có thể bị geo-block |
 | Forex | Biquote public/configured | exchangerate-api; Frankfurter/ECB cho daily reference history |
 | Commodities | **Vietnambiz data portal** | Các adapter/provider phụ trợ tùy symbol và cấu hình |
 | News | CafeF, VnExpress, VietnamBiz, Tuổi Trẻ, BBC, CoinTelegraph, Google News, FRED, Fed, ECB, SEC RSS | Từng feed hoạt động độc lập; partial success vẫn được trả kèm metadata |
+
+Catalog nguồn chuẩn: `src/lib/data-engine/catalog.ts`; self-test kết nối từng nguồn: `GET /api/v1/system/connectivity` (hoặc panel trong `/system`).
 
 Provider adapters nằm trong `src/lib/providers/` và financial adapters trong `src/lib/financial/`. Không có mock market data trong request path. Khi upstream lỗi, pipeline thực hiện timeout/retry/backoff, circuit handling, cache và stale-while-revalidate trước khi trả trạng thái `DEGRADED` hoặc `UNAVAILABLE`.
 

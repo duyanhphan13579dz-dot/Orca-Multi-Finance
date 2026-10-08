@@ -61,7 +61,21 @@ function mapRow(r: SsiBoardRow): Quote | null {
   };
 }
 
+/**
+ * iBoard has no per-symbol query — one call returns the whole exchange board.
+ * A short memo (8s) keeps board/multi-quote/screener bursts from re-downloading
+ * the same three boards several times per request.
+ */
+const BOARD_MEMO_TTL_MS = 8_000;
+const boardMemo = new Map<string, { at: number; rows: SsiBoardRow[] }>();
+
+export function clearSsiBoardMemo(): void {
+  boardMemo.clear();
+}
+
 async function fetchExchange(ex: "hose" | "hnx" | "upcom"): Promise<SsiBoardRow[]> {
+  const hit = boardMemo.get(ex);
+  if (hit && Date.now() - hit.at < BOARD_MEMO_TTL_MS) return hit.rows;
   const res = await httpJson<SsiEnvelope>(`${BASE}/stock/exchange/${ex}?boardId=MAIN`, {
     provider: "ssi-iboard",
     timeoutMs: 8_500,
@@ -72,7 +86,8 @@ async function fetchExchange(ex: "hose" | "hnx" | "upcom"): Promise<SsiBoardRow[
       Referer: "https://iboard.ssi.com.vn/",
     },
   });
-  if (!res.ok || !res.data?.data) return [];
+  if (!res.ok || !res.data?.data) return hit?.rows ?? [];
+  boardMemo.set(ex, { at: Date.now(), rows: res.data.data });
   return res.data.data;
 }
 

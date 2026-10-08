@@ -69,6 +69,11 @@ export const env = {
 
   redisUrl: redisIsTcp ? redisCandidate : undefined,
   redisNote,
+  /** Upstash Redis REST — works on Cloudflare Workers (no TCP). Prefer when set. */
+  upstashRestUrl:
+    opt(process.env.UPSTASH_REDIS_REST_URL) ??
+    (redisCandidate && /^https?:\/\//i.test(redisCandidate) ? redisCandidate : undefined),
+  upstashRestToken: opt(process.env.UPSTASH_REDIS_REST_TOKEN),
   /** Không còn khóa mặc định: auth.ts tự quyết định (production thiếu → từ chối, dev → khóa cục bộ). */
   jwtSecret: opt(process.env.JWT_SECRET),
 

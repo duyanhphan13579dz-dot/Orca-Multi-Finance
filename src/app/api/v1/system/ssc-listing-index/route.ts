@@ -2,10 +2,13 @@ import { ok } from "@/lib/envelope";
 import { buildMeta } from "@/lib/freshness";
 import { buildSscListingIndex, refreshSscListingIndex } from "@/lib/financial/official/ssc-listing-index";
 
+import { requireInternalSession } from "@/lib/internal-api-auth";
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 export async function GET(req: Request) {
+  const unauthorized = await requireInternalSession();
+  if (unauthorized) return unauthorized;
   const url = new URL(req.url);
   const force = url.searchParams.get("refresh") === "1" || url.searchParams.get("force") === "1";
   const index = force ? await refreshSscListingIndex() : await buildSscListingIndex();

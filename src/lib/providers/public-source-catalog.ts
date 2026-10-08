@@ -12,12 +12,18 @@ export interface PublicSourceDefinition {
   url: string;
   apiKeyRequired: boolean;
   notes: string;
+  /**
+   * Runtime provider id this documented source maps to (see data-engine/catalog.ts
+   * and /api/v1/system/connectivity). Undefined = documented candidate not wired yet.
+   */
+  providerId?: string;
 }
 
 /** Curated public/free sources used as adapters or research candidates. */
 export const PUBLIC_SOURCE_CATALOG: PublicSourceDefinition[] = [
   {
     id: "vps-bgapidatafeed",
+    providerId: "vps",
     name: "VPS Fmarket/BGAPi",
     domain: "vn-stocks",
     access: "open",
@@ -28,6 +34,7 @@ export const PUBLIC_SOURCE_CATALOG: PublicSourceDefinition[] = [
   },
   {
     id: "vps-histdatafeed",
+    providerId: "vps-hist",
     name: "VPS HistDatafeed (TV history)",
     domain: "vn-stocks",
     access: "open",
@@ -38,6 +45,7 @@ export const PUBLIC_SOURCE_CATALOG: PublicSourceDefinition[] = [
   },
   {
     id: "entrade-chart-api",
+    providerId: "entrade",
     name: "DNSE Entrade chart-api",
     domain: "vn-stocks",
     access: "open",
@@ -48,6 +56,7 @@ export const PUBLIC_SOURCE_CATALOG: PublicSourceDefinition[] = [
   },
   {
     id: "ssi-iboard",
+    providerId: "ssi-iboard",
     name: "SSI iBoard",
     domain: "vn-stocks",
     access: "open",
@@ -58,6 +67,7 @@ export const PUBLIC_SOURCE_CATALOG: PublicSourceDefinition[] = [
   },
   {
     id: "vndirect-dstock-fs",
+    providerId: "vndirect-fs",
     name: "VNDirect DStock financial statements",
     domain: "vn-stocks",
     access: "open",
@@ -68,6 +78,7 @@ export const PUBLIC_SOURCE_CATALOG: PublicSourceDefinition[] = [
   },
   {
     id: "vndirect-dchart",
+    providerId: "vndirect-dchart",
     name: "VNDirect dchart history",
     domain: "vn-stocks",
     access: "open",
@@ -78,6 +89,7 @@ export const PUBLIC_SOURCE_CATALOG: PublicSourceDefinition[] = [
   },
   {
     id: "yahoo-finance",
+    providerId: "yahoo-vn",
     name: "Yahoo Finance",
     domain: "macro",
     access: "open",
@@ -88,6 +100,7 @@ export const PUBLIC_SOURCE_CATALOG: PublicSourceDefinition[] = [
   },
   {
     id: "binance-public",
+    providerId: "binance-spot",
     name: "Binance public market data",
     domain: "crypto",
     access: "open",
@@ -98,6 +111,7 @@ export const PUBLIC_SOURCE_CATALOG: PublicSourceDefinition[] = [
   },
   {
     id: "coingecko-demo",
+    providerId: "coingecko",
     name: "CoinGecko Demo API",
     domain: "crypto",
     access: "free-tier",
@@ -108,6 +122,7 @@ export const PUBLIC_SOURCE_CATALOG: PublicSourceDefinition[] = [
   },
   {
     id: "biquote-public",
+    providerId: "biquote-public",
     name: "Biquote public (MT5)",
     domain: "forex",
     access: "open",
@@ -118,6 +133,7 @@ export const PUBLIC_SOURCE_CATALOG: PublicSourceDefinition[] = [
   },
   {
     id: "yahoo-fx",
+    providerId: "yahoo",
     name: "Yahoo Finance FX / Futures",
     domain: "forex",
     access: "open",
@@ -128,6 +144,7 @@ export const PUBLIC_SOURCE_CATALOG: PublicSourceDefinition[] = [
   },
   {
     id: "frankfurter-ecb",
+    providerId: "frankfurter-ecb",
     name: "Frankfurter / ECB",
     domain: "forex",
     access: "open",
@@ -138,6 +155,7 @@ export const PUBLIC_SOURCE_CATALOG: PublicSourceDefinition[] = [
   },
   {
     id: "exchange-rate-api",
+    providerId: "exchangerate-api",
     name: "ExchangeRate API open",
     domain: "forex",
     access: "open",
@@ -148,6 +166,7 @@ export const PUBLIC_SOURCE_CATALOG: PublicSourceDefinition[] = [
   },
   {
     id: "vietnambiz-data",
+    providerId: "vietnambiz-data",
     name: "VietnamBiz Data",
     domain: "commodities",
     access: "open",
