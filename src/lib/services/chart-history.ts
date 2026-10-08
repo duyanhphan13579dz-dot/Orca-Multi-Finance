@@ -214,7 +214,7 @@ export async function getChartHistory(
   args: ChartArgs,
 ): Promise<{ data: ChartMarketData; meta: Meta } | null> {
   const symbol = String(args.symbol ?? "").trim().toUpperCase();
-  const tf = String(args.timeframe ?? args.interval ?? "1d");
+  const tf = String(args.timeframe ?? "1d");
   if (!symbol) return null;
   const maxL = maxHistoryLimit(args.assetType);
   const limit = Math.min(Math.max(args.limit ?? 500, 40), maxL);

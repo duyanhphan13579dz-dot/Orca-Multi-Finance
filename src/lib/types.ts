@@ -186,15 +186,19 @@ export type DivergenceKind =
   | "hidden_bearish";
 export type DivergenceOscillator = "rsi" | "macd_hist" | "macd_line" | "stoch";
 export type DivergenceStrength = "A" | "B" | "C";
-export interface DivergencePivot { index: number; price: number; osc: number; time?: number; }
+export interface DivergencePivot { index: number; price: number; value: number; time: number; }
 export interface DivergenceSignal {
   kind: DivergenceKind;
   oscillator: DivergenceOscillator;
   strength: DivergenceStrength;
-  pricePivots: number[];
-  oscPivots: number[];
-  ageBars: number;
-  note?: string;
+  confidence: number;
+  barsBetween: number;
+  timeframe: string | null;
+  pricePivots: [DivergencePivot, DivergencePivot];
+  oscPivots: [DivergencePivot, DivergencePivot];
+  structure: "single" | "double" | "triple";
+  volumeConfirmed: boolean | null;
+  detectedAt: number;
 }
 
 export interface CryptoMarketRow extends Quote { marketCap?: number | null; rank?: number | null; }

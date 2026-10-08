@@ -1,6 +1,7 @@
 import { getVndirectLatencyStats } from "@/lib/providers/vndirect";
 import { ensureVndirectWsStarted, vndirectWs } from "@/lib/realtime/vndirect-ws";
 
+import { requireInternalSession } from "@/lib/internal-api-auth";
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
@@ -9,6 +10,8 @@ export const runtime = "nodejs";
  * Rolling VNDirect REST latency (p50/p95) + WS getStats(). No secrets.
  */
 export async function GET() {
+  const unauthorized = await requireInternalSession();
+  if (unauthorized) return unauthorized;
   let ws: Record<string, unknown> = { started: false };
   try {
     if (process.env.VNDIRECT_WS_DISABLED !== "true") {

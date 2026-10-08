@@ -4,11 +4,14 @@ import { ssiWs, ensureSsiWsStarted } from "@/lib/realtime/ssi-ws";
 import { bootSsiMarketDataPipeline } from "@/lib/realtime/ssi-market-boot";
 import { ssiFcConfigured } from "@/lib/providers/ssi-fcdata";
 
+import { requireInternalSession } from "@/lib/internal-api-auth";
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 /** GET /api/v1/system/ssi-ws — trạng thái DataHub streaming (All api data + All stream data) */
 export async function GET() {
+  const unauthorized = await requireInternalSession();
+  if (unauthorized) return unauthorized;
   if (ssiFcConfigured() && process.env.SSI_WS_DISABLED !== "true") {
     bootSsiMarketDataPipeline();
   }

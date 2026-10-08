@@ -6,12 +6,6 @@ initOpenNextCloudflareForDev();
 
 const nextConfig: NextConfig = {
   output: "standalone",
-  // TEMP: SWC panics ("failed to initiate panic, error 5") when printing TS
-  // code frames that contain multi-byte Vietnamese text. Unblocks deploy;
-  // remove once `tsc --noEmit` is clean on CI.
-  typescript: {
-    ignoreBuildErrors: true,
-  },
   // Keep heavy Node-only packages out of the Next server bundle.
   serverExternalPackages: ["pg", "playwright", "playwright-core"],
   // Cloudflare Workers (OpenNext): `pg` loads `pg-cloudflare` for TCP sockets via the

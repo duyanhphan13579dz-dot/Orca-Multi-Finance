@@ -8,6 +8,7 @@ import { ensureHeartbeatStarted, processHeartbeat } from "@/lib/realtime/heartbe
 import { cacheStats, redisStatus } from "@/lib/cache";
 import { llmConfigured } from "@/lib/ai/gateway";
 
+import { requireInternalSession } from "@/lib/internal-api-auth";
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
@@ -15,6 +16,8 @@ const startedAt = Date.now();
 
 /** Non-sensitive system information for Settings › System. */
 export async function GET() {
+  const unauthorized = await requireInternalSession();
+  if (unauthorized) return unauthorized;
   let version = "0.0.0";
   try {
     const pkg = JSON.parse(readFileSync(join(process.cwd(), "package.json"), "utf8")) as { version?: string; name?: string };
