@@ -221,8 +221,8 @@ export interface TechnicalSnapshot {
   returns?: { d7?: number | null; d30?: number | null; ytd?: number | null; y1?: number | null };
   high52w?: number | null;
   low52w?: number | null;
-  support?: number | number[] | null;
-  resistance?: number | number[] | null;
+  support?: number[] | null;
+  resistance?: number[] | null;
   supportLevels?: number[];
   resistanceLevels?: number[];
   trend?: { score: number; label: string } | null;
