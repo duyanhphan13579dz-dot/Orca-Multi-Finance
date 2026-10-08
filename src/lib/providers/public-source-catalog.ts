@@ -77,6 +77,16 @@ export const PUBLIC_SOURCE_CATALOG: PublicSourceDefinition[] = [
     notes: "Intraday + daily OHLCV for charts — raced with Entrade + VPS hist.",
   },
   {
+    id: "vndirect-events",
+    name: "VNDirect DStock corporate events",
+    domain: "vn-stocks",
+    access: "open",
+    cadence: "daily",
+    url: "https://api-finfo.vndirect.com.vn/v4/events",
+    apiKeyRequired: false,
+    notes: "Dividends, AGM, rights — wired via providers/vndirect-events.ts and /api/v1/stocks/:symbol/events.",
+  },
+  {
     id: "yahoo-finance",
     name: "Yahoo Finance",
     domain: "macro",
@@ -85,6 +95,16 @@ export const PUBLIC_SOURCE_CATALOG: PublicSourceDefinition[] = [
     url: "https://finance.yahoo.com",
     apiKeyRequired: false,
     notes: "Indices, FX, commodity futures reference quotes.",
+  },
+  {
+    id: "worldbank-open",
+    name: "World Bank Open Data",
+    domain: "macro",
+    access: "open",
+    cadence: "daily",
+    url: "https://api.worldbank.org/v2",
+    apiKeyRequired: false,
+    notes: "Structured annual macro (GDP, CPI, FDI…) — providers/worldbank.ts, GET /api/v1/macro/worldbank.",
   },
   {
     id: "binance-public",
@@ -164,7 +184,7 @@ export const PUBLIC_SOURCE_CATALOG: PublicSourceDefinition[] = [
     cadence: "daily",
     url: "https://fred.stlouisfed.org",
     apiKeyRequired: false,
-    notes: "Public macro series; CSV download endpoints.",
+    notes: "Public macro series; CSV download endpoints (API key optional for JSON).",
   },
   {
     id: "sbv-public",
