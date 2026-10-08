@@ -8,13 +8,18 @@ import {
   ssiFcConfigured,
 } from "../providers/ssi-fcdata";
 import type { IndexQuote, Meta, OhlcvBar, Quote } from "../types";
+import {
+  marketSourceIdFor,
+  recordMarketSource,
+} from "../realtime/market-source-monitor";
 import { getMultiQuotes } from "./multi-quote";
 import {
   getPublicIndices,
   getPublicQuotes,
-  getPublicOhlcv,
+  getPublicOhlcvPack,
   LIQUID_BOARD,
 } from "../providers/public-vn-feed";
+import { getVnUniverse } from "./vn-universe";
 
 const INDEX_PRIORITY = ["VNINDEX", "VN30", "HNX", "UPCOM", "HNX30", "VN100"];
 
@@ -176,16 +181,43 @@ export async function getVnOhlcv(
         7_000,
       ),
       withTimeout(
-        getPublicOhlcv(sym, limit, kind)
-          .then((bars) => (bars?.length ? { bars, source: "public" } : null))
+        getPublicOhlcvPack(sym, limit, kind)
+          .then((pack) => (pack?.bars?.length ? { bars: pack.bars, source: `public:${pack.source}` } : null))
           .catch(() => null),
         7_000,
       ),
     ];
-    if (ssiFcConfigured() && !isIndex) {
+    // dchart lives on a different VNDirect host than api-finfo, so it survives an
+    // api-finfo outage and adds intraday-grade candles to the race.
+    tasks.push(
+      withTimeout(
+        import("../providers/vndirect-dchart")
+          .then((m) => m.fetchVndDchartHistory(sym, "D", limit))
+          .then((bars) => (bars?.length ? { bars, source: "vndirect-dchart" } : null))
+          .catch(() => null),
+        7_000,
+      ),
+    );
+    if (ssiFcConfigured()) {
       tasks.push(
         withTimeout(
-          getSsiDailyOhlc(sym, { pageSize: limit })
+          (isIndex
+            ? import("../providers/ssi-market-catalog")
+                .then((m) => m.getSsiIndexHistory(sym, { pageSize: Math.max(limit, 200) }))
+                .then((rows) =>
+                  rows
+                    .filter((r) => !r.synthetic)
+                    .map((r) => ({
+                      time: r.time,
+                      open: r.open,
+                      high: r.high,
+                      low: r.low,
+                      close: r.close,
+                      volume: r.volume ?? 0,
+                    })),
+                )
+            : getSsiDailyOhlc(sym, { pageSize: limit })
+          )
             .then((bars) => (bars?.length ? { bars, source: "ssi-fcdata" } : null))
             .catch(() => null),
           7_000,
@@ -195,7 +227,12 @@ export async function getVnOhlcv(
     const settled = await Promise.all(tasks);
     const ok = settled.filter((x): x is Cand => Boolean(x?.bars?.length));
     if (!ok.length) return null;
-    ok.sort((a, b) => b.bars.length - a.bars.length);
+    ok.sort((a, b) => {
+      const aOk = a.bars.length >= 20 ? 1 : 0;
+      const bOk = b.bars.length >= 20 ? 1 : 0;
+      if (aOk !== bOk) return bOk - aOk;
+      return b.bars.length - a.bars.length;
+    });
     return ok[0]!;
   };
 
@@ -206,6 +243,8 @@ export async function getVnOhlcv(
       producer: async () => {
         const pack = await raceBars();
         if (!pack?.bars?.length) throw new Error(`ohlcv empty ${sym}`);
+        const monitorId = marketSourceIdFor(pack.source);
+        if (monitorId) recordMarketSource(monitorId, true, 0);
         return pack;
       },
     });
@@ -301,7 +340,41 @@ export async function getVnMarketBoard(): Promise<{
   }
 }
 
-export async function getVnUniverseList(): Promise<{ symbols: string[]; meta: Meta } | null> {
+/**
+ * Full listed-equity universe (VNDirect + SSI iBoard, cached 6h).
+ * Falls back to board quotes and finally LIQUID_BOARD — always labelled via meta.source.
+ */
+export async function getVnUniverseList(opts?: {
+  exchange?: string | null;
+  limit?: number | null;
+}): Promise<{ symbols: string[]; meta: Meta } | null> {
+  const exchange = (opts?.exchange ?? "").trim().toUpperCase();
+  try {
+    const universe = await getVnUniverse();
+    let rows = universe.rows;
+    if (exchange && exchange !== "ALL") {
+      rows = rows.filter((r) => String(r.exchange ?? "").toUpperCase().includes(exchange));
+    }
+    const limit = Number(opts?.limit ?? 0);
+    if (Number.isFinite(limit) && limit > 0) rows = rows.slice(0, Math.floor(limit));
+    const symbols = rows.map((r) => r.symbol);
+    if (symbols.length >= 20) {
+      return {
+        symbols,
+        meta: buildMeta({
+          source: universe.source,
+          sourceTimestampMs: universe.producedAt,
+          cached: universe.cached,
+          stale: universe.stale,
+          partial: universe.partial,
+          note: `${symbols.length} mã niêm yết${exchange && exchange !== "ALL" ? ` · ${exchange}` : ""}`,
+        }),
+      };
+    }
+  } catch {
+    /* fall through to board quotes */
+  }
+
   try {
     const board = await getVnMarketBoard();
     const symbols = [...new Set((board?.quotes ?? []).map((q) => q.symbol).filter(Boolean))];
@@ -313,7 +386,7 @@ export async function getVnUniverseList(): Promise<{ symbols: string[]; meta: Me
     }
     return {
       symbols,
-      meta: board?.meta ?? buildMeta({ source: "board", sourceTimestampMs: Date.now() }),
+      meta: board?.meta ?? buildMeta({ source: "board", sourceTimestampMs: Date.now(), partial: true }),
     };
   } catch {
     return {

@@ -177,14 +177,15 @@ export async function getVndMarketQuotes(
   return fetchVndMarketQuotesParallel(sessionDate);
 }
 
-export async function getVndQuotes(symbols: string[]): Promise<{ quotes: Quote[]; sourceTs: number | null }> {
-  const uniq = [...new Set(symbols.map((s) => s.toUpperCase()).filter(Boolean))].slice(0, 40);
-  if (!uniq.length) return { quotes: [], sourceTs: null };
-  const date = await getVndLatestSessionDate();
+/** Symbols per /v4/stock_prices call (transport batch size). */
+const QUOTE_BATCH_SIZE = 40;
+/** Concurrent batches — keeps large lists inside the caller deadline without a thundering herd. */
+const QUOTE_BATCH_CONCURRENCY = 4;
+
+async function fetchQuoteBatch(symbols: string[], date: string): Promise<Quote[]> {
   const quotes: Quote[] = [];
-  let newest: number | null = null;
   const results = await Promise.allSettled(
-    uniq.map((s) =>
+    symbols.map((s) =>
       vndGet<Page<VndPriceRow>>(`/v4/stock_prices?q=code:${s}~date:${date}&size=1&sort=date:desc`, 6_000),
     ),
   );
@@ -195,8 +196,6 @@ export async function getVndQuotes(symbols: string[]): Promise<{ quotes: Quote[]
     const symbol = String(row.code ?? "").toUpperCase();
     const price = num(row.close);
     if (!symbol || price == null) continue;
-    const t = row.date ? Date.parse(`${row.date}T15:00:00+07:00`) : null;
-    if (t != null && Number.isFinite(t) && (newest == null || t > newest)) newest = t;
     quotes.push({
       symbol,
       assetClass: "stock",
@@ -213,6 +212,34 @@ export async function getVndQuotes(symbols: string[]): Promise<{ quotes: Quote[]
       floorPrice: num(row.floorPrice),
       updatedAt: row.date ?? null,
     });
+  }
+  return quotes;
+}
+
+/**
+ * Per-symbol quotes. Batches of 40 with bounded concurrency — no silent truncation,
+ * so callers may pass the full board (prefer getVndMarketSnapshot for large sets).
+ */
+export async function getVndQuotes(symbols: string[]): Promise<{ quotes: Quote[]; sourceTs: number | null }> {
+  const uniq = [...new Set(symbols.map((s) => s.toUpperCase().trim()).filter(Boolean))];
+  if (!uniq.length) return { quotes: [], sourceTs: null };
+  const date = await getVndLatestSessionDate();
+  const chunks: string[][] = [];
+  for (let i = 0; i < uniq.length; i += QUOTE_BATCH_SIZE) chunks.push(uniq.slice(i, i + QUOTE_BATCH_SIZE));
+
+  const quotes: Quote[] = [];
+  let newest: number | null = null;
+  for (let i = 0; i < chunks.length; i += QUOTE_BATCH_CONCURRENCY) {
+    const group = chunks.slice(i, i + QUOTE_BATCH_CONCURRENCY);
+    const settled = await Promise.allSettled(group.map((batch) => fetchQuoteBatch(batch, date)));
+    for (const s of settled) {
+      if (s.status !== "fulfilled") continue;
+      for (const q of s.value) {
+        quotes.push(q);
+        const t = q.updatedAt ? Date.parse(`${q.updatedAt}T15:00:00+07:00`) : null;
+        if (t != null && Number.isFinite(t) && (newest == null || t > newest)) newest = t;
+      }
+    }
   }
   if (!quotes.length) throw new ProviderError("vndirect: empty quotes batch", VNDIRECT);
   return { quotes, sourceTs: newest };

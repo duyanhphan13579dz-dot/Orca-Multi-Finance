@@ -75,12 +75,27 @@ export async function getVietcapCompany(symbol: string): Promise<VietcapProfile 
   };
 }
 
+/** Vietcap IQ serves one company per request → keep batches small and bounded. */
+const VIETCAP_BATCH = 20;
+const VIETCAP_CONCURRENCY = 3;
+
 export async function getVietcapQuotes(symbols: string[]): Promise<{
   quotes: Quote[];
   sourceTs: number | null;
 }> {
-  const uniq = [...new Set(symbols.map((s) => s.toUpperCase()).filter(Boolean))].slice(0, 20);
-  const results = await Promise.allSettled(uniq.map((s) => getVietcapCompany(s)));
+  const uniq = [...new Set(symbols.map((s) => s.toUpperCase()).filter(Boolean))];
+  const chunks: string[][] = [];
+  for (let i = 0; i < uniq.length; i += VIETCAP_BATCH) chunks.push(uniq.slice(i, i + VIETCAP_BATCH));
+  const results: PromiseSettledResult<VietcapProfile | null>[] = [];
+  for (let i = 0; i < chunks.length; i += VIETCAP_CONCURRENCY) {
+    const group = chunks.slice(i, i + VIETCAP_CONCURRENCY);
+    const settled = await Promise.allSettled(
+      group.map((batch) => Promise.allSettled(batch.map((s) => getVietcapCompany(s)))),
+    );
+    for (const g of settled) {
+      if (g.status === "fulfilled") results.push(...g.value);
+    }
+  }
   const quotes: Quote[] = [];
   for (const r of results) {
     if (r.status !== "fulfilled" || !r.value) continue;
