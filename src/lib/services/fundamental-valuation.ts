@@ -36,12 +36,6 @@ function saneMultiple(v: number | null | undefined, maxAbs = 500): number | null
   return v;
 }
 
-function saneYieldPct(v: number | null | undefined): number | null {
-  if (v == null || !Number.isFinite(v)) return null;
-  if (Math.abs(v) > 80) return null;
-  return v;
-}
-
 function yieldRatioToPct(v: number | null | undefined): number | null {
   if (v == null || !Number.isFinite(v) || v < 0) return null;
   const ratio = v > 1 ? v / 100 : v;
@@ -238,12 +232,20 @@ export async function runFundamentalValuation(
     capexTtm: cfInputs.capexTtm,
     deltaNwc: cfInputs.deltaNwc,
     netBorrowing: cfInputs.netBorrowing,
-    historicalRows: undefined,
-    peerComparison: peerPack
+    peerComparison: peerPack?.peers?.length
       ? {
           symbol,
-          sector: sectorOf(symbol),
-          subject: peerPack.subject,
+          sector: peerPack.sector ?? sectorOf(symbol),
+          subject: {
+            symbol,
+            pe: saneMultiple(vndRatios?.pe) ?? null,
+            pb: saneMultiple(vndRatios?.pb) ?? null,
+            ps: saneMultiple(vndRatios?.ps) ?? null,
+            evEbitda: saneMultiple(vndRatios?.evEbitda) ?? null,
+            pfcf: null,
+            dividendYield: yieldRatioToPct(vndRatios?.dividendYield),
+            marketCap: vndRatios?.marketCap ?? null,
+          },
           peers: peerPack.peers,
         }
       : undefined,
@@ -265,7 +267,7 @@ export async function runFundamentalValuation(
             pb: saneMultiple(vndRatios.pb),
             ps: saneMultiple(vndRatios.ps),
             evEbitda: saneMultiple(vndRatios.evEbitda),
-            dividendYield: saneYieldPct(vndRatios.dividendYield),
+            dividendYield: yieldRatioToPct(vndRatios.dividendYield),
             marketCap: vndRatios.marketCap ?? null,
           }
         : { marketCap: null },
