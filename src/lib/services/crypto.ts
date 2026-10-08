@@ -36,6 +36,20 @@ export interface CryptoSummary {
   fetchedAt: string;
 }
 
+export interface CryptoDetail {
+  symbol: string;
+  quote: CryptoMarketRow | null;
+  bars: OhlcvBar[];
+  technical: TechnicalSnapshot | null;
+  patterns: CandlePattern[];
+}
+
+export interface CryptoScreenerParams {
+  sort?: "volume" | "gainers" | "losers";
+  limit?: number;
+  minQuoteVolume?: number;
+}
+
 type AllMarket = {
   rows: CryptoMarketRow[];
   fetchedAt: number;
@@ -114,7 +128,6 @@ export async function getCryptoMarkets(): Promise<{
 
         let overlaid = 0;
         try {
-          const subscribed = candleAggregator.subscribedSymbols();
           for (const row of rows) {
             const sym = row.symbol;
             const last = binanceWs.getLastPrice?.(sym) ?? null;
@@ -195,28 +208,18 @@ export async function getCryptoMarkets(): Promise<{
   }
 }
 
-export async function getCryptoDetail(
+export async function getCryptoKlines(
   symbol: string,
-  interval = "1d",
-  limit = 120,
-): Promise<{
-  quote: CryptoMarketRow | null;
-  bars: OhlcvBar[];
-  technical: TechnicalSnapshot | null;
-  patterns: CandlePattern[];
-  meta: Meta;
-} | null> {
+  interval = "1h",
+  limit = 200,
+): Promise<{ bars: OhlcvBar[]; meta: Meta } | null> {
   const sym = symbol.toUpperCase().replace(/[^A-Z0-9]/g, "");
   if (!sym) return null;
   const pair = sym.endsWith("USDT") ? sym : `${sym}USDT`;
-
   try {
-    const [markets, klines] = await Promise.all([
-      getCryptoMarkets().catch(() => null),
-      binance.getKlines(pair, interval, limit).catch(() => null),
-    ]);
-    const quote = markets?.rows.find((r) => r.symbol === pair) ?? null;
-    const bars: OhlcvBar[] = (klines ?? []).map((k) => ({
+    const klines = await binance.getKlines(pair, interval, limit);
+    if (!klines?.length) return null;
+    const bars: OhlcvBar[] = klines.map((k) => ({
       time: k.openTime,
       open: k.open,
       high: k.high,
@@ -224,6 +227,33 @@ export async function getCryptoDetail(
       close: k.close,
       volume: k.volume,
     }));
+    return {
+      bars,
+      meta: buildMeta({
+        source: "binance-klines",
+        sourceTimestampMs: bars[bars.length - 1]?.time ?? Date.now(),
+      }),
+    };
+  } catch {
+    return null;
+  }
+}
+
+export async function getCryptoDetail(
+  symbol: string,
+  interval = "1h",
+): Promise<{ detail: CryptoDetail; meta: Meta } | null> {
+  const sym = symbol.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  if (!sym) return null;
+  const pair = sym.endsWith("USDT") ? sym : `${sym}USDT`;
+
+  try {
+    const [markets, klines] = await Promise.all([
+      getCryptoMarkets().catch(() => null),
+      getCryptoKlines(pair, interval, 200).catch(() => null),
+    ]);
+    const quote = markets?.rows.find((r) => r.symbol === pair) ?? null;
+    const bars = klines?.bars ?? [];
     let technical: TechnicalSnapshot | null = null;
     let patterns: CandlePattern[] = [];
     if (bars.length >= 20) {
@@ -234,11 +264,15 @@ export async function getCryptoDetail(
         /* */
       }
     }
-    return {
+    const detail: CryptoDetail = {
+      symbol: pair,
       quote,
       bars,
       technical,
       patterns,
+    };
+    return {
+      detail,
       meta: buildMeta({
         source: quote ? "binance+klines" : "binance-klines",
         sourceTimestampMs: bars.length ? bars[bars.length - 1]!.time : Date.now(),
@@ -248,4 +282,23 @@ export async function getCryptoDetail(
   } catch {
     return null;
   }
+}
+
+export async function screenCrypto(
+  params: CryptoScreenerParams,
+): Promise<{ rows: CryptoMarketRow[]; meta: Meta } | null> {
+  const m = await getCryptoMarkets();
+  if (!m) return null;
+  let rows = m.rows;
+  if (params.minQuoteVolume != null) {
+    rows = rows.filter((r) => (r.quoteVolume ?? 0) >= (params.minQuoteVolume ?? 0));
+  }
+  if (params.sort === "gainers") {
+    rows = [...rows].sort((a, b) => (b.changePercent ?? 0) - (a.changePercent ?? 0));
+  } else if (params.sort === "losers") {
+    rows = [...rows].sort((a, b) => (a.changePercent ?? 0) - (b.changePercent ?? 0));
+  } else {
+    rows = [...rows].sort((a, b) => (b.quoteVolume ?? 0) - (a.quoteVolume ?? 0));
+  }
+  return { rows: rows.slice(0, params.limit ?? 40), meta: m.meta };
 }
