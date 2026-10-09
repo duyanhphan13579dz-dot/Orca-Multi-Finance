@@ -8,14 +8,27 @@ import { Chg, FreshnessDot, Loading, MetaLine, Panel, Unavailable } from "@/comp
 import { Globe2 } from "lucide-react";
 
 export function ForexDashboard() {
-  const { data, meta, isLoading } = useApi<ForexMarket>("/api/v1/forex/markets", { refreshInterval: 90_000 });
+  const { data, meta, isLoading } = useApi<ForexMarket>("/api/v1/forex/markets", {
+    refreshInterval: 30_000,
+    keepPreviousData: true,
+  });
   if (isLoading && !data) return <Loading rows={10} />;
-  if (!data) return <Unavailable title="Forex chưa khả dụng" note="Biquote chưa cấu hình và nguồn dự phòng (exchangerate-api/ECB) đang gián đoạn. Xem /system." meta={meta} />;
+  if (!data) {
+    return (
+      <Unavailable
+        title="Forex chưa khả dụng"
+        note="Biquote/Yahoo đang kết nối lại. Xem /system."
+        meta={meta}
+      />
+    );
+  }
 
   const groups: { key: ForexRow["group"]; title: string }[] = [
     { key: "major", title: "Cặp chính" },
-    { key: "minor", title: "Cặp phụ" },
-    { key: "exotic", title: "Kim loại · Dầu · Chỉ số / VND" },
+    { key: "cross", title: "Cặp chéo" },
+    { key: "vnd", title: "VND" },
+    { key: "metal", title: "Kim loại (XAU · XAG · XPT)" },
+    { key: "energy", title: "Dầu · Gas · Đồng" },
   ];
 
   return (
@@ -34,28 +47,43 @@ export function ForexDashboard() {
       </Panel>
 
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
-        {groups.map((g) => (
-          <Panel key={g.key} title={g.title} pad={false}>
-            <div className="divide-y divide-line/50">
-              {data.rows.filter((r) => r.group === g.key).map((r) => (
-                <Link key={r.pair} href={`/forex/${r.pair}`} className="row-hover flex items-center justify-between px-3.5 py-2.5">
-                  <div>
-                    <div className="text-[13px] font-semibold">{r.symbol}</div>
-                    <div className="text-[10px] text-ink-3">{r.pair}</div>
-                  </div>
-                  <div className="text-right">
-                    <div className="num text-[14px]">{r.price >= 1000 ? r.price.toLocaleString("vi-VN", { maximumFractionDigits: 0 }) : r.price >= 100 ? r.price.toFixed(2) : r.price.toFixed(4)}</div>
-                    <Chg value={r.changePercent} className="text-[11px]" arrow={false} />
-                  </div>
-                </Link>
-              ))}
-            </div>
-          </Panel>
-        ))}
+        {groups.map((g) => {
+          const rows = data.rows.filter((r) => r.group === g.key);
+          if (!rows.length) return null;
+          return (
+            <Panel key={g.key} title={g.title} pad={false}>
+              <div className="divide-y divide-line/50">
+                {rows.map((r) => (
+                  <Link
+                    key={r.pair}
+                    href={`/forex/${r.pair}`}
+                    className="row-hover flex items-center justify-between px-3.5 py-2.5"
+                  >
+                    <div>
+                      <div className="text-[13px] font-semibold">{r.symbol}</div>
+                      <div className="text-[10px] text-ink-3">{r.pair}</div>
+                    </div>
+                    <div className="text-right">
+                      <div className="num text-[14px]">
+                        {r.price >= 1000
+                          ? r.price.toLocaleString("vi-VN", { maximumFractionDigits: 0 })
+                          : r.price >= 100
+                            ? r.price.toFixed(2)
+                            : r.price.toFixed(4)}
+                      </div>
+                      <Chg value={r.changePercent} className="text-[11px]" arrow={false} />
+                    </div>
+                  </Link>
+                ))}
+              </div>
+            </Panel>
+          );
+        })}
       </div>
 
       <p className="text-[11px] leading-relaxed text-ink-3">
-        Phương pháp: tỷ giá realtime từ provider (Biquote khi được cấu hình, nguồn dự phòng exchangerate-api); kim loại/dầu/chỉ số qua Yahoo Finance. % thay đổi FX đối chiếu ECB; CFD dùng % phiên Yahoo.
+        Realtime: Biquote (FX/XAU/XAG/oil) ∥ Yahoo futures ∥ ER-API. Bấm mã để mở chart + chỉ báo kỹ
+        thuật (RSI, MACD, EMA, BB).
       </p>
     </div>
   );
