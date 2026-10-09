@@ -115,13 +115,23 @@ const YAHOO_PAIR_SYMBOL: Record<string, string> = {
   XAGUSD: "SI=F",
   SILVER: "SI=F",
   XAG: "SI=F",
+  XPTUSD: "PL=F",
+  PLATINUM: "PL=F",
+  XPDUSD: "PA=F",
+  PALLADIUM: "PA=F",
   USOIL: "CL=F",
+  OILUSD: "CL=F",
+  WTIUSD: "CL=F",
   WTI: "CL=F",
   CRUDE: "CL=F",
   CL: "CL=F",
+  UKOIL: "BZ=F",
   BRENT: "BZ=F",
+  BRENTUSD: "BZ=F",
   NATGAS: "NG=F",
+  NGUSD: "NG=F",
   COPPER: "HG=F",
+  HGUSD: "HG=F",
   DXY: "DX-Y.NYB",
   USDOLLAR: "DX-Y.NYB",
   US500: "^GSPC",
@@ -213,12 +223,6 @@ export async function getYahooQuotes(symbols: string[]): Promise<Map<string, Yah
   return out;
 }
 
-/**
- * Yahoo public chart range ceilings (approx):
- * - 1m: ~7d, 2m–90m: ~60d, 60m/1h: ~730d
- * - 1d / 1wk: multi-year, 1mo: max
- * Futures (GC=F etc.) downsample to monthly when range=max — prefer 2y for true daily bars.
- */
 const INTRADAY_LIMITS: Record<string, { interval: string; range: string }> = {
   "1m": { interval: "1m", range: "7d" },
   "5m": { interval: "5m", range: "60d" },
