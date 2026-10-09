@@ -9,10 +9,11 @@ import {
   type FxLatest,
 } from "../providers/forex";
 import { getYahooQuotes, getYahooChart, yahooSymbolForPair, yahooIntervalFor } from "../providers/yahoo";
+import { ensureBiquoteCoreWatch, ensureBiquotePollStarted } from "../realtime/biquote-poll";
 import { analyzeSeries, detectPatterns } from "../technical";
 import type { Meta, OhlcvBar, CandlePattern, TechnicalSnapshot } from "../types";
 
-export type ForexGroup = "major" | "cross" | "vnd" | "metal";
+export type ForexGroup = "major" | "cross" | "vnd" | "metal" | "energy";
 
 export interface ForexPairDef {
   pair: string;
@@ -62,10 +63,20 @@ const PAIRS: ForexPairDef[] = [
   { pair: "EURJPY", base: "EUR", quote: "JPY", group: "cross", kind: "cross" },
   { pair: "GBPJPY", base: "GBP", quote: "JPY", group: "cross", kind: "cross" },
   { pair: "EURGBP", base: "EUR", quote: "GBP", group: "cross", kind: "cross" },
+  { pair: "AUDJPY", base: "AUD", quote: "JPY", group: "cross", kind: "cross" },
+  { pair: "EURAUD", base: "EUR", quote: "AUD", group: "cross", kind: "cross" },
+  { pair: "EURCHF", base: "EUR", quote: "CHF", group: "cross", kind: "cross" },
   { pair: "USDVND", base: "USD", quote: "VND", group: "vnd", kind: "usd-base" },
   { pair: "EURVND", base: "EUR", quote: "VND", group: "vnd", kind: "cross" },
   { pair: "XAUUSD", base: "XAU", quote: "USD", group: "metal", kind: "yahoo-only" },
   { pair: "XAGUSD", base: "XAG", quote: "USD", group: "metal", kind: "yahoo-only" },
+  { pair: "XPTUSD", base: "XPT", quote: "USD", group: "metal", kind: "yahoo-only" },
+  { pair: "XPDUSD", base: "XPD", quote: "USD", group: "metal", kind: "yahoo-only" },
+  { pair: "OILUSD", base: "OIL", quote: "USD", group: "energy", kind: "yahoo-only" },
+  { pair: "USOIL", base: "USO", quote: "USD", group: "energy", kind: "yahoo-only" },
+  { pair: "UKOIL", base: "UKO", quote: "USD", group: "energy", kind: "yahoo-only" },
+  { pair: "NGUSD", base: "NG", quote: "USD", group: "energy", kind: "yahoo-only" },
+  { pair: "COPPER", base: "HG", quote: "USD", group: "energy", kind: "yahoo-only" },
 ];
 
 function displaySymbol(def: ForexPairDef): string {
@@ -134,10 +145,18 @@ function usdNote(rows: ForexRow[], dxy?: { price: number; changePercent: number 
   const dxyNote = dxy?.changePercent != null ? ` DXY ${dxy.changePercent >= 0 ? "+" : ""}${dxy.changePercent.toFixed(2)}%.` : "";
   const vnd = rows.find((r) => r.pair === "USDVND");
   const vndNote = vnd?.changePercent != null ? ` USD/VND ${vnd.changePercent >= 0 ? "+" : ""}${vnd.changePercent.toFixed(2)}%.` : "";
-  return `Tỷ giá các cặp chính đi ngang, USD chưa có xu hướng rõ.${dxyNote} ${vndNote}`.trim();
+  const gold = rows.find((r) => r.pair === "XAUUSD");
+  const goldNote = gold?.changePercent != null ? ` XAU ${gold.changePercent >= 0 ? "+" : ""}${gold.changePercent.toFixed(2)}%.` : "";
+  return `Tỷ giá các cặp chính · kim loại · dầu.${dxyNote}${vndNote}${goldNote}`.trim();
 }
 
 export async function getForexMarkets(): Promise<{ data: ForexMarket; meta: Meta } | null> {
+  try {
+    ensureBiquotePollStarted();
+    ensureBiquoteCoreWatch();
+  } catch {
+    /* */
+  }
   const prev = await prevEcbRates();
   try {
     const live = await getRealtimeFxQuotes(PAIRS.map((p) => p.pair));
@@ -173,7 +192,7 @@ export async function getForexMarkets(): Promise<{ data: ForexMarket; meta: Meta
         sourceTimestampMs: ts,
         note:
           liveSource.includes("biquote")
-            ? "Realtime đa nguồn public (Biquote ∥ Yahoo ∥ ER-API)."
+            ? "Realtime đa nguồn public (Biquote ∥ Yahoo ∥ ER-API) — FX/metals/oil."
             : undefined,
         slas: { liveSlaMs: 15_000, freshSlaMs: 60_000, delayedSlaMs: 300_000 },
       });
@@ -214,7 +233,7 @@ export async function getForexMarkets(): Promise<{ data: ForexMarket; meta: Meta
         sourceTimestampMs: latest.value.ts,
         cached: latest.cached,
         stale: latest.stale,
-        note: "Daily reference rates (ER-API) — realtime temporarily unavailable",
+        note: "Daily reference rates (ER-API) + Yahoo metals/oil — realtime temporarily unavailable",
         partial: true,
       }),
     };
@@ -226,7 +245,7 @@ export async function getForexMarkets(): Promise<{ data: ForexMarket; meta: Meta
 export async function getForexDetail(pairRaw: string): Promise<{ detail: ForexDetail; meta: Meta } | null> {
   const pair = pairRaw.toUpperCase().replace(/[^A-Z0-9]/g, "");
   const def = PAIRS.find((p) => p.pair === pair);
-  if (!def && pair.length !== 6) return null;
+  if (!def && pair.length !== 6 && !pair.match(/^(XAU|XAG|OIL|USO|UKO)/)) return null;
   const base = def?.base ?? pair.slice(0, 3);
   const quote = def?.quote ?? pair.slice(3);
   const markets = await getForexMarkets();
