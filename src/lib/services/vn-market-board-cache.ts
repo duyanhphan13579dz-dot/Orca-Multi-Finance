@@ -58,27 +58,16 @@ async function withTimeout<T>(p: Promise<T>, ms: number): Promise<T | null> {
   ]);
 }
 
-async function loadIndices(): Promise<{ items: IndexQuote[]; source: string; sourceTs: number | null }> {
-  const vnd = await withTimeout(vndirect.getVndIndices(), 5_000);
+async function loadIndicesLight(): Promise<{ items: IndexQuote[]; source: string; sourceTs: number | null }> {
+  const vnd = await withTimeout(vndirect.getVndIndices(), 4_000);
   if (vnd?.items?.length) {
     return { items: sortIndices(vnd.items), source: "vndirect-indices", sourceTs: vnd.sourceTs };
   }
   try {
     const { getPublicIndices } = await import("../providers/public-vn-feed");
-    const pub = await withTimeout(getPublicIndices(), 5_000);
+    const pub = await withTimeout(getPublicIndices(), 4_000);
     if (pub?.items?.length) {
       return { items: sortIndices(pub.items), source: "public-indices", sourceTs: pub.sourceTs ?? Date.now() };
-    }
-  } catch {
-    /* */
-  }
-  try {
-    const { getSsiIndices, ssiFcConfigured } = await import("../providers/ssi-fcdata");
-    if (ssiFcConfigured()) {
-      const ssi = await withTimeout(getSsiIndices(), 5_000);
-      if (ssi?.items?.length) {
-        return { items: sortIndices(ssi.items), source: "ssi-indices", sourceTs: Date.now() };
-      }
     }
   } catch {
     /* */
@@ -86,104 +75,114 @@ async function loadIndices(): Promise<{ items: IndexQuote[]; source: string; sou
   return { items: [], source: "none", sourceTs: null };
 }
 
-async function loadQuotes(): Promise<{
+async function loadQuotesSequential(deadlineAt: number): Promise<{
   quotes: Quote[];
   sessionDate: string;
   source: string;
   sourceTs: number;
 }> {
-  try {
-    const mq = await withTimeout(vndirect.getVndMarketQuotes(), 14_000);
-    if (mq?.quotes?.length) {
-      return {
-        quotes: mq.quotes,
-        sessionDate: mq.sessionDate ?? "",
-        source: "vndirect",
-        sourceTs: mq.sourceTs ?? Date.now(),
-      };
+  const remain = () => Math.max(500, deadlineAt - Date.now());
+
+  if (Date.now() < deadlineAt - 800) {
+    try {
+      const mq = await withTimeout(vndirect.getVndMarketQuotes(), Math.min(10_000, remain()));
+      if (mq?.quotes?.length) {
+        return {
+          quotes: mq.quotes,
+          sessionDate: mq.sessionDate ?? "",
+          source: "vndirect",
+          sourceTs: mq.sourceTs ?? Date.now(),
+        };
+      }
+    } catch {
+      /* */
     }
-  } catch {
-    /* */
   }
 
-  try {
-    const { getVpsQuotes } = await import("../providers/vps");
-    const { LIQUID_BOARD } = await import("../providers/public-vn-feed");
-    const vpsQuotes = await withTimeout(getVpsQuotes(LIQUID_BOARD), 8_000);
-    if (vpsQuotes?.length) {
-      return {
-        quotes: vpsQuotes,
-        sessionDate: "",
-        source: "vps",
-        sourceTs: Date.now(),
-      };
+  if (Date.now() < deadlineAt - 500) {
+    try {
+      const { getPublicQuotes, LIQUID_BOARD } = await import("../providers/public-vn-feed");
+      const pub = await withTimeout(getPublicQuotes(LIQUID_BOARD.slice(0, 80)), Math.min(6_000, remain()));
+      if (pub?.quotes?.length) {
+        return {
+          quotes: pub.quotes,
+          sessionDate: "",
+          source: (pub.sources ?? []).join("+") || "public-vn",
+          sourceTs: Date.now(),
+        };
+      }
+    } catch {
+      /* */
     }
-  } catch {
-    /* */
   }
 
-  try {
-    const { getPublicQuotes, LIQUID_BOARD } = await import("../providers/public-vn-feed");
-    const pub = await withTimeout(getPublicQuotes(LIQUID_BOARD), 8_000);
-    if (pub?.quotes?.length) {
-      return {
-        quotes: pub.quotes,
-        sessionDate: "",
-        source: (pub.sources ?? []).join("+") || "public-vn",
-        sourceTs: Date.now(),
-      };
+  if (Date.now() < deadlineAt - 500) {
+    try {
+      const { getVpsQuotes } = await import("../providers/vps");
+      const { LIQUID_BOARD } = await import("../providers/public-vn-feed");
+      const vpsQuotes = await withTimeout(getVpsQuotes(LIQUID_BOARD.slice(0, 50)), Math.min(6_000, remain()));
+      if (vpsQuotes?.length) {
+        return {
+          quotes: vpsQuotes,
+          sessionDate: "",
+          source: "vps",
+          sourceTs: Date.now(),
+        };
+      }
+    } catch {
+      /* */
     }
-  } catch {
-    /* */
-  }
-
-  try {
-    const { getMultiQuotes } = await import("./multi-quote");
-    const { LIQUID_BOARD } = await import("../providers/public-vn-feed");
-    const multi = await withTimeout(getMultiQuotes(LIQUID_BOARD.slice(0, 60)), 10_000);
-    if (multi?.quotes?.length) {
-      return {
-        quotes: multi.quotes,
-        sessionDate: "",
-        source: multi.sources.join("+") || "multi-quote",
-        sourceTs: multi.sourceTs ?? Date.now(),
-      };
-    }
-  } catch {
-    /* */
   }
 
   return { quotes: [], sessionDate: "", source: "none", sourceTs: Date.now() };
 }
 
 /**
- * Full VN board with server cache + last-good snapshot.
- * Trading: TTL 12s / stale 120s · After hours: TTL 60s / stale 15m.
- * Never drop the board while last-good is still warm (≤4h).
+ * Workers-safe VN board cache (v4).
+ * Trading: TTL 15s / stale 180s · After hours: TTL 90s / stale 20m.
  */
 export async function loadVnMarketBoardCached(
   boot?: () => void,
 ): Promise<VnMarketBoard | null> {
   boot?.();
-  let ttl = 60_000;
-  let stale = 900_000;
+
+  const fresh = lastGoodStore().current;
+  if (fresh && Date.now() - fresh.at < 20_000 && fresh.board.quotes.length >= 20) {
+    return {
+      ...fresh.board,
+      meta: {
+        ...fresh.board.meta,
+        cached: true,
+        stale: false,
+        note: `${fresh.board.meta.note ?? ""} · hot-last-good`.trim(),
+      },
+    };
+  }
+
+  let ttl = 90_000;
+  let stale = 1_200_000;
   try {
     const { getVnSession } = await import("../vn/sessions");
     if (getVnSession().trading) {
-      ttl = 12_000;
-      stale = 120_000;
+      ttl = 15_000;
+      stale = 180_000;
     }
   } catch {
     /* */
   }
 
   try {
-    const res = await cached<VnMarketBoard | null>("vn:market-board:v3", {
+    const res = await cached<VnMarketBoard | null>("vn:market-board:v4", {
       ttlMs: ttl,
       staleMs: stale,
       softSwr: true,
       producer: async () => {
-        const [qPack, idxPack] = await Promise.all([loadQuotes(), loadIndices()]);
+        const deadlineAt = Date.now() + 12_000;
+        const qPack = await loadQuotesSequential(deadlineAt);
+        let idxPack = { items: [] as IndexQuote[], source: "none", sourceTs: null as number | null };
+        if (Date.now() < deadlineAt - 600) {
+          idxPack = await loadIndicesLight();
+        }
         if (!qPack.quotes.length && !idxPack.items.length) {
           return null;
         }
