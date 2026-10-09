@@ -1,4 +1,4 @@
-import { getVnMarketBoard, getVnQuotes } from "@/lib/services/stocks";
+import { getVnMarketBoard, getVn30Board, getVnQuotes } from "@/lib/services/stocks";
 import { ensureHeartbeatStarted } from "@/lib/realtime/heartbeat";
 import { ensureSessionPollerStarted } from "@/lib/realtime/session-poller";
 import { getVnSession } from "@/lib/vn/sessions";
@@ -22,13 +22,72 @@ export async function GET(req: Request) {
   const url = new URL(req.url);
   const symbolsParam = (url.searchParams.get("symbols") ?? "").trim();
   const board = (url.searchParams.get("board") ?? "").toLowerCase();
+  const wantVn30 = board === "vn30" || board === "core";
   const wantFull =
-    board === "full" ||
-    symbolsParam === "" ||
-    symbolsParam.toLowerCase() === "all" ||
-    symbolsParam === "*";
+    !wantVn30 &&
+    (board === "full" ||
+      symbolsParam === "" ||
+      symbolsParam.toLowerCase() === "all" ||
+      symbolsParam === "*");
 
   const session = getVnSession();
+
+  if (wantVn30) {
+    return safeApi({
+      label: "vn-board-vn30",
+      guard: { wallMs: 6_000, maxSubrequests: 14, maxConcurrent: 2 },
+      produce: async () => {
+        const market = await getVn30Board();
+        if (!market || (!market.indices.length && !market.quotes.length)) return null;
+        const data = {
+          indices: market.indices,
+          quotes: market.quotes,
+          universeSize: market.universeSize,
+          sessionDate: market.sessionDate,
+          session,
+          count: market.quotes.length,
+          boardTier: "vn30" as const,
+        };
+        putHot("board", data, { source: market.meta.source, partial: true, note: market.meta.note });
+        return {
+          data,
+          meta: market.meta,
+          headers: {
+            "Cache-Control": "private, max-age=8, stale-while-revalidate=30",
+            "X-Orca-Board": "vn30",
+          },
+        };
+      },
+      fallback: async () => {
+        const snap = await getHot("board");
+        if (snap?.data) {
+          return {
+            data: { ...(snap.data as object), session },
+            meta: {
+              ...snap.meta,
+              note: `last-good · ${Math.round(snap.ageMs / 1000)}s`,
+              partial: true,
+              stale: true,
+            },
+          };
+        }
+        return {
+          data: {
+            indices: [],
+            quotes: [],
+            universeSize: 0,
+            sessionDate: null,
+            session,
+            count: 0,
+            boardTier: "vn30",
+          },
+          meta: { source: "vn30-shell", partial: true, stale: true, note: "shell" },
+        };
+      },
+      unavailableSource: "vn30",
+      unavailableNote: "VN30 board tạm không khả dụng",
+    });
+  }
 
   if (wantFull) {
     return safeApi({
@@ -60,7 +119,37 @@ export async function GET(req: Request) {
           };
         }
 
-        const market = await getVnMarketBoard();
+        const vn30 = await getVn30Board().catch(() => null);
+        let market = await getVnMarketBoard();
+        if (
+          (!market || (!market.indices.length && !market.quotes.length)) &&
+          vn30 &&
+          (vn30.quotes.length || vn30.indices.length)
+        ) {
+          market = {
+            indices: vn30.indices,
+            quotes: vn30.quotes,
+            universeSize: vn30.universeSize,
+            sessionDate: vn30.sessionDate,
+            meta: vn30.meta,
+          };
+        } else if (
+          market &&
+          vn30 &&
+          market.quotes.length < 20 &&
+          vn30.quotes.length > market.quotes.length
+        ) {
+          market = {
+            ...market,
+            quotes: vn30.quotes,
+            universeSize: vn30.universeSize,
+            meta: {
+              ...market.meta,
+              partial: true,
+              note: vn30.meta.note ?? "VN30-first",
+            },
+          };
+        }
         if (!market || (!market.indices.length && !market.quotes.length)) return null;
         const data = {
           indices: market.indices,
@@ -69,6 +158,7 @@ export async function GET(req: Request) {
           sessionDate: market.sessionDate ?? null,
           session,
           count: market.quotes.length,
+          boardTier: market.quotes.length <= 35 ? "vn30" : "full",
         };
         putHot("board", data, {
           source: market.meta.source,
