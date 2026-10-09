@@ -6,10 +6,19 @@ Offline fixtures for demos, backtests, and valuation pipeline tests when upstrea
 
 | Path | Description |
 | --- | --- |
-| `ohlcv/VCB.json` | ~30 daily OHLCV bars (quote unit: nghìn VND) |
-| `ohlcv/{SYMBOL}.json` | Bluechip seeds: HPG, FPT, VNM, MWG, TCB, MBB, BID, CTG, GAS, VHM, VIC, MSN, SSI, VPB, ACB |
+| `ohlcv/VCB.json` | HOSE bluechip (~30 daily bars) |
+| `ohlcv/{SYMBOL}.json` | HOSE bluechips: HPG, FPT, VNM, MWG, TCB, MBB, BID, CTG, GAS, VHM, VIC, MSN, SSI, VPB, ACB |
+| `ohlcv/CEO.json`, `PVS.json`, `CST.json`, `IDC.json` | **HNX** samples |
+| `ohlcv/BSR.json`, `OIL.json` | **UPCOM** samples |
+| `ohlcv/SHB.json`, `VGI.json` | Cross-floor samples |
 
 Captured from VNDirect public board (`/v4/stock_prices`).
+
+**Runtime OHLCV** for *all* HOSE / HNX / UPCOM listings (not only seeds):
+
+- `GET /api/v1/stocks/universe?exchange=HOSE|HNX|UPCOM|ALL`
+- `GET /api/v1/chart/history?symbol={SYMBOL}&assetType=stock&timeframe=1d`
+- Cascade: `vndirect-dchart` ∥ `stock_prices` ∥ public (VPS/Entrade) ∥ SSI fcdata
 
 ## Conventions
 
