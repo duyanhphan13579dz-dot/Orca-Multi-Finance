@@ -1,4 +1,3 @@
-import { ok, unavailable } from "@/lib/envelope";
 import { getVnMarketBoard, getVnQuotes } from "@/lib/services/stocks";
 import { ensureHeartbeatStarted } from "@/lib/realtime/heartbeat";
 import { ensureSessionPollerStarted } from "@/lib/realtime/session-poller";
@@ -6,15 +5,12 @@ import { getVnSession } from "@/lib/vn/sessions";
 import { LIQUID_BOARD } from "@/lib/providers/public-vn-feed";
 import { safeApi } from "@/lib/safe-api";
 import { WORKERS_BUDGET } from "@/lib/data-engine/workers-budget";
+import { putHot, getHot } from "@/lib/hot-snapshot";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 export const maxDuration = 25;
 
-/**
- * GET /api/v1/stocks
- * Anti-break: runGuarded + last-good fallback + isolate cooldown.
- */
 export async function GET(req: Request) {
   try {
     ensureHeartbeatStarted();
@@ -43,17 +39,44 @@ export async function GET(req: Request) {
         maxConcurrent: 2,
       },
       produce: async () => {
+        const fresh = await getHot<{
+          indices: unknown[];
+          quotes: unknown[];
+          universeSize?: number;
+          sessionDate?: string | null;
+          count?: number;
+        }>("board");
+        if (fresh?.fresh && ((fresh.data.quotes?.length ?? 0) > 0 || (fresh.data.indices?.length ?? 0) > 0)) {
+          return {
+            data: { ...fresh.data, session },
+            meta: {
+              ...fresh.meta,
+              note: `hot-fresh board · ${Math.round(fresh.ageMs / 1000)}s`,
+            },
+            headers: {
+              "Cache-Control": "private, max-age=8, stale-while-revalidate=40",
+              "X-Orca-Hot": "fresh",
+            },
+          };
+        }
+
         const market = await getVnMarketBoard();
         if (!market || (!market.indices.length && !market.quotes.length)) return null;
+        const data = {
+          indices: market.indices,
+          quotes: market.quotes,
+          universeSize: market.universeSize ?? market.quotes.length,
+          sessionDate: market.sessionDate ?? null,
+          session,
+          count: market.quotes.length,
+        };
+        putHot("board", data, {
+          source: market.meta.source,
+          partial: market.meta.partial,
+          note: market.meta.note,
+        });
         return {
-          data: {
-            indices: market.indices,
-            quotes: market.quotes,
-            universeSize: market.universeSize ?? market.quotes.length,
-            sessionDate: market.sessionDate ?? null,
-            session,
-            count: market.quotes.length,
-          },
+          data,
           meta: {
             source: market.meta.source,
             sourceTimestamp: market.meta.sourceTimestamp,
@@ -70,6 +93,24 @@ export async function GET(req: Request) {
         };
       },
       fallback: async () => {
+        const snap = await getHot<{
+          indices: unknown[];
+          quotes: unknown[];
+          universeSize?: number;
+          sessionDate?: string | null;
+          count?: number;
+        }>("board");
+        if (snap?.data && ((snap.data.quotes?.length ?? 0) > 0 || (snap.data.indices?.length ?? 0) > 0)) {
+          return {
+            data: { ...snap.data, session },
+            meta: {
+              ...snap.meta,
+              note: `last-good board · age ${Math.round(snap.ageMs / 1000)}s`,
+              partial: true,
+              stale: true,
+            },
+          };
+        }
         return {
           data: {
             indices: [],
@@ -80,50 +121,50 @@ export async function GET(req: Request) {
             count: 0,
           },
           meta: {
-            source: "empty-shell",
+            source: "board-shell",
             partial: true,
             stale: true,
-            note: "Board tạm trống — đang kết nối lại",
+            note: "shell — cron hot-warm sẽ đổ đầy",
           },
         };
       },
-      unavailableSource: "vn-market",
-      unavailableNote: "Chưa kéo được thị trường VN — đang thử lại.",
+      unavailableSource: "vn-board",
+      unavailableNote: "VN board tạm không khả dụng",
     });
   }
 
   const symbols = symbolsParam
-    .split(",")
-    .map((s) => s.trim().toUpperCase())
-    .filter(Boolean)
-    .slice(0, 30);
+    ? symbolsParam.split(/[,;\s]+/).map((x) => x.trim().toUpperCase()).filter(Boolean)
+    : LIQUID_BOARD.slice(0, 40);
 
   return safeApi({
     label: "vn-quotes",
-    guard: { wallMs: 10_000, maxSubrequests: 18, maxConcurrent: 2 },
+    guard: {
+      wallMs: Math.min(10_000, WORKERS_BUDGET.boardWallMs),
+      maxSubrequests: 16,
+      maxConcurrent: 2,
+    },
     produce: async () => {
-      const quotes = await getVnQuotes(symbols);
-      if (!quotes?.quotes?.length) return null;
+      const pack = await getVnQuotes(symbols);
+      if (!pack?.quotes?.length) return null;
       return {
         data: {
           indices: null,
-          quotes: quotes.quotes,
+          quotes: pack.quotes,
+          count: pack.quotes.length,
           session,
-          count: quotes.quotes.length,
         },
-        meta: {
-          source: quotes.meta?.source ?? "vndirect",
-          cached: quotes.meta?.cached,
-          stale: quotes.meta?.stale,
-          partial: true,
+        meta: pack.meta,
+        headers: {
+          "Cache-Control": "private, max-age=8, stale-while-revalidate=30",
         },
       };
     },
     fallback: async () => ({
-      data: { indices: null, quotes: [], session, count: 0 },
-      meta: { source: "empty-shell", partial: true, stale: true, note: "Quotes tạm trống" },
+      data: { indices: null, quotes: [], count: 0, session },
+      meta: { source: "quotes-shell", partial: true, stale: true, note: "shell" },
     }),
-    unavailableSource: "vn-stocks",
-    unavailableNote: "Bảng giá VN không khả dụng.",
+    unavailableSource: "vn-quotes",
+    unavailableNote: "Quotes tạm không khả dụng",
   });
 }
