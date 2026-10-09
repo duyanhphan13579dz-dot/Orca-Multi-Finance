@@ -5,19 +5,8 @@ import { vnProviderLayout } from "./index";
 import { ssiFcConfigured } from "../providers/ssi-fcdata";
 import { getMarketSourceStats, getMarketSourceStatus, type MarketSourceId } from "../realtime/market-source-monitor";
 
-export type MarketSourceHealthId =
-  | "vndirect"
-  | "vndirect-dchart"
-  | "vps"
-  | "vps-hist"
-  | "ssi-iboard"
-  | "ssi-fcdata"
-  | "vietcap"
-  | "entrade"
-  | "yahoo-public";
-
 export interface MarketSourceHealthRow {
-  provider: MarketSourceHealthId;
+  provider: "ssi-fcdata" | "vndirect" | "vps" | "ssi-iboard" | "vietcap";
   configured: boolean;
   role: "primary" | "fallback";
   status: "healthy" | "degraded" | "down" | "not_configured";
@@ -107,14 +96,10 @@ export function getMarketSourceHealth(): MarketSourceHealth {
   const ssiConfigured = layout.fallback === "ssi-fcdata";
   const rows = ([
     ["vndirect", true, "primary"],
-    ["vndirect-dchart", true, "fallback"],
     ["vps", true, "fallback"],
     ["ssi-iboard", true, "fallback"],
     ["ssi-fcdata", ssiConfigured, "fallback"],
     ["vietcap", true, "fallback"],
-    ["entrade", true, "fallback"],
-    ["vps-hist", true, "fallback"],
-    ["yahoo-public", true, "fallback"],
   ] as const).map(([provider, configured, role]) => {
     const source = provider as MarketSourceId;
     const stats = getMarketSourceStats(source);

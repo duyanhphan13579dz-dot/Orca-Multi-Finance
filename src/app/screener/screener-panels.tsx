@@ -12,11 +12,6 @@ type StocksData = { indices: IndexQuote[] | null; quotes: Quote[] | null };
 const VN_BOARD =
   "VCB,BID,CTG,TCB,MBB,VPB,ACB,STB,HDB,VIB,LPB,SHB,FPT,HPG,VNM,VIC,VHM,VRE,NVL,PDR,GAS,PLX,MSN,MWG,SSI,VND,HCM,VCI,SHS,BSR,POW,REE,KDH,DXG,DCM,DPM,DGC,VHC,SAB,PNJ,GMD";
 
-/** Full listed board (HOSE/HNX/UPCoM) served from the shared snapshot cache. */
-const UNIVERSE_URL = "/api/v1/stocks?universe=all";
-/** Render cap for the whole-market view — the filter/sort still runs on every fetched row. */
-const DISPLAY_CAP = 400;
-
 export function Field({
   label,
   value,
@@ -42,11 +37,8 @@ export function Field({
 }
 
 export function VnScreener({ defaultSector }: { defaultSector: string | null }) {
-  const [scope, setScope] = useState<"liquid" | "all">("liquid");
-  const url = scope === "all" ? UNIVERSE_URL : `/api/v1/stocks?symbols=${VN_BOARD}`;
-  const { res, data, meta, isLoading, isValidating, mutate } = useApi<StocksData>(url, {
-    // Toàn thị trường = payload lớn hơn nhiều → giãn nhịp refresh.
-    refreshInterval: scope === "all" ? 30_000 : 20_000,
+  const { res, data, meta, isLoading, isValidating, mutate } = useApi<StocksData>(`/api/v1/stocks?symbols=${VN_BOARD}`, {
+    refreshInterval: 20_000,
   });
   const [sector, setSector] = useState(defaultSector ?? "");
   const [minChg, setMinChg] = useState("");
@@ -85,9 +77,6 @@ export function VnScreener({ defaultSector }: { defaultSector: string | null }) 
     window.setTimeout(() => setPressed(false), 180);
   }, [sector, minChg, maxChg, minVol, q, mutate]);
 
-  const matched = rows.length;
-  const visible = rows.length > DISPLAY_CAP ? rows.slice(0, DISPLAY_CAP) : rows;
-
   if (isLoading && !res) return <Loading rows={8} />;
   if (!res?.success) {
     return (
@@ -104,8 +93,7 @@ export function VnScreener({ defaultSector }: { defaultSector: string | null }) 
       <Panel
         title={
           <span>
-            Kết quả: {matched} mã
-            {scope === "all" ? " · toàn thị trường" : ""} <FreshnessDot status={meta?.freshness} ageMs={meta?.ageMs} />
+            Kết quả: {rows.length} mã <FreshnessDot status={meta?.freshness} ageMs={meta?.ageMs} />
             {isValidating ? <span className="ml-1.5 text-[10px] text-accent-primary">· đang cập nhật</span> : null}
           </span>
         }
@@ -131,21 +119,6 @@ export function VnScreener({ defaultSector }: { defaultSector: string | null }) 
           <button type="button" onClick={run} className={`rounded-md px-3.5 py-1.5 text-[12px] font-semibold text-white ${pressed ? "bg-accent-primary" : "bg-accent-primary/90"}`}>
             {isValidating ? "Đang lọc…" : "Tìm kiếm"}
           </button>
-          <div className="flex items-center gap-1 rounded-md bg-panel-2 p-0.5">
-            {([["liquid", "Nhóm thanh khoản"], ["all", "Toàn thị trường"]] as const).map(([id, label]) => (
-              <button
-                key={id}
-                type="button"
-                onClick={() => setScope(id)}
-                title={id === "all" ? "Bảng niêm yết đầy đủ HOSE/HNX/UPCoM (nguồn VNDirect, cache dùng chung)" : `Danh sách ${VN_BOARD.split(",").length} mã thanh khoản cao`}
-                className={`rounded px-2.5 py-1 text-[11px] font-medium transition ${
-                  scope === id ? "bg-white/10 text-text-primary ring-1 ring-white/15" : "text-text-muted hover:text-text-primary"
-                }`}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
         </div>
         <div className="hidden overflow-x-auto md:block">
           <table className="w-full min-w-[560px] text-[12px]">
@@ -159,9 +132,9 @@ export function VnScreener({ defaultSector }: { defaultSector: string | null }) 
               </tr>
             </thead>
             <tbody>
-              {visible.length === 0 ? (
+              {rows.length === 0 ? (
                 <tr><td colSpan={5} className="px-3.5 py-6 text-center text-text-muted">Không có mã khớp.</td></tr>
-              ) : visible.map((row) => (
+              ) : rows.map((row) => (
                 <tr key={row.symbol} className="row-hover border-b border-line/40">
                   <td className="px-3.5 py-2"><Link href={`/stocks/${row.symbol}`} className="font-semibold hover:text-accent">{row.symbol}</Link></td>
                   <td className="py-2 text-[11px] text-text-muted">{sectorOf(row.symbol)}</td>
@@ -174,7 +147,7 @@ export function VnScreener({ defaultSector }: { defaultSector: string | null }) 
           </table>
         </div>
         <div className="divide-y divide-line/50 md:hidden">
-          {visible.map((row) => (
+          {rows.map((row) => (
             <Link key={row.symbol} href={`/stocks/${row.symbol}`} className="flex items-center gap-3 px-3.5 py-3 hover:bg-panel-2">
               <span className="min-w-0 flex-1">
                 <span className="block text-[13px] font-semibold">{row.symbol}</span>
@@ -187,11 +160,6 @@ export function VnScreener({ defaultSector }: { defaultSector: string | null }) 
             </Link>
           ))}
         </div>
-        {matched > visible.length ? (
-          <div className="border-t border-line px-3.5 py-2 text-[11px] text-text-muted">
-            Hiển thị {visible.length} mã thanh khoản cao nhất trong {matched} mã khớp — thu hẹp bộ lọc hoặc tìm theo mã để xem phần còn lại.
-          </div>
-        ) : null}
         <div className="border-t border-line px-3.5 py-2"><MetaLine meta={meta} /></div>
       </Panel>
     </>

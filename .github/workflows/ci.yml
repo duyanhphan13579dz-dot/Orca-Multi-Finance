@@ -38,7 +38,7 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - name: Unit tests
-        run: pnpm exec node --import tsx --import ./test/test-setup/register-stub.mjs --require ./test/test-setup/patch-server-only.cjs --test src/lib/__tests__/chart-engine.test.ts src/lib/__tests__/divergence.test.ts src/lib/__tests__/candlestick-patterns.test.ts src/lib/__tests__/valuation-phase1.test.ts src/lib/__tests__/valuation-phase2.test.ts src/lib/__tests__/valuation-phase3.test.ts src/lib/__tests__/valuation-phase4.test.ts src/lib/__tests__/valuation-phase5.test.ts src/lib/__tests__/valuation-phase6.test.ts src/lib/__tests__/valuation-pipeline.test.ts src/lib/__tests__/market-connections.test.ts
+        run: pnpm exec node --import tsx --import ./test/test-setup/register-stub.mjs --require ./test/test-setup/patch-server-only.cjs --test src/lib/__tests__/chart-engine.test.ts src/lib/__tests__/divergence.test.ts src/lib/__tests__/candlestick-patterns.test.ts src/lib/__tests__/valuation-phase1.test.ts src/lib/__tests__/valuation-phase2.test.ts src/lib/__tests__/valuation-phase3.test.ts src/lib/__tests__/valuation-phase4.test.ts src/lib/__tests__/valuation-phase5.test.ts src/lib/__tests__/valuation-phase6.test.ts src/lib/__tests__/valuation-pipeline.test.ts
 
   build:
     runs-on: ubuntu-latest
