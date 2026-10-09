@@ -1,25 +1,23 @@
 import "server-only";
 import type { Meta, OhlcvBar } from "../types";
 import { getVnOhlcv } from "./stocks";
+import { fetchOhlcvResilient } from "./screener-ohlcv";
+import { WORKERS_BUDGET } from "../data-engine/workers-budget";
+import { buildMeta } from "../freshness";
 
 /**
- * Concurrent OHLCV batch for screeners (candlestick / divergence / CANSLIM / alerts).
- * - Concurrency cap avoids thundering herd on VNDirect dchart
- * - Optional overall deadline: return partial map when time is up (realtime path)
- * - Per-symbol timeout so one slow symbol does not stall the pool
+ * Concurrent OHLCV batch for screeners (candlestick / divergence / CANSLIM / Minervini).
+ * - Workers-safe concurrency (default 6)
+ * - Overall deadline → partial map
+ * - Per-symbol timeout + resilient fallback when primary empty
  */
 
 export type OhlcvPack = { bars: OhlcvBar[]; meta: Meta } | null;
 
-const DEFAULT_CONCURRENCY = 12;
-const DEFAULT_LIMIT_BARS = 120;
-/** Soft per-symbol wall time in batch (getVnOhlcv itself may be faster via cache). */
-const DEFAULT_PER_SYMBOL_MS = 4_000;
+const DEFAULT_CONCURRENCY = WORKERS_BUDGET.ohlcvBatchConcurrency;
+const DEFAULT_LIMIT_BARS = WORKERS_BUDGET.screenerBars;
+const DEFAULT_PER_SYMBOL_MS = WORKERS_BUDGET.ohlcvPerSymbolMs;
 
-/**
- * Run `worker` over `items` with at most `concurrency` in flight.
- * Optional `shouldStop` aborts scheduling new work (in-flight still finish).
- */
 export async function mapPool<T, R>(
   items: T[],
   concurrency: number,
@@ -51,29 +49,23 @@ function withTimeout<T>(p: Promise<T>, ms: number): Promise<T | null> {
 }
 
 export type OhlcvBatchOpts = {
-  /** Bars per symbol (default 120). */
   bars?: number;
-  /** Max parallel getVnOhlcv (default 12, max 20). */
   concurrency?: number;
-  /** Overall wall-clock budget (ms). Partial results returned when exceeded. */
   deadlineMs?: number;
-  /** Max time per symbol (ms). Default 4000. */
   perSymbolMs?: number;
+  /** When true, try fetchOhlcvResilient if getVnOhlcv returns empty. */
+  resilient?: boolean;
 };
 
-/**
- * Fetch OHLCV for many symbols with concurrency limit.
- * Returns only symbols that produced non-empty bars.
- * With deadlineMs, prioritizes completing as many symbols as possible within budget.
- */
 export async function batchVnOhlcv(
   symbols: string[],
   opts: OhlcvBatchOpts = {},
 ): Promise<Map<string, { bars: OhlcvBar[]; meta: Meta }>> {
   const uniq = [...new Set(symbols.map((s) => s.trim().toUpperCase()).filter(Boolean))];
   const bars = opts.bars ?? DEFAULT_LIMIT_BARS;
-  const concurrency = Math.max(1, Math.min(opts.concurrency ?? DEFAULT_CONCURRENCY, 20));
+  const concurrency = Math.max(1, Math.min(opts.concurrency ?? DEFAULT_CONCURRENCY, 10));
   const perSymbolMs = opts.perSymbolMs ?? DEFAULT_PER_SYMBOL_MS;
+  const resilient = opts.resilient !== false;
   const t0 = Date.now();
   const deadlineAt = opts.deadlineMs != null ? t0 + opts.deadlineMs : null;
   const out = new Map<string, { bars: OhlcvBar[]; meta: Meta }>();
@@ -83,7 +75,21 @@ export async function batchVnOhlcv(
     concurrency,
     async (sym) => {
       try {
-        const pack = await withTimeout(getVnOhlcv(sym, bars), perSymbolMs);
+        let pack = await withTimeout(getVnOhlcv(sym, bars), perSymbolMs);
+        if ((!pack?.bars?.length) && resilient) {
+          const r = await withTimeout(fetchOhlcvResilient(sym, bars), perSymbolMs);
+          if (r?.bars?.length) {
+            pack = {
+              bars: r.bars,
+              meta:
+                r.pack?.meta ??
+                buildMeta({
+                  source: "ohlcv-resilient",
+                  sourceTimestampMs: Date.now(),
+                }),
+            };
+          }
+        }
         if (pack?.bars?.length) out.set(sym, pack);
       } catch {
         /* skip */
@@ -96,4 +102,4 @@ export async function batchVnOhlcv(
 }
 
 /** Default cap = full VN100 for technical screeners. */
-export const SCREENER_UNIVERSE_CAP = 100;
+export const SCREENER_UNIVERSE_CAP = WORKERS_BUDGET.techUniverse;
