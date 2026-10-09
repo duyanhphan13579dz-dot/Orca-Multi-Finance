@@ -31,6 +31,7 @@ Base URL: `https://<your-app>.workers.dev` (or your custom domain)
 | **Financials OHLCV** | `...?phase=ohlcv` | Mon–Fri **16:16** | **30s** |
 | **Financials CANSLIM** | `...?phase=canslim` | Mon–Fri **16:18** | **30s** |
 | **crypto-warm** | `/api/v1/cron/crypto-warm` | **Every 60–90s** (24/7) | **15s** |
+| **multi-asset-warm** | `/api/v1/cron/multi-asset-warm` | **Every 60–90s** (24/7) | **18s** |
 | commodities | `/api/v1/cron/commodities` | Daily 00:05 | 30s |
 
 Optional late backup (17:30): repeat BCTC slices if morning/afternoon failed.
@@ -84,6 +85,20 @@ https://YOUR_DOMAIN/api/v1/cron/crypto-warm?secret=SECRET
 | Interval | **60–90s** (24/7) |
 | Timeout | 15s |
 | Pipeline | Binance → OKX → CoinCap → CoinGecko → last-good |
+
+## Multi-asset board (BTC · ETH · XAU · XAG · FOREX)
+
+```text
+https://YOUR_DOMAIN/api/v1/market/multi-asset
+https://YOUR_DOMAIN/api/v1/market/multi-asset?symbol=XAU
+https://YOUR_DOMAIN/api/v1/cron/multi-asset-warm?secret=SECRET
+```
+
+| Class | Symbols | Sources |
+|-------|---------|---------|
+| crypto | BTCUSDT, ETHUSDT | Binance → OKX → CoinCap → CoinGecko → Yahoo |
+| metal | XAUUSD, XAGUSD | Biquote → Yahoo GC=F / SI=F |
+| forex | EURUSD, GBPUSD, USDJPY, USDCHF, AUDUSD, USDCAD, NZDUSD, USDVND | Biquote → Yahoo → ER-API |
 
 ## CANSLIM screener (API)
 
