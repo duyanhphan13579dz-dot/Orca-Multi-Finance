@@ -150,6 +150,13 @@ function mergeValuation(
 
   const netDebtToEbitda = snap?.netDebtToEbitda ?? null;
 
+  // Reject nonsense multiples (data glitches)
+  if (pe != null && (pe < 1 || pe > 80)) pe = null;
+  if (pb != null && (pb < 0.15 || pb > 25)) pb = null;
+  if (ps != null && (ps < 0.05 || ps > 40)) ps = null;
+  if (evEbitda != null && (evEbitda < 0.5 || evEbitda > 50)) evEbitda = null;
+  if (peg != null && (peg < 0 || peg > 8)) peg = null;
+
   let score = 0;
   let parts = 0;
   const add = (cond: boolean, pts: number) => {
@@ -168,7 +175,10 @@ function mergeValuation(
   add(fcfYieldPct != null && fcfYieldPct >= 5, 15);
   add(fcfYieldPct != null && fcfYieldPct >= 2 && fcfYieldPct < 5, 8);
   add(netDebtToEbitda != null && netDebtToEbitda < 2, 10);
-  if (parts === 0) score = [pe, pb, ps, evEbitda].filter((v) => v != null).length * 10;
+  const metricsHit = [pe, pb, ps, evEbitda].filter((x) => x != null).length;
+  if (metricsHit >= 3) score += 8;
+  else if (metricsHit === 1) score = Math.round(score * 0.75);
+  if (parts === 0) score = metricsHit * 10;
 
   return {
     symbol,
@@ -231,7 +241,7 @@ function passes(row: ValuationScreenRow, f: ValuationFilterOpts): boolean {
 
 export async function screenValuation(opts: ValuationFilterOpts = {}) {
   const symbols = normalizeSymbols(opts.symbols, DEFAULT_SYMBOLS.split(","), 80);
-  const key = `screener:valuation:v6:${symbols.join(",")}`;
+  const key = `screener:valuation:v7:${symbols.join(",")}`;
 
   const result = await cached(key, {
     ttlMs: 8 * 60_000,
