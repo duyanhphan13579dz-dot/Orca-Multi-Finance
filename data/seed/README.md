@@ -6,7 +6,10 @@ Offline fixtures for demos, backtests, and valuation pipeline tests when upstrea
 
 | Path | Description |
 | --- | --- |
-| `ohlcv/VCB.json` | ~30 daily OHLCV bars for VCB (quote unit: nghìn VND) from VNDirect public board |
+| `ohlcv/VCB.json` | ~30 daily OHLCV bars (quote unit: nghìn VND) |
+| `ohlcv/{SYMBOL}.json` | Bluechip seeds: HPG, FPT, VNM, MWG, TCB, MBB, BID, CTG, GAS, VHM, VIC, MSN, SSI, VPB, ACB |
+
+Captured from VNDirect public board (`/v4/stock_prices`).
 
 ## Conventions
 
