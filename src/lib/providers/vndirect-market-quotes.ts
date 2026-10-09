@@ -113,7 +113,15 @@ async function getSessionDate(): Promise<string> {
 export async function fetchVndMarketQuotesParallel(
   sessionDate?: string,
 ): Promise<{ quotes: Quote[]; sourceTs: number | null; sessionDate: string }> {
-  const date = sessionDate ?? (await getSessionDate());
+  let date = sessionDate;
+  if (!date) {
+    try {
+      date = await getSessionDate();
+    } catch {
+      const now = new Date(Date.now() + 7 * 3600_000);
+      date = now.toISOString().slice(0, 10);
+    }
+  }
   const pageSize = 500;
   const MAX_PAGES = 8;
   const PAGE_TIMEOUT = 7_000;
@@ -130,10 +138,18 @@ export async function fetchVndMarketQuotesParallel(
     }
   };
 
-  const first = await vndGet<Page<VndPriceRow>>(
-    `/v4/stock_prices?q=date:${date}~type:STOCK&size=${pageSize}&page=1`,
-    PAGE_TIMEOUT,
-  );
+  let first: Page<VndPriceRow>;
+  try {
+    first = await vndGet<Page<VndPriceRow>>(
+      `/v4/stock_prices?q=date:${date}~type:STOCK&size=${pageSize}&page=1`,
+      PAGE_TIMEOUT,
+    );
+  } catch {
+    first = await vndGet<Page<VndPriceRow>>(
+      `/v4/stock_prices?q=type:STOCK&size=${pageSize}&page=1&sort=date:desc`,
+      PAGE_TIMEOUT,
+    );
+  }
   ingest(first.data ?? []);
   const totalPages = Math.min(MAX_PAGES, Math.max(1, Number(first.totalPages) || 1));
 
