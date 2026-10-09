@@ -1,4 +1,5 @@
 import { safeApi } from "@/lib/safe-api";
+import { putHot, getHot } from "@/lib/hot-snapshot";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -118,6 +119,17 @@ export async function GET() {
     label: "market-global",
     guard: { wallMs: 12_000, maxSubrequests: 18, maxConcurrent: 3 },
     produce: async () => {
+      const fresh = await getHot("global");
+      if (fresh?.fresh && fresh.data) {
+        return {
+          data: fresh.data,
+          meta: { ...fresh.meta, note: `hot-fresh global · ${Math.round(fresh.ageMs / 1000)}s` },
+          headers: {
+            "Cache-Control": "private, max-age=15, stale-while-revalidate=60",
+            "X-Orca-Hot": "fresh",
+          },
+        };
+      }
       const [usP, cryptoP, asiaP, liqP] = await Promise.all([
         loadUs(),
         loadCrypto(),
@@ -128,15 +140,17 @@ export async function GET() {
       const sources = [usP.source, cryptoP.source, asiaP.source].filter((s) => s && s !== "none");
       if (liqP) sources.push(`liq:${liqP.source}`);
 
+      const data = {
+        us: usP.rows,
+        crypto: cryptoP.rows,
+        asia: asiaP.rows,
+        liquiditySpark: liqP,
+        sources,
+        at: new Date().toISOString(),
+      };
+      putHot("global", data, { source: sources.join("+") || "partial", partial: true });
       return {
-        data: {
-          us: usP.rows,
-          crypto: cryptoP.rows,
-          asia: asiaP.rows,
-          liquiditySpark: liqP,
-          sources,
-          at: new Date().toISOString(),
-        },
+        data,
         meta: {
           source: sources.join("+") || "partial",
           sourceTimestampMs: Date.now(),
@@ -148,22 +162,36 @@ export async function GET() {
         },
       };
     },
-    fallback: async () => ({
-      data: {
-        us: [],
-        crypto: [],
-        asia: [],
-        liquiditySpark: null,
-        sources: [],
-        at: new Date().toISOString(),
-      },
-      meta: {
-        source: "global-shell",
-        partial: true,
-        stale: true,
-        note: "Global market shell — đang kết nối lại",
-      },
-    }),
+    fallback: async () => {
+      const snap = await getHot("global");
+      if (snap?.data) {
+        return {
+          data: snap.data,
+          meta: {
+            ...snap.meta,
+            note: `last-good global · age ${Math.round(snap.ageMs / 1000)}s`,
+            partial: true,
+            stale: true,
+          },
+        };
+      }
+      return {
+        data: {
+          us: [],
+          crypto: [],
+          asia: [],
+          liquiditySpark: null,
+          sources: [],
+          at: new Date().toISOString(),
+        },
+        meta: {
+          source: "global-shell",
+          partial: true,
+          stale: true,
+          note: "Global market shell — đang kết nối lại",
+        },
+      };
+    },
     unavailableSource: "global",
     unavailableNote: "Global market data tạm gián đoạn",
   });
