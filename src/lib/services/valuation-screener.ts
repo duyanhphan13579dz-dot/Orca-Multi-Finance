@@ -251,7 +251,10 @@ export async function screenValuation(opts: ValuationFilterOpts = {}) {
         hubVnQuotes(symbols).catch(() => null),
         getFundamentalSnapshots(symbols, { concurrency: WORKERS_BUDGET.snapshotConcurrency }),
       ]);
-      const quoteMap = new Map((quotes?.quotes ?? []).map((q) => [q.symbol, q]));
+      const quoteMap = new Map<string, { price?: number | null }>();
+      for (const quote of quotes?.quotes ?? []) {
+        if (quote.symbol) quoteMap.set(quote.symbol, quote);
+      }
       const snapMap = new Map(snapPack.snapshots.map((s) => [s.symbol, s]));
 
       const rows = (

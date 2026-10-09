@@ -108,12 +108,12 @@ test("computeValuation uses statement-backed FCFF and FCFE when supplied", () =>
 
 test("net-debt ratios do not treat missing cash as zero", () => {
   const missingCash = computeDetailedRatios({
-    metrics: { shortTermDebt: 100, ebitda: 50 },
+    metrics: { shortTermDebt: 100, longTermDebt: 0, ebitda: 50 },
     priceQuote: null,
     sharesOutstanding: null,
   });
   const zeroCash = computeDetailedRatios({
-    metrics: { shortTermDebt: 100, cash: 0, ebitda: 50 },
+    metrics: { shortTermDebt: 100, longTermDebt: 0, cash: 0, ebitda: 50 },
     priceQuote: null,
     sharesOutstanding: null,
   });

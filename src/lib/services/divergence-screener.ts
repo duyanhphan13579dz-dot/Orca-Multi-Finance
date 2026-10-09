@@ -12,6 +12,7 @@ import type {
   DivergenceSignal,
   DivergenceStrength,
   Meta,
+  Quote,
 } from "../types";
 import { getSecurity, sectorOf } from "../vn/master";
 import { defaultTechnicalUniverse } from "../vn/vn100";
@@ -70,8 +71,13 @@ const CRYPTO_UNIVERSE = [
   "AVAXUSDT", "DOTUSDT", "LINKUSDT", "MATICUSDT", "NEARUSDT", "ATOMUSDT", "LTCUSDT", "APTUSDT",
 ];
 
-function strengthOk(s: DivergenceStrength, min: DivergenceStrength): boolean {
-  return STRENGTH_RANK[s] >= STRENGTH_RANK[min];
+function strengthRank(s: string | number): number {
+  if (typeof s === "number") return s >= 3 ? 3 : s >= 2 ? 2 : s >= 1 ? 1 : 0;
+  return STRENGTH_RANK[String(s).toUpperCase()] ?? 0;
+}
+
+function strengthOk(s: string | number, min: DivergenceStrength): boolean {
+  return strengthRank(s) >= strengthRank(min);
 }
 
 function isAlertWorthy(d: DivergenceSignal): boolean {
@@ -79,19 +85,19 @@ function isAlertWorthy(d: DivergenceSignal): boolean {
   const confFloor = multi ? 0.5 : 0.55;
   const volOk = d.volumeConfirmed === true;
   const volSoft = d.volumeConfirmed !== false;
-  if (d.strength === "A" && d.confidence >= confFloor && (volOk || (volSoft && d.confidence >= 0.7))) {
+  if (strengthRank(d.strength) === 3 && d.confidence >= confFloor && (volOk || (volSoft && d.confidence >= 0.7))) {
     return true;
   }
   if (
-    d.strength === "B" &&
+    strengthRank(d.strength) === 2 &&
     (d.kind === "regular_bullish" || d.kind === "regular_bearish") &&
     d.confidence >= confFloor &&
     volOk
   ) {
     return true;
   }
-  if (d.strength === "B" && multi && d.confidence >= 0.6 && volOk) return true;
-  if (d.strength === "A" && volOk && d.confidence >= 0.45) return true;
+  if (strengthRank(d.strength) === 2 && multi && d.confidence >= 0.6 && volOk) return true;
+  if (strengthRank(d.strength) === 3 && volOk && d.confidence >= 0.45) return true;
   return false;
 }
 
@@ -112,8 +118,8 @@ function rankSignals(a: DivergenceSignal, b: DivergenceSignal): number {
   const va = a.volumeConfirmed === true ? 1 : 0;
   const vb = b.volumeConfirmed === true ? 1 : 0;
   if (vb !== va) return vb - va;
-  if (STRENGTH_RANK[b.strength] !== STRENGTH_RANK[a.strength]) {
-    return STRENGTH_RANK[b.strength] - STRENGTH_RANK[a.strength];
+  if (strengthRank(b.strength) !== strengthRank(a.strength)) {
+    return strengthRank(b.strength) - strengthRank(a.strength);
   }
   return b.confidence - a.confidence;
 }
@@ -135,8 +141,8 @@ function cacheKeyVn(opts: DivergenceScreenOpts, universe: string[]): string {
   const o = opts.oscillator ?? "any";
   const s = opts.minStrength ?? "C";
   const lim = Math.min(opts.limit ?? 40, 80);
-  const symPart = opts.symbols?.length ? universe.slice(0, 20).join(",") : "vn100";
-  return `div:vn:v4:${w}:${tf}:${k}:${o}:${s}:${lim}:${symPart}`;
+  const symPart = opts.symbols?.length ? universe.join(",") : "vn100";
+  return `div:vn:v5:${w}:${tf}:${k}:${o}:${s}:${lim}:${symPart}`;
 }
 
 export async function screenVnDivergences(
@@ -163,7 +169,10 @@ export async function screenVnDivergences(
       }),
       getVnQuotes(universe).catch(() => null),
     ]);
-    const quoteBy = new Map((quotesPack?.quotes ?? []).map((q) => [q.symbol.toUpperCase(), q]));
+    const quoteBy = new Map<string, Quote>();
+    for (const quote of quotesPack?.quotes ?? []) {
+      if (quote.symbol) quoteBy.set(quote.symbol.toUpperCase(), quote);
+    }
 
     const rows: DivergenceScreenRow[] = [];
     let skipped = 0;

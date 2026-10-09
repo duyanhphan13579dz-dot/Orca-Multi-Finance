@@ -246,7 +246,9 @@ export async function screenFundamental(opts: FundamentalFilterOpts = {}) {
     fallback,
     opts.symbols?.length ? Math.min(opts.symbols.length, WORKERS_BUDGET.screenerUniverseMax) : uniMax,
   );
-  const cacheKey = `screener:fundamental:v6:${symbols.length}:${symbols.slice(0, 8).join(",")}`;
+  // Include the complete normalized universe: length + first 8 symbols can collide
+  // for distinct custom scan lists and return another request's rows.
+  const cacheKey = `screener:fundamental:v7:${symbols.join(",")}`;
 
   const result = await cached(cacheKey, {
     ttlMs: 20 * 60_000,
@@ -257,7 +259,10 @@ export async function screenFundamental(opts: FundamentalFilterOpts = {}) {
         getFundamentalSnapshots(symbols, { concurrency: WORKERS_BUDGET.snapshotConcurrency, persist: true }),
         hubVnQuotes(symbols).catch(() => null),
       ]);
-      const quoteMap = new Map((quotes?.quotes ?? []).map((q) => [q.symbol, q]));
+      const quoteMap = new Map<string, { price?: number | null }>();
+      for (const quote of quotes?.quotes ?? []) {
+        if (quote.symbol) quoteMap.set(quote.symbol, quote);
+      }
 
       const rows: FundamentalScreenRow[] = [];
       for (const s of snapPack.snapshots) {

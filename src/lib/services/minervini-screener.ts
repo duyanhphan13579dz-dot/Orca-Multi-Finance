@@ -6,7 +6,7 @@ import { LIQUID_BOARD } from "../providers/public-vn-feed";
 import { batchVnOhlcv } from "./ohlcv-batch";
 import { WORKERS_BUDGET } from "../data-engine/workers-budget";
 import { getSecurity, sectorOf } from "../vn/master";
-import type { Meta, OhlcvBar } from "../types";
+import type { Meta, OhlcvBar, Quote } from "../types";
 
 /**
  * Mark Minervini — Trend Template screener (SEPA universe filter).
@@ -132,8 +132,9 @@ function analyzeBars(symbol: string, bars: OhlcvBar[]): RawPack | null {
   const lookHigh = bars.slice(-252);
   const highs = lookHigh.map((b) => b.high);
   const lows = lookHigh.map((b) => b.low);
-  const high52w = highs.length ? Math.max(...highs) : null;
-  const low52w = lows.length ? Math.min(...lows) : null;
+  const hasFull52w = lookHigh.length >= 252;
+  const high52w = hasFull52w && highs.length ? Math.max(...highs) : null;
+  const low52w = hasFull52w && lows.length ? Math.min(...lows) : null;
 
   return {
     symbol,
@@ -145,8 +146,8 @@ function analyzeBars(symbol: string, bars: OhlcvBar[]): RawPack | null {
     sma200Prev30: smaAt(closes, 200, 30),
     high52w,
     low52w,
-    ret126: pctRet(closes, Math.min(126, closes.length - 1)),
-    ret252: pctRet(closes, Math.min(252, closes.length - 1)),
+    ret126: closes.length > 126 ? pctRet(closes, 126) : null,
+    ret252: closes.length > 252 ? pctRet(closes, 252) : null,
     volume20: avgVol(bars, 20),
     volume60: avgVol(bars, 60),
   };
@@ -238,7 +239,10 @@ export async function screenMinervini(args?: {
   ].slice(0, 100);
 
   const quotesPack = await getVnQuotes(uniq).catch(() => null);
-  const quoteMap = new Map((quotesPack?.quotes ?? []).map((q) => [q.symbol, q]));
+  const quoteMap = new Map<string, Quote>();
+  for (const quote of quotesPack?.quotes ?? []) {
+    if (quote.symbol) quoteMap.set(quote.symbol, quote);
+  }
 
   let skipped = 0;
   const ohlcvMap = await batchVnOhlcv(uniq, {

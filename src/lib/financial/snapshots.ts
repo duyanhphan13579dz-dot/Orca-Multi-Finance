@@ -62,8 +62,9 @@ const pct = (v: number | null | undefined): number | null =>
 
 function growthPct(raw: number | null | undefined): number | null {
   if (raw == null || !Number.isFinite(raw)) return null;
-  if (Math.abs(raw) <= 3) return Number((raw * 100).toFixed(2));
-  return Number(raw.toFixed(2));
+  // computeGrowth stores changePct as a ratio (e.g. 4.0 = +400%), not as
+  // mixed ratio/percent units. Always convert once at the snapshot boundary.
+  return Number((raw * 100).toFixed(2));
 }
 
 function growthOf(g: GrowthSnapshot | null | undefined, metric: string, kind: "yoy" | "qoq"): number | null {

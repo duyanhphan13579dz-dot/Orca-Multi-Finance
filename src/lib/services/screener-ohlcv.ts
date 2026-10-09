@@ -51,7 +51,14 @@ export async function fetchOhlcvResilient(
     };
   } catch {
     try {
-      const hit = await raceHealthy(attempts as any, { perAttemptMs: 3_500, label: `screener-ohlcv-race:${sym}` });
+      const hit = await raceHealthy<OhlcvBar[]>(
+        attempts.map((a) => ({
+          id: a.id,
+          run: async (_signal?: AbortSignal) => a.run(),
+          accept: a.accept,
+        })),
+        { perAttemptMs: 3_500, label: `screener-ohlcv-race:${sym}` },
+      );
       return {
         bars: hit.value,
         pack: { bars: hit.value, meta: { source: hit.sourceId, sourceTimestampMs: Date.now() } } as any,

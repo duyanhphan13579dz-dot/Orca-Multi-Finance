@@ -4,6 +4,7 @@
  * Units: BCTC = VND full; HOSE quote often nghìn đồng (price < 500 → ×1000).
  */
 import type { NormalizedMetrics, NormalizedPeriod } from "./types";
+import { buildTtmPeriod } from "./normalize";
 
 export type RatioFormat = "pct" | "x" | "num" | "money" | "days";
 export type RatioBand = "safe" | "ok" | "risk" | "na";
@@ -151,8 +152,17 @@ export function computeDetailedRatios(input: RatioEngineInput): RatioEngineResul
   const currentLiab = n(m.currentLiabilities);
   const std = n(m.shortTermDebt);
   const ltd = n(m.longTermDebt);
-  const totalDebt = std != null || ltd != null ? (std ?? 0) + (ltd ?? 0) : null;
+  const totalDebt = std != null && ltd != null ? std + ltd : null;
   const payables = n(extendedMetrics.payables) ?? n(extendedMetrics.accountsPayable);
+  const avgBalance = (current: number | null, previous: unknown): number | null => {
+    const p = n(previous);
+    return current != null && p != null ? (current + p) / 2 : current;
+  };
+  const assetsAvg = avgBalance(assets, prior?.totalAssets);
+  const equityAvg = avgBalance(equity, prior?.equity);
+  const inventoryAvg = avgBalance(inventory, prior?.inventory);
+  const receivablesAvg = avgBalance(receivables, prior?.receivables);
+  const payablesAvg = payables;
 
   const ocf = n(m.operatingCashFlow);
   const capexRaw = n(m.capex);
@@ -176,8 +186,8 @@ export function computeDetailedRatios(input: RatioEngineInput): RatioEngineResul
   const quickAssets =
     currentAssets != null && inventory != null
       ? currentAssets - inventory
-      : cash != null || receivables != null
-        ? (cash ?? 0) + (receivables ?? 0)
+      : cash != null && receivables != null
+        ? cash + receivables
         : null;
   const quickRatio = div(quickAssets, currentLiab);
   const cashRatio = div(
@@ -201,14 +211,29 @@ export function computeDetailedRatios(input: RatioEngineInput): RatioEngineResul
   const ebitMargin = div(ebit, revenue);
   const ebitdaMargin = div(ebitda, revenue);
   const netMargin = div(ni, revenue);
-  const roe = div(ni, equity);
-  const roa = div(ni, assets);
-  const nopat = ebit != null ? ebit * 0.8 : null;
+  const roe = div(ni, equityAvg);
+  const roa = div(ni, assetsAvg);
+  const pretax = n(m.profitBeforeTax);
+  const taxExpense = n(m.taxExpense);
+  const observedTaxRate = pretax != null && pretax > 0 && taxExpense != null ? taxExpense / pretax : null;
+  const taxRate = observedTaxRate != null && observedTaxRate >= 0 && observedTaxRate < 0.6
+    ? observedTaxRate
+    : 0.2;
+  const nopat = ebit != null ? ebit * (1 - taxRate) : null;
+  const priorDebt =
+    prior && n(prior.shortTermDebt) != null && n(prior.longTermDebt) != null
+      ? n(prior.shortTermDebt)! + n(prior.longTermDebt)!
+      : null;
+  const investedCapitalPrior =
+    prior && n(prior.equity) != null && priorDebt != null && n(prior.cash) != null
+      ? n(prior.equity)! + priorDebt - n(prior.cash)!
+      : null;
   const investedCapital =
     equity != null && totalDebt != null && cash != null
       ? equity + totalDebt - cash
       : null;
-  const roic = div(nopat, investedCapital != null && investedCapital > 0 ? investedCapital : null);
+  const investedCapitalAvg = avgBalance(investedCapital, investedCapitalPrior);
+  const roic = div(nopat, investedCapitalAvg != null && investedCapitalAvg > 0 ? investedCapitalAvg : null);
   const roeB = bandRoe(roe);
 
   const priorRev = prior ? n(prior.netRevenue) ?? n(prior.revenue) : null;
@@ -220,11 +245,11 @@ export function computeDetailedRatios(input: RatioEngineInput): RatioEngineResul
   const niGrowth =
     priorNi != null && priorNi !== 0 && ni != null ? (ni - priorNi) / Math.abs(priorNi) : null;
 
-  const assetTurnover = div(revenue, assets);
-  const equityTurnover = div(revenue, equity);
-  const invTurnover = div(cogs ?? revenue, inventory);
-  const recvTurnover = div(revenue, receivables);
-  const payTurnover = div(cogs ?? revenue, payables);
+  const assetTurnover = div(revenue, assetsAvg);
+  const equityTurnover = div(revenue, equityAvg);
+  const invTurnover = div(cogs ?? revenue, inventoryAvg);
+  const recvTurnover = div(revenue, receivablesAvg);
+  const payTurnover = div(cogs ?? revenue, payablesAvg);
   const dio = invTurnover != null && invTurnover > 0 ? 365 / invTurnover : null;
   const dso = recvTurnover != null && recvTurnover > 0 ? 365 / recvTurnover : null;
   const dpo = payTurnover != null && payTurnover > 0 ? 365 / payTurnover : null;
@@ -271,8 +296,8 @@ export function computeDetailedRatios(input: RatioEngineInput): RatioEngineResul
         ? (ebit - Math.abs(interest)) / ebit
         : null;
   const dupontRoe =
-    netMargin != null && assetTurnover != null && equity != null && assets != null && equity !== 0
-      ? netMargin * assetTurnover * (assets / equity)
+    netMargin != null && assetTurnover != null && equityAvg != null && assetsAvg != null && equityAvg !== 0
+      ? netMargin * assetTurnover * (assetsAvg / equityAvg)
       : null;
 
   const liquidity = [
@@ -317,11 +342,13 @@ export function computeDetailedRatios(input: RatioEngineInput): RatioEngineResul
     item("roe", "ROE", "ROE", roe, "pct", "profitability", {
       band: roeB.band,
       bandLabel: roeB.label,
-      formula: "LNST / VCSH",
+      formula: "LNST TTM / VCSH bình quân",
     }),
-    item("roa", "ROA", "ROA", roa, "pct", "profitability", { formula: "LNST / Tổng tài sản" }),
+    item("roa", "ROA", "ROA", roa, "pct", "profitability", { formula: "LNST TTM / Tổng tài sản bình quân" }),
     item("roic", "ROIC (ước tính)", "ROIC", roic, "pct", "profitability", {
-      note: "NOPAT≈EBIT×(1−20%)",
+      note: taxRate === 0.2 && (observedTaxRate == null || !Number.isFinite(observedTaxRate))
+        ? "NOPAT dùng thuế suất chuẩn 20% do thiếu thuế suất hiệu dụng"
+        : "NOPAT dùng thuế suất hiệu dụng từ BCTC",
       formula: "NOPAT / Vốn đầu tư",
     }),
     item("revGrowth", "Tăng trưởng DT YoY", "Revenue Growth YoY", revGrowth, "pct", "profitability"),
@@ -423,12 +450,22 @@ export function pickMetricsFromPeriods(periods: NormalizedPeriod[]): {
   const ttm = periods.find((p) => p.periodType === "ttm");
   const nonTtm = periods.filter((p) => p.periodType !== "ttm");
   const head = ttm ?? nonTtm[0] ?? periods[0];
-  const prior =
-    nonTtm.length >= 2
-      ? nonTtm[ttm ? 0 : 1]?.metrics ?? null
-      : nonTtm.length >= 1 && ttm
-        ? nonTtm[0]?.metrics ?? null
-        : null;
+  const quarters = nonTtm
+    .filter((p) => p.periodType === "quarter" && p.year != null && p.quarter != null)
+    .sort((a, b) => (b.year! * 4 + b.quarter!) - (a.year! * 4 + a.quarter!));
+  let prior: NormalizedMetrics | null = null;
+  if (ttm) {
+    // Compare TTM with the TTM ending four quarters earlier; never compare a TTM
+    // flow total with one quarter of revenue/earnings.
+    const priorTtm = buildTtmPeriod(quarters.slice(4));
+    prior = priorTtm?.metrics ?? null;
+  } else if (head?.periodType === "quarter" && head.year != null && head.quarter != null) {
+    prior = nonTtm.find(
+      (p) => p.periodType === "quarter" && p.year === head.year! - 1 && p.quarter === head.quarter,
+    )?.metrics ?? null;
+  } else if (head?.periodType === "year" && head.year != null) {
+    prior = nonTtm.find((p) => p.periodType === "year" && p.year === head.year! - 1)?.metrics ?? null;
+  }
   return {
     metrics: head?.metrics ?? null,
     prior,
