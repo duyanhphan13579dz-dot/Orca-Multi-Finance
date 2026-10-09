@@ -85,14 +85,28 @@ function bandScore(v: number | null, bands: [number, number][]): number | null {
   return 20;
 }
 
+/** Cap extreme ratios that are usually data errors (e.g. ROE 400%). */
+function sanePct(v: number | null, maxAbs = 120): number | null {
+  if (v == null || !Number.isFinite(v)) return null;
+  if (Math.abs(v) > maxAbs) return null;
+  return v;
+}
+
 function computeScreenScore(s: FundamentalSnapshot): number {
+  if (s.coverage < 0.15 && s.roe == null && s.roa == null) return 0;
+
+  const roe = sanePct(s.roe);
+  const roic = sanePct(s.roic);
+  const nm = sanePct(s.netMargin, 80);
+  const gm = sanePct(s.grossMargin, 95);
+
   const parts: { w: number; s: number }[] = [];
-  const roeS = bandScore(s.roe, [[22, 95], [15, 85], [10, 70], [5, 50], [0, 35]]);
-  const roicS = bandScore(s.roic, [[18, 95], [12, 85], [8, 70], [4, 50], [0, 35]]);
-  const nmS = bandScore(s.netMargin, [[20, 95], [12, 85], [7, 70], [3, 55], [0, 40]]);
-  const gmS = bandScore(s.grossMargin, [[40, 90], [25, 75], [15, 60], [8, 45]]);
+  const roeS = bandScore(roe, [[22, 95], [15, 85], [10, 70], [5, 50], [0, 35]]);
+  const roicS = bandScore(roic, [[18, 95], [12, 85], [8, 70], [4, 50], [0, 35]]);
+  const nmS = bandScore(nm, [[20, 95], [12, 85], [7, 70], [3, 55], [0, 40]]);
+  const gmS = bandScore(gm, [[40, 90], [25, 75], [15, 60], [8, 45]]);
   const deS =
-    s.debtEquity == null
+    s.debtEquity == null || !Number.isFinite(s.debtEquity) || s.debtEquity < 0
       ? null
       : s.debtEquity < 0.5
         ? 90
@@ -104,19 +118,39 @@ function computeScreenScore(s: FundamentalSnapshot): number {
               ? 35
               : 20;
   const crS = bandScore(s.currentRatio, [[2, 90], [1.5, 75], [1.1, 60], [0.8, 40]]);
-  const covS = s.coverage >= 0.7 ? 90 : s.coverage >= 0.4 ? 65 : s.coverage > 0 ? 40 : null;
+  const covS = s.coverage >= 0.7 ? 90 : s.coverage >= 0.4 ? 65 : s.coverage > 0.2 ? 45 : 25;
 
-  if (roeS != null) parts.push({ w: 0.28, s: roeS });
-  if (roicS != null) parts.push({ w: 0.22, s: roicS });
-  if (nmS != null) parts.push({ w: 0.18, s: nmS });
-  if (gmS != null) parts.push({ w: 0.1, s: gmS });
+  const niYoy = sanePct(s.niYoyPct, 200);
+  const growthS =
+    niYoy == null
+      ? null
+      : niYoy >= 25
+        ? 90
+        : niYoy >= 10
+          ? 75
+          : niYoy >= 0
+            ? 55
+            : niYoy >= -15
+              ? 35
+              : 20;
+
+  if (roeS != null) parts.push({ w: 0.26, s: roeS });
+  if (roicS != null) parts.push({ w: 0.2, s: roicS });
+  if (nmS != null) parts.push({ w: 0.16, s: nmS });
+  if (gmS != null) parts.push({ w: 0.08, s: gmS });
   if (deS != null) parts.push({ w: 0.12, s: deS });
   if (crS != null) parts.push({ w: 0.05, s: crS });
-  if (covS != null) parts.push({ w: 0.05, s: covS });
+  if (covS != null) parts.push({ w: 0.07, s: covS });
+  if (growthS != null) parts.push({ w: 0.06, s: growthS });
 
   if (!parts.length) return 0;
   const wSum = parts.reduce((a, p) => a + p.w, 0);
-  return Math.round(parts.reduce((a, p) => a + p.s * p.w, 0) / wSum);
+  let score = parts.reduce((a, p) => a + p.s * p.w, 0) / wSum;
+
+  if (s.coverage < 0.35) score *= 0.85;
+  if (s.qualityScore != null && s.qualityScore < 40) score *= 0.9;
+
+  return Math.round(Math.max(0, Math.min(100, score)));
 }
 
 function passesFilters(row: FundamentalScreenRow, f: FundamentalFilterOpts): boolean {
@@ -212,7 +246,7 @@ export async function screenFundamental(opts: FundamentalFilterOpts = {}) {
     fallback,
     opts.symbols?.length ? Math.min(opts.symbols.length, WORKERS_BUDGET.screenerUniverseMax) : uniMax,
   );
-  const cacheKey = `screener:fundamental:v5:${symbols.length}:${symbols.slice(0, 8).join(",")}`;
+  const cacheKey = `screener:fundamental:v6:${symbols.length}:${symbols.slice(0, 8).join(",")}`;
 
   const result = await cached(cacheKey, {
     ttlMs: 20 * 60_000,
