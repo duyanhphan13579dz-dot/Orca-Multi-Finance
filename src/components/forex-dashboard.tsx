@@ -9,8 +9,9 @@ import { Globe2 } from "lucide-react";
 
 export function ForexDashboard() {
   const { data, meta, isLoading } = useApi<ForexMarket>("/api/v1/forex/markets", {
-    refreshInterval: 30_000,
+    refreshInterval: 25_000,
     keepPreviousData: true,
+    timeoutMs: 16_000,
   });
   if (isLoading && !data) return <Loading rows={10} />;
   if (!data) {
@@ -23,7 +24,7 @@ export function ForexDashboard() {
     );
   }
 
-  const groups: { key: ForexRow["group"]; title: string }[] = [
+  const groups: { key: NonNullable<ForexRow["group"]>; title: string }[] = [
     { key: "major", title: "Cặp chính" },
     { key: "cross", title: "Cặp chéo" },
     { key: "vnd", title: "VND" },
@@ -49,11 +50,33 @@ export function ForexDashboard() {
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
         {groups.map((g) => {
           const rows = data.rows.filter((r) => r.group === g.key);
-          if (!rows.length) return null;
+          const placeholders =
+            g.key === "metal"
+              ? [
+                  { pair: "XAUUSD", symbol: "XAU/USD" },
+                  { pair: "XAGUSD", symbol: "XAG/USD" },
+                  { pair: "XPTUSD", symbol: "XPT/USD" },
+                ]
+              : g.key === "energy"
+                ? [
+                    { pair: "OILUSD", symbol: "OIL/USD" },
+                    { pair: "UKOIL", symbol: "UKO/USD" },
+                    { pair: "USOIL", symbol: "USO/USD" },
+                  ]
+                : [];
+          const show = rows.length
+            ? rows
+            : placeholders.map((p) => ({
+                pair: p.pair,
+                symbol: p.symbol,
+                price: null as number | null,
+                changePercent: null as number | null,
+              }));
+          if (!show.length) return null;
           return (
             <Panel key={g.key} title={g.title} pad={false}>
               <div className="divide-y divide-line/50">
-                {rows.map((r) => (
+                {show.map((r) => (
                   <Link
                     key={r.pair}
                     href={`/forex/${r.pair}`}
@@ -65,11 +88,13 @@ export function ForexDashboard() {
                     </div>
                     <div className="text-right">
                       <div className="num text-[14px]">
-                        {r.price >= 1000
-                          ? r.price.toLocaleString("vi-VN", { maximumFractionDigits: 0 })
-                          : r.price >= 100
-                            ? r.price.toFixed(2)
-                            : r.price.toFixed(4)}
+                        {r.price == null
+                          ? "—"
+                          : r.price >= 1000
+                            ? r.price.toLocaleString("vi-VN", { maximumFractionDigits: 0 })
+                            : r.price >= 100
+                              ? r.price.toFixed(2)
+                              : r.price.toFixed(4)}
                       </div>
                       <Chg value={r.changePercent} className="text-[11px]" arrow={false} />
                     </div>
@@ -82,8 +107,7 @@ export function ForexDashboard() {
       </div>
 
       <p className="text-[11px] leading-relaxed text-ink-3">
-        Realtime: Biquote (FX/XAU/XAG/oil) ∥ Yahoo futures ∥ ER-API. Bấm mã để mở chart + chỉ báo kỹ
-        thuật (RSI, MACD, EMA, BB).
+        Realtime ≤15s: Biquote (FX) ∥ Yahoo (XAU/XAG/oil) ∥ ER-API. Bấm mã để mở chart + chỉ báo.
       </p>
     </div>
   );
