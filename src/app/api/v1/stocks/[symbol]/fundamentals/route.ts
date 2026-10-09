@@ -1,12 +1,14 @@
 import { ok, badRequest, fail } from "@/lib/envelope";
 import { cached } from "@/lib/cache";
 import { periodsToLegacyRows, fetchVndirectFinancials } from "@/lib/financial/vndirect-fs";
+import { fetchFinancialStatementsMulti } from "@/lib/financial/fs-multi";
 import { computeGrowth, sortPeriodsNewestFirst } from "@/lib/financial/normalize";
 import { getVnQuotes } from "@/lib/services/stocks";
 import { getVndEquitySnapshot, getVndValuationRatios } from "@/lib/providers/vndirect-company";
 import { computeFinancialHealth } from "@/lib/engines/fundamental";
 import { computeInvestmentPerformance } from "@/lib/financial/investment-performance";
 import { fetchVndDchartHistory } from "@/lib/providers/vndirect-dchart";
+import { getVietcapCompany } from "@/lib/providers/vietcap";
 import type { OhlcvBar } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -37,19 +39,29 @@ export async function GET(
       return badRequest("symbol không hợp lệ");
     }
 
-    const cachedRes = await cached(`fund:ui:${symbol}:v5`, {
+    const cachedRes = await cached(`fund:ui:${symbol}:v6`, {
       ttlMs: 90_000,
       staleMs: 300_000,
       producer: async () => {
         // Song song: BCTC, giá, equity, ratios, lịch sử mã, lịch sử VNINDEX
-        const [fs, quotes, equity, ratios, bars, idxBars] = await Promise.all([
+        const [fsPrimary, fsMulti, quotes, equity, ratios, bars, idxBars, vietcap] = await Promise.all([
           fetchVndirectFinancials(symbol, { limitPeriods: 16 }).catch(() => null),
+          fetchFinancialStatementsMulti(symbol).catch(() => null),
           getVnQuotes([symbol]).catch(() => null),
           getVndEquitySnapshot(symbol).catch(() => null),
           getVndValuationRatios(symbol).catch(() => null),
           fetchVndDchartHistory(symbol, "D", 320).catch(() => [] as OhlcvBar[]),
           fetchVndDchartHistory("VNINDEX", "D", 320).catch(() => [] as OhlcvBar[]),
+          getVietcapCompany(symbol).catch(() => null),
         ]);
+
+        // Prefer multi-source richest set, then primary VNDirect
+        const fs =
+          fsMulti?.periods?.length
+            ? { periods: fsMulti.periods, latencyMs: fsMulti.latencyMs, profile: null as string | null, sources: fsMulti.sources }
+            : fsPrimary?.periods?.length
+              ? { periods: fsPrimary.periods, latencyMs: fsPrimary.latencyMs, profile: fsPrimary.profile, sources: ["vndirect-fs"] }
+              : null;
 
         // Retry dchart nếu lần 1 rỗng (timeout / rate limit)
         let stockBars = bars ?? [];
@@ -61,14 +73,11 @@ export async function GET(
           indexBars = await fetchVndDchartHistory("VNINDEX", "D", 320).catch(() => [] as OhlcvBar[]);
         }
 
-        if (!fs?.periods?.length) {
-          throw Object.assign(new Error(`Không lấy được BCTC ${symbol} từ VNDirect`), {
-            code: "STOCK_UNAVAILABLE",
-          });
-        }
-
-        const periods = sortPeriodsNewestFirst(fs.periods);
-        const rows = periodsToLegacyRows(periods, symbol);
+        // Soft-fail: still return quote/performance shell when BCTC missing
+        const periods = fs?.periods?.length ? sortPeriodsNewestFirst(fs.periods) : [];
+        const rows = periods.length
+          ? periodsToLegacyRows(periods, symbol)
+          : { income: [] as Record<string, unknown>[], balance: [] as Record<string, unknown>[], cashflow: [] as Record<string, unknown>[], ratios: [] as Record<string, unknown>[] };
         const health = computeFinancialHealth(
           {
             income: rows.income as Record<string, unknown>[],
@@ -78,13 +87,23 @@ export async function GET(
           { symbol },
         );
 
-        let shares = equity?.sharesOutstanding ?? health.anchors?.shares ?? null;
+        let shares =
+          equity?.sharesOutstanding ??
+          equity?.totalShares ??
+          health.anchors?.shares ??
+          vietcap?.sharesOutstanding ??
+          null;
         if (equity?.sharesOutstanding && equity.sharesOutstanding > 0) {
           shares = equity.sharesOutstanding;
+        } else if ((shares == null || shares <= 0) && vietcap?.sharesOutstanding && vietcap.sharesOutstanding > 0) {
+          shares = vietcap.sharesOutstanding;
         }
 
-        const price = quotes?.quotes?.[0]?.price ?? null;
-        const growth = computeGrowth(periods);
+        let price = quotes?.quotes?.[0]?.price ?? null;
+        if ((price == null || price <= 0) && vietcap?.price && vietcap.price > 0) {
+          price = vietcap.price >= 1000 ? vietcap.price / 1000 : vietcap.price;
+        }
+        const growth = periods.length ? computeGrowth(periods) : { yoy: [], qoq: [], latestPeriod: null, priorYearPeriod: null, priorQuarterPeriod: null };
 
         const closes = closesFromBars(stockBars);
         const indexCloses = closesFromBars(indexBars);
@@ -143,8 +162,12 @@ export async function GET(
               ? price * shares
               : (equity?.marketCapReported ?? ratios?.marketCap ?? null),
           periodCount: periods.length,
-          latencyMs: fs.latencyMs,
-          profile: fs.profile,
+          latencyMs: fs?.latencyMs ?? 0,
+          profile: fs?.profile ?? null,
+          fsSources: fs && "sources" in fs ? fs.sources : null,
+          notes: periods.length
+            ? [`BCTC ${periods.length} kỳ`]
+            : ["Chưa lấy được BCTC — hiển thị partial (giá/hiệu suất nếu có)."],
           closes,
           indexClosesCount: indexCloses.length,
           performance,
@@ -172,7 +195,10 @@ export async function GET(
       sourceTimestampMs: Date.now(),
       cached: cachedRes.cached,
       stale: cachedRes.stale,
-      note: `BCTC ${r.periodCount} kỳ · giá ${r.closes?.length ?? 0} phiên · VNINDEX ${r.indexClosesCount ?? 0} · ${r.latencyMs}ms`,
+      note: r.periodCount
+        ? `BCTC ${r.periodCount} kỳ · giá ${r.closes?.length ?? 0} phiên · VNINDEX ${r.indexClosesCount ?? 0} · ${r.latencyMs}ms`
+        : `Partial: chưa có BCTC · giá ${r.closes?.length ?? 0} phiên · ${r.latencyMs}ms`,
+      partial: !r.periodCount,
     });
   } catch (e) {
     if (e && typeof e === "object" && (e as { code?: string }).code === "STOCK_UNAVAILABLE") {

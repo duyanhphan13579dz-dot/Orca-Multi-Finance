@@ -21,6 +21,9 @@ import { getVietcapCompany } from "../providers/vietcap";
 import { getVpsQuotes } from "../providers/vps";
 import { getVnOrderBook, type VnOrderBook } from "./stock-orderbook";
 import { getVnQuotes, getVnOhlcv } from "./stocks-board";
+import { fetchOhlcvResilient } from "./screener-ohlcv";
+import { cached } from "../cache";
+import { WORKERS_BUDGET } from "../data-engine/workers-budget";
 
 export interface VnStockDetail {
   symbol: string;
@@ -54,19 +57,75 @@ export interface VnStockDetail {
   notes: string[];
 }
 
+/** Soft-timeout: never let one slow source hang the whole detail page. */
+async function soft<T>(p: Promise<T>, ms: number, _label?: string): Promise<T | null> {
+  try {
+    return await Promise.race([
+      p.then((v) => v).catch(() => null as T | null),
+      new Promise<null>((r) => setTimeout(() => r(null), ms)),
+    ]);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Produce stock detail under Workers resource budget (avoids Error 1102).
+ * Stage A (≤4 parallel): quote + OHLCV + profile + equity
+ * Stage B (≤3 parallel): ratios + orderbook + foreign — only if wall remains
+ * Stage C (sequential): financials — only if wall remains
+ * Dual OHLCV race is deferred (legacy first, resilient only on miss).
+ */
 async function produceVnStockDetail(sym: string): Promise<{ detail: VnStockDetail; meta: Meta } | null> {
   const failed: string[] = [];
   const notes: string[] = [];
-  const [quoteRes, ohlcvRes, profileRes, equityRes, bookRes, foreignRes, finRes, valRatioRes] = await Promise.all([
-    getVnQuotes([sym]).catch(() => null),
-    getVnOhlcv(sym, 320).catch(() => null),
-    getVndCompanyProfile(sym).catch(() => null),
-    getVndEquitySnapshot(sym).catch(() => null),
-    getVnOrderBook(sym).catch(() => null),
-    getVndSymbolForeignFlow(sym).catch(() => null),
-    getFinancialsForSymbol(sym).catch(() => null),
-    getVndValuationRatios(sym).catch(() => null),
+  const wallStart = Date.now();
+  const wallLeft = () => WORKERS_BUDGET.detailWallMs - (Date.now() - wallStart);
+  const BARS = WORKERS_BUDGET.detailBars;
+  const softMs = WORKERS_BUDGET.providerSoftMs;
+
+  // Stage A — core (max 4 parallel)
+  const [quoteRes, ohlcvLegacy, profileRes, equityRes] = await Promise.all([
+    soft(getVnQuotes([sym]), softMs, "quotes"),
+    soft(getVnOhlcv(sym, BARS), Math.min(7_000, softMs + 2_000), "ohlcv"),
+    soft(getVndCompanyProfile(sym), softMs, "profile"),
+    soft(getVndEquitySnapshot(sym), softMs, "equity"),
   ]);
+
+  // OHLCV resilient only if legacy empty and budget remains
+  let ohlcvResilient: Awaited<ReturnType<typeof fetchOhlcvResilient>> | null = null;
+  if (!(ohlcvLegacy?.bars?.length) && wallLeft() > 4_000) {
+    ohlcvResilient = await soft(fetchOhlcvResilient(sym, BARS), 6_000, "ohlcv-resilient");
+  }
+
+  // Stage B — secondary
+  let bookRes: Awaited<ReturnType<typeof getVnOrderBook>> | null = null;
+  let foreignRes: Awaited<ReturnType<typeof getVndSymbolForeignFlow>> | null = null;
+  let valRatioRes: Awaited<ReturnType<typeof getVndValuationRatios>> | null = null;
+  if (wallLeft() > 3_000) {
+    const secondary = await Promise.all([
+      soft(getVnOrderBook(sym), 3_500, "orderbook"),
+      soft(getVndSymbolForeignFlow(sym), 3_500, "foreign"),
+      soft(getVndValuationRatios(sym), softMs, "ratios"),
+    ]);
+    bookRes = secondary[0];
+    foreignRes = secondary[1];
+    valRatioRes = secondary[2];
+  } else {
+    notes.push("skip:secondary-budget");
+  }
+
+  // Stage C — financials (heaviest)
+  let finRes: Awaited<ReturnType<typeof getFinancialsForSymbol>> | null = null;
+  if (wallLeft() > 5_000) {
+    finRes = await soft(
+      getFinancialsForSymbol(sym),
+      Math.min(WORKERS_BUDGET.financialSoftMs, Math.max(2_000, wallLeft() - 500)),
+      "financials",
+    );
+  } else {
+    notes.push("skip:financials-budget");
+  }
 
   let quote = quoteRes?.quotes?.[0] ?? null;
   if (!quote) {
@@ -89,12 +148,15 @@ async function produceVnStockDetail(sym: string): Promise<{ detail: VnStockDetai
           enName: null,
           foundDate: null,
           taxCode: null,
+          registrationCode: null,
           vnAddress: null,
+          enAddress: null,
           phone: null,
           fax: null,
           website: null,
           email: null,
           employees: null,
+          branches: null,
           vnSummary: null,
           enSummary: null,
         };
@@ -135,16 +197,19 @@ async function produceVnStockDetail(sym: string): Promise<{ detail: VnStockDetai
             logo: null,
             vnName: vietcapData.name,
             enName: vietcapData.nameEn,
-            foundDate: null,
+            foundDate: vietcapData.listedDate,
             taxCode: null,
+            registrationCode: null,
             vnAddress: null,
+            enAddress: null,
             phone: null,
             fax: null,
             website: null,
             email: null,
             employees: null,
-            vnSummary: null,
-            enSummary: null,
+            branches: null,
+            vnSummary: vietcapData.sector ? `Ngành: ${vietcapData.sector}` : null,
+            enSummary: vietcapData.sector ? `Sector: ${vietcapData.sector}` : null,
           };
         }
         if (!equity && (vietcapData.sharesOutstanding || vietcapData.marketCap)) {
@@ -164,7 +229,12 @@ async function produceVnStockDetail(sym: string): Promise<{ detail: VnStockDetai
 
   if (!quote) failed.push("quote");
   const name = quote?.name ?? (profile as { vnName?: string } | null)?.vnName ?? null;
-  const bars = ohlcvRes?.bars ?? [];
+  const bars =
+    (ohlcvResilient?.bars?.length ? ohlcvResilient.bars : null) ??
+    ohlcvLegacy?.bars ??
+    [];
+  if (ohlcvResilient?.bars?.length) notes.push(`ohlcv:${ohlcvResilient.pack?.meta?.source ?? "resilient"}`);
+  else if (ohlcvLegacy?.bars?.length) notes.push(`ohlcv:${ohlcvLegacy.meta?.source ?? "legacy"}`);
   if (!bars.length) failed.push("ohlcv");
 
   let technical: TechnicalSnapshot | null = null;
@@ -178,10 +248,11 @@ async function produceVnStockDetail(sym: string): Promise<{ detail: VnStockDetai
     }
   }
 
+  // Alpha-beta optional — skip under tight budget (extra VNINDEX fetch).
   let alphaBeta: unknown = null;
-  if (bars.length >= 60) {
+  if (bars.length >= 60 && wallLeft() > 4_000) {
     try {
-      const idx = await getVnOhlcv("VNINDEX", 320).catch(() => null);
+      const idx = await soft(getVnOhlcv("VNINDEX", BARS), 4_000, "vnindex");
       if (idx?.bars?.length) {
         alphaBeta = computeAlphaBeta(bars, idx.bars);
       }
@@ -228,7 +299,7 @@ async function produceVnStockDetail(sym: string): Promise<{ detail: VnStockDetai
 
   const sources = [
     quoteRes?.meta?.source,
-    ohlcvRes?.meta?.source,
+    ohlcvResilient?.pack?.meta?.source ?? ohlcvLegacy?.meta?.source,
     finRes?.meta?.source,
     valRatioRes?.source,
   ].filter(Boolean) as string[];
@@ -269,48 +340,59 @@ async function produceVnStockDetail(sym: string): Promise<{ detail: VnStockDetai
   return { detail, meta };
 }
 
+function emptyShell(sym: string, note: string): { detail: VnStockDetail; meta: Meta } {
+  return {
+    detail: {
+      symbol: sym,
+      name: null,
+      quote: null,
+      bars: [],
+      technical: null,
+      patterns: [],
+      equity: null,
+      sharesOutstanding: null,
+      profile: null,
+      orderBook: null,
+      foreignFlow: null,
+      financials: null,
+      financialHealth: null,
+      financialMeta: null,
+      financialGrowth: null,
+      financialTtm: null,
+      detailedRatios: null,
+      ratioMap: {},
+      metricsSources: [],
+      notes: [note],
+    },
+    meta: buildMeta({
+      source: "degraded",
+      sourceTimestampMs: Date.now(),
+      note,
+      partial: true,
+    }),
+  };
+}
+
 export async function getVnStockDetail(
   symbol: string,
 ): Promise<{ detail: VnStockDetail; meta: Meta } | null> {
   const sym = symbol.toUpperCase().replace(/[^A-Z0-9]/g, "");
   if (!sym) return null;
+
   try {
-    const r = await produceVnStockDetail(sym);
-    if (r?.detail?.quote?.price && r.detail.quote.price > 0) return r;
-    // Retry once on partial
-    const r2 = await produceVnStockDetail(sym);
-    if (r2) return r2;
-    return r;
-  } catch (e) {
-    return {
-      detail: {
-        symbol: sym,
-        name: null,
-        quote: null,
-        bars: [],
-        technical: null,
-        patterns: [],
-        equity: null,
-        sharesOutstanding: null,
-        profile: null,
-        orderBook: null,
-        foreignFlow: null,
-        financials: null,
-        financialHealth: null,
-        financialMeta: null,
-        financialGrowth: null,
-        financialTtm: null,
-        detailedRatios: null,
-        ratioMap: {},
-        metricsSources: [],
-        notes: [e instanceof Error ? e.message : "detail_error"],
+    const hit = await cached(`vn:stock-detail:${sym}:v2`, {
+      ttlMs: 25_000,
+      staleMs: 180_000,
+      softSwr: true,
+      producer: async () => {
+        // Single produce — no double-retry (avoids 2× subrequest burn on Workers).
+        const r = await produceVnStockDetail(sym);
+        if (!r) throw new Error(`detail unavailable: ${sym}`);
+        return r;
       },
-      meta: buildMeta({
-        source: "degraded",
-        sourceTimestampMs: Date.now(),
-        note: "partial shell — retry client-side",
-        partial: true,
-      }),
-    };
+    });
+    return hit.value;
+  } catch (e) {
+    return emptyShell(sym, e instanceof Error ? e.message : "detail_error");
   }
 }

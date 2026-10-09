@@ -1,4 +1,4 @@
-import { ok, unavailable, badRequest } from "@/lib/envelope";
+import { badRequest, ok } from "@/lib/envelope";
 import {
   getRecentDivergenceAlerts,
   screenCryptoDivergences,
@@ -7,10 +7,12 @@ import {
   warmVnDivergenceScreen,
 } from "@/lib/services/divergence-screener";
 import type { DivergenceKind, DivergenceOscillator, DivergenceStrength } from "@/lib/types";
+import { safeApi } from "@/lib/safe-api";
+import { WORKERS_BUDGET } from "@/lib/data-engine/workers-budget";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
-export const maxDuration = 90;
+export const maxDuration = 30;
 
 const KINDS = new Set([
   "any",
@@ -22,19 +24,7 @@ const KINDS = new Set([
 const OSC = new Set(["any", "rsi", "macd_hist", "macd_line", "stoch"]);
 const STR = new Set(["A", "B", "C"]);
 
-/**
- * GET /api/v1/screener/divergence
- *   ?asset=stock|crypto|multi
- *   &kind=regular_bullish|…|any
- *   &oscillator=rsi|macd_hist|macd_line|stoch|any
- *   &minStrength=A|B|C
- *   &timeframe=1d|1h|4h
- *   &window=short_3_4d|default
- *   &limit=40&symbols=VCB,FPT
- *   &skipCache=1  → force recompute
- *   &warm=1      → pre-warm default VN short screen only
- *   &recent=1    → alerts already fired by cron
- */
+/** GET /api/v1/screener/divergence */
 export async function GET(req: Request) {
   const url = new URL(req.url);
 
@@ -49,11 +39,18 @@ export async function GET(req: Request) {
   }
 
   if (url.searchParams.get("warm") === "1") {
-    const warm = await warmVnDivergenceScreen();
-    return ok({
-      warm,
-      note: "Đã làm nóng cache màn phân kỳ VN short_3_4d",
-    });
+    try {
+      const warm = await warmVnDivergenceScreen();
+      return ok({
+        warm,
+        note: "Đã làm nóng cache màn phân kỳ VN short_3_4d",
+      });
+    } catch (e) {
+      return ok({
+        warm: null,
+        note: e instanceof Error ? e.message : "warm failed",
+      });
+    }
   }
 
   const asset = (url.searchParams.get("asset") ?? "stock").toLowerCase();
@@ -96,21 +93,47 @@ export async function GET(req: Request) {
     skipCache,
   };
 
-  try {
-    const r =
-      asset === "multi"
-        ? await screenMultiAssetDivergences(opts)
-        : asset === "crypto"
-          ? await screenCryptoDivergences(opts)
-          : await screenVnDivergences(opts);
-
-    return ok(
-      {
-        rows: r.rows,
-        scanned: r.scanned,
-        skipped: r.skipped,
+  return safeApi({
+    label: "screener-divergence",
+    guard: {
+      wallMs: WORKERS_BUDGET.techScreenWallMs,
+      maxSubrequests: 24,
+      maxConcurrent: 3,
+    },
+    produce: async () => {
+      const r =
+        asset === "multi"
+          ? await screenMultiAssetDivergences(opts)
+          : asset === "crypto"
+            ? await screenCryptoDivergences(opts)
+            : await screenVnDivergences(opts);
+      if (!r) return null;
+      return {
+        data: {
+          rows: r.rows,
+          scanned: r.scanned,
+          skipped: r.skipped,
+          asset,
+          legs: "legs" in r ? (r as { legs?: unknown }).legs : undefined,
+          filters: {
+            kind: opts.kind,
+            oscillator: opts.oscillator,
+            minStrength: opts.minStrength,
+            timeframe: opts.timeframe,
+            window: opts.window,
+          },
+          engine: "phân kỳ · short 3–4d · vol-confirm · cache+OHLCV batch",
+        },
+        meta: r.meta,
+      };
+    },
+    fallback: async () => ({
+      data: {
+        rows: [],
+        scanned: 0,
+        skipped: 0,
         asset,
-        legs: "legs" in r ? (r as { legs?: unknown }).legs : undefined,
+        legs: undefined,
         filters: {
           kind: opts.kind,
           oscillator: opts.oscillator,
@@ -120,12 +143,14 @@ export async function GET(req: Request) {
         },
         engine: "phân kỳ · short 3–4d · vol-confirm · cache+OHLCV batch",
       },
-      r.meta,
-    );
-  } catch (e) {
-    return unavailable(
-      "divergence-screener",
-      e instanceof Error ? e.message : "scan failed",
-    );
-  }
+      meta: {
+        source: "divergence-shell",
+        partial: true,
+        stale: true,
+        note: "Divergence screener tạm trống — đang phục hồi",
+      },
+    }),
+    unavailableSource: "divergence-screener",
+    unavailableNote: "Divergence screener tạm không khả dụng",
+  });
 }

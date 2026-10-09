@@ -24,8 +24,10 @@ function hitsBand(price: number | null | undefined, band: number | null | undefi
 }
 
 export default function VnMarketCenterPage() {
-  const { res, data, meta, isLoading } = useApi<StocksData>(`/api/v1/stocks?board=full`, {
-    refreshInterval: 45_000,
+  const { res, data, meta, isLoading, error } = useApi<StocksData>(`/api/v1/stocks?board=full`, {
+    refreshInterval: 30_000,
+    timeoutMs: 18_000,
+    keepPreviousData: true,
   });
   const [q, setQ] = useState("");
   const [sector, setSector] = useState("");
@@ -53,7 +55,8 @@ export default function VnMarketCenterPage() {
     return { atCeiling, atFloor };
   }, [quotes]);
 
-  if (isLoading && !res) return <Loading rows={12} />;
+  // Keep showing last board while revalidating / after transient errors
+  if (isLoading && !res && !data) return <Loading rows={12} />;
 
   return (
     <div className="stock-workspace">
@@ -102,7 +105,12 @@ export default function VnMarketCenterPage() {
               Bảng đầy đủ
             </button>
           </div>
-          <span className="ml-auto flex items-center gap-2">
+          {error && !data?.quotes?.length ? (
+            <Badge tone="warn">Đang kết nối lại bảng điện…</Badge>
+          ) : meta?.partial || meta?.stale ? (
+            <Badge tone="neutral">Dữ liệu dự phòng</Badge>
+          ) : null}
+          <span className="ml-auto flex items-center gap-2" data-board-status-banner>
             <FreshnessDot status={meta?.freshness} ageMs={meta?.ageMs} />
             <span className="hidden sm:inline">
               <MetaLine meta={meta} />
@@ -134,13 +142,13 @@ export default function VnMarketCenterPage() {
         ) : null}
       </Panel>
 
-      {!res?.success ? (
+      {!res?.success && !(data?.quotes?.length || data?.indices?.length) ? (
         <Unavailable
           title="Chưa kéo được dữ liệu thị trường VN"
           note={
             res && !res.success
               ? res.error.message
-              : "Nguồn VNDirect/VNStock tạm không phản hồi — thử lại sau hoặc kiểm tra /system."
+              : "Nguồn VNDirect/VNStock tạm không phản hồi — đang thử lại. Kiểm tra /system nếu kéo dài."
           }
         />
       ) : (
@@ -148,6 +156,11 @@ export default function VnMarketCenterPage() {
           {viewMode === "dien" ? (
             <Panel title="Bảng điện thông minh" pad={false}>
               <div className="p-2 sm:p-3">
+                {!(data?.quotes?.length) ? (
+                  <p className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-3 text-center text-[12px] text-amber-200">
+                    Đang tải lại bảng giá… giữ tab này mở, hệ thống tự kết nối lại trong vài giây.
+                  </p>
+                ) : null}
                 <BangDienBoard
                   quotes={data?.quotes ?? []}
                   indices={data?.indices ?? []}

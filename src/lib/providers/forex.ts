@@ -4,20 +4,6 @@ import { httpJson } from "../http";
 import { ProviderError } from "./binance";
 import type { OhlcvBar } from "../types";
 
-/**
- * Forex / metals providers — real-time first.
- *
- * Priority (quotes): parallel public multi-source
- *   1. Biquote public (https://biquote.io) — no key, MT5 ticks, FX + XAU/XAG
- *   2. Yahoo Finance (=X / futures)
- *   3. open.er-api.com USD-based rates
- *
- * Priority (OHLC / chart):
- *   1. Biquote public /api/{symbol}/ohlc
- *   2. Yahoo Finance chart
- * Daily reference: Frankfurter / ECB
- */
-
 export const BIQUOTE = "biquote-forex";
 export const BIQUOTE_PUBLIC = "biquote-public";
 export const ER_API = "exchangerate-api";
@@ -63,8 +49,21 @@ export function biquoteIntervalFor(tf: string): string | null {
   return map[tf] ?? null;
 }
 
+const PAIR_ALIASES: Record<string, string> = {
+  OILUSD: "USOIL",
+  WTIUSD: "USOIL",
+  WTI: "USOIL",
+  BRENT: "UKOIL",
+  BRENTUSD: "UKOIL",
+  GOLD: "XAUUSD",
+  XAU: "XAUUSD",
+  SILVER: "XAGUSD",
+  XAG: "XAGUSD",
+};
+
 function normalizePair(symbol: string): string {
-  return symbol.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  const s = symbol.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  return PAIR_ALIASES[s] ?? s;
 }
 
 function parseTick(raw: Record<string, unknown>): BiquoteTick | null {
@@ -103,14 +102,18 @@ export async function getBiquotePublicTick(symbol: string): Promise<BiquoteTick>
   const sym = normalizePair(symbol);
   const res = await httpJson<Record<string, unknown>>(`${BIQUOTE_PUBLIC_BASE}/api/${encodeURIComponent(sym)}/tick`, {
     provider: BIQUOTE_PUBLIC,
-    timeoutMs: 6_000,
-    retries: 1,
+    timeoutMs: 3_500,
+    retries: 0,
   });
   const tick = res.ok && res.data ? parseTick(res.data) : null;
   if (!tick) throw new ProviderError(`biquote public tick empty: ${sym}`, BIQUOTE_PUBLIC);
   return tick;
 }
 
+/**
+ * P1: batch via GET /api/latest?symbols=A&symbols=B (1 subrequest)
+ * Docs: https://biquote.io/docs/
+ */
 export async function getBiquotePublicQuotes(
   pairs: string[],
 ): Promise<{ rates: Record<string, number>; ticks: Record<string, BiquoteTick>; ts: number | null }> {
@@ -118,15 +121,54 @@ export async function getBiquotePublicQuotes(
   const rates: Record<string, number> = {};
   const ticks: Record<string, BiquoteTick> = {};
   let ts: number | null = null;
-  const settled = await Promise.allSettled(uniq.map((p) => getBiquotePublicTick(p)));
-  for (let i = 0; i < settled.length; i++) {
-    const s = settled[i]!;
-    if (s.status !== "fulfilled") continue;
-    const t = s.value;
-    rates[t.symbol] = t.mid;
-    ticks[t.symbol] = t;
-    if (ts == null || t.timestamp > ts) ts = t.timestamp;
+
+  if (uniq.length) {
+    try {
+      const qs = uniq.map((s) => `symbols=${encodeURIComponent(s)}`).join("&");
+      const res = await httpJson<Record<string, Record<string, unknown>>>(
+        `${BIQUOTE_PUBLIC_BASE}/api/latest?${qs}`,
+        { provider: BIQUOTE_PUBLIC, timeoutMs: 5_000, retries: 0 },
+      );
+      if (res.ok && res.data && typeof res.data === "object") {
+        for (const [key, raw] of Object.entries(res.data)) {
+          if (!raw || typeof raw !== "object") continue;
+          const tick = parseTick({ ...raw, symbol: raw.symbol ?? key });
+          if (!tick) continue;
+          rates[tick.symbol] = tick.mid;
+          ticks[tick.symbol] = tick;
+          if (ts == null || tick.timestamp > ts) ts = tick.timestamp;
+          const want = uniq.find((u) => u === tick.symbol || normalizePair(u) === tick.symbol);
+          if (want && want !== tick.symbol) {
+            rates[want] = tick.mid;
+            ticks[want] = tick;
+          }
+        }
+      }
+    } catch {
+      /* fall through */
+    }
   }
+
+  const missing = uniq.filter((p) => rates[p] == null);
+  if (missing.length && Object.keys(rates).length === 0) {
+    const limited = missing.slice(0, 6);
+    const settled = await Promise.allSettled(
+      limited.map((p) =>
+        Promise.race([
+          getBiquotePublicTick(p),
+          new Promise<null>((r) => setTimeout(() => r(null), 3_000)),
+        ]),
+      ),
+    );
+    for (const s of settled) {
+      if (s.status !== "fulfilled" || !s.value) continue;
+      const tick = s.value;
+      rates[tick.symbol] = tick.mid;
+      ticks[tick.symbol] = tick;
+      if (ts == null || tick.timestamp > ts) ts = tick.timestamp;
+    }
+  }
+
   if (!Object.keys(rates).length) throw new ProviderError("biquote public quotes empty", BIQUOTE_PUBLIC);
   return { rates, ticks, ts };
 }
@@ -140,9 +182,11 @@ export async function getBiquotePublicOhlc(
   const interval = biquoteIntervalFor(tf) ?? "1d";
   const res = await httpJson<{ candles?: unknown[]; data?: unknown[] } | unknown[]>(
     `${BIQUOTE_PUBLIC_BASE}/api/${encodeURIComponent(sym)}/ohlc?interval=${encodeURIComponent(interval)}&limit=${limit}`,
-    { provider: BIQUOTE_PUBLIC, timeoutMs: 10_000, retries: 1 },
+    { provider: BIQUOTE_PUBLIC, timeoutMs: 8_000, retries: 1 },
   );
-  const raw = Array.isArray(res.data) ? res.data : (res.data as { candles?: unknown[] })?.candles ?? (res.data as { data?: unknown[] })?.data ?? [];
+  const raw = Array.isArray(res.data)
+    ? res.data
+    : (res.data as { candles?: unknown[] })?.candles ?? (res.data as { data?: unknown[] })?.data ?? [];
   const bars: OhlcvBar[] = [];
   for (const row of raw as Record<string, unknown>[]) {
     const time = Number(row.time ?? row.t ?? row.timestamp);
@@ -168,11 +212,11 @@ export async function getBiquoteQuotes(pairs: string[]): Promise<{ rates: Record
   if (!base || !env.biquoteApiKey) throw new ProviderError("biquote not configured", BIQUOTE);
   const rates: Record<string, number> = {};
   let ts: number | null = null;
-  for (const p of pairs.slice(0, 30)) {
+  for (const p of pairs.slice(0, 20)) {
     const res = await httpJson<Record<string, unknown>>(`${base}/v1/quotes/${encodeURIComponent(p)}`, {
       provider: BIQUOTE,
-      timeoutMs: 6_000,
-      retries: 1,
+      timeoutMs: 4_000,
+      retries: 0,
       headers: { Authorization: `Bearer ${env.biquoteApiKey}` },
     });
     if (!res.ok || !res.data) continue;
@@ -186,13 +230,6 @@ export async function getBiquoteQuotes(pairs: string[]): Promise<{ rates: Record
   return { rates, ts };
 }
 
-/**
- * Parallel public FX quotes:
- *  1) Biquote public (MT5 ticks)
- *  2) Yahoo Finance (=X / futures)
- *  3) ExchangeRate-API open (USD base daily)
- * Merge: prefer Biquote mid when present; fill gaps from Yahoo then ER-API.
- */
 export async function getRealtimeFxQuotes(
   pairs: string[],
 ): Promise<{ rates: Record<string, number>; ticks?: Record<string, BiquoteTick>; ts: number | null; source: string }> {
@@ -209,7 +246,7 @@ export async function getRealtimeFxQuotes(
       try {
         const pub = await Promise.race([
           getBiquotePublicQuotes(want),
-          new Promise<null>((r) => setTimeout(() => r(null), 7_000)),
+          new Promise<null>((r) => setTimeout(() => r(null), 5_000)),
         ]);
         if (!pub) return;
         for (const [k, v] of Object.entries(pub.rates ?? {})) {
@@ -227,34 +264,9 @@ export async function getRealtimeFxQuotes(
   jobs.push(
     (async () => {
       try {
-        const { getYahooQuotes, yahooSymbolForPair } = await import("./yahoo");
-        const ySymbols = want.map((p) => yahooSymbolForPair(p));
-        const map = await Promise.race([
-          getYahooQuotes(ySymbols),
-          new Promise<null>((r) => setTimeout(() => r(null), 8_000)),
-        ]);
-        if (!map) return;
-        let hit = 0;
-        for (const p of want) {
-          const q = map.get(yahooSymbolForPair(p));
-          if (!q || !(q.price > 0)) continue;
-          if (rates[p] == null) rates[p] = q.price;
-          hit += 1;
-          if (q.marketTime && (ts == null || q.marketTime > ts)) ts = q.marketTime;
-        }
-        if (hit) sources.push("yahoo-fx");
-      } catch {
-        /* */
-      }
-    })(),
-  );
-
-  jobs.push(
-    (async () => {
-      try {
         const er = await Promise.race([
           getErApiLatest(),
-          new Promise<null>((r) => setTimeout(() => r(null), 7_000)),
+          new Promise<null>((r) => setTimeout(() => r(null), 4_500)),
         ]);
         if (!er?.rates) return;
         let hit = 0;
@@ -314,7 +326,7 @@ type ErApiPayload = {
 export async function getErApiLatest(): Promise<FxLatest> {
   const res = await httpJson<ErApiPayload>("https://open.er-api.com/v6/latest/USD", {
     provider: ER_API,
-    timeoutMs: 7_000,
+    timeoutMs: 5_000,
     retries: 1,
   });
   if (!res.ok || !res.data || res.data.result !== "success") {
@@ -336,13 +348,17 @@ type FrankfurterSeries = {
   rates: Record<string, Record<string, number>>;
 };
 
-export async function getFrankfurterSeries(base: string, quote: string, days = 366): Promise<{ date: string; rate: number }[]> {
+export async function getFrankfurterSeries(
+  base: string,
+  quote: string,
+  days = 366,
+): Promise<{ date: string; rate: number }[]> {
   const end = new Date();
   const start = new Date(Date.now() - days * 86_400_000);
   const fmt = (d: Date) => d.toISOString().slice(0, 10);
   const res = await httpJson<FrankfurterSeries>(
     `https://api.frankfurter.dev/v1/${fmt(start)}..${fmt(end)}?base=${encodeURIComponent(base)}&symbols=${encodeURIComponent(quote)}`,
-    { provider: FRANKFURTER, timeoutMs: 9_000, retries: 1 },
+    { provider: FRANKFURTER, timeoutMs: 7_000, retries: 1 },
   );
   if (!res.ok || !res.data) throw new ProviderError(`frankfurter: ${res.error ?? "unreachable"}`, FRANKFURTER);
   return Object.entries(res.data.rates)

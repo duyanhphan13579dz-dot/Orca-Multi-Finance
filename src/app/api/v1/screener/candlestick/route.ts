@@ -1,4 +1,4 @@
-import { ok, unavailable, badRequest } from "@/lib/envelope";
+import { badRequest, ok } from "@/lib/envelope";
 import {
   getRecentPatternAlerts,
   screenCandlestickPatterns,
@@ -6,18 +6,14 @@ import {
   screenForexCandlePatterns,
   screenMultiAssetCandlePatterns,
 } from "@/lib/services/candlestick-screener";
+import { safeApi } from "@/lib/safe-api";
+import { WORKERS_BUDGET } from "@/lib/data-engine/workers-budget";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
-export const maxDuration = 90;
+export const maxDuration = 30;
 
-/**
- * GET /api/v1/screener/candlestick
- *   ?category=bullish_reversal|bearish_reversal|continuation|all
- *   &minScore=55&limit=40&volumeOnly=1&symbols=VCB,FPT
- *   &asset=stock|crypto|forex|multi  (default stock; multi = VN+crypto+XAU/majors)
- *   &recent=1  → reversal alerts already fired
- */
+/** GET /api/v1/screener/candlestick */
 export async function GET(req: Request) {
   const url = new URL(req.url);
 
@@ -54,52 +50,62 @@ export async function GET(req: Request) {
     ? symbolsRaw.split(/[,;\s]+/).map((s) => s.trim().toUpperCase()).filter(Boolean)
     : undefined;
 
-  try {
-    const opts = {
-      category,
-      minScore: Number.isFinite(minScore) ? minScore : 55,
-      limit: Number.isFinite(limit) ? limit : 40,
-      volumeOnly,
-      symbols,
-      assetClass: (asset === "multi" ? "stock" : asset) as "stock" | "forex" | "crypto",
-    };
-    const r =
-      asset === "multi"
-        ? await screenMultiAssetCandlePatterns(opts)
-        : asset === "crypto"
-          ? await screenCryptoCandlePatterns(opts)
-          : asset === "forex"
-            ? await screenForexCandlePatterns(opts)
-            : await screenCandlestickPatterns(opts);
-
-    const payload = r ?? {
-      rows: [],
-      scanned: 0,
-      skipped: 0,
-      meta: {
-        source: "candlestick-screener",
-        sourceTimestampMs: Date.now(),
-        hasData: false,
-        partial: true,
-        note: "OHLCV tạm lỗi — thử lại sau",
-      },
-    };
-    return ok(
-      {
-        rows: payload.rows,
-        scanned: payload.scanned,
-        skipped: payload.skipped,
+  return safeApi({
+    label: "screener-candlestick",
+    guard: {
+      wallMs: WORKERS_BUDGET.techScreenWallMs,
+      maxSubrequests: 24,
+      maxConcurrent: 3,
+    },
+    produce: async () => {
+      const opts = {
+        category,
+        minScore: Number.isFinite(minScore) ? minScore : 55,
+        limit: Number.isFinite(limit) ? limit : 40,
+        volumeOnly,
+        symbols,
+        assetClass: (asset === "multi" ? "stock" : asset) as "stock" | "forex" | "crypto",
+      };
+      const r =
+        asset === "multi"
+          ? await screenMultiAssetCandlePatterns(opts)
+          : asset === "crypto"
+            ? await screenCryptoCandlePatterns(opts)
+            : asset === "forex"
+              ? await screenForexCandlePatterns(opts)
+              : await screenCandlestickPatterns(opts);
+      if (!r) return null;
+      return {
+        data: {
+          rows: r.rows,
+          scanned: r.scanned,
+          skipped: r.skipped,
+          asset,
+          legs: "legs" in r ? (r as { legs?: unknown }).legs : undefined,
+          ruleset: "candlestick-engine multi-bar + soft FX/crypto",
+          alertPolicy: "reversal-only (high|very_high + volume gate when available)",
+        },
+        meta: r.meta,
+      };
+    },
+    fallback: async () => ({
+      data: {
+        rows: [],
+        scanned: 0,
+        skipped: 0,
         asset,
-        legs: "legs" in payload ? (payload as { legs?: unknown }).legs : undefined,
+        legs: undefined,
         ruleset: "candlestick-engine multi-bar + soft FX/crypto",
         alertPolicy: "reversal-only (high|very_high + volume gate when available)",
       },
-      payload.meta,
-    );
-  } catch (e) {
-    return unavailable(
-      "candlestick-screener",
-      e instanceof Error ? e.message : "scan failed",
-    );
-  }
+      meta: {
+        source: "candlestick-shell",
+        partial: true,
+        stale: true,
+        note: "OHLCV tạm lỗi — thử lại sau",
+      },
+    }),
+    unavailableSource: "candlestick-screener",
+    unavailableNote: "Candlestick screener tạm không khả dụng",
+  });
 }

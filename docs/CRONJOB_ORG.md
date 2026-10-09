@@ -20,7 +20,8 @@ Base URL: `https://<your-app>.workers.dev` (or your custom domain)
 
 | Job | Path + query | Schedule (VN) | Timeout |
 |-----|----------------|---------------|---------|
-| market-live | `/api/v1/cron/market-live` | Every 1–2 min Mon–Fri 08:45–15:15 | 25–30s |
+| **board-warm** | `/api/v1/cron/board-warm` | **Every 45s** Mon–Fri 08:45–15:15 | **15s** |
+| market-live | `/api/v1/cron/market-live` | Every 1–2 min Mon–Fri 08:45–15:15 | 20s |
 | stocks | `/api/v1/cron/stocks` | Every 5 min Mon–Fri 09:00–15:00 | 30s |
 | alerts | `/api/v1/cron/alerts` | Every 10 min Mon–Fri 09:00–15:30 | 30s |
 | reports | `/api/v1/cron/reports` | Session slots (morning/lunch/ATC…) | 30s |
@@ -29,6 +30,8 @@ Base URL: `https://<your-app>.workers.dev` (or your custom domain)
 | **Financials BCTC #3** | `...?phase=bctc&offset=40&limit=20` | Mon–Fri **16:14** | **30s** |
 | **Financials OHLCV** | `...?phase=ohlcv` | Mon–Fri **16:16** | **30s** |
 | **Financials CANSLIM** | `...?phase=canslim` | Mon–Fri **16:18** | **30s** |
+| **crypto-warm** | `/api/v1/cron/crypto-warm` | **Every 60–90s** (24/7) | **15s** |
+| **multi-asset-warm** | `/api/v1/cron/multi-asset-warm` | **Every 60–90s** (24/7) | **18s** |
 | commodities | `/api/v1/cron/commodities` | Daily 00:05 | 30s |
 
 Optional late backup (17:30): repeat BCTC slices if morning/afternoon failed.
@@ -49,6 +52,53 @@ https://YOUR_DOMAIN/api/v1/cron/financials?phase=bctc&offset=0&limit=20&secret=S
 https://YOUR_DOMAIN/api/v1/cron/financials?phase=ohlcv&secret=SECRET
 https://YOUR_DOMAIN/api/v1/cron/financials?phase=canslim&secret=SECRET
 ```
+
+
+## Board pre-warm (anti-blank `/stocks`)
+
+Keeps `last-good` board snapshot hot so the overview page never cold-starts empty
+and reduces Worker 1102 on user traffic.
+
+```text
+https://YOUR_DOMAIN/api/v1/cron/board-warm?secret=SECRET
+```
+
+| Setting | Value |
+|---------|--------|
+| Interval | **30–60s** (recommend **45s**) during VN session |
+| Outside session | every 5–10 min or off |
+| Timeout | 15s |
+| Work | `getVnMarketBoard()` only under `runGuarded` (no orderbook / alerts) |
+
+`market-live` remains the 1–2 min job (heartbeat + session + board). Prefer
+`board-warm` for high-frequency cache refresh; keep `stocks` at 5 min for
+orderbook snapshots + pattern alerts.
+
+## Crypto pre-warm
+
+```text
+https://YOUR_DOMAIN/api/v1/cron/crypto-warm?secret=SECRET
+```
+
+| Setting | Value |
+|---------|--------|
+| Interval | **60–90s** (24/7) |
+| Timeout | 15s |
+| Pipeline | Binance → OKX → CoinCap → CoinGecko → last-good |
+
+## Multi-asset board (BTC · ETH · XAU · XAG · FOREX)
+
+```text
+https://YOUR_DOMAIN/api/v1/market/multi-asset
+https://YOUR_DOMAIN/api/v1/market/multi-asset?symbol=XAU
+https://YOUR_DOMAIN/api/v1/cron/multi-asset-warm?secret=SECRET
+```
+
+| Class | Symbols | Sources |
+|-------|---------|---------|
+| crypto | BTCUSDT, ETHUSDT | Binance → OKX → CoinCap → CoinGecko → Yahoo |
+| metal | XAUUSD, XAGUSD | Biquote → Yahoo GC=F / SI=F |
+| forex | EURUSD, GBPUSD, USDJPY, USDCHF, AUDUSD, USDCAD, NZDUSD, USDVND | Biquote → Yahoo → ER-API |
 
 ## CANSLIM screener (API)
 

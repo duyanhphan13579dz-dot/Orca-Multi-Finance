@@ -121,7 +121,7 @@ async function produceMarketIntel(): Promise<{ intel: MarketIntel; meta: Meta }>
   ]);
   const [snapRes, crossRes, foreignPrimary, etfRes, propRes, idxStats, marketBoardRes, newsPack, foreignFb] = await Promise.all([
     withTimeout(buildMarketSnapshot(), 12_000),
-    withTimeout(getCrossAsset(), 6_000),
+    withTimeout(getCrossAsset(), 12_000),
     withTimeout(vndirect.getVndForeignFlow(), 8_000),
     withTimeout(vndirect.getVndEtfFlow(), 5_000),
     withTimeout((async () => { const date = await vndirect.getVndLatestSessionDate(); return getCafefPropFlow(date); })(), 5_000),

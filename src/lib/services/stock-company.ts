@@ -4,8 +4,10 @@ import { buildMeta } from "../freshness";
 import {
   getVndCompanyProfile,
   getVndShareholders,
+  getVndCompanyRelations,
   type VndCompanyProfile,
   type VndShareholder,
+  type VndCompanyRelation,
 } from "../providers/vndirect-company";
 import { getVietcapCompany } from "../providers/vietcap";
 import { fetchVndirectFinancials, periodsToLegacyRows } from "../financial/vndirect-fs";
@@ -14,11 +16,24 @@ import { buildDeterministicResearch, enrichFoundDate } from "./company-research"
 import type { Meta } from "../types";
 import { getSecurity } from "../vn/master";
 
+export interface OwnershipSnapshot {
+  foreignerPct: number | null;
+  freeFloatPct: number | null;
+  statePct: number | null;
+  maxForeignPct: number | null;
+  source: string | null;
+}
+
 export interface StockCompanyPackage {
   symbol: string;
   profile: VndCompanyProfile | null;
   shareholders: VndShareholder[];
+  /** Ban lãnh đạo / HĐQT suy từ danh sách cổ đông (role chứa từ khóa board). */
   board: { name: string; role: string }[];
+  /** Công ty con / liên kết / mẹ / kiểm toán từ VNDirect company_relations. */
+  relations: VndCompanyRelation[];
+  /** Tỷ lệ sở hữu nước ngoài / free-float / nhà nước (Vietcap IQ). */
+  ownership: OwnershipSnapshot | null;
   valueChain: { input: string[]; process: string[]; output: string[] } | null;
   catalysts: string[];
   risks: string[];
@@ -36,6 +51,10 @@ function profileFromVietcap(
   sym: string,
   vc: NonNullable<Awaited<ReturnType<typeof getVietcapCompany>>>,
 ): VndCompanyProfile {
+  const summaryVn =
+    [vc.profileVn, vc.sector ? `Ngành: ${vc.sector}` : null].filter(Boolean).join(" — ") || null;
+  const summaryEn =
+    [vc.profileEn, vc.sector ? `Sector: ${vc.sector}` : null].filter(Boolean).join(" — ") || null;
   return {
     code: sym,
     floor: vc.exchange,
@@ -44,14 +63,17 @@ function profileFromVietcap(
     enName: vc.nameEn,
     foundDate: vc.listedDate,
     taxCode: null,
+    registrationCode: null,
     vnAddress: null,
+    enAddress: null,
     phone: null,
     fax: null,
     website: null,
     email: null,
     employees: null,
-    vnSummary: vc.sector ? `Ngành: ${vc.sector}` : null,
-    enSummary: vc.sector ? `Sector: ${vc.sector}` : null,
+    branches: null,
+    vnSummary: summaryVn,
+    enSummary: summaryEn,
   };
 }
 
@@ -66,12 +88,15 @@ export function profileFromMaster(sym: string): VndCompanyProfile | null {
     enName: sec.nameEn ?? null,
     foundDate: null,
     taxCode: null,
+    registrationCode: null,
     vnAddress: null,
+    enAddress: null,
     phone: null,
     fax: null,
     website: null,
     email: null,
     employees: null,
+    branches: null,
     vnSummary: sec.sector ? `Ngành: ${sec.sector}` : null,
     enSummary: sec.sector ? `Sector: ${sec.sector}` : null,
   };
@@ -92,12 +117,15 @@ export function mergeProfiles(
     enName: base.enName ?? fill.enName ?? null,
     foundDate: base.foundDate ?? fill.foundDate ?? null,
     taxCode: base.taxCode ?? fill.taxCode ?? null,
+    registrationCode: base.registrationCode ?? fill.registrationCode ?? null,
     vnAddress: base.vnAddress ?? fill.vnAddress ?? null,
+    enAddress: base.enAddress ?? fill.enAddress ?? null,
     phone: base.phone ?? fill.phone ?? null,
     fax: base.fax ?? fill.fax ?? null,
     website: base.website ?? fill.website ?? null,
     email: base.email ?? fill.email ?? null,
     employees: base.employees ?? fill.employees ?? null,
+    branches: base.branches ?? fill.branches ?? null,
     vnSummary: base.vnSummary ?? fill.vnSummary ?? null,
     enSummary: base.enSummary ?? fill.enSummary ?? null,
   };
@@ -106,21 +134,27 @@ export function mergeProfiles(
 async function loadCompanyCore(sym: string): Promise<{
   profile: VndCompanyProfile | null;
   shareholders: VndShareholder[];
+  relations: VndCompanyRelation[];
+  ownership: OwnershipSnapshot | null;
   sources: string[];
 }> {
   const sources: string[] = [];
 
-  const [vndProfile, shareholdersRaw, vietcap] = await Promise.all([
+  const [vndProfile, shareholdersRaw, relationsRaw, vietcap] = await Promise.all([
     getVndCompanyProfile(sym).catch(() => null),
     getVndShareholders(sym, 50).catch(() => [] as VndShareholder[]),
+    getVndCompanyRelations(sym, 80).catch(() => [] as VndCompanyRelation[]),
     getVietcapCompany(sym).catch(() => null),
   ]);
 
   let shareholders = shareholdersRaw;
+  let relations = relationsRaw;
   let profile = enrichFoundDate(vndProfile);
   if (profile) sources.push("vndirect");
   if (shareholders.length) sources.push("vndirect-holders");
+  if (relations.length) sources.push("vndirect-relations");
 
+  let ownership: OwnershipSnapshot | null = null;
   if (vietcap) {
     const fromVc = profileFromVietcap(sym, vietcap);
     if (!profile) {
@@ -130,6 +164,13 @@ async function loadCompanyCore(sym: string): Promise<{
       profile = mergeProfiles(profile, fromVc);
       sources.push("vietcap-fill");
     }
+    ownership = {
+      foreignerPct: vietcap.foreignerPct,
+      freeFloatPct: vietcap.freeFloatPct,
+      statePct: vietcap.statePct,
+      maxForeignPct: vietcap.maxForeignPct,
+      source: "vietcap",
+    };
   }
 
   const thin =
@@ -137,9 +178,10 @@ async function loadCompanyCore(sym: string): Promise<{
     (!profile.vnName && !profile.vnSummary) ||
     (!profile.website && !profile.vnAddress && !shareholders.length);
   if (thin) {
-    const [vnd2, holders2, vc2] = await Promise.all([
+    const [vnd2, holders2, rel2, vc2] = await Promise.all([
       getVndCompanyProfile(sym).catch(() => null),
       getVndShareholders(sym, 50).catch(() => [] as VndShareholder[]),
+      getVndCompanyRelations(sym, 80).catch(() => [] as VndCompanyRelation[]),
       getVietcapCompany(sym).catch(() => null),
     ]);
     if (vnd2) {
@@ -150,9 +192,22 @@ async function loadCompanyCore(sym: string): Promise<{
       shareholders = holders2;
       if (!sources.includes("vndirect-holders")) sources.push("vndirect-holders");
     }
+    if (rel2.length) {
+      relations = rel2;
+      if (!sources.includes("vndirect-relations")) sources.push("vndirect-relations");
+    }
     if (vc2) {
       profile = mergeProfiles(profile, profileFromVietcap(sym, vc2));
       if (!sources.includes("vietcap") && !sources.includes("vietcap-fill")) sources.push("vietcap");
+      if (!ownership) {
+        ownership = {
+          foreignerPct: vc2.foreignerPct,
+          freeFloatPct: vc2.freeFloatPct,
+          statePct: vc2.statePct,
+          maxForeignPct: vc2.maxForeignPct,
+          source: "vietcap",
+        };
+      }
     }
   }
 
@@ -176,8 +231,46 @@ async function loadCompanyCore(sym: string): Promise<{
     }
   }
 
-  return { profile, shareholders, sources };
+  return { profile, shareholders, relations, ownership, sources };
 }
+
+/** Suy ban lãnh đạo / HĐQT từ danh sách cổ đông (roleType chứa từ khóa board). */
+export function boardFromShareholders(holders: VndShareholder[]): { name: string; role: string }[] {
+  const boardKeywords = [
+    "hđqt",
+    "hdqt",
+    "hội đồng quản trị",
+    "hoi dong quan tri",
+    "board",
+    "chairman",
+    "chủ tịch",
+    "chu tich",
+    "ceo",
+    "tổng giám đốc",
+    "tong giam doc",
+    "giám đốc",
+    "giam doc",
+    "cfo",
+    "ban kiểm soát",
+    "ban kiem soat",
+    "kiểm soát viên",
+    "director",
+  ];
+  const out: { name: string; role: string }[] = [];
+  const seen = new Set<string>();
+  for (const h of holders) {
+    const role = (h.role ?? "").trim();
+    if (!role) continue;
+    const low = role.toLowerCase();
+    if (!boardKeywords.some((k) => low.includes(k))) continue;
+    const key = h.name.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ name: h.name, role });
+  }
+  return out.slice(0, 20);
+}
+
 
 export async function enrichCompanyWithAi(
   sym: string,
@@ -269,9 +362,15 @@ export async function getStockCompanyPackage(
   if (!sym) return null;
 
   try {
-    let core: { profile: VndCompanyProfile | null; shareholders: VndShareholder[]; sources: string[] };
+    let core: {
+      profile: VndCompanyProfile | null;
+      shareholders: VndShareholder[];
+      relations: VndCompanyRelation[];
+      ownership: OwnershipSnapshot | null;
+      sources: string[];
+    };
     try {
-      const companyRes = await cached(`vn:company:${sym}:v7`, {
+      const companyRes = await cached(`vn:company:${sym}:v8`, {
         ttlMs: 30 * 60_000,
         staleMs: 6 * 3_600_000,
         softSwr: true,
@@ -298,7 +397,7 @@ export async function getStockCompanyPackage(
       core = await loadCompanyCore(sym);
       if (!core.profile) {
         const m = profileFromMaster(sym);
-        if (m) core = { profile: m, shareholders: [], sources: ["vn-master-fallback"] };
+        if (m) core = { profile: m, shareholders: [], relations: [], ownership: null, sources: ["vn-master-fallback"] };
       }
     }
 
@@ -394,16 +493,25 @@ export async function getStockCompanyPackage(
         core = {
           profile: m,
           shareholders: core.shareholders,
+          relations: core.relations,
+          ownership: core.ownership,
           sources: [...core.sources, "vn-master-end"],
         };
       }
     }
 
+    if (core.relations.length)
+      notes.push(`Quan hệ DN: ${core.relations.length} bản ghi (công ty con / liên kết / kiểm toán).`);
+    if (core.ownership)
+      notes.push("Tỷ lệ sở hữu nước ngoài / free-float / nhà nước từ Vietcap IQ.");
+
     const data: StockCompanyPackage = {
       symbol: sym,
       profile: core.profile,
       shareholders: core.shareholders,
-      board: [],
+      board: boardFromShareholders(core.shareholders),
+      relations: core.relations,
+      ownership: core.ownership,
       valueChain,
       catalysts,
       risks,
@@ -430,6 +538,8 @@ export async function getStockCompanyPackage(
         profile: master,
         shareholders: [],
         board: [],
+        relations: [],
+        ownership: null,
         valueChain: null,
         catalysts: [],
         risks: [],

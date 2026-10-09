@@ -121,7 +121,6 @@ type SectorCol = {
   imbalance: number | null;
   buyVol: number;
   sellVol: number;
-  /** Priority sectors get elevated glow */
   featured?: boolean;
 };
 
@@ -132,9 +131,9 @@ function buildColumns(quotes: Quote[]): SectorCol[] {
     .filter((q): q is Quote => Boolean(q))
     .sort((a, b) => (b.changePercent ?? -999) - (a.changePercent ?? -999));
   const cols: SectorCol[] = [];
-  /** Show every ticker in the sector (vertical scroll) — no artificial row cap. */
   const pushCol = (name: string, rows: Quote[], featured = false) => {
-    if (rows.length < 2) return;
+    // Featured (VN30) may show with a single liquid ticker during partial outages
+    if (rows.length < (featured ? 1 : 2)) return;
     const sorted = [...rows].sort((a, b) => (b.changePercent ?? -999) - (a.changePercent ?? -999));
     const withPct = sorted.filter((q) => q.changePercent != null);
     const avg = withPct.length
@@ -261,7 +260,6 @@ function IndexStrip({ indices, quotes }: { indices: IndexQuote[]; quotes: Quote[
   return (
     <div className="flex flex-wrap gap-2">
       {list.map((idx) => {
-        const upIdx = (idx.changePercent ?? 0) >= 0;
         return (
           <div
             key={idx.code}
@@ -370,8 +368,8 @@ export function BangDienBoard({ quotes, indices }: { quotes: Quote[]; indices: I
 
   if (!quotes.length) {
     return (
-      <p className="rounded-lg border border-border-subtle bg-surface-elevated/40 px-3 py-4 text-center text-[12px] text-text-muted">
-        Chưa có dữ liệu bảng giá để dựng bảng điện.
+      <p className="rounded-lg border border-amber-500/25 bg-amber-500/10 px-3 py-4 text-center text-[12px] text-amber-100/90">
+        Bảng điện đang kết nối lại nguồn giá (VNDirect / VPS / public). Dữ liệu sẽ hiện lại tự động.
       </p>
     );
   }

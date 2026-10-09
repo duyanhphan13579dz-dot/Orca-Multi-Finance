@@ -75,179 +75,153 @@ export async function getVnQuotes(symbols: string[]): Promise<{ quotes: Quote[];
           source: (pub.sources ?? []).join("+") || "public-vn",
           sourceTimestampMs: pub.sourceTs ?? Date.now(),
           partial: pub.quotes.length < syms.length,
-          note: "multi-quote empty — public last resort",
         }),
       };
     }
   } catch {
-    /* ignore */
+    /* */
   }
 
-  return {
-    quotes: [],
-    meta: buildMeta({
-      source: "unavailable",
-      sourceTimestampMs: Date.now(),
-      note: "all quote sources empty",
-      partial: true,
-    }),
-  };
+  try {
+    const vnd = await withTimeout(vndirect.getVndQuotes(syms), 5_000);
+    if (vnd?.quotes?.length) {
+      return {
+        quotes: vnd.quotes,
+        meta: buildMeta({
+          source: "vndirect",
+          sourceTimestampMs: vnd.sourceTs ?? Date.now(),
+          partial: vnd.quotes.length < syms.length,
+        }),
+      };
+    }
+  } catch {
+    /* */
+  }
+
+  return null;
 }
 
 export async function getVnIndices(): Promise<{ items: IndexQuote[]; meta: Meta } | null> {
   try {
-    const res = await cached<{ items: IndexQuote[]; meta: Meta } | null>("vn:indices:live:v4", {
-      ttlMs: 12_000,
-      staleMs: 300_000,
-      softSwr: true,
-      producer: async () => {
-        const tasks: Promise<{ items: IndexQuote[]; source: string; ts?: number } | null>[] = [];
-        if (ssiFcConfigured()) {
-          tasks.push(
-            withTimeout(
-              getSsiIndices().then((r) =>
-                r?.items?.length ? { items: r.items, source: "ssi-fcdata", ts: Date.now() } : null,
-              ),
-              4_000,
-            ),
-          );
-        }
-        tasks.push(
-          withTimeout(
-            vndirect.getVndIndices().then((r) =>
-              r?.items?.length
-                ? { items: r.items, source: "vndirect", ts: r.sourceTs ?? Date.now() }
-                : null,
-            ),
-            5_000,
-          ),
-        );
-        tasks.push(
-          withTimeout(
-            getPublicIndices().then((pub) => {
-              const items = Array.isArray(pub) ? pub : pub?.items;
-              return items?.length
-                ? {
-                    items,
-                    source: "public-indices",
-                    ts: (pub as { sourceTs?: number })?.sourceTs ?? Date.now(),
-                  }
-                : null;
-            }),
-            5_000,
-          ),
-        );
-        const settled = await Promise.all(tasks);
-        const byCode = new Map<string, IndexQuote>();
-        const sources: string[] = [];
-        let newest = Date.now();
-        for (const pack of settled) {
-          if (!pack?.items?.length) continue;
-          sources.push(pack.source);
-          if (pack.ts) newest = Math.max(newest, pack.ts);
-          for (const it of pack.items) {
-            const code = String(it.code ?? "").toUpperCase();
-            if (!code) continue;
-            const prev = byCode.get(code);
-            if (!prev || (it.value != null && it.value > 0)) byCode.set(code, it);
-          }
-        }
-        if (!byCode.size) throw new Error("empty indices");
-        return {
-          items: sortIndices([...byCode.values()]),
-          meta: buildMeta({
-            source: sources.join("+") || "indices",
-            sourceTimestampMs: newest,
-          }),
-        };
-      },
-    });
-    return res.value;
+    const vnd = await withTimeout(vndirect.getVndIndices(), 4_500);
+    if (vnd?.items?.length) {
+      return {
+        items: sortIndices(vnd.items),
+        meta: buildMeta({ source: "vndirect-indices", sourceTimestampMs: vnd.sourceTs ?? Date.now() }),
+      };
+    }
   } catch {
-    return null;
+    /* */
   }
+
+  try {
+    if (ssiFcConfigured()) {
+      const ssi = await withTimeout(getSsiIndices(), 4_000);
+      if (ssi?.items?.length) {
+        return {
+          items: sortIndices(ssi.items),
+          meta: buildMeta({ source: "ssi-fcdata", sourceTimestampMs: Date.now() }),
+        };
+      }
+    }
+  } catch {
+    /* */
+  }
+
+  try {
+    const pub = await withTimeout(getPublicIndices(), 4_000);
+    if (pub?.items?.length) {
+      return {
+        items: sortIndices(pub.items),
+        meta: buildMeta({ source: "public-indices", sourceTimestampMs: pub.sourceTs ?? Date.now() }),
+      };
+    }
+  } catch {
+    /* */
+  }
+
+  return null;
 }
 
 export async function getVnOhlcv(
   symbol: string,
-  limit = 260,
+  limit = 250,
+  kind: "stock" | "index" = "stock",
 ): Promise<{ bars: OhlcvBar[]; meta: Meta } | null> {
-  const sym = symbol.toUpperCase();
-  const isIndex = vndirect.isVnIndexSymbol(sym);
-  const kind = isIndex ? ("index" as const) : ("stock" as const);
-
-  const raceBars = async (): Promise<{ bars: OhlcvBar[]; source: string } | null> => {
-    type Cand = { bars: OhlcvBar[]; source: string };
-    const tasks: Promise<Cand | null>[] = [
-      withTimeout(
-        fetchVndDchartHistory(sym, "D", limit)
-          .then((bars) => (bars?.length ? { bars, source: "vndirect-dchart" } : null))
-          .catch(() => null),
-        6_000,
-      ),
-      withTimeout(
-        (isIndex ? vndirect.getVndIndexOhlcv(sym, limit) : vndirect.getVndOhlcv(sym, limit))
-          .then((bars) => (bars?.length ? { bars, source: "vndirect" } : null))
-          .catch(() => null),
-        6_500,
-      ),
-      withTimeout(
-        getPublicOhlcv(sym, limit, kind)
-          .then((bars) => (bars?.length ? { bars, source: "public" } : null))
-          .catch(() => null),
-        6_500,
-      ),
-    ];
-    if (ssiFcConfigured() && !isIndex) {
-      tasks.push(
-        withTimeout(
-          getSsiDailyOhlc(sym, { pageSize: limit })
-            .then((bars) => (bars?.length ? { bars, source: "ssi-fcdata" } : null))
-            .catch(() => null),
-          6_500,
-        ),
-      );
-    }
-    const settled = await Promise.all(tasks);
-    const ok = settled.filter((x): x is Cand => Boolean(x?.bars?.length));
-    if (!ok.length) return null;
-    ok.sort((a, b) => b.bars.length - a.bars.length);
-    return ok[0]!;
-  };
+  const sym = symbol.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  if (!sym) return null;
 
   try {
-    const res = await cached(`vn:ohlcv:${sym}:${limit}`, {
-      ttlMs: 60_000,
-      staleMs: 30 * 60_000,
-      producer: async () => {
-        const pack = await raceBars();
-        if (!pack?.bars?.length) throw new Error(`ohlcv empty ${sym}`);
-        return pack;
-      },
-    });
-    const pack = res.value as { bars: OhlcvBar[]; source: string };
+    const bars = await withTimeout(getPublicOhlcv(sym, limit, kind), 8_000);
+    if (bars?.length) {
+      return {
+        bars,
+        meta: buildMeta({ source: "public-ohlcv", sourceTimestampMs: Date.now() }),
+      };
+    }
+  } catch {
+    /* */
+  }
+
+  try {
+    const bars = await withTimeout(fetchVndDchartHistory(sym, "D", limit), 7_000);
+    if (bars?.length) {
+      return {
+        bars,
+        meta: buildMeta({ source: "vndirect-dchart", sourceTimestampMs: Date.now() }),
+      };
+    }
+  } catch {
+    /* */
+  }
+
+  try {
+    if (ssiFcConfigured()) {
+      const bars = await withTimeout(getSsiDailyOhlc(sym, limit), 6_000);
+      if (bars?.length) {
+        return {
+          bars,
+          meta: buildMeta({ source: "ssi-fcdata", sourceTimestampMs: Date.now() }),
+        };
+      }
+    }
+  } catch {
+    /* */
+  }
+
+  return null;
+}
+
+/** P1: VN30-only board for first paint (<5s). */
+export async function getVn30Board(): Promise<{
+  indices: IndexQuote[];
+  quotes: Quote[];
+  universeSize: number;
+  sessionDate: string | null;
+  meta: Meta;
+} | null> {
+  try {
+    const { VN30_BOARD } = await import("../providers/public-vn-feed");
+    const [quotesPack, idxPack] = await Promise.all([
+      withTimeout(getVnQuotes([...VN30_BOARD]), 4_000),
+      withTimeout(getVnIndices(), 3_500),
+    ]);
+    const quotes = quotesPack?.quotes ?? [];
+    const indices = idxPack?.items ?? [];
+    if (!quotes.length && !indices.length) return null;
     return {
-      bars: pack.bars,
+      indices,
+      quotes,
+      universeSize: quotes.length,
+      sessionDate: null,
       meta: buildMeta({
-        source: `${pack.source}-ohlcv`,
-        sourceTimestampMs: pack.bars[pack.bars.length - 1]?.time ?? Date.now(),
+        source: [quotesPack?.meta?.source, idxPack ? "indices" : null].filter(Boolean).join("+") || "vn30",
+        sourceTimestampMs: Date.now(),
+        partial: true,
+        note: `VN30-first · ${quotes.length} mã`,
       }),
     };
   } catch {
-    try {
-      const pack = await raceBars();
-      if (pack?.bars?.length) {
-        return {
-          bars: pack.bars,
-          meta: buildMeta({
-            source: `${pack.source}-ohlcv`,
-            sourceTimestampMs: pack.bars[pack.bars.length - 1]?.time,
-          }),
-        };
-      }
-    } catch {
-      /* */
-    }
     return null;
   }
 }
@@ -259,10 +233,30 @@ export async function getVnMarketBoard(): Promise<{
   universeSize?: number;
   sessionDate?: string | null;
 } | null> {
-  // Tier 1: Prefer full cached market board from VNDirect (500+ stocks)
+  // Isolate cooldown → never fan-out; only cached path
+  try {
+    const { isIsolateCoolingDown } = await import("../data-engine/workers-guard");
+    if (isIsolateCoolingDown()) {
+      const fullBoard = await loadVnMarketBoardCached();
+      if (fullBoard && (fullBoard.quotes.length || fullBoard.indices.length)) {
+        return {
+          indices: fullBoard.indices,
+          quotes: fullBoard.quotes,
+          universeSize: fullBoard.universeSize,
+          sessionDate: fullBoard.sessionDate,
+          meta: { ...fullBoard.meta, stale: true, partial: true, note: `${fullBoard.meta.note ?? ""} · cooldown`.trim() },
+        };
+      }
+      return null;
+    }
+  } catch {
+    /* */
+  }
+
+  // Tier 1: cached board (sequential cascade + last-good inside)
   try {
     const fullBoard = await loadVnMarketBoardCached();
-    if (fullBoard && fullBoard.quotes.length >= 10) {
+    if (fullBoard && (fullBoard.quotes.length >= 1 || fullBoard.indices.length >= 1)) {
       return {
         indices: fullBoard.indices,
         quotes: fullBoard.quotes,
@@ -272,61 +266,25 @@ export async function getVnMarketBoard(): Promise<{
       };
     }
   } catch {
-    /* fallback to multi-source liquid board below */
+    /* */
   }
 
-  // Tier 2: Multi-source liquid board fallback
-  const loadOnce = async () => {
-    const [idx, q] = await Promise.all([
-      getVnIndices().catch(() => null),
-      getVnQuotes(LIQUID_BOARD).catch(() => null),
-    ]);
-    return {
-      indices: idx?.items ?? [],
-      quotes: q?.quotes ?? [],
-      sources: [idx?.meta?.source, q?.meta?.source].filter(Boolean) as string[],
-    };
-  };
+  // Tier 2: light sequential liquid fallback (no double-retry, no parallel indices+quotes race)
   try {
-    let pack = await loadOnce();
-    if (!pack.indices.length && !pack.quotes.length) {
-      await new Promise((r) => setTimeout(r, 350));
-      pack = await loadOnce();
-    }
-    if (!pack.indices.length && !pack.quotes.length) {
-      try {
-        const [pubIdx, pubQ] = await Promise.all([
-          getPublicIndices().catch(() => null),
-          getPublicQuotes(LIQUID_BOARD.slice(0, 50)).catch(() => null),
-        ]);
-        const items = pubIdx?.items ?? [];
-        if (items.length) {
-          pack.indices = items;
-          pack.sources.push("public-indices");
-        }
-        if (pubQ?.quotes?.length) {
-          pack.quotes = pubQ.quotes;
-          pack.sources.push(...(pubQ.sources ?? ["public-vn"]));
-        }
-      } catch {
-        /* */
-      }
-    }
-    if (!pack.indices.length && !pack.quotes.length) return null;
+    const { getPublicQuotes } = await import("../providers/public-vn-feed");
+    const pubQ = await getPublicQuotes(LIQUID_BOARD.slice(0, 40)).catch(() => null);
+    const quotes = pubQ?.quotes ?? [];
+    if (!quotes.length) return null;
     return {
-      indices: pack.indices,
-      quotes: pack.quotes,
-      universeSize: pack.quotes.length || LIQUID_BOARD.length,
+      indices: [],
+      quotes,
+      universeSize: quotes.length,
       sessionDate: null,
       meta: buildMeta({
-        source: pack.sources.join("+") || "board",
+        source: (pubQ?.sources ?? ["public-vn"]).join("+"),
         sourceTimestampMs: Date.now(),
-        partial: !pack.indices.length || !pack.quotes.length,
-        note: !pack.indices.length
-          ? "Chỉ số tạm thiếu — quotes public"
-          : !pack.quotes.length
-            ? "Quotes tạm thiếu — chỉ số public"
-            : undefined,
+        partial: true,
+        note: "Liquid public fallback — indices skipped (Workers budget)",
       }),
     };
   } catch {

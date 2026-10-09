@@ -10,6 +10,7 @@ export {
   getVnIndices,
   getVnOhlcv,
   getVnMarketBoard,
+  getVn30Board,
   getVnUniverseList,
 } from "./stocks-board";
 

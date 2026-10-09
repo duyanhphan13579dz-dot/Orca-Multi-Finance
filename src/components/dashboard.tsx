@@ -29,7 +29,6 @@ type GlobalMarket = {
   sources?: string[];
 };
 
-/** Minimal intel so Command Center still paints when /market/intel is slow/down. */
 function synthesizeIntel(board: StocksBoard | undefined): MarketIntel | null {
   const indices = board?.indices?.length ? board.indices : null;
   if (!indices?.length && !(board?.quotes?.length)) return null;
@@ -100,24 +99,35 @@ export function Dashboard() {
     mutate,
     error,
   } = useApi<MarketIntel>("/api/v1/market/intel", {
-    refreshInterval: 15_000,
-    timeoutMs: 22_000,
+    refreshInterval: 20_000,
+    timeoutMs: 14_000,
     keepPreviousData: true,
   });
 
   const {
-    data: board,
-    isLoading: boardLoading,
-    mutate: mutateBoard,
-  } = useApi<StocksBoard>("/api/v1/stocks?board=full", {
+    data: boardCore,
+    isLoading: boardCoreLoading,
+  } = useApi<StocksBoard>("/api/v1/stocks?board=vn30", {
     refreshInterval: 20_000,
-    timeoutMs: 22_000,
+    timeoutMs: 6_000,
     keepPreviousData: true,
   });
 
+  const {
+    data: boardFull,
+    isLoading: boardLoading,
+    mutate: mutateBoard,
+  } = useApi<StocksBoard>("/api/v1/stocks?board=full", {
+    refreshInterval: 22_000,
+    timeoutMs: 12_000,
+    keepPreviousData: true,
+  });
+
+  const board = boardFull?.quotes?.length ? boardFull : boardCore;
+
   const { data: globalMkt } = useApi<GlobalMarket>("/api/v1/market/global", {
-    refreshInterval: 60_000,
-    timeoutMs: 15_000,
+    refreshInterval: 45_000,
+    timeoutMs: 12_000,
     keepPreviousData: true,
   });
 
@@ -126,7 +136,7 @@ export function Dashboard() {
     return synthesizeIntel(board);
   }, [intel, board]);
 
-  const stillBooting = isLoading && boardLoading && !displayIntel;
+  const stillBooting = !displayIntel && isLoading && boardCoreLoading && boardLoading;
 
   if (stillBooting) {
     return <PageSkeleton variant="dashboard" title="Market Command Center" />;
