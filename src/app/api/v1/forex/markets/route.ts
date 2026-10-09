@@ -1,15 +1,12 @@
 import { safeApi } from "@/lib/safe-api";
 import { getForexMarkets } from "@/lib/services/forex";
 import { ensureCryptoForexRealtime } from "@/lib/realtime/crypto-forex-boot";
+import { putHot, getHot } from "@/lib/hot-snapshot";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 export const maxDuration = 20;
 
-/**
- * GET /api/v1/forex/markets
- * Majors · crosses · VND · XAU/XAG · OIL — hard budget ≤15s, partial OK.
- */
 export async function GET() {
   try {
     ensureCryptoForexRealtime();
@@ -21,8 +18,24 @@ export async function GET() {
     label: "forex-markets",
     guard: { wallMs: 14_000, maxSubrequests: 24, maxConcurrent: 3 },
     produce: async () => {
+      const fresh = await getHot<{ rows: unknown[]; usdStrengthNote?: string }>("forex");
+      if (fresh?.fresh && Array.isArray(fresh.data?.rows) && fresh.data.rows.length) {
+        return {
+          data: fresh.data,
+          meta: { ...fresh.meta, note: `hot-fresh forex · ${Math.round(fresh.ageMs / 1000)}s` },
+          headers: {
+            "Cache-Control": "private, max-age=8, stale-while-revalidate=45",
+            "X-Orca-Hot": "fresh",
+          },
+        };
+      }
       const r = await getForexMarkets();
       if (!r?.data?.rows?.length) return null;
+      putHot("forex", r.data, {
+        source: r.meta?.source,
+        partial: r.meta?.partial,
+        note: r.meta?.note,
+      });
       const metals = r.data.rows.filter((x) => x.group === "metal" || x.group === "energy").length;
       return {
         data: r.data,
@@ -37,18 +50,32 @@ export async function GET() {
         },
       };
     },
-    fallback: async () => ({
-      data: {
-        rows: [],
-        usdStrengthNote: "Đang kết nối lại Biquote/Yahoo — thử refresh sau vài giây",
-      },
-      meta: {
-        source: "forex-shell",
-        partial: true,
-        stale: true,
-        note: "shell ≤15s",
-      },
-    }),
+    fallback: async () => {
+      const snap = await getHot<{ rows: unknown[]; usdStrengthNote?: string }>("forex");
+      if (snap?.data && Array.isArray(snap.data.rows) && snap.data.rows.length) {
+        return {
+          data: snap.data,
+          meta: {
+            ...snap.meta,
+            note: `last-good forex · age ${Math.round(snap.ageMs / 1000)}s`,
+            partial: true,
+            stale: true,
+          },
+        };
+      }
+      return {
+        data: {
+          rows: [],
+          usdStrengthNote: "Đang kết nối lại Biquote/Yahoo — thử refresh sau vài giây",
+        },
+        meta: {
+          source: "forex-shell",
+          partial: true,
+          stale: true,
+          note: "shell ≤15s",
+        },
+      };
+    },
     unavailableSource: "forex",
     unavailableNote: "Forex tạm không khả dụng",
   });

@@ -3,18 +3,13 @@ import { getVnMarketBoard } from "@/lib/services/stocks";
 import { cronUnauthorized } from "@/lib/cron-auth";
 import { WORKERS_BUDGET } from "@/lib/data-engine/workers-budget";
 import { runGuarded, guardMeta } from "@/lib/data-engine/workers-guard";
+import { putHot } from "@/lib/hot-snapshot";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 export const maxDuration = 15;
 
-/**
- * Light board pre-warm — call every 30–60s during VN session.
- * Only warms market board cache / last-good so /stocks never cold-starts empty.
- *
- * GET /api/v1/cron/board-warm?secret=...
- * Recommended: every 45s Mon–Fri 08:45–15:15 Asia/Ho_Chi_Minh
- */
+/** Light board pre-warm — also writes hot last-good. */
 export async function GET(req: Request) {
   const denied = cronUnauthorized(req);
   if (denied) return denied;
@@ -36,6 +31,18 @@ export async function GET(req: Request) {
     if (!market || (!market.quotes.length && !market.indices.length)) {
       return unavailable("vn-board-warm", "Board warm failed — last-good may still serve UI");
     }
+
+    putHot(
+      "board",
+      {
+        indices: market.indices,
+        quotes: market.quotes,
+        universeSize: market.universeSize ?? market.quotes.length,
+        sessionDate: market.sessionDate ?? null,
+        count: market.quotes.length,
+      },
+      { source: market.meta.source, partial: market.meta.partial, note: market.meta.note },
+    );
 
     return ok(
       {
