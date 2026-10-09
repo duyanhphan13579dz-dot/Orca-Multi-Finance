@@ -12,6 +12,10 @@ const HEADERS: Record<string, string> = {
   "X-Requested-With": "XMLHttpRequest",
 };
 
+/** Official VN equity floors — OHLCV cascade covers every listed STOCK on these. */
+export const VN_EXCHANGES = ["HOSE", "HNX", "UPCOM"] as const;
+export type VnExchange = (typeof VN_EXCHANGES)[number];
+
 type Page<T> = {
   data?: T[];
   totalElements?: number;
@@ -67,14 +71,27 @@ async function vndGet<T>(path: string, timeoutMs = 12_000): Promise<T> {
   return res.data;
 }
 
+function normalizeExchange(floor: string | null | undefined): VnExchange | null {
+  const f = String(floor ?? "")
+    .toUpperCase()
+    .replace(/[^A-Z]/g, "");
+  if (f === "HOSE" || f === "HSX" || f === "HCM") return "HOSE";
+  if (f === "HNX" || f === "HASTC") return "HNX";
+  if (f === "UPCOM" || f === "UPCO") return "UPCOM";
+  return null;
+}
+
 function mapRow(r: VndStockRow): VndUniverseItem | null {
   const symbol = String(r.code ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "");
   if (!symbol || symbol.length < 2) return null;
+  const st = String(r.status ?? "").toLowerCase();
+  if (st.includes("delist")) return null;
   const listedDate = String(r.listedDate ?? r.listingDate ?? "").slice(0, 10) || null;
+  const exchange = normalizeExchange(r.floor) ?? (r.floor ? String(r.floor).toUpperCase() : null);
   return {
     symbol,
     name: r.companyName ?? r.companyNameEng ?? r.shortName ?? null,
-    exchange: r.floor ?? null,
+    exchange,
     industry: r.industryName ?? null,
     listedDate,
     status: r.status ?? null,
@@ -90,50 +107,50 @@ export async function lookupVndSymbol(symbol: string): Promise<VndUniverseItem |
       (r) => String(r.code ?? "").toUpperCase() === sym && String(r.type ?? "STOCK").toUpperCase() === "STOCK",
     );
     if (!row) return null;
-    const st = String(row.status ?? "").toLowerCase();
-    if (st.includes("delist")) return null;
     return mapRow(row);
   } catch {
     return null;
   }
 }
 
-export type VndFullUniversePack = {
-  rows: VndUniverseItem[];
-  /** Rows that actually came back from the VNDirect /v4/stocks listing endpoint. */
-  fetchedFromVndirect: number;
-  /** Rows that came back from SSI iBoard boards. */
-  fetchedFromIboard: number;
-};
-
-/**
- * Full VN listed universe: VNDirect /v4/stocks (LISTED pages + recent listings) merged
- * with SSI iBoard HOSE/HNX/UPCoM boards, plus the hard-coded 2025-2026 IPO seed.
- * The returned counters let callers label the result honestly when a source is down.
- */
-export async function fetchVndFullUniverseWithMeta(): Promise<VndFullUniversePack> {
-  const pageSize = 500;
+/** Page one floor until exhausted (VNDirect returns ~200–500 per page). */
+async function pageFloor(floor: VnExchange, bySym: Map<string, VndUniverseItem>): Promise<number> {
+  const pageSize = 200;
   let page = 1;
   let totalPages = 1;
-  let fetchedFromVndirect = 0;
-  let fetchedFromIboard = 0;
-  const bySym = new Map<string, VndUniverseItem>();
-
-  for (const s of IPO_SEED_2025_2026) bySym.set(s.symbol, s);
-
-  while (page <= totalPages && page <= 25) {
+  let added = 0;
+  while (page <= totalPages && page <= 20) {
     try {
       const payload = await vndGet<Page<VndStockRow>>(
-        `/v4/stocks?q=type:STOCK~status:LISTED&size=${pageSize}&page=${page}&sort=code:asc`,
+        `/v4/stocks?q=type:STOCK~floor:${floor}&size=${pageSize}&page=${page}&sort=code:asc`,
         15_000,
       );
       const data = payload.data ?? [];
       totalPages = Math.max(1, Number(payload.totalPages) || 1);
       for (const r of data) {
         const item = mapRow(r);
-        if (item) {
-          bySym.set(item.symbol, item);
-          fetchedFromVndirect += 1;
+        if (!item) continue;
+        // Force exchange label when floor query is explicit
+        const normalized: VndUniverseItem = {
+          ...item,
+          exchange: item.exchange ?? floor,
+        };
+        if (!normalized.exchange || normalizeExchange(normalized.exchange) == null) {
+          normalized.exchange = floor;
+        }
+        const prev = bySym.get(normalized.symbol);
+        if (!prev) {
+          bySym.set(normalized.symbol, normalized);
+          added += 1;
+        } else {
+          bySym.set(normalized.symbol, {
+            ...prev,
+            name: prev.name ?? normalized.name,
+            exchange: prev.exchange ?? normalized.exchange,
+            industry: prev.industry ?? normalized.industry,
+            listedDate: prev.listedDate ?? normalized.listedDate,
+            status: prev.status ?? normalized.status,
+          });
         }
       }
       if (!data.length) break;
@@ -141,6 +158,48 @@ export async function fetchVndFullUniverseWithMeta(): Promise<VndFullUniversePac
     } catch {
       break;
     }
+  }
+  return added;
+}
+
+/**
+ * Full equity universe across HOSE + HNX + UPCOM.
+ * Strategy: floor-paged VNDirect (complete counts) → recent listings → SSI iBoard merge → IPO seeds.
+ * OHLCV for any returned symbol is available via getVnOhlcv (dchart ∥ stock_prices ∥ public ∥ SSI).
+ */
+export async function fetchVndFullUniverse(): Promise<VndUniverseItem[]> {
+  const bySym = new Map<string, VndUniverseItem>();
+
+  for (const s of IPO_SEED_2025_2026) bySym.set(s.symbol, s);
+
+  // Primary: page each floor independently (covers ~440 HOSE + ~360 HNX + ~1170 UPCOM)
+  await Promise.all(VN_EXCHANGES.map((floor) => pageFloor(floor, bySym)));
+
+  // Legacy LISTED query as supplemental (status spelling variants)
+  try {
+    let page = 1;
+    let totalPages = 1;
+    while (page <= totalPages && page <= 15) {
+      const payload = await vndGet<Page<VndStockRow>>(
+        `/v4/stocks?q=type:STOCK~status:LISTED&size=500&page=${page}&sort=code:asc`,
+        15_000,
+      );
+      const data = payload.data ?? [];
+      totalPages = Math.max(1, Number(payload.totalPages) || 1);
+      for (const r of data) {
+        const item = mapRow(r);
+        if (!item) continue;
+        const prev = bySym.get(item.symbol);
+        if (!prev) bySym.set(item.symbol, item);
+        else if (!prev.exchange && item.exchange) {
+          bySym.set(item.symbol, { ...prev, exchange: item.exchange });
+        }
+      }
+      if (!data.length) break;
+      page += 1;
+    }
+  } catch {
+    /* non-fatal — floor pages already primary */
   }
 
   for (let p = 1; p <= 5; p++) {
@@ -150,11 +209,8 @@ export async function fetchVndFullUniverseWithMeta(): Promise<VndFullUniversePac
         12_000,
       );
       for (const r of recent.data ?? []) {
-        const st = String(r.status ?? "").toLowerCase();
-        if (st.includes("delist")) continue;
         const item = mapRow(r);
         if (!item) continue;
-        fetchedFromVndirect += 1;
         const prev = bySym.get(item.symbol);
         if (!prev) bySym.set(item.symbol, item);
         else if (!prev.listedDate && item.listedDate) {
@@ -167,29 +223,27 @@ export async function fetchVndFullUniverseWithMeta(): Promise<VndFullUniversePac
     }
   }
 
-  // SSI iBoard — HOSE/HNX/UPCOM (độc lập VNDirect)
+  // SSI iBoard — independent HOSE/HNX/UPCOM board (fills gaps VNDirect misses)
   try {
     const { getSsiIboardUniverse } = await import("./ssi-iboard");
     const ssi = await getSsiIboardUniverse();
     for (const row of ssi) {
-      fetchedFromIboard += 1;
       const prev = bySym.get(row.symbol);
+      const ex = normalizeExchange(row.exchange) ?? row.exchange;
       if (!prev) {
         bySym.set(row.symbol, {
           symbol: row.symbol,
           name: row.name,
-          exchange: row.exchange,
+          exchange: ex,
           industry: null,
           listedDate: row.listedDate,
           status: "listed",
         });
       } else {
-        // iBoard knows the floor code for every symbol it lists, so it fills the gaps
-        // left by listing rows (VNDirect occasionally returns no `floor`).
         bySym.set(row.symbol, {
           ...prev,
           name: prev.name ?? row.name,
-          exchange: prev.exchange ?? row.exchange,
+          exchange: prev.exchange ?? ex,
         });
       }
     }
@@ -204,15 +258,25 @@ export async function fetchVndFullUniverseWithMeta(): Promise<VndFullUniversePac
     }),
   );
 
-  return {
-    rows: [...bySym.values()].sort((a, b) => a.symbol.localeCompare(b.symbol)),
-    fetchedFromVndirect,
-    fetchedFromIboard,
-  };
+  return [...bySym.values()].sort((a, b) => a.symbol.localeCompare(b.symbol));
 }
 
-export async function fetchVndFullUniverse(): Promise<VndUniverseItem[]> {
-  return (await fetchVndFullUniverseWithMeta()).rows;
+export function filterUniverseByExchange(
+  items: VndUniverseItem[],
+  exchange: VnExchange | "ALL",
+): VndUniverseItem[] {
+  if (exchange === "ALL") return items;
+  return items.filter((x) => normalizeExchange(x.exchange) === exchange);
+}
+
+export function universeCountsByExchange(items: VndUniverseItem[]): Record<VnExchange | "OTHER", number> {
+  const counts: Record<VnExchange | "OTHER", number> = { HOSE: 0, HNX: 0, UPCOM: 0, OTHER: 0 };
+  for (const x of items) {
+    const ex = normalizeExchange(x.exchange);
+    if (ex) counts[ex] += 1;
+    else counts.OTHER += 1;
+  }
+  return counts;
 }
 
 export async function fetchVndRecentListings(withinDays = 365): Promise<VndUniverseItem[]> {

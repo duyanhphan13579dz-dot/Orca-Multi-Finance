@@ -63,6 +63,11 @@ function buildMetaPackage(
     note: [note, `metricProfile=${profile}`].filter(Boolean).join(" · "),
     ttmPeriod: ttm?.period ?? null,
     hasGrowth: Boolean(growth && (growth.yoy.length || growth.qoq.length)),
+    sourceUrls: {
+      balance: `https://dstock.vndirect.com.vn/bang-can-doi-ke-toan/${symbol.toUpperCase()}`,
+      income: `https://dstock.vndirect.com.vn/bao-cao-ket-qua-kinh-doanh/${symbol.toUpperCase()}`,
+      cashflow: `https://dstock.vndirect.com.vn/bao-cao-luu-chuyen-tien-te/${symbol.toUpperCase()}`,
+    },
     qualityScore: quality?.score ?? null,
     qualityStatus: quality?.status ?? null,
     crossConfidence: quality?.cross.confidence ?? null,

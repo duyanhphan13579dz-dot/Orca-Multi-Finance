@@ -1,7 +1,6 @@
 import "server-only";
 import { httpJson } from "../http";
 import type { ChartCandle } from "../chart-const";
-import type { OhlcvBar } from "../types";
 import { ProviderError } from "./binance";
 
 /**
@@ -129,65 +128,6 @@ const YAHOO_PAIR_SYMBOL: Record<string, string> = {
   US30: "^DJI",
   USTEC: "^NDX",
 };
-
-const VN_INDEX_YAHOO: Record<string, string> = {
-  VNINDEX: "^VNINDEX",
-  VN30: "^VN30",
-  HNX: "^HNX",
-  HNXINDEX: "^HNX",
-  HNX30: "^HNX30",
-  UPCOM: "^UPCOM",
-  VN100: "^VN100",
-  VNXALL: "^VNXALL",
-};
-
-/**
- * VN equity/index → Yahoo symbol.
- * HOSE/HNX/UPCoM tickers use the `.VN` suffix (VCB → VCB.VN); indices use the `^` series.
- */
-export function yahooSymbolForVnEquity(symbol: string): string {
-  const raw = String(symbol ?? "").toUpperCase().trim();
-  const stripped = raw.replace(/[^A-Z0-9]/g, "");
-  const idx = VN_INDEX_YAHOO[raw] ?? VN_INDEX_YAHOO[stripped];
-  if (idx) return idx;
-  if (stripped.startsWith("^")) return stripped;
-  if (stripped.endsWith("VN") && stripped.length > 4) return stripped;
-  return `${stripped}.VN`;
-}
-
-export function isVnIndexYahooSymbol(symbol: string): boolean {
-  const raw = String(symbol ?? "").toUpperCase().trim();
-  const stripped = raw.replace(/[^A-Z0-9]/g, "");
-  return Boolean(VN_INDEX_YAHOO[raw] ?? VN_INDEX_YAHOO[stripped]);
-}
-
-function toOhlcvBars(result: YahooResult | null | undefined, limit: number): OhlcvBar[] {
-  const candles = result?.candles ?? [];
-  if (!candles.length) return [];
-  return candles
-    .filter((c) => Number.isFinite(c.close) && c.close > 0 && Number.isFinite(c.time))
-    .slice(-Math.max(1, limit))
-    .map((c) => ({
-      time: c.time,
-      open: c.open,
-      high: c.high,
-      low: c.low,
-      close: c.close,
-      volume: c.volume ?? 0,
-    }));
-}
-
-/**
- * Daily OHLCV fallback for VN equities/indices (public, no key).
- * Used when VNDirect / entrade / VPS-hist feed are unreachable.
- */
-export async function getYahooDailyBars(symbol: string, limit = 250): Promise<OhlcvBar[]> {
-  const ySym = yahooSymbolForVnEquity(symbol);
-  if (!ySym) return [];
-  const cfg = yahooIntervalFor("1d") ?? { interval: "1d", range: "2y" };
-  const chart = await getYahooChart(ySym, cfg.interval, cfg.range);
-  return toOhlcvBars(chart, limit);
-}
 
 /** map "EURUSD" → "EURUSD=X"; metals/oil use futures; never emit invalid COMMODITY=X */
 export function yahooSymbolForPair(pair: string): string {

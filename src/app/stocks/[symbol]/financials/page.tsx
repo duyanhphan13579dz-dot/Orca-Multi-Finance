@@ -3,6 +3,7 @@
 import "@/app/stock-fs-table.css";
 
 import { useEffect, useState } from "react";
+import { ExternalLink } from "lucide-react";
 import { useApi } from "@/lib/hooks";
 import { fmtCompact, Loading, Panel, Unavailable } from "@/components/ui";
 import { financialsApiUrl, type FinTablePayload } from "@/components/stocks/financials-table-data";
@@ -259,18 +260,37 @@ export default function StockFinancialsPage({ params }: { params: Promise<{ symb
           ))}
         </div>
 
-        <div className="stock-fs-meta mb-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-ink-3">
-          <span>
-            {TABS.find((x) => x.key === tab)?.label} · Nguồn{" "}
-            <strong className="text-ink-2">{sourceLabel}</strong>
-          </span>
-          {fm?.latestPeriod && (
+        <div className="stock-fs-meta mb-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-[11px] text-ink-3">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
             <span>
-              Kỳ mới nhất: <strong className="text-ink-2">{fm.latestPeriod}</strong>
+              {TABS.find((x) => x.key === tab)?.label} · Nguồn{" "}
+              <strong className="text-ink-2">{sourceLabel}</strong>
             </span>
-          )}
-          {tab === "ratios" && (
-            <span className="text-accent/90">Chỉ số được tính tự động từ BCTC</span>
+            {fm?.latestPeriod && (
+              <span>
+                Kỳ mới nhất: <strong className="text-ink-2">{fm.latestPeriod}</strong>
+              </span>
+            )}
+            {tab === "ratios" && (
+              <span className="text-accent/90">Chỉ số được tính tự động từ BCTC</span>
+            )}
+          </div>
+          {tab !== "ratios" && symbol && (
+            <a
+              href={
+                tab === "balance"
+                  ? `https://dstock.vndirect.com.vn/bang-can-doi-ke-toan/${symbol}`
+                  : tab === "cashflow"
+                    ? `https://dstock.vndirect.com.vn/bao-cao-luu-chuyen-tien-te/${symbol}`
+                    : `https://dstock.vndirect.com.vn/bao-cao-ket-qua-kinh-doanh/${symbol}`
+              }
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 rounded bg-accent/10 px-2 py-0.5 text-[10.5px] font-medium text-accent hover:bg-accent/20"
+            >
+              <ExternalLink className="size-3" />
+              Xem nguồn gốc trên DStock VNDirect ↗
+            </a>
           )}
         </div>
 

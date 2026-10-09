@@ -2,7 +2,6 @@ import "server-only";
 import { cached } from "../cache";
 import { buildMeta } from "../freshness";
 import * as vndirect from "../providers/vndirect";
-import { getVndMarketSnapshot } from "../providers/vndirect-market-quotes";
 import type { IndexQuote, Meta, Quote } from "../types";
 
 const INDEX_PRIORITY = ["VNINDEX", "VN30", "HNX", "UPCOM", "HNX30", "VN100"];
@@ -44,27 +43,59 @@ export async function loadVnMarketBoardCached(
     /* */
   }
   try {
-    const res = await cached<VnMarketBoard | null>("vn:market-board:v3", {
+    const res = await cached<VnMarketBoard | null>("vn:market-board:v2", {
       ttlMs: ttl,
       staleMs: stale,
       softSwr: true,
       producer: async () => {
-        // Whole-board snapshot (shared cache with the multi-quote layer).
-        const mq = await getVndMarketSnapshot();
-        if (!mq.quotes?.length) return null;
-        const idx = await vndirect
+        let quotes: Quote[] = [];
+        let sessionDate = "";
+        let source = "vndirect";
+        let sourceTs = Date.now();
+        try {
+          const mq = await vndirect.getVndMarketQuotes();
+          if (mq.quotes?.length) {
+            quotes = mq.quotes;
+            sessionDate = mq.sessionDate;
+            sourceTs = mq.sourceTs ?? Date.now();
+          }
+        } catch {
+          /* try VPS fallback below */
+        }
+        if (!quotes.length) {
+          try {
+            const { getVpsQuotes } = await import("../providers/vps");
+            const { LIQUID_BOARD } = await import("../providers/public-vn-feed");
+            const vpsQuotes = await getVpsQuotes(LIQUID_BOARD);
+            if (vpsQuotes.length) {
+              quotes = vpsQuotes;
+              source = "vps";
+            }
+          } catch {
+            /* */
+          }
+        }
+        if (!quotes.length) return null;
+        let idx = await vndirect
           .getVndIndices()
           .catch(() => ({ items: [] as IndexQuote[], sourceTs: null as number | null }));
+        if (!idx.items.length) {
+          try {
+            const { getPublicIndices } = await import("../providers/public-vn-feed");
+            const pubIdx = await getPublicIndices();
+            if (pubIdx?.items?.length) {
+              idx = { items: pubIdx.items, sourceTs: pubIdx.sourceTs };
+            }
+          } catch {
+            /* */
+          }
+        }
         return {
-          quotes: mq.quotes,
+          quotes,
           indices: sortIndices(idx.items),
-          universeSize: mq.quotes.length,
-          sessionDate: mq.sessionDate,
-          meta: buildMeta({
-            source: "vndirect",
-            sourceTimestampMs: mq.sourceTs ?? Date.now(),
-            note: `full board · ${mq.quotes.length} mã · ${mq.pagesFetched} page(s)`,
-          }),
+          universeSize: quotes.length,
+          sessionDate,
+          meta: buildMeta({ source, sourceTimestampMs: sourceTs }),
         };
       },
     });
@@ -83,55 +114,4 @@ export async function loadVnMarketBoardCached(
   } catch {
     return null;
   }
-}
-
-export type VnMarketBoardFilter = {
-  exchange?: string | null;
-  limit?: number | null;
-  symbols?: string[] | null;
-};
-
-/**
- * Filter a full board pack by explicit symbols and/or row limit.
- * Exchange filtering needs the listing map (DStock rows carry no floor code) —
- * use `loadVnMarketBoardByExchange` for that.
- */
-export function filterVnMarketBoard(board: VnMarketBoard, filter?: VnMarketBoardFilter): VnMarketBoard {
-  let quotes: Quote[] = board.quotes;
-  const symbols = (filter?.symbols ?? []).map((s) => s.toUpperCase().trim()).filter(Boolean);
-  if (symbols.length) {
-    const want = new Set(symbols);
-    quotes = quotes.filter((q) => want.has(String(q.symbol ?? "").toUpperCase()));
-  }
-  const limit = Number(filter?.limit ?? 0);
-  if (Number.isFinite(limit) && limit > 0) quotes = quotes.slice(0, Math.floor(limit));
-  return { ...board, quotes, universeSize: quotes.length };
-}
-
-/** Full listed board for a single exchange code (hose|hnx|upcom) using the universe map. */
-export async function loadVnMarketBoardByExchange(
-  exchange: string,
-  opts?: { limit?: number | null },
-): Promise<VnMarketBoard | null> {
-  const board = await loadVnMarketBoardCached();
-  if (!board) return null;
-  try {
-    const { getVnUniverse } = await import("./vn-universe");
-    const universe = await getVnUniverse();
-    const want = (exchange ?? "").trim().toUpperCase();
-    const codes = new Set(
-      universe.rows
-        .filter((r) => String(r.exchange ?? "").toUpperCase().includes(want))
-        .map((r) => r.symbol),
-    );
-    if (codes.size) {
-      let quotes = board.quotes.filter((q) => codes.has(String(q.symbol ?? "").toUpperCase()));
-      const limit = Number(opts?.limit ?? 0);
-      if (Number.isFinite(limit) && limit > 0) quotes = quotes.slice(0, Math.floor(limit));
-      return { ...board, quotes, universeSize: quotes.length };
-    }
-  } catch {
-    /* fall through to unfiltered board */
-  }
-  return filterVnMarketBoard(board, { limit: opts?.limit });
 }

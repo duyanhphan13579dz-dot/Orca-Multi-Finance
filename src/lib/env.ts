@@ -63,8 +63,9 @@ export const env = {
       return {} as Record<string, string>;
     }
   })(),
-  /** Không còn khóa mặc định trong mã nguồn; chưa có biến → tính năng MSN tắt. */
-  msnApiKey: opt(process.env.MSN_FINANCE_API_KEY),
+  msnApiKey:
+    opt(process.env.MSN_FINANCE_API_KEY) ??
+    "0QfOX3Vn51YCzitbLaRkTTBadtWpgTN8NZLW0C1SEM",
 
   redisUrl: redisIsTcp ? redisCandidate : undefined,
   redisNote,
