@@ -97,31 +97,36 @@ function deriveRate(def: ForexPairDef, usdRates: Record<string, number>): number
   return q / b;
 }
 
-async function prevEcbRates(): Promise<FxLatest | null> {
-  return null;
+function usdNote(rows: ForexRow[], dxy?: { price: number; changePercent: number | null } | null): string {
+  const dxyNote = dxy?.changePercent != null ? ` DXY ${dxy.changePercent >= 0 ? "+" : ""}${dxy.changePercent.toFixed(2)}%.` : "";
+  const vnd = rows.find((r) => r.pair === "USDVND");
+  const vndNote = vnd?.changePercent != null ? ` USD/VND ${vnd.changePercent >= 0 ? "+" : ""}${vnd.changePercent.toFixed(2)}%.` : "";
+  const gold = rows.find((r) => r.pair === "XAUUSD");
+  const goldNote = gold?.changePercent != null ? ` XAU ${gold.changePercent >= 0 ? "+" : ""}${gold.changePercent.toFixed(2)}%.` : "";
+  return `Tỷ giá các cặp chính · kim loại · dầu.${dxyNote}${vndNote}${goldNote}`.trim();
 }
 
-async function fetchDxySnapshot(): Promise<{ price: number; changePercent: number | null } | null> {
-  try {
-    const q = await getYahooQuotes(["DX-Y.NYB"]);
-    const d = q.get("DX-Y.NYB");
-    if (!d || !Number.isFinite(d.price)) return null;
-    return { price: d.price, changePercent: d.changePercent };
-  } catch {
-    return null;
-  }
-}
+/** Priority commodities on board (Yahoo futures — few subrequests). */
+const BOARD_COMMODITIES = ["XAUUSD", "XAGUSD", "OILUSD", "UKOIL", "USOIL"] as const;
 
-async function appendYahooOnly(rows: ForexRow[]): Promise<ForexRow[]> {
-  const have = new Set(rows.map((r) => r.pair));
-  const missing = PAIRS.filter((p) => p.kind === "yahoo-only" && !have.has(p.pair));
-  if (!missing.length) return rows;
+/** FX majors/cross/vnd only — avoid fan-out to 24 Biquote ticks. */
+const FX_LIVE_PAIRS = PAIRS.filter((p) => p.kind !== "yahoo-only").map((p) => p.pair);
+
+async function loadCommodityRows(budgetMs = 6_000): Promise<ForexRow[]> {
+  const boardSet = new Set<string>(BOARD_COMMODITIES);
+  const defs = PAIRS.filter((p) => boardSet.has(p.pair));
+  if (!defs.length) return [];
   try {
-    const symbols = missing.map((p) => yahooSymbolForPair(p.pair));
-    const m = await getYahooQuotes(symbols);
-    for (const def of missing) {
-      const q = m.get(yahooSymbolForPair(def.pair));
-      if (!q || !Number.isFinite(q.price) || q.price <= 0) continue;
+    const symbols = [...new Set(defs.map((d) => yahooSymbolForPair(d.pair)))];
+    const map = await Promise.race([
+      getYahooQuotes(symbols),
+      new Promise<null>((r) => setTimeout(() => r(null), budgetMs)),
+    ]);
+    if (!map) return [];
+    const rows: ForexRow[] = [];
+    for (const def of defs) {
+      const q = map.get(yahooSymbolForPair(def.pair));
+      if (!q || !(q.price > 0)) continue;
       rows.push({
         pair: def.pair,
         base: def.base,
@@ -135,21 +140,44 @@ async function appendYahooOnly(rows: ForexRow[]): Promise<ForexRow[]> {
         updatedAt: q.marketTime ? new Date(q.marketTime).toISOString() : null,
       });
     }
+    return rows;
   } catch {
-    /* optional */
+    return [];
   }
-  return rows;
 }
 
-function usdNote(rows: ForexRow[], dxy?: { price: number; changePercent: number | null } | null): string {
-  const dxyNote = dxy?.changePercent != null ? ` DXY ${dxy.changePercent >= 0 ? "+" : ""}${dxy.changePercent.toFixed(2)}%.` : "";
-  const vnd = rows.find((r) => r.pair === "USDVND");
-  const vndNote = vnd?.changePercent != null ? ` USD/VND ${vnd.changePercent >= 0 ? "+" : ""}${vnd.changePercent.toFixed(2)}%.` : "";
-  const gold = rows.find((r) => r.pair === "XAUUSD");
-  const goldNote = gold?.changePercent != null ? ` XAU ${gold.changePercent >= 0 ? "+" : ""}${gold.changePercent.toFixed(2)}%.` : "";
-  return `Tỷ giá các cặp chính · kim loại · dầu.${dxyNote}${vndNote}${goldNote}`.trim();
+function rowsFromRates(
+  rates: Record<string, number>,
+  ticks: Record<string, { dayDiffPercent?: number | null }> | undefined,
+  ts: number | null,
+): ForexRow[] {
+  const out: ForexRow[] = [];
+  for (const def of PAIRS) {
+    const rate = rates[def.pair];
+    if (rate == null || !(rate > 0)) continue;
+    const tick = ticks?.[def.pair];
+    const changePercent = tick?.dayDiffPercent != null ? tick.dayDiffPercent : null;
+    out.push({
+      pair: def.pair,
+      base: def.base,
+      quote: def.quote,
+      group: def.group,
+      symbol: displaySymbol(def),
+      assetClass: "forex",
+      price: rate,
+      change: changePercent != null ? (rate * changePercent) / 100 : null,
+      changePercent,
+      updatedAt: ts ? new Date(ts).toISOString() : null,
+    });
+  }
+  return out;
 }
 
+/**
+ * Markets board — hard budget ~12s, always try partial.
+ *  Parallel: Biquote+ER for FX · Yahoo for metals/oil (4–5 symbols)
+ *  Cache 18s / stale 2min — never block past deadline
+ */
 export async function getForexMarkets(): Promise<{ data: ForexMarket; meta: Meta } | null> {
   try {
     ensureBiquotePollStarted();
@@ -157,85 +185,139 @@ export async function getForexMarkets(): Promise<{ data: ForexMarket; meta: Meta
   } catch {
     /* */
   }
-  const prev = await prevEcbRates();
+
   try {
-    const live = await getRealtimeFxQuotes(PAIRS.map((p) => p.pair));
-    const { rates, ts, source: liveSource } = live;
-    let rows = PAIRS.map((def): ForexRow | null => {
-      const rate = rates[def.pair];
-      if (rate == null) return null;
-      const tick = live.ticks?.[def.pair];
-      const changePercent =
-        tick?.dayDiffPercent != null
-          ? tick.dayDiffPercent
-          : prev && deriveRate(def, prev.rates)
-            ? (rate / (deriveRate(def, prev.rates) as number) - 1) * 100
-            : null;
-      const prevRate = prev ? deriveRate(def, prev.rates) : null;
-      return {
-        pair: def.pair,
-        base: def.base,
-        quote: def.quote,
-        group: def.group,
-        symbol: displaySymbol(def),
-        assetClass: "forex" as const,
-        price: rate,
-        change: changePercent != null ? (rate * changePercent) / 100 : prevRate != null ? rate - prevRate : null,
-        changePercent,
-        updatedAt: ts ? new Date(ts).toISOString() : null,
-      } satisfies ForexRow;
-    }).filter((x): x is ForexRow => x !== null);
-    if (rows.length) {
-      rows = await appendYahooOnly(rows);
-      const meta = buildMeta({
-        source: liveSource,
-        sourceTimestampMs: ts,
-        note:
-          liveSource.includes("biquote")
-            ? "Realtime đa nguồn public (Biquote ∥ Yahoo ∥ ER-API) — FX/metals/oil."
-            : undefined,
-        slas: { liveSlaMs: 15_000, freshSlaMs: 60_000, delayedSlaMs: 300_000 },
-      });
-      return { data: { rows, usdStrengthNote: usdNote(rows, await fetchDxySnapshot()) }, meta };
-    }
-  } catch {
-    /* degrade */
-  }
-  try {
-    const latest = await cached<FxLatest>("forex:er-latest", {
-      ttlMs: 10 * 60_000,
-      staleMs: 26 * 3_600_000,
-      producer: () => getErApiLatest(),
+    const c = await cached<{ data: ForexMarket; meta: Meta }>("forex:markets:v3", {
+      ttlMs: 18_000,
+      staleMs: 120_000,
+      producer: async () => {
+        const t0 = Date.now();
+        const HARD_MS = 12_000;
+        const remaining = () => Math.max(500, HARD_MS - (Date.now() - t0));
+
+        let rates: Record<string, number> = {};
+        let ticks: Record<string, { dayDiffPercent?: number | null }> | undefined;
+        let ts: number | null = null;
+        const sources: string[] = [];
+
+        const fxJob = (async () => {
+          try {
+            const live = await Promise.race([
+              getRealtimeFxQuotes(FX_LIVE_PAIRS),
+              new Promise<null>((r) => setTimeout(() => r(null), Math.min(8_000, remaining()))),
+            ]);
+            if (!live) return;
+            Object.assign(rates, live.rates);
+            if (live.ticks) ticks = live.ticks as typeof ticks;
+            if (live.ts) ts = live.ts;
+            if (live.source) sources.push(live.source);
+          } catch {
+            /* */
+          }
+        })();
+
+        const commodityJob = (async () => {
+          try {
+            return await loadCommodityRows(Math.min(6_500, remaining()));
+          } catch {
+            return [] as ForexRow[];
+          }
+        })();
+
+        const [, commodityRows] = await Promise.all([fxJob, commodityJob]);
+
+        let rows = rowsFromRates(rates, ticks, ts);
+
+        if (commodityRows?.length) {
+          const have = new Set(rows.map((r) => r.pair));
+          for (const r of commodityRows) {
+            if (!have.has(r.pair)) {
+              rows.push(r);
+              have.add(r.pair);
+            } else {
+              const i = rows.findIndex((x) => x.pair === r.pair);
+              if (i >= 0 && rows[i]!.changePercent == null && r.changePercent != null) {
+                rows[i] = { ...rows[i]!, changePercent: r.changePercent, change: r.change };
+              }
+            }
+          }
+          if (commodityRows.length) sources.push("yahoo-commodities");
+        }
+
+        if (remaining() > 2_000) {
+          const have = new Set(rows.map((r) => r.pair));
+          const still = BOARD_COMMODITIES.filter((p) => !have.has(p));
+          if (still.length) {
+            const extra = await loadCommodityRows(Math.min(4_000, remaining()));
+            for (const r of extra) {
+              if (!have.has(r.pair)) {
+                rows.push(r);
+                have.add(r.pair);
+              }
+            }
+          }
+        }
+
+        if (!rows.length) {
+          try {
+            const latest = await Promise.race([
+              getErApiLatest(),
+              new Promise<null>((r) => setTimeout(() => r(null), Math.min(4_000, remaining()))),
+            ]);
+            if (latest?.rates) {
+              for (const def of PAIRS.filter((p) => p.kind !== "yahoo-only")) {
+                const rate = deriveRate(def, latest.rates);
+                if (rate == null) continue;
+                rows.push({
+                  pair: def.pair,
+                  base: def.base,
+                  quote: def.quote,
+                  group: def.group,
+                  symbol: displaySymbol(def),
+                  assetClass: "forex",
+                  price: rate,
+                  change: null,
+                  changePercent: null,
+                  updatedAt: new Date(latest.ts).toISOString(),
+                });
+              }
+              sources.push("exchangerate-api");
+              ts = latest.ts;
+            }
+          } catch {
+            /* */
+          }
+        }
+
+        if (!rows.length) throw new Error("forex markets empty");
+
+        const order = new Map(PAIRS.map((p, i) => [p.pair, i]));
+        rows.sort((a, b) => (order.get(a.pair) ?? 99) - (order.get(b.pair) ?? 99));
+
+        const source = sources.filter(Boolean).join("+") || "forex";
+        const meta = buildMeta({
+          source,
+          sourceTimestampMs: ts ?? Date.now(),
+          note: `Board FX+kim loại+dầu · ${rows.length} cặp · ${Date.now() - t0}ms`,
+          partial: rows.length < PAIRS.length,
+          slas: { liveSlaMs: 15_000, freshSlaMs: 60_000, delayedSlaMs: 180_000 },
+        });
+
+        return {
+          data: { rows, usdStrengthNote: usdNote(rows, null) },
+          meta,
+        };
+      },
     });
-    const rates = latest.value.rates;
-    let rows = PAIRS.map((def): ForexRow | null => {
-      const rate = deriveRate(def, rates);
-      if (rate == null) return null;
-      return {
-        pair: def.pair,
-        base: def.base,
-        quote: def.quote,
-        group: def.group,
-        symbol: displaySymbol(def),
-        assetClass: "forex" as const,
-        price: rate,
-        change: null,
-        changePercent: null,
-        updatedAt: new Date(latest.value.ts).toISOString(),
-      } satisfies ForexRow;
-    }).filter((x): x is ForexRow => x !== null);
-    rows = await appendYahooOnly(rows);
-    if (!rows.length) return null;
+
+    if (!c?.value) return null;
     return {
-      data: { rows, usdStrengthNote: usdNote(rows, await fetchDxySnapshot()) },
-      meta: buildMeta({
-        source: latest.value.source,
-        sourceTimestampMs: latest.value.ts,
-        cached: latest.cached,
-        stale: latest.stale,
-        note: "Daily reference rates (ER-API) + Yahoo metals/oil — realtime temporarily unavailable",
-        partial: true,
-      }),
+      data: c.value.data,
+      meta: {
+        ...c.value.meta,
+        cached: c.cached,
+        stale: c.stale || c.value.meta.stale,
+      },
     };
   } catch {
     return null;
@@ -243,9 +325,21 @@ export async function getForexMarkets(): Promise<{ data: ForexMarket; meta: Meta
 }
 
 export async function getForexDetail(pairRaw: string): Promise<{ detail: ForexDetail; meta: Meta } | null> {
-  const pair = pairRaw.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  const ALIAS: Record<string, string> = {
+    OILUSD: "OILUSD",
+    WTIUSD: "USOIL",
+    WTI: "USOIL",
+    BRENT: "UKOIL",
+    GOLD: "XAUUSD",
+    XAU: "XAUUSD",
+    SILVER: "XAGUSD",
+    XAG: "XAGUSD",
+  };
+  const pair =
+    ALIAS[pairRaw.toUpperCase().replace(/[^A-Z0-9]/g, "")] ??
+    pairRaw.toUpperCase().replace(/[^A-Z0-9]/g, "");
   const def = PAIRS.find((p) => p.pair === pair);
-  if (!def && pair.length !== 6 && !pair.match(/^(XAU|XAG|OIL|USO|UKO)/)) return null;
+  if (!def && !(pair.length >= 4 && pair.length <= 10)) return null;
   const base = def?.base ?? pair.slice(0, 3);
   const quote = def?.quote ?? pair.slice(3);
   const markets = await getForexMarkets();
@@ -262,10 +356,10 @@ export async function getForexDetail(pairRaw: string): Promise<{ detail: ForexDe
       try {
         const bq = await Promise.race([
           getBiquotePublicOhlc(pair, "1d", 400),
-          new Promise<null>((r) => setTimeout(() => r(null), 8_000)),
+          new Promise<null>((r) => setTimeout(() => r(null), 6_000)),
         ]);
         if (bq && bq.length >= 10)
-          return { bars: bq, source: "biquote-public", note: `OHLC daily Biquote public — ${pair}.` };
+          return { bars: bq, source: "biquote-public", note: `OHLC daily Biquote — ${pair}.` };
       } catch {
         /* */
       }
@@ -275,7 +369,7 @@ export async function getForexDetail(pairRaw: string): Promise<{ detail: ForexDe
       try {
         const y = await Promise.race([
           getYahooChart(yahooSymbolForPair(pair), "1d", "2y"),
-          new Promise<null>((r) => setTimeout(() => r(null), 9_000)),
+          new Promise<null>((r) => setTimeout(() => r(null), 7_000)),
         ]);
         if (y?.candles?.length)
           return {
@@ -295,7 +389,7 @@ export async function getForexDetail(pairRaw: string): Promise<{ detail: ForexDe
         try {
           const direct = await Promise.race([
             getFrankfurterSeries(base, quote, 370),
-            new Promise<null>((r) => setTimeout(() => r(null), 9_000)),
+            new Promise<null>((r) => setTimeout(() => r(null), 6_000)),
           ]);
           if (direct?.length) {
             return {
@@ -321,12 +415,7 @@ export async function getForexDetail(pairRaw: string): Promise<{ detail: ForexDe
   const settled = await Promise.all(ohlcJobs);
   const ok = settled.filter((x): x is Cand => Boolean(x?.bars?.length));
   if (ok.length) {
-    ok.sort((a, b) => {
-      const aOk = a.bars.length >= 30 ? 1 : 0;
-      const bOk = b.bars.length >= 30 ? 1 : 0;
-      if (aOk !== bOk) return bOk - aOk;
-      return b.bars.length - a.bars.length;
-    });
+    ok.sort((a, b) => b.bars.length - a.bars.length);
     bars = ok[0]!.bars;
     source = ok.map((x) => x.source).filter((s, i, a) => a.indexOf(s) === i).join("+");
     referenceNote = ok[0]!.note;
@@ -338,18 +427,16 @@ export async function getForexDetail(pairRaw: string): Promise<{ detail: ForexDe
   const technical = bars.length >= 30 ? analyzeSeries(bars) : null;
   let patterns: CandlePattern[] = [];
   try {
-    const bqH = await getBiquotePublicOhlc(pair, "1h", 200);
-    if (bqH.length >= 20) patterns = detectPatterns(bqH);
-  } catch {
-    try {
-      const cfg = yahooIntervalFor("1h");
-      if (cfg) {
-        const y = await getYahooChart(yahooSymbolForPair(pair), cfg.interval, cfg.range);
-        if (y.candles?.length) patterns = detectPatterns(y.candles as OhlcvBar[]);
-      }
-    } catch {
-      /* */
+    const cfg = yahooIntervalFor("1h");
+    if (cfg) {
+      const y = await Promise.race([
+        getYahooChart(yahooSymbolForPair(pair), cfg.interval, cfg.range),
+        new Promise<null>((r) => setTimeout(() => r(null), 5_000)),
+      ]);
+      if (y?.candles?.length) patterns = detectPatterns(y.candles as OhlcvBar[]);
     }
+  } catch {
+    /* */
   }
 
   const detail: ForexDetail = {
@@ -365,7 +452,7 @@ export async function getForexDetail(pairRaw: string): Promise<{ detail: ForexDe
   const meta = buildMeta({
     source,
     sourceTimestampMs: seriesTs,
-    note: current ? undefined : "Giá hiện tại không khả dụng — chỉ còn chuỗi lịch sử",
+    note: current ? undefined : "Giá hiện tại tạm thiếu — còn chuỗi lịch sử",
     slas: { liveSlaMs: 86_400_000, freshSlaMs: 2 * 86_400_000, delayedSlaMs: 5 * 86_400_000 },
   });
   return { detail, meta };
