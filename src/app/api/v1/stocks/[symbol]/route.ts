@@ -1,56 +1,87 @@
-import { ok, unavailable } from "@/lib/envelope";
+import { unavailable } from "@/lib/envelope";
 import { getVnStockDetail } from "@/lib/services/stocks";
+import { safeApi } from "@/lib/safe-api";
+import { WORKERS_BUDGET } from "@/lib/data-engine/workers-budget";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
-export const maxDuration = 25;
+export const maxDuration = 20;
 
 /**
  * GET /api/v1/stocks/:symbol
- * Single load (no double-retry) to stay under Workers CPU/subrequest budget.
- * Partial payload is OK when quote OR bars present.
+ * Anti-break: guarded budget + partial shell always preferred over 502/1102.
  */
 export async function GET(_req: Request, ctx: { params: Promise<{ symbol: string }> }) {
   const { symbol } = await ctx.params;
   const sym = (symbol ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "");
   if (!sym) return unavailable("vn-market", "Thiếu mã cổ phiếu");
 
-  try {
-    let r: Awaited<ReturnType<typeof getVnStockDetail>> = null;
-    try {
-      const { runInDataHub } = await import("@/lib/data-engine/hub");
-      r = await runInDataHub(() => getVnStockDetail(sym));
-    } catch {
-      r = await getVnStockDetail(sym);
-    }
+  return safeApi({
+    label: `vn-detail:${sym}`,
+    guard: {
+      wallMs: WORKERS_BUDGET.detailWallMs,
+      maxSubrequests: 20,
+      maxConcurrent: 3,
+    },
+    produce: async () => {
+      let r: Awaited<ReturnType<typeof getVnStockDetail>> = null;
+      try {
+        const { runInDataHub } = await import("@/lib/data-engine/hub");
+        r = await runInDataHub(() => getVnStockDetail(sym));
+      } catch {
+        r = await getVnStockDetail(sym);
+      }
+      if (!r?.detail) return null;
 
-    if (!r?.detail) {
-      return unavailable("vn-market", `Chưa tải được ${sym}. Thử lại.`);
-    }
+      const hasPrice = Boolean(r.detail.quote?.price && r.detail.quote.price > 0);
+      const hasBars = Boolean(r.detail.bars && r.detail.bars.length >= 5);
+      const hasMeta = Boolean(r.detail.profile || r.detail.equity);
 
-    const hasPrice = Boolean(r.detail.quote?.price && r.detail.quote.price > 0);
-    const hasBars = Boolean(r.detail.bars && r.detail.bars.length >= 5);
-    const hasMeta = Boolean(r.detail.profile || r.detail.equity);
+      if (!hasPrice && !hasBars && !hasMeta) return null;
 
-    if (hasPrice && r.detail.bars && r.detail.bars.length >= 20) {
-      return ok(r.detail, r.meta);
-    }
-    if (hasPrice || hasBars || hasMeta) {
-      return ok(r.detail, {
-        ...r.meta,
+      return {
+        data: r.detail,
+        meta: {
+          ...r.meta,
+          partial: !(hasPrice && hasBars && r.detail.bars && r.detail.bars.length >= 20),
+          note:
+            hasPrice && hasBars && r.detail.bars.length >= 20
+              ? r.meta?.note
+              : r.meta?.note ?? `Partial ${sym}: đang đồng bộ dữ liệu.`,
+        },
+      };
+    },
+    fallback: async () => ({
+      data: {
+        symbol: sym,
+        name: null,
+        quote: null,
+        bars: [],
+        technical: null,
+        patterns: [],
+        equity: null,
+        sharesOutstanding: null,
+        profile: null,
+        orderBook: null,
+        foreignFlow: null,
+        financials: null,
+        financialHealth: null,
+        financialMeta: null,
+        financialGrowth: null,
+        financialTtm: null,
+        detailedRatios: null,
+        ratioMap: {},
+        metricsSources: [],
+        notes: ["degraded-shell"],
+      },
+      meta: {
+        source: "degraded-shell",
         partial: true,
-        note: r.meta?.note ?? `Partial ${sym}: đang đồng bộ dữ liệu.`,
-      });
-    }
-    return unavailable(
-      "vn-market",
-      `Chưa tải đủ dữ liệu ${sym} (cần giá hoặc lịch sử nến). Thử lại.`,
-    );
-  } catch (e) {
-    console.error("[stocks/detail]", sym, e);
-    return unavailable(
-      "vn-market",
-      e instanceof Error ? e.message : `Lỗi tải ${sym}`,
-    );
-  }
+        stale: true,
+        note: `Shell ${sym} — nguồn đang phục hồi`,
+      },
+    }),
+    unavailableSource: "vn-market",
+    unavailableNote: `Chưa tải được ${sym}. Thử lại.`,
+  });
 }
