@@ -55,7 +55,6 @@ function mergeQuotes(
   return { quotes: [...bySym.values()], sourceTs: newest, sources: [...used] };
 }
 
-/** Race VPS ∥ SSI iBoard ∥ Vietcap — no API key. */
 export async function getPublicQuotes(symbols: string[]): Promise<{
   quotes: Quote[];
   sourceTs: number | null;
@@ -272,6 +271,16 @@ export async function getPublicOhlcv(
   });
   return candidates[0]!.slice(-limit);
 }
+
+/** VN30 constituents — first-paint board (≤30 symbols). */
+export const VN30_BOARD = [
+  "ACB", "BCM", "BID", "BVH", "CTG",
+  "FPT", "GAS", "GVR", "HDB", "HPG",
+  "MBB", "MSN", "MWG", "PLX", "POW",
+  "SAB", "SHB", "SSB", "SSI", "STB",
+  "TCB", "TPB", "VCB", "VHM", "VIB",
+  "VIC", "VJC", "VNM", "VPB", "VRE",
+] as const;
 
 /** Liquid universe for board fallback (not full HOSE). */
 export const LIQUID_BOARD = [

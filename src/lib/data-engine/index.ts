@@ -57,3 +57,19 @@ export {
 } from "./asset-registry";
 export type { HubAssetType, AssetTypeDef } from "./asset-registry";
 export type { HubPortfolioMark } from "./hub";
+
+export {
+  runGuarded,
+  guardedCall,
+  tryAcquireSubrequest,
+  recordSubrequests,
+  isOverloaded,
+  budgetLeftMs,
+  getGuard,
+  guardMeta,
+  markIsolateOverload,
+  isIsolateCoolingDown,
+} from "./workers-guard";
+export type { GuardState, GuardOpts } from "./workers-guard";
+
+export { WORKERS_BUDGET, clampUniverse } from "./workers-budget";

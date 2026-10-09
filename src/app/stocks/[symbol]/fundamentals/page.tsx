@@ -52,7 +52,9 @@ type ValPayload = {
     evEbitda?: number | null;
     peg?: number | null;
   };
+  /** Legacy alias — engine also emits marketRatios */
   vndirectRatios?: { pe?: number | null; pb?: number | null; ps?: number | null; dividendYield?: number | null };
+  marketRatios?: { pe?: number | null; pb?: number | null; ps?: number | null; dividendYield?: number | null };
   fairValues?: { dcfBase?: number | null; blended?: number | null; graham?: number | null };
   upsideDownside?: number | null;
   marketCap?: number | null;
@@ -103,14 +105,18 @@ export default function StockFundamentalsPage({
   );
 
   const metrics = useMemo(() => {
-    if (!data?.financials) return null;
+    if (!data) return null;
     const m = valData?.multiples;
-    const vr = valData?.vndirectRatios;
+    const vr = valData?.vndirectRatios ?? valData?.marketRatios;
     const fv = valData?.fairValues;
+    const income = (data.financials?.income ?? []) as Record<string, unknown>[];
+    const balance = (data.financials?.balance ?? []) as Record<string, unknown>[];
+    const cashflow = (data.financials?.cashflow ?? []) as Record<string, unknown>[];
+    // Still render investment/valuation strips when BCTC rows are empty
     return buildSnapshotMetrics({
-      income: (data.financials.income ?? []) as Record<string, unknown>[],
-      balance: (data.financials.balance ?? []) as Record<string, unknown>[],
-      cashflow: (data.financials.cashflow ?? []) as Record<string, unknown>[],
+      income,
+      balance,
+      cashflow,
       price: data.quote?.price ?? null,
       closes: data.closes ?? [],
       shares: data.sharesOutstanding ?? data.financialHealth?.anchors?.shares ?? null,
@@ -133,7 +139,10 @@ export default function StockFundamentalsPage({
         upsidePct: valData?.upsideDownside ?? null,
         marketCap: valData?.marketCap ?? null,
         dividendYield:
-          data.performance?.dividendYield ?? data.vndirectRatios?.dividendYield ?? null,
+          data.performance?.dividendYield ??
+          data.vndirectRatios?.dividendYield ??
+          vr?.dividendYield ??
+          null,
       },
     });
   }, [data, valData]);
@@ -193,7 +202,11 @@ export default function StockFundamentalsPage({
 
   if (!symbol || (isLoading && !res)) return <Loading rows={8} />;
   if (!res?.success || !data || !metrics) {
-    return <Unavailable title={`Không lấy được phân tích cơ bản ${symbol || ""}`} />;
+    const msg =
+      (res && !res.success && typeof (res as { error?: { message?: string } }).error?.message === "string"
+        ? (res as { error: { message: string } }).error.message
+        : null) ?? "Nguồn BCTC/giá đang gián đoạn. Thử lại sau vài giây.";
+    return <Unavailable title={`Không lấy được phân tích cơ bản ${symbol || ""}`} note={msg} />;
   }
 
   const tabs: { key: TabKey; label: string }[] = [

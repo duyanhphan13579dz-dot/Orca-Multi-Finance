@@ -1,4 +1,5 @@
 import "server-only";
+import { WORKERS_BUDGET } from "../data-engine/workers-budget";
 import { cached } from "../cache";
 import { getFinancialPackage } from "./service";
 import { hubFinancialPackage } from "../data-engine";
@@ -9,14 +10,7 @@ import type { GrowthSnapshot } from "./types";
 
 /**
  * Bulk fundamental snapshots — shared layer for screeners (Fundamental, CANSLIM, Valuation).
- *
- * Strategy:
- *  1. Parallel hubFinancialPackage (request hub + TTL cache) with pool limit
- *  2. Flatten health + growth into a filter-friendly snapshot (extra cache)
- *  3. Best-effort persist periods → financial_statements
- *  4. CANSLIM / Valuation reuse the same package map
- *
- * Universe: any listed equity list (full market), not limited to a fixed board.
+ * Default concurrency is Workers-safe (WORKERS_BUDGET.snapshotConcurrency).
  */
 
 export type FundamentalSnapshot = {
@@ -153,7 +147,7 @@ export async function getFinancialPackagesBulk(
   opts?: { concurrency?: number; persist?: boolean },
 ): Promise<Map<string, PackageBundle>> {
   const uniq = [...new Set(symbols.map((s) => s.toUpperCase()).filter(Boolean))];
-  const concurrency = opts?.concurrency ?? 10;
+  const concurrency = opts?.concurrency ?? WORKERS_BUDGET.snapshotConcurrency;
   const doPersist = opts?.persist !== false;
   const map = new Map<string, PackageBundle>();
 
@@ -187,7 +181,7 @@ export async function getFundamentalSnapshots(
 ): Promise<{ snapshots: FundamentalSnapshot[]; packages: Map<string, PackageBundle>; scanned: number; hit: number }> {
   const uniq = [...new Set(symbols.map((s) => s.toUpperCase()).filter(Boolean))];
   const packages = await getFinancialPackagesBulk(uniq, {
-    concurrency: opts?.concurrency ?? 10,
+    concurrency: opts?.concurrency ?? WORKERS_BUDGET.snapshotConcurrency,
     persist: opts?.persist,
   });
 

@@ -3,13 +3,14 @@ import { buildMeta } from "../freshness";
 import { sma } from "../technical";
 import { getVnQuotes } from "./stocks";
 import { LIQUID_BOARD } from "../providers/public-vn-feed";
-import { fetchOhlcvResilient, mapPool } from "./screener-ohlcv";
+import { batchVnOhlcv } from "./ohlcv-batch";
+import { WORKERS_BUDGET } from "../data-engine/workers-budget";
 import { getSecurity, sectorOf } from "../vn/master";
 import type { Meta, OhlcvBar } from "../types";
 
 /**
  * Mark Minervini — Trend Template screener (SEPA universe filter).
- * Resilient OHLCV (retry) + never returns null — empty table + partial meta.
+ * Resilient OHLCV batch + never returns null — empty table + partial meta.
  */
 
 export interface MinerviniCriteria {
@@ -240,18 +241,27 @@ export async function screenMinervini(args?: {
   const quoteMap = new Map((quotesPack?.quotes ?? []).map((q) => [q.symbol, q]));
 
   let skipped = 0;
-  const packs = await mapPool(uniq, 8, async (symbol) => {
-    const { bars } = await fetchOhlcvResilient(symbol, 280);
+  const ohlcvMap = await batchVnOhlcv(uniq, {
+    bars: 260,
+    concurrency: WORKERS_BUDGET.ohlcvBatchConcurrency,
+    perSymbolMs: WORKERS_BUDGET.ohlcvPerSymbolMs + 1_000,
+    deadlineMs: WORKERS_BUDGET.techScreenWallMs + 10_000,
+    resilient: true,
+    priority: uniq.slice(0, 30),
+  });
+  const packs: (RawPack | null)[] = [];
+  for (const symbol of uniq) {
+    const bars = ohlcvMap.get(symbol)?.bars ?? [];
     const pack = analyzeBars(symbol, bars);
     if (!pack) {
       skipped += 1;
-      return null;
+      packs.push(null);
+    } else {
+      packs.push(pack);
     }
-    return pack;
-  });
+  }
 
   const valid = packs.filter((p): p is RawPack => p != null);
-  // Never hard-fail — empty table + partial note instead of "không khả dụng"
 
   const retKey = (p: RawPack) => p.ret252 ?? p.ret126;
   const ranked = valid

@@ -21,12 +21,16 @@ export interface VndCompanyProfile {
   enName: string | null;
   foundDate: string | null;
   taxCode: string | null;
+  /** Mã đăng ký kinh doanh (thường trùng MST). */
+  registrationCode: string | null;
   vnAddress: string | null;
+  enAddress: string | null;
   phone: string | null;
   fax: string | null;
   website: string | null;
   email: string | null;
   employees: number | null;
+  branches: number | null;
   vnSummary: string | null;
   enSummary: string | null;
 }
@@ -38,6 +42,29 @@ export interface VndShareholder {
   shares: number | null;
   ownershipPct: number | null;
   effectiveDate: string | null;
+}
+
+/** Công ty con / liên doanh / công ty mẹ / kiểm toán / tư vấn niêm yết. */
+export type VndRelationType =
+  | "SUBSIDIARY"
+  | "ASSOCIATE"
+  | "PARENT"
+  | "AUDITOR"
+  | "LISTCONSUL"
+  | "OTHER"
+  | string;
+
+export interface VndCompanyRelation {
+  code: string;
+  relationType: VndRelationType;
+  nameVn: string;
+  nameEn: string | null;
+  relationId: number | null;
+  ownershipPct: number | null;
+  investmentCapital: number | null;
+  unit: string | null;
+  effectiveDate: string | null;
+  year: string | null;
 }
 
 export interface VndEquitySnapshot {
@@ -77,12 +104,15 @@ function mapProfileRow(sym: string, row: Record<string, unknown>): VndCompanyPro
     enName: s(row.enName),
     foundDate: s(row.foundDate),
     taxCode: s(row.taxCode),
+    registrationCode: s(row.registrationCode) ?? s(row.taxCode),
     vnAddress: s(row.vnAddress),
+    enAddress: s(row.enAddress),
     phone: s(row.phone),
     fax: s(row.fax),
     website: s(row.website),
     email: s(row.email),
     employees: n(row.employees),
+    branches: n(row.branches),
     vnSummary: s(row.vnSummary),
     enSummary: s(row.enSummary),
   };
@@ -152,6 +182,83 @@ export async function getVndShareholders(symbol: string, size = 30): Promise<Vnd
         };
       })
       .filter((x) => x.name && x.name !== "—");
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Quan hệ doanh nghiệp: công ty con, liên doanh/liên kết, công ty mẹ, kiểm toán, tư vấn niêm yết.
+ * Dedup theo (relationType + nameVn), giữ bản ghi mới nhất theo effectiveDate/year.
+ */
+export async function getVndCompanyRelations(
+  symbol: string,
+  size = 80,
+): Promise<VndCompanyRelation[]> {
+  const sym = symbol.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  if (!sym) return [];
+
+  try {
+    const payload = (
+      await vndirectJson<{ data?: Record<string, unknown>[] }>(
+        `/v4/company_relations?q=code:${encodeURIComponent(sym)}&size=${Math.max(1, Math.min(200, size))}`,
+        {
+          provider: VND,
+          timeoutMs: 12_000,
+          retries: 2,
+          accept: (value) => Array.isArray(value.data),
+        },
+      )
+    ).data;
+    const rows = payload.data ?? [];
+    const n = (v: unknown) => {
+      const x = Number(v);
+      return Number.isFinite(x) ? x : null;
+    };
+    const s = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : null);
+
+    const mapped: VndCompanyRelation[] = rows
+      .map((r) => {
+        const nameVn = s(r.relationNameVn) ?? s(r.relationNameEn) ?? "";
+        return {
+          code: String(r.code ?? sym),
+          relationType: (s(r.relationType) ?? "OTHER") as VndRelationType,
+          nameVn,
+          nameEn: s(r.relationNameEn),
+          relationId: n(r.relationId),
+          ownershipPct: n(r.ownershipPct),
+          investmentCapital: n(r.investmentCapital),
+          unit: s(r.unit),
+          effectiveDate: s(r.effectiveDate),
+          year: s(r.year),
+        };
+      })
+      .filter((x) => x.nameVn);
+
+    const byKey = new Map<string, VndCompanyRelation>();
+    for (const row of mapped) {
+      const key = `${row.relationType}::${row.nameVn.toLowerCase()}`;
+      const prev = byKey.get(key);
+      if (!prev) {
+        byKey.set(key, row);
+        continue;
+      }
+      const prevScore = (prev.effectiveDate ?? prev.year ?? "") + "";
+      const nextScore = (row.effectiveDate ?? row.year ?? "") + "";
+      if (nextScore >= prevScore) byKey.set(key, row);
+    }
+
+    const preferredOrder = ["PARENT", "SUBSIDIARY", "ASSOCIATE", "AUDITOR", "LISTCONSUL"];
+    return [...byKey.values()].sort((a, b) => {
+      const ia = preferredOrder.indexOf(String(a.relationType).toUpperCase());
+      const ib = preferredOrder.indexOf(String(b.relationType).toUpperCase());
+      const ra = ia < 0 ? 99 : ia;
+      const rb = ib < 0 ? 99 : ib;
+      if (ra !== rb) return ra - rb;
+      const oa = a.ownershipPct ?? -1;
+      const ob = b.ownershipPct ?? -1;
+      return ob - oa;
+    });
   } catch {
     return [];
   }

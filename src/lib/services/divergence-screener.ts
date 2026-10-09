@@ -17,6 +17,7 @@ import { getSecurity, sectorOf } from "../vn/master";
 import { defaultTechnicalUniverse } from "../vn/vn100";
 import { getVnQuotes } from "./stocks";
 import { batchVnOhlcv, SCREENER_UNIVERSE_CAP } from "./ohlcv-batch";
+import { WORKERS_BUDGET } from "../data-engine/workers-budget";
 
 export type DivergenceScreenRow = {
   symbol: string;
@@ -135,13 +136,12 @@ function cacheKeyVn(opts: DivergenceScreenOpts, universe: string[]): string {
   const s = opts.minStrength ?? "C";
   const lim = Math.min(opts.limit ?? 40, 80);
   const symPart = opts.symbols?.length ? universe.slice(0, 20).join(",") : "vn100";
-  return `div:vn:v3:${w}:${tf}:${k}:${o}:${s}:${lim}:${symPart}`;
+  return `div:vn:v4:${w}:${tf}:${k}:${o}:${s}:${lim}:${symPart}`;
 }
 
 export async function screenVnDivergences(
   opts: DivergenceScreenOpts = {},
 ): Promise<DivergenceScreenResult> {
-  // Ưu tiên rổ VN100 — phân kỳ 3–4 phiên gần nhất
   const universe = (opts.symbols?.length ? opts.symbols : defaultTechnicalUniverse(SCREENER_UNIVERSE_CAP))
     .map((s) => s.toUpperCase())
     .filter(Boolean)
@@ -155,10 +155,11 @@ export async function screenVnDivergences(
     const t0 = Date.now();
     const [ohlcvMap, quotesPack] = await Promise.all([
       batchVnOhlcv(universe, {
-        bars: short ? 48 : 120,
-        concurrency: short ? 16 : 12,
-        perSymbolMs: short ? 2_500 : 4_000,
-        deadlineMs: short ? 24_000 : 35_000,
+        bars: short ? 80 : 160,
+        concurrency: WORKERS_BUDGET.ohlcvBatchConcurrency,
+        perSymbolMs: WORKERS_BUDGET.ohlcvPerSymbolMs,
+        deadlineMs: short ? WORKERS_BUDGET.techScreenWallMs : WORKERS_BUDGET.techScreenWallMs + 8_000,
+        resilient: true,
       }),
       getVnQuotes(universe).catch(() => null),
     ]);
@@ -257,7 +258,7 @@ export async function screenCryptoDivergences(
   let skipped = 0;
 
   const { mapPool } = await import("./ohlcv-batch");
-  const packs = await mapPool(universe, short ? 8 : 6, async (sym) => {
+  const packs = await mapPool(universe, short ? 6 : 4, async (sym) => {
     try {
       const bars = await getKlinesDeep(sym, interval, short ? 60 : 120);
       return { sym, bars };

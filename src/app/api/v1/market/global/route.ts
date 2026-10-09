@@ -1,12 +1,9 @@
-import { ok, fail } from "@/lib/envelope";
+import { safeApi } from "@/lib/safe-api";
+import { putHot, getHot } from "@/lib/hot-snapshot";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
-
-/**
- * GET /api/v1/market/global
- * US (Polygon ∥ Yahoo ETF) + crypto (CoinGecko) + Asia (Yahoo) + VN liquidity volume spark.
- */
+export const maxDuration = 20;
 
 const ASIA_YAHOO: { yahoo: string; key: string; label: string }[] = [
   { yahoo: "^N225", key: "N225", label: "Nikkei 225" },
@@ -15,167 +12,187 @@ const ASIA_YAHOO: { yahoo: string; key: string; label: string }[] = [
   { yahoo: "^KS11", key: "KOSPI", label: "KOSPI" },
 ];
 
-export async function GET() {
+const US_ETF = ["SPY", "QQQ", "DIA", "IWM"] as const;
+
+type UsRow = { symbol: string; price: number; changePercent: number | null };
+type CryptoRow = {
+  symbol: string;
+  baseAsset: string;
+  price: number;
+  changePercent: number | null;
+};
+type AsiaRow = {
+  symbol: string;
+  label: string;
+  price: number;
+  changePercent: number | null;
+};
+
+async function loadUs(): Promise<{ rows: UsRow[]; source: string }> {
   try {
-    const sources: string[] = [];
-    let us: unknown[] = [];
-    let crypto: unknown[] = [];
-    let asia: {
-      symbol: string;
-      label: string;
-      price: number;
-      changePercent: number | null;
-    }[] = [];
-    let liquiditySpark: {
-      volumes: number[];
-      times: (string | null)[];
-      source: string;
-      symbol: string;
-    } | null = null;
-    const errors: string[] = [];
-
-    const jobs: Promise<void>[] = [];
-
-    jobs.push(
-      (async () => {
-        try {
-          const { getPolygonIndexSnapshots } = await import("@/lib/providers/polygon");
-          const poly = await getPolygonIndexSnapshots(["SPY", "QQQ", "DIA", "IWM"]);
-          us = poly.rows;
-          if (us.length) sources.push("polygon");
-        } catch (e) {
-          errors.push(e instanceof Error ? e.message : "polygon failed");
-        }
-        if (!us.length) {
-          try {
-            const { getYahooQuotes } = await import("@/lib/providers/yahoo");
-            const map = await getYahooQuotes(["SPY", "QQQ", "DIA", "IWM"]);
-            const rows: { symbol: string; price: number; changePercent: number | null }[] = [];
-            for (const sym of ["SPY", "QQQ", "DIA", "IWM"]) {
-              const q = map.get(sym);
-              if (!q || !Number.isFinite(q.price)) continue;
-              rows.push({ symbol: sym, price: q.price, changePercent: q.changePercent });
-            }
-            if (rows.length) {
-              us = rows;
-              sources.push("yahoo-us-etf");
-            }
-          } catch (e) {
-            errors.push(e instanceof Error ? e.message : "yahoo us failed");
-          }
-        }
-      })(),
-    );
-
-    jobs.push(
-      (async () => {
-        try {
-          const { getCoinGeckoSimplePrices } = await import("@/lib/providers/coingecko");
-          const cg = await getCoinGeckoSimplePrices();
-          crypto = cg.rows.slice(0, 10);
-          sources.push(`coingecko:${cg.via}`);
-        } catch (e) {
-          errors.push(e instanceof Error ? e.message : "coingecko failed");
-        }
-      })(),
-    );
-
-    jobs.push(
-      (async () => {
-        try {
-          const { getYahooQuotes } = await import("@/lib/providers/yahoo");
-          const map = await getYahooQuotes(ASIA_YAHOO.map((a) => a.yahoo));
-          for (const a of ASIA_YAHOO) {
-            const q = map.get(a.yahoo);
-            if (!q || !Number.isFinite(q.price)) continue;
-            asia.push({
-              symbol: a.key,
-              label: a.label,
-              price: q.price,
-              changePercent: q.changePercent,
-            });
-          }
-          if (asia.length) sources.push("yahoo-asia");
-        } catch (e) {
-          errors.push(e instanceof Error ? e.message : "yahoo asia failed");
-        }
-      })(),
-    );
-
-    jobs.push(
-      (async () => {
-        try {
-          const { getVnOhlcv } = await import("@/lib/services/stocks");
-          const pack = await getVnOhlcv("VNINDEX", 20);
-          const bars = pack?.bars ?? [];
-          const withVol = bars.filter((b) => b.volume != null && b.volume > 0);
-          if (withVol.length >= 4) {
-            const slice = withVol.slice(-12);
-            liquiditySpark = {
-              volumes: slice.map((b) => Number(b.volume) || 0),
-              times: slice.map((b) =>
-                b.time ? new Date(b.time).toISOString().slice(0, 10) : null,
-              ),
-              source: pack?.meta?.source ?? "vn-ohlcv",
-              symbol: "VNINDEX",
-            };
-            sources.push(`liq:${liquiditySpark.source}`);
-            return;
-          }
-        } catch (e) {
-          errors.push(e instanceof Error ? e.message : "vn ohlcv spark failed");
-        }
-        try {
-          const { getChartHistory } = await import("@/lib/services/chart");
-          const r = await getChartHistory({
-            symbol: "VNINDEX",
-            assetType: "stock",
-            timeframe: "1d",
-            limit: 20,
-          });
-          const candles = r?.data?.candles ?? [];
-          const withVol = candles.filter((c) => (c.volume ?? 0) > 0);
-          if (withVol.length >= 4) {
-            const slice = withVol.slice(-12);
-            liquiditySpark = {
-              volumes: slice.map((c) => Number(c.volume) || 0),
-              times: slice.map((c) =>
-                c.time ? new Date(c.time).toISOString().slice(0, 10) : null,
-              ),
-              source: r?.meta?.source ?? "chart-history",
-              symbol: "VNINDEX",
-            };
-            sources.push(`liq:${liquiditySpark.source}`);
-          }
-        } catch (e) {
-          errors.push(e instanceof Error ? e.message : "chart spark failed");
-        }
-      })(),
-    );
-
-    await Promise.all(jobs);
-
-    if (!us.length && !crypto.length && !asia.length) {
-      return fail("GLOBAL_MARKET_UNAVAILABLE", errors.join("; ") || "no providers", 502);
+    const { getYahooQuotes } = await import("@/lib/providers/yahoo");
+    const map = await getYahooQuotes([...US_ETF]);
+    const rows: UsRow[] = [];
+    for (const sym of US_ETF) {
+      const q = map.get(sym);
+      if (!q || !(q.price > 0)) continue;
+      rows.push({ symbol: sym, price: q.price, changePercent: q.changePercent ?? null });
     }
+    if (rows.length) return { rows, source: "yahoo-us" };
+  } catch {
+    /* */
+  }
+  return { rows: [], source: "none" };
+}
 
-    return ok(
-      {
-        us,
-        crypto,
-        asia,
-        liquiditySpark,
+async function loadCrypto(): Promise<{ rows: CryptoRow[]; source: string }> {
+  try {
+    const { getCryptoMarkets } = await import("@/lib/services/crypto");
+    const m = await getCryptoMarkets();
+    if (m?.rows?.length) {
+      const rows = m.rows
+        .filter((r) => r.symbol === "BTCUSDT" || r.symbol === "ETHUSDT")
+        .map((r) => ({
+          symbol: r.symbol,
+          baseAsset: r.baseAsset,
+          price: r.price,
+          changePercent: r.changePercent,
+        }));
+      if (rows.length) return { rows, source: m.meta.source ?? "crypto" };
+    }
+  } catch {
+    /* */
+  }
+  return { rows: [], source: "none" };
+}
+
+async function loadAsia(): Promise<{ rows: AsiaRow[]; source: string }> {
+  try {
+    const { getYahooQuotes } = await import("@/lib/providers/yahoo");
+    const map = await getYahooQuotes(ASIA_YAHOO.map((a) => a.yahoo));
+    const rows: AsiaRow[] = [];
+    for (const def of ASIA_YAHOO) {
+      const q = map.get(def.yahoo);
+      if (!q || !(q.price > 0)) continue;
+      rows.push({
+        symbol: def.key,
+        label: def.label,
+        price: q.price,
+        changePercent: q.changePercent ?? null,
+      });
+    }
+    if (rows.length) return { rows, source: "yahoo-asia" };
+  } catch {
+    /* */
+  }
+  return { rows: [], source: "none" };
+}
+
+async function loadLiqSpark(): Promise<{
+  volumes: number[];
+  times: (string | null)[];
+  source: string;
+  symbol: string;
+} | null> {
+  try {
+    const { getVnOhlcv } = await import("@/lib/services/stocks");
+    const pack = await getVnOhlcv("VNINDEX", 20);
+    const bars = pack?.bars ?? [];
+    const withVol = bars.filter((b) => b.volume != null && b.volume > 0);
+    if (withVol.length >= 4) {
+      const slice = withVol.slice(-12);
+      return {
+        volumes: slice.map((b) => Number(b.volume) || 0),
+        times: slice.map((b) => (b.time ? new Date(b.time).toISOString().slice(0, 10) : null)),
+        source: pack?.meta?.source ?? "vn-ohlcv",
+        symbol: "VNINDEX",
+      };
+    }
+  } catch {
+    /* */
+  }
+  return null;
+}
+
+export async function GET() {
+  return safeApi({
+    label: "market-global",
+    guard: { wallMs: 12_000, maxSubrequests: 18, maxConcurrent: 3 },
+    produce: async () => {
+      const fresh = await getHot("global");
+      if (fresh?.fresh && fresh.data) {
+        return {
+          data: fresh.data,
+          meta: { ...fresh.meta, note: `hot-fresh global · ${Math.round(fresh.ageMs / 1000)}s` },
+          headers: {
+            "Cache-Control": "private, max-age=15, stale-while-revalidate=60",
+            "X-Orca-Hot": "fresh",
+          },
+        };
+      }
+      const [usP, cryptoP, asiaP, liqP] = await Promise.all([
+        loadUs(),
+        loadCrypto(),
+        loadAsia(),
+        loadLiqSpark(),
+      ]);
+
+      const sources = [usP.source, cryptoP.source, asiaP.source].filter((s) => s && s !== "none");
+      if (liqP) sources.push(`liq:${liqP.source}`);
+
+      const data = {
+        us: usP.rows,
+        crypto: cryptoP.rows,
+        asia: asiaP.rows,
+        liquiditySpark: liqP,
         sources,
         at: new Date().toISOString(),
-      },
-      {
-        source: sources.join("+") || "none",
-        sourceTimestampMs: Date.now(),
-        partial: errors.length > 0 || !asia.length || !liquiditySpark,
-        note: errors.length ? errors.join("; ") : undefined,
-      },
-    );
-  } catch (e) {
-    return fail("GLOBAL_MARKET_FAILED", e instanceof Error ? e.message : "unknown", 502);
-  }
+      };
+      putHot("global", data, { source: sources.join("+") || "partial", partial: true });
+      return {
+        data,
+        meta: {
+          source: sources.join("+") || "partial",
+          sourceTimestampMs: Date.now(),
+          partial: !usP.rows.length || !cryptoP.rows.length || !asiaP.rows.length,
+          note: `us=${usP.rows.length} crypto=${cryptoP.rows.length} asia=${asiaP.rows.length}`,
+        },
+        headers: {
+          "Cache-Control": "private, max-age=20, stale-while-revalidate=90",
+        },
+      };
+    },
+    fallback: async () => {
+      const snap = await getHot("global");
+      if (snap?.data) {
+        return {
+          data: snap.data,
+          meta: {
+            ...snap.meta,
+            note: `last-good global · age ${Math.round(snap.ageMs / 1000)}s`,
+            partial: true,
+            stale: true,
+          },
+        };
+      }
+      return {
+        data: {
+          us: [],
+          crypto: [],
+          asia: [],
+          liquiditySpark: null,
+          sources: [],
+          at: new Date().toISOString(),
+        },
+        meta: {
+          source: "global-shell",
+          partial: true,
+          stale: true,
+          note: "Global market shell — đang kết nối lại",
+        },
+      };
+    },
+    unavailableSource: "global",
+    unavailableNote: "Global market data tạm gián đoạn",
+  });
 }

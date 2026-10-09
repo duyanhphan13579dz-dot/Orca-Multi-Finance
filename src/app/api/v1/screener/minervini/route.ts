@@ -1,21 +1,13 @@
-import { ok, badRequest } from "@/lib/envelope";
+import { badRequest } from "@/lib/envelope";
 import { screenMinervini } from "@/lib/services/minervini-screener";
+import { safeApi } from "@/lib/safe-api";
+import { WORKERS_BUDGET } from "@/lib/data-engine/workers-budget";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
+export const maxDuration = 25;
 
-/**
- * GET /api/v1/screener/minervini
- * Mark Minervini Trend Template (8 criteria, Stage 2 filter).
- *
- * Query:
- *   symbols=VCB,FPT   — optional subset
- *   minPass=6         — minimum criteria passed (default 6; use 8 for strict)
- *   onlyPassAll=1     — only 8/8 Stage-2 names
- *   minRs=70          — minimum RS proxy
- *   sector=Ngân hàng
- *   limit=40
- */
+/** GET /api/v1/screener/minervini — Mark Minervini Trend Template */
 export async function GET(req: Request) {
   const url = new URL(req.url);
   const symbolsRaw = url.searchParams.get("symbols");
@@ -36,29 +28,34 @@ export async function GET(req: Request) {
     return badRequest("minPass must be 0–8");
   }
 
-  const r = await screenMinervini({
-    symbols,
-    minPass: Math.min(8, Math.max(0, Math.floor(minPass))),
-    onlyPassAll,
-    minRs: Number.isFinite(minRs) ? minRs : 0,
-    sector,
-    limit: Number.isFinite(limit) ? Math.min(80, Math.max(1, limit)) : 40,
-  });
-
-  // Service never returns null — empty table + partial meta instead of "không khả dụng"
-  const payload = r ?? {
-    rows: [],
-    scanned: 0,
-    skipped: 0,
-    meta: { source: "minervini-screener", sourceTimestampMs: Date.now(), hasData: false, partial: true,
-      note: "OHLCV tạm lỗi — thử lại sau" },
-  };
-  return ok(
-    {
-      rows: payload.rows,
-      scanned: payload.scanned,
-      skipped: payload.skipped,
+  return safeApi({
+    label: "screener-minervini",
+    guard: { wallMs: WORKERS_BUDGET.techScreenWallMs, maxSubrequests: 24, maxConcurrent: 3 },
+    produce: async () => {
+      const r = await screenMinervini({
+        symbols,
+        minPass: Math.min(8, Math.max(0, Math.floor(minPass))),
+        onlyPassAll,
+        minRs: Number.isFinite(minRs) ? minRs : 0,
+        sector,
+        limit: Number.isFinite(limit) ? Math.min(80, Math.max(1, limit)) : 40,
+      });
+      if (!r) return null;
+      return {
+        data: { rows: r.rows, scanned: r.scanned, skipped: r.skipped },
+        meta: r.meta,
+      };
     },
-    payload.meta,
-  );
+    fallback: async () => ({
+      data: { rows: [], scanned: 0, skipped: 0 },
+      meta: {
+        source: "minervini-shell",
+        partial: true,
+        stale: true,
+        note: "OHLCV tạm lỗi — thử lại sau",
+      },
+    }),
+    unavailableSource: "minervini-screener",
+    unavailableNote: "Minervini screener tạm không khả dụng",
+  });
 }

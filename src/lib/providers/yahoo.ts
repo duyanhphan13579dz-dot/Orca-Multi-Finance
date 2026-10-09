@@ -3,12 +3,6 @@ import { httpJson } from "../http";
 import type { ChartCandle } from "../chart-const";
 import { ProviderError } from "./binance";
 
-/**
- * Yahoo Finance public chart API — no API key.
- * Approved public fallback provider for FX/commodity OHLC (Yahoo Finance
- * chart v8 endpoints). Host rotation for resilience.
- */
-
 export const YAHOO = "yahoo";
 
 const HOSTS = [
@@ -60,7 +54,7 @@ export async function getYahooChart(yahooSymbol: string, interval: string, range
     const idx = (lastGood + i) % HOSTS.length;
     const res = await httpJson<YahooChartResult>(
       `${HOSTS[idx]}/v8/finance/chart/${encodeURIComponent(yahooSymbol)}?interval=${encodeURIComponent(interval)}&range=${encodeURIComponent(range)}&includePrePost=false`,
-      { provider: YAHOO, timeoutMs: 10_000, retries: 1 },
+      { provider: YAHOO, timeoutMs: 5_000, retries: 0 },
     );
     const result = res.data?.chart?.result?.[0];
     if (!res.ok || !result?.timestamp?.length) {
@@ -99,7 +93,6 @@ export async function getYahooChart(yahooSymbol: string, interval: string, range
   throw new ProviderError(`yahoo chart: ${lastErr}`, YAHOO);
 }
 
-/** Binance-style BTCUSDT / ETHUSDT → Yahoo BTC-USD (public, no key). */
 export function yahooCryptoSymbol(symbol: string): string {
   const s = symbol.toUpperCase().replace(/[^A-Z0-9]/g, "");
   if (s.endsWith("USDT")) return `${s.slice(0, -4)}-USD`;
@@ -115,13 +108,23 @@ const YAHOO_PAIR_SYMBOL: Record<string, string> = {
   XAGUSD: "SI=F",
   SILVER: "SI=F",
   XAG: "SI=F",
+  XPTUSD: "PL=F",
+  PLATINUM: "PL=F",
+  XPDUSD: "PA=F",
+  PALLADIUM: "PA=F",
   USOIL: "CL=F",
+  OILUSD: "CL=F",
+  WTIUSD: "CL=F",
   WTI: "CL=F",
   CRUDE: "CL=F",
   CL: "CL=F",
+  UKOIL: "BZ=F",
   BRENT: "BZ=F",
+  BRENTUSD: "BZ=F",
   NATGAS: "NG=F",
+  NGUSD: "NG=F",
   COPPER: "HG=F",
+  HGUSD: "HG=F",
   DXY: "DX-Y.NYB",
   USDOLLAR: "DX-Y.NYB",
   US500: "^GSPC",
@@ -129,7 +132,6 @@ const YAHOO_PAIR_SYMBOL: Record<string, string> = {
   USTEC: "^NDX",
 };
 
-/** map "EURUSD" → "EURUSD=X"; metals/oil use futures; never emit invalid COMMODITY=X */
 export function yahooSymbolForPair(pair: string): string {
   const p = pair.toUpperCase().replace(/[^A-Z0-9]/g, "");
   if (YAHOO_PAIR_SYMBOL[p]) return YAHOO_PAIR_SYMBOL[p]!;
@@ -167,14 +169,13 @@ type YahooMetaResp = {
   };
 };
 
-/** Latest quote via the public chart meta (no key, real provider timestamps). */
 export async function getYahooQuote(yahooSymbol: string): Promise<YahooQuote> {
   let lastErr = "unreachable";
   for (let i = 0; i < HOSTS.length; i++) {
     const idx = (lastGood + i) % HOSTS.length;
     const res = await httpJson<YahooMetaResp>(
       `${HOSTS[idx]}/v8/finance/chart/${encodeURIComponent(yahooSymbol)}?interval=1d&range=5d`,
-      { provider: YAHOO, timeoutMs: 8_000, retries: 1 },
+      { provider: YAHOO, timeoutMs: 4_000, retries: 0 },
     );
     const m = res.data?.chart?.result?.[0]?.meta;
     if (res.ok && m && typeof m.regularMarketPrice === "number") {
@@ -202,23 +203,25 @@ export async function getYahooQuote(yahooSymbol: string): Promise<YahooQuote> {
 
 export async function getYahooQuotes(symbols: string[]): Promise<Map<string, YahooQuote>> {
   const out = new Map<string, YahooQuote>();
-  const chunk = 6;
-  for (let i = 0; i < symbols.length; i += chunk) {
-    const batch = symbols.slice(i, i + chunk);
-    const results = await Promise.allSettled(batch.map((s) => getYahooQuote(s)));
+  const uniq = [...new Set(symbols.filter(Boolean))].slice(0, 12);
+  const concurrency = 4;
+  for (let i = 0; i < uniq.length; i += concurrency) {
+    const batch = uniq.slice(i, i + concurrency);
+    const results = await Promise.allSettled(
+      batch.map((s) =>
+        Promise.race([
+          getYahooQuote(s),
+          new Promise<null>((r) => setTimeout(() => r(null), 4_200)),
+        ]),
+      ),
+    );
     results.forEach((r, j) => {
-      if (r.status === "fulfilled") out.set(batch[j]!, r.value);
+      if (r.status === "fulfilled" && r.value) out.set(batch[j]!, r.value);
     });
   }
   return out;
 }
 
-/**
- * Yahoo public chart range ceilings (approx):
- * - 1m: ~7d, 2m–90m: ~60d, 60m/1h: ~730d
- * - 1d / 1wk: multi-year, 1mo: max
- * Futures (GC=F etc.) downsample to monthly when range=max — prefer 2y for true daily bars.
- */
 const INTRADAY_LIMITS: Record<string, { interval: string; range: string }> = {
   "1m": { interval: "1m", range: "7d" },
   "5m": { interval: "5m", range: "60d" },

@@ -23,7 +23,7 @@ const INDEX_ALIASES: Record<string, string[]> = {
 
 /**
  * REALTIME CHART STREAM (SSE).
- * crypto: Binance WS · stock: VNDirect · forex/commodity: Biquote public poll (~1.2s)
+ * crypto: Binance WS · stock: VNDirect · forex/commodity: Biquote public poll (~1s)
  */
 export async function GET(req: Request) {
   const url = new URL(req.url);
@@ -39,7 +39,6 @@ export async function GET(req: Request) {
   }
 
   if (assetType === "crypto") ensureBinanceWsStarted();
-  if (assetType === "forex" || assetType === "commodity") ensureBiquotePollStarted();
 
   const encoder = new TextEncoder();
   let unsubscribe: (() => void) | null = null;
@@ -49,6 +48,16 @@ export async function GET(req: Request) {
   let heartbeat: ReturnType<typeof setInterval> | null = null;
   let pollTimer: ReturnType<typeof setInterval> | null = null;
   let lastPollPrice: number | null = null;
+
+  if (assetType === "forex" || assetType === "commodity") {
+    ensureBiquotePollStarted();
+    try {
+      const bq = await import("@/lib/realtime/biquote-poll");
+      bq.ensureBiquoteCoreWatch();
+    } catch {
+      /* */
+    }
+  }
 
   const isIndex = assetType === "stock" && INDEX_CODES.has(symbol);
 
@@ -239,7 +248,7 @@ export async function GET(req: Request) {
           if (t) injectTick(t.price, t.ts, 0, "biquote");
         };
         pushLive();
-        pollTimer = setInterval(pushLive, 1_200);
+        pollTimer = setInterval(pushLive, 1_000);
         pollTimer.unref?.();
 
         const snap = candleAggregator.snapshot(symbol, timeframe);
@@ -251,7 +260,7 @@ export async function GET(req: Request) {
           source: "biquote-public+poll",
           note: snap
             ? undefined
-            : "Live FX/metals qua Biquote public (poll ~1.2s; SignalR client-side optional)",
+            : "Live FX/metals/oil qua Biquote public (poll ~1s)",
         });
       } else {
         send("snapshot", {
