@@ -259,7 +259,27 @@ export async function getVnMarketBoard(): Promise<{
   universeSize?: number;
   sessionDate?: string | null;
 } | null> {
-  // Tier 1: Prefer full cached market board (multi-source + last-good inside)
+  // Isolate cooldown → never fan-out; only cached path
+  try {
+    const { isIsolateCoolingDown } = await import("../data-engine/workers-guard");
+    if (isIsolateCoolingDown()) {
+      const fullBoard = await loadVnMarketBoardCached();
+      if (fullBoard && (fullBoard.quotes.length || fullBoard.indices.length)) {
+        return {
+          indices: fullBoard.indices,
+          quotes: fullBoard.quotes,
+          universeSize: fullBoard.universeSize,
+          sessionDate: fullBoard.sessionDate,
+          meta: { ...fullBoard.meta, stale: true, partial: true, note: `${fullBoard.meta.note ?? ""} · cooldown`.trim() },
+        };
+      }
+      return null;
+    }
+  } catch {
+    /* */
+  }
+
+  // Tier 1: cached board (sequential cascade + last-good inside)
   try {
     const fullBoard = await loadVnMarketBoardCached();
     if (fullBoard && (fullBoard.quotes.length >= 1 || fullBoard.indices.length >= 1)) {
@@ -272,61 +292,25 @@ export async function getVnMarketBoard(): Promise<{
       };
     }
   } catch {
-    /* fallback to multi-source liquid board below */
+    /* */
   }
 
-  // Tier 2: Multi-source liquid board fallback
-  const loadOnce = async () => {
-    const [idx, q] = await Promise.all([
-      getVnIndices().catch(() => null),
-      getVnQuotes(LIQUID_BOARD).catch(() => null),
-    ]);
-    return {
-      indices: idx?.items ?? [],
-      quotes: q?.quotes ?? [],
-      sources: [idx?.meta?.source, q?.meta?.source].filter(Boolean) as string[],
-    };
-  };
+  // Tier 2: light sequential liquid fallback (no double-retry, no parallel indices+quotes race)
   try {
-    let pack = await loadOnce();
-    if (!pack.indices.length && !pack.quotes.length) {
-      await new Promise((r) => setTimeout(r, 350));
-      pack = await loadOnce();
-    }
-    if (!pack.indices.length && !pack.quotes.length) {
-      try {
-        const [pubIdx, pubQ] = await Promise.all([
-          getPublicIndices().catch(() => null),
-          getPublicQuotes(LIQUID_BOARD.slice(0, 50)).catch(() => null),
-        ]);
-        const items = pubIdx?.items ?? [];
-        if (items.length) {
-          pack.indices = items;
-          pack.sources.push("public-indices");
-        }
-        if (pubQ?.quotes?.length) {
-          pack.quotes = pubQ.quotes;
-          pack.sources.push(...(pubQ.sources ?? ["public-vn"]));
-        }
-      } catch {
-        /* */
-      }
-    }
-    if (!pack.indices.length && !pack.quotes.length) return null;
+    const { getPublicQuotes } = await import("../providers/public-vn-feed");
+    const pubQ = await getPublicQuotes(LIQUID_BOARD.slice(0, 40)).catch(() => null);
+    const quotes = pubQ?.quotes ?? [];
+    if (!quotes.length) return null;
     return {
-      indices: pack.indices,
-      quotes: pack.quotes,
-      universeSize: pack.quotes.length || LIQUID_BOARD.length,
+      indices: [],
+      quotes,
+      universeSize: quotes.length,
       sessionDate: null,
       meta: buildMeta({
-        source: pack.sources.join("+") || "board",
+        source: (pubQ?.sources ?? ["public-vn"]).join("+"),
         sourceTimestampMs: Date.now(),
-        partial: !pack.indices.length || !pack.quotes.length,
-        note: !pack.indices.length
-          ? "Chỉ số tạm thiếu — quotes public"
-          : !pack.quotes.length
-            ? "Quotes tạm thiếu — chỉ số public"
-            : undefined,
+        partial: true,
+        note: "Liquid public fallback — indices skipped (Workers budget)",
       }),
     };
   } catch {
