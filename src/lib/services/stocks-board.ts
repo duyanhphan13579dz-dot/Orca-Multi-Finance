@@ -334,7 +334,28 @@ export async function getVnMarketBoard(): Promise<{
   }
 }
 
+/**
+ * Prefer full HOSE/HNX/UPCOM catalog (~1900+ stocks) for OHLCV screeners.
+ * Falls back to live board quotes, then LIQUID_BOARD.
+ */
 export async function getVnUniverseList(): Promise<{ symbols: string[]; meta: Meta } | null> {
+  try {
+    const { getVnUniverseSymbols } = await import("./vn-universe");
+    const full = await getVnUniverseSymbols("ALL");
+    if (full.length >= 100) {
+      return {
+        symbols: full,
+        meta: buildMeta({
+          source: "vndirect+ssi-universe",
+          sourceTimestampMs: Date.now(),
+          note: `full-universe n=${full.length}`,
+        }),
+      };
+    }
+  } catch {
+    /* fall through */
+  }
+
   try {
     const board = await getVnMarketBoard();
     const symbols = [...new Set((board?.quotes ?? []).map((q) => q.symbol).filter(Boolean))];
