@@ -6,18 +6,26 @@ import { PriceAlertMonitorHost } from "@/components/price-alert-monitor-host";
 import { PatternAlertMonitorHost } from "@/components/pattern-alert-monitor-host";
 import { ErrorBoundary } from "@/components/error-boundary";
 import { prefetchMarketSnapshot } from "@/components/ticker-tape";
+import { prefetchApi } from "@/lib/hooks";
 
-/** Stable SWR cache across ClientProviders re-renders (tab hops keep data). */
 const globalSwrCache = new Map();
 
-/**
- * App-wide client hosts:
- * - SWR defaults tuned for fast tab hops (keep previous, short dedupe)
- * - Soft error boundary so one page crash does not blank the shell
- * - Price alert monitor (singleton)
- * - Candlestick reversal pattern push monitor
- * - Prefetch market snapshot so ticker paints early
- */
+/** Warm critical APIs in staggered order so first paint is not blocked. */
+function WarmCriticalApis() {
+  useEffect(() => {
+    prefetchApi("/api/v1/stocks?board=full", 12_000);
+    const t1 = window.setTimeout(() => prefetchApi("/api/v1/market/intel", 14_000), 400);
+    const t2 = window.setTimeout(() => prefetchApi("/api/v1/market/global", 12_000), 900);
+    const t3 = window.setTimeout(() => prefetchApi("/api/v1/forex/markets", 14_000), 1_200);
+    return () => {
+      clearTimeout(t1);
+      clearTimeout(t2);
+      clearTimeout(t3);
+    };
+  }, []);
+  return null;
+}
+
 export function ClientProviders({ children }: { children: ReactNode }) {
   useEffect(() => {
     prefetchMarketSnapshot();
@@ -27,8 +35,6 @@ export function ClientProviders({ children }: { children: ReactNode }) {
     <SWRConfig
       value={{
         provider: () => globalSwrCache,
-        // Avoid a request burst every time users return from another tab.
-        // Page hooks still opt into focus refresh when their settings allow it.
         revalidateOnFocus: false,
         revalidateOnReconnect: true,
         keepPreviousData: true,
@@ -44,6 +50,7 @@ export function ClientProviders({ children }: { children: ReactNode }) {
       <ErrorBoundary name="app-root">
         <PriceAlertMonitorHost />
         <PatternAlertMonitorHost />
+        <WarmCriticalApis />
         {children}
       </ErrorBoundary>
     </SWRConfig>
