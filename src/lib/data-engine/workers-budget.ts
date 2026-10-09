@@ -3,36 +3,42 @@ import "server-only";
 /**
  * Cloudflare Workers resource budget helpers.
  * Error 1102 = Worker exceeded resource limits (CPU / memory / subrequests).
- * Keep fan-out small; prefer sequential fallback over parallel race.
+ * Prefer sequential fallback over parallel race. Cap everything.
  */
 
 export const WORKERS_BUDGET = {
   /** Parallel outbound provider calls inside one request */
-  maxParallelProviders: 4,
+  maxParallelProviders: 3,
+  /** Approximate max subrequests per Worker invocation */
+  maxSubrequestsPerRequest: 28,
+  /** Wall budget for generic API handlers */
+  apiWallMs: 14_000,
+  /** Board load wall */
+  boardWallMs: 12_000,
   /** Bulk BCTC / snapshot concurrency */
-  snapshotConcurrency: 3,
+  snapshotConcurrency: 2,
   /** Screener default universe size (fundamental) */
-  screenerUniverse: 120,
+  screenerUniverse: 80,
   /** Screener hard max symbols */
-  screenerUniverseMax: 200,
+  screenerUniverseMax: 120,
   /** Technical screener universe (VN100-class) */
-  techUniverse: 100,
+  techUniverse: 60,
   /** OHLCV batch concurrency for technical screeners */
-  ohlcvBatchConcurrency: 6,
+  ohlcvBatchConcurrency: 4,
   /** OHLCV bars for detail page */
-  detailBars: 120,
+  detailBars: 100,
   /** OHLCV bars for technical screener */
-  screenerBars: 120,
+  screenerBars: 100,
   /** Soft timeout (ms) for a single provider call */
-  providerSoftMs: 5_000,
+  providerSoftMs: 4_000,
   /** Soft timeout for heavy FS package */
-  financialSoftMs: 9_000,
+  financialSoftMs: 7_000,
   /** Wall budget for entire detail produce */
-  detailWallMs: 18_000,
+  detailWallMs: 14_000,
   /** Wall budget for technical screener (candlestick / divergence) */
-  techScreenWallMs: 20_000,
+  techScreenWallMs: 16_000,
   /** Per-symbol OHLCV timeout in batch */
-  ohlcvPerSymbolMs: 3_000,
+  ohlcvPerSymbolMs: 2_500,
 } as const;
 
 export function clampUniverse(n: number | undefined, fallback = WORKERS_BUDGET.screenerUniverse): number {
