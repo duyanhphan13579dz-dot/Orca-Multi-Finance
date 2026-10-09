@@ -4,18 +4,25 @@ import { buildMeta } from "../freshness";
 import { hubVnQuotes } from "../data-engine";
 import { getVndValuationRatios, priceQuoteToVnd } from "../providers/vndirect-company";
 import { getFundamentalSnapshots, mapPool, normalizeSymbols, type FundamentalSnapshot } from "../financial/snapshots";
-import { sectorOf } from "../vn/master";
+import { sectorOf, getSecurity } from "../vn/master";
+
+function exchangeOf(symbol: string): string | null {
+  return getSecurity(symbol)?.exchange ?? null;
+}
 
 export type ValuationScreenRow = {
   symbol: string;
   sector: string | null;
+  exchange: string | null;
   price: number | null;
+  marketCap: number | null;
   pe: number | null;
   pb: number | null;
   ps: number | null;
   evEbitda: number | null;
   peg: number | null;
   fcfYieldPct: number | null;
+  dividendYieldPct: number | null;
   netDebtToEbitda: number | null;
   eps: number | null;
   niYoyPct: number | null;
@@ -27,6 +34,7 @@ export type ValuationScreenRow = {
 export type ValuationFilterOpts = {
   symbols?: string[];
   sector?: string;
+  exchange?: string;
   minPe?: number;
   maxPe?: number;
   minPb?: number;
@@ -38,11 +46,23 @@ export type ValuationFilterOpts = {
   maxPeg?: number;
   minFcfYield?: number;
   maxNetDebtEbitda?: number;
+  minDividendYield?: number;
+  maxDividendYield?: number;
+  minMarketCap?: number;
+  maxMarketCap?: number;
+  minPrice?: number;
+  maxPrice?: number;
   limit?: number;
 };
 
 export const DEFAULT_SYMBOLS =
   "VCB,BID,CTG,TCB,MBB,VPB,ACB,STB,HDB,VIB,LPB,SHB,FPT,HPG,VNM,VIC,VHM,VRE,NVL,PDR,GAS,PLX,MSN,MWG,SSI,VND,HCM,VCI,SHS,BSR,POW,REE,KDH,DXG,DCM,DPM,DGC,VHC,SAB,PNJ,GMD";
+
+function yieldRatioToPct(v: number | null | undefined): number | null {
+  if (v == null || !Number.isFinite(v) || v < 0) return null;
+  const ratio = v > 1 ? v / 100 : v;
+  return ratio <= 0.8 ? Number((ratio * 100).toFixed(2)) : null;
+}
 
 function positive(value: number | null | undefined, max: number): number | null {
   return value != null && Number.isFinite(value) && value > 0 && value <= max ? value : null;
@@ -62,7 +82,6 @@ function mergeValuation(
   const notes: string[] = [];
   if (ratios) notes.push("vnd-ratios");
 
-  // BCTC anchors fallback when ratios missing
   if (snap) {
     notes.push("bctc");
     const priceVnd = price != null ? priceQuoteToVnd(price) : null;
@@ -130,7 +149,6 @@ function mergeValuation(
 
   const netDebtToEbitda = snap?.netDebtToEbitda ?? null;
 
-  // Score: prefer reasonable multiples + growth + FCF
   let score = 0;
   let parts = 0;
   const add = (cond: boolean, pts: number) => {
@@ -154,13 +172,23 @@ function mergeValuation(
   return {
     symbol,
     sector: sectorOf(symbol),
+    exchange: exchangeOf(symbol),
     price,
+    marketCap: (() => {
+      const m = ratios?.marketCap;
+      if (m != null && m > 0) return m;
+      const pv = price != null ? priceQuoteToVnd(price) : null;
+      const sh = snap?.shares;
+      if (pv != null && sh != null && sh > 0) return pv * sh;
+      return null;
+    })(),
     pe,
     pb,
     ps,
     evEbitda,
     peg,
     fcfYieldPct,
+    dividendYieldPct: yieldRatioToPct(ratios?.dividendYield),
     netDebtToEbitda,
     eps,
     niYoyPct: niYoy,
@@ -172,6 +200,10 @@ function mergeValuation(
 
 function passes(row: ValuationScreenRow, f: ValuationFilterOpts): boolean {
   if (f.sector && row.sector !== f.sector) return false;
+  if (f.exchange) {
+    const ex = String(f.exchange).toUpperCase();
+    if (!row.exchange || row.exchange.toUpperCase() !== ex) return false;
+  }
   const check = (val: number | null, min?: number, max?: number) => {
     if (min != null && Number.isFinite(min) && (val == null || val < min)) return false;
     if (max != null && Number.isFinite(max) && (val == null || val > max)) return false;
@@ -190,12 +222,15 @@ function passes(row: ValuationScreenRow, f: ValuationFilterOpts): boolean {
     (row.netDebtToEbitda == null || row.netDebtToEbitda > f.maxNetDebtEbitda)
   )
     return false;
+  if (!check(row.dividendYieldPct, f.minDividendYield, f.maxDividendYield)) return false;
+  if (!check(row.marketCap, f.minMarketCap, f.maxMarketCap)) return false;
+  if (!check(row.price, f.minPrice, f.maxPrice)) return false;
   return true;
 }
 
 export async function screenValuation(opts: ValuationFilterOpts = {}) {
   const symbols = normalizeSymbols(opts.symbols, DEFAULT_SYMBOLS.split(","), 80);
-  const key = `screener:valuation:v2:${symbols.join(",")}`;
+  const key = `screener:valuation:v5:${symbols.join(",")}`;
 
   const result = await cached(key, {
     ttlMs: 8 * 60_000,
@@ -242,7 +277,7 @@ export async function screenValuation(opts: ValuationFilterOpts = {}) {
       cached: result.cached,
       stale: result.stale,
       partial: result.value.scanned > result.value.withData,
-      note: `P/E·P/B·P/S·EV/EBITDA + PEG/FCF yield từ BCTC · ${rows.length} khớp / ${result.value.withData} có data · BCTC ${result.value.bctcHit}`,
+      note: `P/E·P/B·P/S·EV/EBITDA + PEG/FCF/Div yield · ${rows.length} khớp / ${result.value.withData} có data · BCTC ${result.value.bctcHit}`,
     }),
   };
 }
