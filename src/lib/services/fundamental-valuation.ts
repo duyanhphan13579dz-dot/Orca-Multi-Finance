@@ -15,10 +15,12 @@ import {
   getVndValuationRatios,
   priceQuoteToVnd,
 } from "../providers/vndirect-company";
+import { getVietcapCompany } from "../providers/vietcap";
 import { getVnQuotes } from "./stocks";
 import { sectorOf } from "../vn/master";
 import { industryFairMultiples } from "../financial/industry-profiles";
 import { fetchFinancialStatementsMulti } from "../financial/fs-multi";
+import { resolveCapmInputs, type CapmInputs } from "../financial/valuation-capm";
 import type { Meta } from "../types";
 import type { NormalizedPeriod } from "../financial/types";
 
@@ -127,7 +129,7 @@ export async function runFundamentalValuation(
 
   const quoteP = getVnQuotes([symbol]).catch(() => null);
 
-  const equityP = cached(`fv:equity:${symbol}:v2`, {
+  const equityP = cached(`fv:equity:${symbol}:v3`, {
     ttlMs: 2 * 3_600_000,
     staleMs: 12 * 3_600_000,
     producer: async () => {
@@ -155,12 +157,29 @@ export async function runFundamentalValuation(
     ? collectPeerMetrics(symbol, 4).catch(() => null)
     : Promise.resolve(null);
 
-  const [fs, quotes, equity, vndRatios, peerPack] = await Promise.all([
+  const vietcapP = cached(`fv:vietcap:${symbol}:v1`, {
+    ttlMs: 30 * 60_000,
+    staleMs: 4 * 3_600_000,
+    producer: async () => {
+      const vc = await getVietcapCompany(symbol);
+      if (!vc) throw new Error(`vietcap unavailable: ${symbol}`);
+      return vc;
+    },
+  })
+    .then((r) => r.value)
+    .catch(() => null);
+
+  /** CAPM: Rf (macro) + beta (OHLCV) — soft-timeout inside resolveCapmInputs. */
+  const capmP = resolveCapmInputs(symbol, { skipBeta: !wantFull }).catch(() => null);
+
+  const [fs, quotes, equity, vndRatios, peerPack, vietcap, capm] = await Promise.all([
     fsP,
     quoteP,
     equityP,
     ratiosP,
     peersP,
+    vietcapP,
+    capmP,
   ]);
 
   const priceQuote =
@@ -202,9 +221,23 @@ export async function runFundamentalValuation(
 
   let sharesOutstanding: number | null = health.anchors?.shares ?? null;
   let sharesSource: string | null = sharesOutstanding != null ? "financial-statements" : null;
-  if (equity?.listedShare && equity.listedShare > 0) {
-    sharesOutstanding = equity.listedShare;
-    sharesSource = equity.source ?? "vndirect-equity";
+  // Prefer live equity snapshot (sharesOutstanding / totalShares) over FS anchors.
+  const eqShares = equity?.sharesOutstanding ?? equity?.totalShares ?? null;
+  if (eqShares != null && eqShares > 0) {
+    sharesOutstanding = eqShares;
+    sharesSource = equity?.source ?? "vndirect-equity";
+  }
+  // Vietcap IQ fallback when VNDirect equity is thin.
+  if ((sharesOutstanding == null || sharesOutstanding <= 0) && vietcap?.sharesOutstanding && vietcap.sharesOutstanding > 0) {
+    sharesOutstanding = vietcap.sharesOutstanding;
+    sharesSource = "vietcap";
+  }
+  // Patch health anchors so phase1 multiples use best shares estimate.
+  if (sharesOutstanding != null && sharesOutstanding > 0 && health.anchors) {
+    health = {
+      ...health,
+      anchors: { ...health.anchors, shares: sharesOutstanding },
+    };
   }
 
   const ttm = fs?.periods?.length ? buildTtmPeriod(fs.periods) : null;
@@ -217,13 +250,22 @@ export async function runFundamentalValuation(
     );
   }
 
+  const marketCapOverride =
+    (vndRatios?.marketCap != null && vndRatios.marketCap > 0 ? vndRatios.marketCap : null) ??
+    (equity?.marketCapReported != null && equity.marketCapReported > 0
+      ? equity.marketCapReported
+      : null) ??
+    (vietcap?.marketCap != null && vietcap.marketCap > 0 ? vietcap.marketCap : null);
+
+  if (capm?.notes?.length) notes.push(...capm.notes.slice(0, 4));
+
   const valuation = computeValuation({
     fairPe: industryFair.fairPe,
     fairPb: industryFair.fairPb,
     fairEvEbitda: industryFair.fairEvEbitda,
     price: priceQuote > 0 ? priceQuote : 1,
     priceVnd: priceVnd > 0 ? priceVnd : null,
-    marketCapOverride: vndRatios?.marketCap ?? null,
+    marketCapOverride,
     health,
     dividendYield: vndRatios?.dividendYield ?? null,
     ebitTtm: cfInputs.ebitTtm,
@@ -232,6 +274,11 @@ export async function runFundamentalValuation(
     capexTtm: cfInputs.capexTtm,
     deltaNwc: cfInputs.deltaNwc,
     netBorrowing: cfInputs.netBorrowing,
+    riskFreeRate: capm?.riskFreeRate ?? null,
+    beta: capm?.beta ?? null,
+    equityRiskPremium: capm
+      ? capm.equityRiskPremium + capm.countryRiskPremium
+      : null,
     peerComparison: peerPack?.peers?.length
       ? {
           symbol,
@@ -244,7 +291,7 @@ export async function runFundamentalValuation(
             evEbitda: saneMultiple(vndRatios?.evEbitda) ?? null,
             pfcf: null,
             dividendYield: yieldRatioToPct(vndRatios?.dividendYield),
-            marketCap: vndRatios?.marketCap ?? null,
+            marketCap: marketCapOverride,
           },
           peers: peerPack.peers,
         }
@@ -288,10 +335,13 @@ export async function runFundamentalValuation(
     fs?.periods?.length ? (fs as { sources?: string[] }).sources?.join("+") ?? "bctc" : null,
     equity?.source,
     vndRatios?.source,
+    vietcap ? "vietcap" : null,
+    capm ? `capm:${capm.sources.beta}+${capm.sources.riskFree}` : null,
     peerPack?.peers?.length ? "sector-peers" : null,
     industryFair.profileId,
   ].filter((part): part is string => Boolean(part));
 
+  const capmPayload: CapmInputs | null = capm;
   const data: Record<string, unknown> = {
     symbol,
     sharesOutstanding,
@@ -301,6 +351,19 @@ export async function runFundamentalValuation(
     health,
     valuation,
     detailedRatios,
+    /** CAPM stack used for Ke / WACC / DCF discount rate. */
+    capm: capmPayload
+      ? {
+          riskFreeRate: capmPayload.riskFreeRate,
+          beta: capmPayload.beta,
+          equityRiskPremium: capmPayload.equityRiskPremium,
+          countryRiskPremium: capmPayload.countryRiskPremium,
+          costOfEquity: capmPayload.costOfEquity,
+          sources: capmPayload.sources,
+          betaMeta: capmPayload.betaMeta,
+          notes: capmPayload.notes,
+        }
+      : null,
     industry: {
       id: industryFair.profileId,
       labelVi: industryFair.labelVi,
@@ -308,16 +371,19 @@ export async function runFundamentalValuation(
       fairPb: industryFair.fairPb,
       fairEvEbitda: industryFair.fairEvEbitda,
     },
-    marketRatios: vndRatios
-      ? {
-          pe: saneMultiple(vndRatios.pe),
-          pb: saneMultiple(vndRatios.pb),
-          ps: saneMultiple(vndRatios.ps),
-          evEbitda: saneMultiple(vndRatios.evEbitda),
-          dividendYield: yieldRatioToPct(vndRatios.dividendYield),
-          marketCap: vndRatios.marketCap,
-        }
-      : null,
+    marketRatios: {
+      pe: saneMultiple(vndRatios?.pe) ?? null,
+      pb: saneMultiple(vndRatios?.pb) ?? null,
+      ps: saneMultiple(vndRatios?.ps) ?? null,
+      evEbitda: saneMultiple(vndRatios?.evEbitda) ?? null,
+      dividendYield: yieldRatioToPct(vndRatios?.dividendYield),
+      marketCap: marketCapOverride,
+      marketCapSources: [
+        vndRatios?.marketCap ? "vndirect-ratios" : null,
+        equity?.marketCapReported ? "vndirect-equity" : null,
+        vietcap?.marketCap ? "vietcap" : null,
+      ].filter(Boolean),
+    },
     peers: peerPack,
     notes: allNotes,
     ttmPeriod: ttm?.period ?? null,
