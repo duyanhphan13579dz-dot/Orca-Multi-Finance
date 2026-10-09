@@ -259,10 +259,10 @@ export async function getVnMarketBoard(): Promise<{
   universeSize?: number;
   sessionDate?: string | null;
 } | null> {
-  // Tier 1: Prefer full cached market board from VNDirect (500+ stocks)
+  // Tier 1: Prefer full cached market board (multi-source + last-good inside)
   try {
     const fullBoard = await loadVnMarketBoardCached();
-    if (fullBoard && fullBoard.quotes.length >= 10) {
+    if (fullBoard && (fullBoard.quotes.length >= 1 || fullBoard.indices.length >= 1)) {
       return {
         indices: fullBoard.indices,
         quotes: fullBoard.quotes,
