@@ -70,11 +70,16 @@ async function fetchAll(): Promise<CommodityMarket> {
         const uniq = [...new Set(YAHOO_ENRICH.map((x) => x.yahoo))];
         const settled = await Promise.allSettled(
           uniq.map(async (y) => {
-            const q = await Promise.race([
-              getYahooQuote(y),
-              new Promise<null>((r) => setTimeout(() => r(null), 6_000)),
-            ]);
-            return { y, q };
+            let timer: ReturnType<typeof setTimeout> | undefined;
+            try {
+              const q = await Promise.race([
+                getYahooQuote(y),
+                new Promise<null>((r) => { timer = setTimeout(() => r(null), 1_200); }),
+              ]);
+              return { y, q };
+            } finally {
+              if (timer) clearTimeout(timer);
+            }
           }),
         );
         for (const s of settled) {

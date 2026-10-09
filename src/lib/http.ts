@@ -138,9 +138,9 @@ async function httpRequest<T>(url: string, opts: HttpOptions): Promise<HttpResul
         signal: controller.signal,
         cache: "no-store",
       });
-      clearTimeout(timer);
       lastStatus = res.status;
       const text = await res.text();
+      clearTimeout(timer);
       if (!res.ok) {
         lastError = `http_${res.status}`;
         recordFailure(provider, lastError);
