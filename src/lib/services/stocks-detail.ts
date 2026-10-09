@@ -23,6 +23,7 @@ import { getVnOrderBook, type VnOrderBook } from "./stock-orderbook";
 import { getVnQuotes, getVnOhlcv } from "./stocks-board";
 import { fetchOhlcvResilient } from "./screener-ohlcv";
 import { cached } from "../cache";
+import { WORKERS_BUDGET } from "../data-engine/workers-budget";
 
 export interface VnStockDetail {
   symbol: string;
@@ -57,7 +58,7 @@ export interface VnStockDetail {
 }
 
 /** Soft-timeout: never let one slow source hang the whole detail page. */
-async function soft<T>(p: Promise<T>, ms: number, label: string): Promise<T | null> {
+async function soft<T>(p: Promise<T>, ms: number, _label?: string): Promise<T | null> {
   try {
     return await Promise.race([
       p.then((v) => v).catch(() => null as T | null),
@@ -68,21 +69,63 @@ async function soft<T>(p: Promise<T>, ms: number, label: string): Promise<T | nu
   }
 }
 
+/**
+ * Produce stock detail under Workers resource budget (avoids Error 1102).
+ * Stage A (≤4 parallel): quote + OHLCV + profile + equity
+ * Stage B (≤3 parallel): ratios + orderbook + foreign — only if wall remains
+ * Stage C (sequential): financials — only if wall remains
+ * Dual OHLCV race is deferred (legacy first, resilient only on miss).
+ */
 async function produceVnStockDetail(sym: string): Promise<{ detail: VnStockDetail; meta: Meta } | null> {
   const failed: string[] = [];
   const notes: string[] = [];
-  const [quoteRes, ohlcvResilient, ohlcvLegacy, profileRes, equityRes, bookRes, foreignRes, finRes, valRatioRes] =
-    await Promise.all([
-      soft(getVnQuotes([sym]), 8_000, "quotes"),
-      soft(fetchOhlcvResilient(sym, 320), 10_000, "ohlcv-resilient"),
-      soft(getVnOhlcv(sym, 320), 8_000, "ohlcv-legacy"),
-      soft(getVndCompanyProfile(sym), 7_000, "profile"),
-      soft(getVndEquitySnapshot(sym), 7_000, "equity"),
-      soft(getVnOrderBook(sym), 5_000, "orderbook"),
-      soft(getVndSymbolForeignFlow(sym), 6_000, "foreign"),
-      soft(getFinancialsForSymbol(sym), 14_000, "financials"),
-      soft(getVndValuationRatios(sym), 7_000, "ratios"),
+  const wallStart = Date.now();
+  const wallLeft = () => WORKERS_BUDGET.detailWallMs - (Date.now() - wallStart);
+  const BARS = WORKERS_BUDGET.detailBars;
+  const softMs = WORKERS_BUDGET.providerSoftMs;
+
+  // Stage A — core (max 4 parallel)
+  const [quoteRes, ohlcvLegacy, profileRes, equityRes] = await Promise.all([
+    soft(getVnQuotes([sym]), softMs, "quotes"),
+    soft(getVnOhlcv(sym, BARS), Math.min(7_000, softMs + 2_000), "ohlcv"),
+    soft(getVndCompanyProfile(sym), softMs, "profile"),
+    soft(getVndEquitySnapshot(sym), softMs, "equity"),
+  ]);
+
+  // OHLCV resilient only if legacy empty and budget remains
+  let ohlcvResilient: Awaited<ReturnType<typeof fetchOhlcvResilient>> | null = null;
+  if (!(ohlcvLegacy?.bars?.length) && wallLeft() > 4_000) {
+    ohlcvResilient = await soft(fetchOhlcvResilient(sym, BARS), 6_000, "ohlcv-resilient");
+  }
+
+  // Stage B — secondary
+  let bookRes: Awaited<ReturnType<typeof getVnOrderBook>> | null = null;
+  let foreignRes: Awaited<ReturnType<typeof getVndSymbolForeignFlow>> | null = null;
+  let valRatioRes: Awaited<ReturnType<typeof getVndValuationRatios>> | null = null;
+  if (wallLeft() > 3_000) {
+    const secondary = await Promise.all([
+      soft(getVnOrderBook(sym), 3_500, "orderbook"),
+      soft(getVndSymbolForeignFlow(sym), 3_500, "foreign"),
+      soft(getVndValuationRatios(sym), softMs, "ratios"),
     ]);
+    bookRes = secondary[0];
+    foreignRes = secondary[1];
+    valRatioRes = secondary[2];
+  } else {
+    notes.push("skip:secondary-budget");
+  }
+
+  // Stage C — financials (heaviest)
+  let finRes: Awaited<ReturnType<typeof getFinancialsForSymbol>> | null = null;
+  if (wallLeft() > 5_000) {
+    finRes = await soft(
+      getFinancialsForSymbol(sym),
+      Math.min(WORKERS_BUDGET.financialSoftMs, Math.max(2_000, wallLeft() - 500)),
+      "financials",
+    );
+  } else {
+    notes.push("skip:financials-budget");
+  }
 
   let quote = quoteRes?.quotes?.[0] ?? null;
   if (!quote) {
@@ -205,10 +248,11 @@ async function produceVnStockDetail(sym: string): Promise<{ detail: VnStockDetai
     }
   }
 
+  // Alpha-beta optional — skip under tight budget (extra VNINDEX fetch).
   let alphaBeta: unknown = null;
-  if (bars.length >= 60) {
+  if (bars.length >= 60 && wallLeft() > 4_000) {
     try {
-      const idx = await getVnOhlcv("VNINDEX", 320).catch(() => null);
+      const idx = await soft(getVnOhlcv("VNINDEX", BARS), 4_000, "vnindex");
       if (idx?.bars?.length) {
         alphaBeta = computeAlphaBeta(bars, idx.bars);
       }
@@ -341,12 +385,8 @@ export async function getVnStockDetail(
       staleMs: 180_000,
       softSwr: true,
       producer: async () => {
-        let r = await produceVnStockDetail(sym);
-        const hasPrice = Boolean(r?.detail?.quote?.price && r.detail.quote.price > 0);
-        const hasBars = Boolean(r?.detail?.bars && r.detail.bars.length >= 20);
-        if (!hasPrice && !hasBars) {
-          r = await produceVnStockDetail(sym);
-        }
+        // Single produce — no double-retry (avoids 2× subrequest burn on Workers).
+        const r = await produceVnStockDetail(sym);
         if (!r) throw new Error(`detail unavailable: ${sym}`);
         return r;
       },
