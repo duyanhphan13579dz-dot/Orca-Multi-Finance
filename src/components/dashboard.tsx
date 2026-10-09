@@ -29,7 +29,6 @@ type GlobalMarket = {
   sources?: string[];
 };
 
-/** Minimal intel so Command Center still paints when /market/intel is slow/down. */
 function synthesizeIntel(board: StocksBoard | undefined): MarketIntel | null {
   const indices = board?.indices?.length ? board.indices : null;
   if (!indices?.length && !(board?.quotes?.length)) return null;
@@ -100,8 +99,8 @@ export function Dashboard() {
     mutate,
     error,
   } = useApi<MarketIntel>("/api/v1/market/intel", {
-    refreshInterval: 15_000,
-    timeoutMs: 22_000,
+    refreshInterval: 20_000,
+    timeoutMs: 14_000,
     keepPreviousData: true,
   });
 
@@ -110,14 +109,14 @@ export function Dashboard() {
     isLoading: boardLoading,
     mutate: mutateBoard,
   } = useApi<StocksBoard>("/api/v1/stocks?board=full", {
-    refreshInterval: 20_000,
-    timeoutMs: 22_000,
+    refreshInterval: 18_000,
+    timeoutMs: 12_000,
     keepPreviousData: true,
   });
 
   const { data: globalMkt } = useApi<GlobalMarket>("/api/v1/market/global", {
-    refreshInterval: 60_000,
-    timeoutMs: 15_000,
+    refreshInterval: 45_000,
+    timeoutMs: 12_000,
     keepPreviousData: true,
   });
 
@@ -126,7 +125,8 @@ export function Dashboard() {
     return synthesizeIntel(board);
   }, [intel, board]);
 
-  const stillBooting = isLoading && boardLoading && !displayIntel;
+  // Progressive paint: board alone is enough to leave skeleton
+  const stillBooting = !displayIntel && isLoading && boardLoading;
 
   if (stillBooting) {
     return <PageSkeleton variant="dashboard" title="Market Command Center" />;
