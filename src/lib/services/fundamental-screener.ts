@@ -9,6 +9,7 @@ import {
 import { hubVnQuotes } from "../data-engine";
 import { sectorOf, getSecurity, type VnExchange } from "../vn/master";
 import { resolveListedEquityUniverse, listedEquityUniverseSync } from "../financial/equity-universe";
+import { WORKERS_BUDGET, clampUniverse } from "../data-engine/workers-budget";
 
 function exchangeOf(symbol: string): string | null {
   return getSecurity(symbol)?.exchange ?? null;
@@ -45,7 +46,6 @@ export type FundamentalScreenRow = {
 export type FundamentalFilterOpts = {
   symbols?: string[];
   sector?: string;
-  /** HOSE | HNX | UPCOM */
   exchange?: VnExchange | string;
   minRoe?: number;
   maxRoe?: number;
@@ -73,7 +73,6 @@ export type FundamentalFilterOpts = {
   minRevenueYoy?: number;
   maxRevenueYoy?: number;
   maxNetDebtEbitda?: number;
-  /** Require FCF TTM > 0 when true-ish (1) */
   requirePositiveFcf?: boolean;
   minPrice?: number;
   maxPrice?: number;
@@ -198,17 +197,22 @@ function toRow(s: FundamentalSnapshot, price: number | null): FundamentalScreenR
 }
 
 export async function screenFundamental(opts: FundamentalFilterOpts = {}) {
-  let fallback = listedEquityUniverseSync(400);
+  const uniMax = clampUniverse(WORKERS_BUDGET.screenerUniverse);
+  let fallback = listedEquityUniverseSync(uniMax);
   try {
     if (!opts.symbols?.length) {
-      const uni = await resolveListedEquityUniverse({ max: 500 });
+      const uni = await resolveListedEquityUniverse({ max: uniMax });
       if (uni.symbols.length) fallback = uni.symbols;
     }
   } catch {
     /* master fallback */
   }
-  const symbols = normalizeSymbols(opts.symbols, fallback, opts.symbols?.length ? 600 : 500);
-  const cacheKey = `screener:fundamental:v4:${symbols.length}:${symbols.slice(0, 8).join(",")}`;
+  const symbols = normalizeSymbols(
+    opts.symbols,
+    fallback,
+    opts.symbols?.length ? Math.min(opts.symbols.length, WORKERS_BUDGET.screenerUniverseMax) : uniMax,
+  );
+  const cacheKey = `screener:fundamental:v5:${symbols.length}:${symbols.slice(0, 8).join(",")}`;
 
   const result = await cached(cacheKey, {
     ttlMs: 20 * 60_000,
@@ -216,7 +220,7 @@ export async function screenFundamental(opts: FundamentalFilterOpts = {}) {
     softSwr: true,
     producer: async () => {
       const [snapPack, quotes] = await Promise.all([
-        getFundamentalSnapshots(symbols, { concurrency: 10, persist: true }),
+        getFundamentalSnapshots(symbols, { concurrency: WORKERS_BUDGET.snapshotConcurrency, persist: true }),
         hubVnQuotes(symbols).catch(() => null),
       ]);
       const quoteMap = new Map((quotes?.quotes ?? []).map((q) => [q.symbol, q]));
@@ -251,7 +255,7 @@ export async function screenFundamental(opts: FundamentalFilterOpts = {}) {
       cached: result.cached,
       stale: result.stale,
       partial: result.value.scanned > result.value.withData,
-      note: `BCTC toàn sàn · ${rows.length} khớp / ${result.value.withData} có data / ${result.value.scanned} quét · ROE·ROIC·biên·đòn bẩy·coverage`,
+      note: `BCTC · ${rows.length} khớp / ${result.value.withData} có data / ${result.value.scanned} quét`,
     }),
   };
 }
