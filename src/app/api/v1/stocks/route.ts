@@ -7,7 +7,7 @@ import { LIQUID_BOARD } from "@/lib/providers/public-vn-feed";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
-export const maxDuration = 30;
+export const maxDuration = 45;
 
 /**
  * GET /api/v1/stocks
@@ -56,8 +56,8 @@ export async function GET(req: Request) {
           },
           {
             "Cache-Control": market.meta.stale
-              ? "private, max-age=5, stale-while-revalidate=30"
-              : "private, max-age=8, stale-while-revalidate=25",
+              ? "private, max-age=8, stale-while-revalidate=60"
+              : "private, max-age=10, stale-while-revalidate=40",
           },
         );
       }
