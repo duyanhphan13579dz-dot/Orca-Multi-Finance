@@ -23,12 +23,19 @@ const nextConfig: NextConfig = {
   typescript: { ignoreBuildErrors: true },
   output: "standalone",
   // Keep heavy Node-only packages out of the Next server bundle.
-  serverExternalPackages: ["pg", "playwright", "playwright-core"],
+  // pg-cloudflare must travel with pg — OpenNext/esbuild resolves it from pg/lib/stream.js.
+  serverExternalPackages: ["pg", "pg-cloudflare", "playwright", "playwright-core"],
   // Cloudflare Workers (OpenNext): `pg` loads `pg-cloudflare` for TCP sockets via the
   // "workerd" export condition, but Next traces with the default condition and would
-  // copy only `dist/empty.js`. Force the real entry files into the trace.
+  // copy only `dist/empty.js`. Force the real entry files into the trace for both
+  // bun (flat node_modules) and pnpm layouts.
   outputFileTracingIncludes: {
-    "/**": ["./node_modules/.pnpm/pg-cloudflare@*/node_modules/pg-cloudflare/{dist,esm}/**/*"],
+    "/**": [
+      "./node_modules/pg-cloudflare/dist/**/*",
+      "./node_modules/pg-cloudflare/esm/**/*",
+      "./node_modules/pg-cloudflare/package.json",
+      "./node_modules/.pnpm/pg-cloudflare@*/node_modules/pg-cloudflare/{dist,esm,package.json}/**/*",
+    ],
   },
   experimental: {
     optimizePackageImports: ["lucide-react", "lightweight-charts"],

@@ -2,52 +2,13 @@ import "server-only";
 
 export type MarketSourceId =
   | "vndirect"
-  | "vndirect-dchart"
   | "vps"
-  | "vps-hist"
   | "ssi-iboard"
   | "ssi-fcdata"
   | "vietcap"
   | "public-vn"
   | "yahoo-public"
   | "entrade";
-
-/** Map an OHLCV/quote source label (e.g. `public:yahoo`) to a monitor id. */
-export function marketSourceIdFor(label: string): MarketSourceId | null {
-  const raw = String(label ?? "").toLowerCase().trim();
-  if (!raw) return null;
-  const tail = raw.includes(":") ? raw.slice(raw.lastIndexOf(":") + 1) : raw;
-  switch (tail) {
-    case "vndirect":
-      return "vndirect";
-    case "vndirect-dchart":
-    case "dchart":
-      return "vndirect-dchart";
-    case "vps":
-      return "vps";
-    case "vps-hist":
-    case "vps-histdatafeed":
-      return "vps-hist";
-    case "ssi-iboard":
-      return "ssi-iboard";
-    case "ssi-fcdata":
-      return "ssi-fcdata";
-    case "vietcap":
-      return "vietcap";
-    case "entrade":
-      return "entrade";
-    case "yahoo":
-    case "yahoo-vn":
-    case "yahoo-public":
-    case "yahoo-asia":
-      return "yahoo-public";
-    case "public":
-    case "public-vn":
-      return "public-vn";
-    default:
-      return null;
-  }
-}
 
 type Sample = { ok: boolean; latencyMs: number; at: number };
 
@@ -98,9 +59,7 @@ export function getMarketSourceMonitor() {
     (
       [
         "vndirect",
-        "vndirect-dchart",
         "vps",
-        "vps-hist",
         "ssi-iboard",
         "ssi-fcdata",
         "vietcap",

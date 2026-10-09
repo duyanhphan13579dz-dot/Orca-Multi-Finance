@@ -12,53 +12,67 @@ const BASE = "https://bgapidatafeed.vps.com.vn";
 const CHUNK = 40;
 
 interface VpsRow {
+  sym?: string;
+  symCode?: string;
   stock_code?: string;
   stockCode?: string;
-  last_price?: number;
-  lastPrice?: number;
-  change_price?: number;
-  changePrice?: number;
-  change_percent?: number;
-  changePercent?: number;
-  total_vol?: number;
-  totalVol?: number;
-  total_val?: number;
-  totalVal?: number;
-  high_price?: number;
-  highPrice?: number;
-  low_price?: number;
-  lowPrice?: number;
-  open_price?: number;
-  openPrice?: number;
-  ref_price?: number;
-  refPrice?: number;
-  ceiling_price?: number;
-  ceilingPrice?: number;
-  floor_price?: number;
-  floorPrice?: number;
+  lastPrice?: number | string;
+  last_price?: number | string;
+  ot?: number | string;
+  changePrice?: number | string;
+  change_price?: number | string;
+  changePc?: number | string;
+  changePercent?: number | string;
+  change_percent?: number | string;
+  lot?: number | string;
+  totalVol?: number | string;
+  total_vol?: number | string;
+  totalVal?: number | string;
+  total_val?: number | string;
+  highPrice?: number | string;
+  high_price?: number | string;
+  lowPrice?: number | string;
+  low_price?: number | string;
+  openPrice?: number | string;
+  open_price?: number | string;
+  r?: number | string;
+  refPrice?: number | string;
+  ref_price?: number | string;
+  c?: number | string;
+  ceilingPrice?: number | string;
+  ceiling_price?: number | string;
+  f?: number | string;
+  floorPrice?: number | string;
+  floor_price?: number | string;
 }
 
+const num = (v: unknown): number | null => {
+  if (v == null || v === "") return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+};
+
 function mapRow(r: VpsRow): Quote | null {
-  const code = (r.stock_code ?? r.stockCode ?? "").toUpperCase();
+  const code = String(r.sym ?? r.stock_code ?? r.stockCode ?? "").toUpperCase();
   if (!code) return null;
-  const last = Number(r.last_price ?? r.lastPrice ?? 0);
-  if (!last || !Number.isFinite(last)) return null;
-  const change = Number(r.change_price ?? r.changePrice ?? 0);
-  const changePercent = Number(r.change_percent ?? r.changePercent ?? 0);
+  const last = num(r.lastPrice ?? r.last_price);
+  if (!last || last <= 0) return null;
+  const change = num(r.ot ?? r.changePrice ?? r.change_price);
+  const changePercent = num(r.changePc ?? r.changePercent ?? r.change_percent);
   return {
     symbol: code,
     assetClass: "stock",
     price: last,
-    change: Number.isFinite(change) ? change : null,
-    changePercent: Number.isFinite(changePercent) ? changePercent : null,
-    volume: Number(r.total_vol ?? r.totalVol ?? 0) || null,
-    quoteVolume: Number(r.total_val ?? r.totalVal ?? 0) || null,
-    high: Number(r.high_price ?? r.highPrice ?? 0) || null,
-    low: Number(r.low_price ?? r.lowPrice ?? 0) || null,
-    open: Number(r.open_price ?? r.openPrice ?? 0) || null,
-    referencePrice: Number(r.ref_price ?? r.refPrice ?? 0) || null,
-    ceilingPrice: Number(r.ceiling_price ?? r.ceilingPrice ?? 0) || null,
-    floorPrice: Number(r.floor_price ?? r.floorPrice ?? 0) || null,
+    change,
+    changePercent,
+    volume: num(r.lot ?? r.totalVol ?? r.total_vol),
+    quoteVolume: num(r.totalVal ?? r.total_val),
+    high: num(r.highPrice ?? r.high_price),
+    low: num(r.lowPrice ?? r.low_price),
+    open: num(r.openPrice ?? r.open_price),
+    referencePrice: num(r.r ?? r.refPrice ?? r.ref_price),
+    ceilingPrice: num(r.c ?? r.ceilingPrice ?? r.ceiling_price),
+    floorPrice: num(r.f ?? r.floorPrice ?? r.floor_price),
     updatedAt: new Date().toISOString(),
   };
 }
@@ -70,7 +84,8 @@ async function fetchChunk(syms: string[]): Promise<Quote[]> {
     retries: 1,
     headers: {
       Accept: "application/json",
-      "User-Agent": "Orca-Multi-Finance/1.0",
+      "User-Agent":
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
     },
   });
   if (!res.ok || !Array.isArray(res.data)) return [];

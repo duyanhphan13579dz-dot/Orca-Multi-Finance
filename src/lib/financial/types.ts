@@ -100,6 +100,12 @@ export interface FinancialPackageMeta {
   note: string | null;
   ttmPeriod: string | null;
   hasGrowth: boolean;
+  /** Direct VNDirect DStock statement source URLs */
+  sourceUrls?: {
+    balance: string;
+    income: string;
+    cashflow: string;
+  };
   /** Phase 5 */
   qualityScore: number | null;
   qualityStatus: "VALID" | "SUSPECT" | "STALE" | "INVALID" | "UNVERIFIED" | null;

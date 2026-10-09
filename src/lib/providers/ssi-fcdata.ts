@@ -475,17 +475,8 @@ async function loadDayBoard(fromDate: string, toDate: string): Promise<{
   }
 }
 
-/** Per-symbol fallback lookups: batch size, parallel batches and hard cap per call. */
-const SSI_FALLBACK_BATCH = 8;
-const SSI_FALLBACK_CONCURRENCY = 2;
-const SSI_FALLBACK_MAX = 40;
-
 export async function getSsiQuotes(symbols: string[]): Promise<{ quotes: Quote[]; sourceTs: number | null }> {
-  // No silent truncation: the day board already covers the whole market, so every
-  // requested symbol is looked up there. Only symbols the board does not contain
-  // (delisted/halted/new listings) cost an extra per-symbol request, and that path
-  // is batched + capped instead of dropping the tail of the request.
-  const uniq = [...new Set(symbols.map((s) => s.toUpperCase()).filter(Boolean))];
+  const uniq = [...new Set(symbols.map((s) => s.toUpperCase()).filter(Boolean))].slice(0, 40);
   if (!uniq.length) return { quotes: [], sourceTs: null };
 
   const today = formatSsiDate();
@@ -499,10 +490,9 @@ export async function getSsiQuotes(symbols: string[]): Promise<{ quotes: Quote[]
     else missing.push(s);
   }
 
-  const lookups = missing.slice(0, SSI_FALLBACK_MAX);
-  for (let i = 0; i < lookups.length; i += SSI_FALLBACK_BATCH * SSI_FALLBACK_CONCURRENCY) {
-    const wave = lookups.slice(i, i + SSI_FALLBACK_BATCH * SSI_FALLBACK_CONCURRENCY);
-    const results = await Promise.allSettled(wave.map((s) => getSsiDailyStockPrice(s)));
+  if (missing.length) {
+    const chunk = missing.slice(0, 8);
+    const results = await Promise.allSettled(chunk.map((s) => getSsiDailyStockPrice(s)));
     for (const r of results) {
       if (r.status !== "fulfilled") continue;
       const sorted = [...r.value.quotes].sort((a, b) => {

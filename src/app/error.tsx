@@ -20,9 +20,6 @@ export default function AppError({
       <p className="text-[13px] leading-relaxed text-text-secondary">
         Module vừa gặp sự cố không mong muốn. Dữ liệu khác vẫn có thể hoạt động bình thường — thử tải lại khung này.
       </p>
-      {error?.digest ? (
-        <p className="text-[11px] text-text-muted">Mã lỗi: {error.digest}</p>
-      ) : null}
       <button
         type="button"
         onClick={() => reset()}

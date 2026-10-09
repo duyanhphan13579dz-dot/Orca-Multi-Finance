@@ -12,28 +12,17 @@ const scopedPools = new WeakMap<object, Pool>();
 const scopedDbs = new WeakMap<object, Db>();
 
 type RuntimeDbConfig = { scope: object | null; connectionString: string | null };
-function usableUrl(v: string | undefined): string | null {
-  const url = v?.trim();
-  return url && !url.includes("<") && !url.includes(">") && !url.includes("example.com") ? url : null;
-}
-
 function runtimeDbConfig(): RuntimeDbConfig {
-  let runtime: { env?: Record<string, unknown>; ctx?: object } | null = null;
   try {
-    runtime = getCloudflareContext() as unknown as { env?: Record<string, unknown>; ctx?: object };
-  } catch {
-    // Ngoài request của Worker (CLI/test/build): dùng pool toàn cục với DATABASE_URL.
-  }
-  if (runtime) {
-    // Trong Worker, kết nối I/O KHÔNG được dùng chung giữa các request
-    // ("Cannot perform I/O on behalf of a different request") → luôn tạo pool theo request,
-    // dù qua Hyperdrive (ưu tiên) hay trực tiếp bằng DATABASE_URL.
+    const runtime = getCloudflareContext() as unknown as { env?: Record<string, unknown>; ctx?: object };
     const hyperdrive = runtime.env?.HYPERDRIVE as { connectionString?: string } | undefined;
-    const connectionString = usableUrl(hyperdrive?.connectionString) ?? usableUrl(process.env.DATABASE_URL);
-    const scope = runtime.ctx ?? runtime.env ?? null;
-    if (scope) return { scope, connectionString };
+    const connectionString = hyperdrive?.connectionString?.trim();
+    if (connectionString) return { scope: runtime.ctx ?? runtime.env ?? null, connectionString };
+  } catch {
+    // Outside a Worker request (e.g. local CLI/tests), use DATABASE_URL.
   }
-  return { scope: null, connectionString: usableUrl(process.env.DATABASE_URL) };
+  const url = process.env.DATABASE_URL?.trim();
+  return { scope: null, connectionString: url && !url.includes("<") && !url.includes(">") && !url.includes("example.com") ? url : null };
 }
 
 /** Is a database URL configured? Lets ops endpoints report honestly without throwing. */
@@ -108,7 +97,7 @@ export function getPool(): Pool {
   if (config.scope) {
     const existing = scopedPools.get(config.scope);
     if (existing) return existing;
-    const pool = config.connectionString ? new Pool({ connectionString: config.connectionString, max: 4, idleTimeoutMillis: 1_000 }) : createMockPool();
+    const pool = config.connectionString ? new Pool({ connectionString: config.connectionString, max: 5, idleTimeoutMillis: 1_000 }) : createMockPool();
     scopedPools.set(config.scope, pool);
     return pool;
   }

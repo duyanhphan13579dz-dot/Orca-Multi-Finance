@@ -3,54 +3,16 @@
 Mọi provider phía sau **Provider Adapter Interface** và bị metadata health giám sát:
 `provider · status · last_success · last_failure · latency (last/EMA) · circuit · recent events`.
 
-Catalog chuẩn (id khớp provider id runtime) nằm ở `src/lib/data-engine/catalog.ts` và được
-phơi ra tại `GET /api/v1/system/connectivity` (probe thật từng nguồn) + `/system/providers`.
-
 ## Registry (priority)
 
 | Domain | Primary | Fallbacks |
 | --- | --- | --- |
-| Market data cổ phiếu VN (quotes/board) | VNDirect (snapshot toàn board + per-symbol) | VPS `getliststockdata` · SSI iBoard · Vietcap · SSI FastConnect (nếu cấu hình) |
-| OHLCV cổ phiếu/chỉ số VN | VNDirect `stock_prices`/`vnmarket_prices` | VNDirect dchart (host khác) · Entrade · VPS TradingView history · Yahoo `.VN`/`^VNINDEX` · SSI FastConnect (nếu cấu hình) |
-| Universe niêm yết | VNDirect `/v4/stocks` (+ recent listings) | SSI iBoard HOSE/HNX/UPCoM · `LIQUID_BOARD` fallback (đánh dấu partial) |
+| Market data cổ phiếu VN | VNDirect | SSI FastConnect (nếu cấu hình), VPS/Vietcap/nguồn công khai theo từng API |
 | BCTC cổ phiếu VN | VNDirect DStock / api-finfo | VNStock API khi có cả `VNSTOCK_BASE_URL` và `VNSTOCK_API_KEY` |
-| Hồ sơ/ratios doanh nghiệp | VNDirect `/v4/company_profiles`, `/v4/ratios`, `/v4/shareholders` | — |
-| crypto | Binance spot REST (`api.binance.com` → `api{1,2}.binance.com` → `data-api.binance.vision`) | CoinGecko (public/proxy) khi Binance bất khả dụng; Binance fapi cho futures (geo-dependent) |
-| forex | Biquote (env) · Biquote public OHLC | exchangerate-api open latest; Frankfurter/ECB daily history + previous fix; Yahoo `=X` |
-| commodities | Vietnambiz data portal | Yahoo futures enrichment (GC=F, CL=F…); Simplize/MSN khi có env |
+| crypto | Binance spot REST (`api.binance.com` → `api{1,2}.binance.com` → `data-api.binance.vision`) | Binance fapi cho futures (geo-dependent) |
+| forex | Biquote (env) | exchangerate-api open latest; Frankfurter/ECB daily history + previous fix |
+| commodities | Vietnambiz (SJC gold board) · Simplize (env key) | MSN Finance quotes (env instrument map) · Binance PAXGUSDT (vàng) |
 | news | CafeF, VnExpress, VietnamBiz, CoinTelegraph RSS | từng feed độc lập; partial-success vẫn được phục vụ kèm note |
-| phái sinh / lãi suất | HNX derivatives | VSDC specs & margin schedule |
-
-## Đường đi dữ liệu market/stock (đã nối)
-
-1. **Toàn board 1 lần gọi**: `getVndMarketSnapshot()` (`providers/vndirect-market-quotes.ts`) lấy cả
-   HOSE/HNX/UPCoM qua `/v4/stock_prices?size=500&page=N` (page 1 trước, các page sau song song 4),
-   dừng sớm khi đã phủ đủ danh sách yêu cầu, cache 8s trong phiên / 45s ngoài phiên.
-   Multi-quote dùng snapshot khi request ≥ 20 mã, per-symbol khi ít hơn.
-2. **Quote race**: `multi-quote.ts` tier 1 ∥ VNDirect + VPS + SSI iBoard → tier 2 ∥ Vietcap + public-vn
-   khi coverage < 75% (`MULTI_SOURCE_MODE=aggressive` để luôn chạy tier 2). Conflict giá được đếm
-   (`1.5%` hoặc `200đ`) và ghi vào meta, không trung bình provider.
-3. **OHLCV race**: `stocks-board.getVnOhlcv` ∥ VNDirect api-finfo · VNDirect dchart · Entrade · VPS-hist ·
-   Yahoo (`.VN`, `^VNINDEX`…) · SSI FastConnect nếu có credentials — chọn chuỗi ≥ 20 nến rồi dài nhất,
-   cache `vn:ohlcv:{sym}:{limit}` 60s/stale 30m. Nguồn thắng được ghi vào `market-source-monitor`.
-4. **Chart timeframe**: `vnStockChartPlan()` route 1m/5m/15m/30m/1h → dchart native, 4h → tổng hợp từ 1h,
-   1w/1M/12M → tổng hợp từ daily, 1d → daily race (trước đây mọi timeframe đều trả nến daily).
-5. **Universe**: `services/vn-universe.ts` gộp VNDirect `/v4/stocks` (LISTED + recent) với SSI iBoard,
-   cache 6h/stale 36h; `getVnUniverseList()` dùng nó trước khi hạ xuống board quotes/LIQUID_BOARD.
-6. **Board toàn thị trường**: `GET /api/v1/stocks?universe=all[&exchange=HOSE&limit=]` phục vụ cả
-   danh sách niêm yết từ cache board (`vn-market-board:v3`).
-
-## Self-test kết nối
-
-- `GET /api/v1/system/connectivity` — probe song song mọi nguồn trong catalog (public GET rẻ, timeout
-  mặc định 2.5s), trả `status=ok|fail|circuit_open|not_configured`, latency, `routes[domain]` (thứ tự
-  fallback theo health + latency) và danh sách nguồn công khai chưa nối adapter.
-- `?force=1` bỏ cache 20s; `?timeout=5000` nới budget probe.
-- Nguồn cần env (`VNSTOCK_BASE_URL`+`VNSTOCK_API_KEY`, `POLYGON_API_KEY` *hoặc*
-  `POLYGON_API_BASE_URL`, `BIQUOTE_BASE_URL`, `DERIVATIVES_QUOTE_URL`) được đánh `not_configured`
-  thay vì báo lỗi sai — nhưng khi env đã có thì probe chạy thật tới endpoint runtime dùng
-  (`/v1/market/indices`, `/v2/snapshot/.../tickers/AAPL`) kèm header/key tương ứng.
-- UI: panel “Kiểm tra kết nối nguồn dữ liệu” trong `/system`.
 
 ## Interface conventions
 

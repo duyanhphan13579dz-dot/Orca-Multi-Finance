@@ -10,10 +10,15 @@ import type { CandlePattern, Meta, OhlcvBar, Quote, TechnicalSnapshot } from "..
 import {
   getVndCompanyProfile,
   getVndEquitySnapshot,
+  getVndValuationRatios,
   type VndCompanyProfile,
   type VndEquitySnapshot,
+  type VndValuationRatios,
 } from "../providers/vndirect-company";
+import { lookupVndSymbol } from "../providers/vndirect-universe";
 import { getVndSymbolForeignFlow } from "../providers/vndirect-foreign-symbol";
+import { getVietcapCompany } from "../providers/vietcap";
+import { getVpsQuotes } from "../providers/vps";
 import { getVnOrderBook, type VnOrderBook } from "./stock-orderbook";
 import { getVnQuotes, getVnOhlcv } from "./stocks-board";
 
@@ -52,7 +57,7 @@ export interface VnStockDetail {
 async function produceVnStockDetail(sym: string): Promise<{ detail: VnStockDetail; meta: Meta } | null> {
   const failed: string[] = [];
   const notes: string[] = [];
-  const [quoteRes, ohlcvRes, profileRes, equityRes, bookRes, foreignRes, finRes] = await Promise.all([
+  const [quoteRes, ohlcvRes, profileRes, equityRes, bookRes, foreignRes, finRes, valRatioRes] = await Promise.all([
     getVnQuotes([sym]).catch(() => null),
     getVnOhlcv(sym, 320).catch(() => null),
     getVndCompanyProfile(sym).catch(() => null),
@@ -60,11 +65,105 @@ async function produceVnStockDetail(sym: string): Promise<{ detail: VnStockDetai
     getVnOrderBook(sym).catch(() => null),
     getVndSymbolForeignFlow(sym).catch(() => null),
     getFinancialsForSymbol(sym).catch(() => null),
+    getVndValuationRatios(sym).catch(() => null),
   ]);
 
-  const quote = quoteRes?.quotes?.[0] ?? null;
+  let quote = quoteRes?.quotes?.[0] ?? null;
+  if (!quote) {
+    const vps = await getVpsQuotes([sym]).catch(() => []);
+    if (vps[0]) quote = vps[0];
+  }
+
+  let profile = profileRes ?? null;
+  let equity = equityRes ?? null;
+
+  if (!profile) {
+    try {
+      const u = await lookupVndSymbol(sym);
+      if (u) {
+        profile = {
+          code: sym,
+          floor: u.exchange,
+          logo: `https://www.vndirect.com.vn/vndirect-resource/nextcom/attachment/LOGO/${sym}.jpg`,
+          vnName: u.name,
+          enName: null,
+          foundDate: null,
+          taxCode: null,
+          vnAddress: null,
+          phone: null,
+          fax: null,
+          website: null,
+          email: null,
+          employees: null,
+          vnSummary: null,
+          enSummary: null,
+        };
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
+  if (!quote || !profile || !equity) {
+    try {
+      const vietcapData = await getVietcapCompany(sym).catch(() => null);
+      if (vietcapData) {
+        if (!quote && vietcapData.price) {
+          const p = vietcapData.price >= 1000 ? vietcapData.price / 1000 : vietcapData.price;
+          quote = {
+            symbol: sym,
+            assetClass: "stock",
+            price: p,
+            name: vietcapData.name,
+            change: null,
+            changePercent: null,
+            volume: null,
+            quoteVolume: null,
+            high: null,
+            low: null,
+            open: null,
+            referencePrice: null,
+            ceilingPrice: null,
+            floorPrice: null,
+            updatedAt: new Date().toISOString(),
+          };
+        }
+        if (!profile) {
+          profile = {
+            code: sym,
+            floor: vietcapData.exchange,
+            logo: null,
+            vnName: vietcapData.name,
+            enName: vietcapData.nameEn,
+            foundDate: null,
+            taxCode: null,
+            vnAddress: null,
+            phone: null,
+            fax: null,
+            website: null,
+            email: null,
+            employees: null,
+            vnSummary: null,
+            enSummary: null,
+          };
+        }
+        if (!equity && (vietcapData.sharesOutstanding || vietcapData.marketCap)) {
+          equity = {
+            sharesOutstanding: vietcapData.sharesOutstanding,
+            totalShares: vietcapData.sharesOutstanding,
+            marketCapReported: vietcapData.marketCap,
+            reportDate: null,
+            source: "vietcap",
+          };
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
   if (!quote) failed.push("quote");
-  const name = quote?.name ?? (profileRes as { vnName?: string } | null)?.vnName ?? null;
+  const name = quote?.name ?? (profile as { vnName?: string } | null)?.vnName ?? null;
   const bars = ohlcvRes?.bars ?? [];
   if (!bars.length) failed.push("ohlcv");
 
@@ -91,8 +190,6 @@ async function produceVnStockDetail(sym: string): Promise<{ detail: VnStockDetai
     }
   }
 
-  const equity = equityRes ?? null;
-  const profile = profileRes ?? null;
   const orderBook = bookRes?.book ?? null;
   const foreignFlow = foreignRes
     ? { latest: foreignRes.latest ?? null, history: foreignRes.history ?? null }
@@ -104,10 +201,36 @@ async function produceVnStockDetail(sym: string): Promise<{ detail: VnStockDetai
   const financialGrowth = finRes?.growth ?? null;
   const financialTtm = finRes?.ttm ?? null;
 
+  const ratioMap: Record<string, unknown> = {};
+  if (valRatioRes) {
+    if (valRatioRes.pe != null) ratioMap.pe = valRatioRes.pe;
+    if (valRatioRes.pb != null) ratioMap.pb = valRatioRes.pb;
+    if (valRatioRes.ps != null) ratioMap.ps = valRatioRes.ps;
+    if (valRatioRes.evEbitda != null) ratioMap.evEbitda = valRatioRes.evEbitda;
+    if (valRatioRes.eps != null) ratioMap.eps = valRatioRes.eps;
+    if (valRatioRes.bvps != null) ratioMap.bvps = valRatioRes.bvps;
+    if (valRatioRes.roe != null) ratioMap.roe = valRatioRes.roe;
+    if (valRatioRes.roa != null) ratioMap.roa = valRatioRes.roa;
+    if (valRatioRes.dividendYield != null) ratioMap.dividendYield = valRatioRes.dividendYield;
+    if (valRatioRes.marketCap != null) ratioMap.marketCap = valRatioRes.marketCap;
+  }
+
+  const detailedRatios = valRatioRes
+    ? {
+        marketCap: valRatioRes.marketCap ?? equity?.marketCapReported ?? null,
+        flat: Object.entries(ratioMap).map(([key, value]) => ({
+          key,
+          value: typeof value === "number" ? value : null,
+        })),
+        ...ratioMap,
+      }
+    : null;
+
   const sources = [
     quoteRes?.meta?.source,
     ohlcvRes?.meta?.source,
     finRes?.meta?.source,
+    valRatioRes?.source,
   ].filter(Boolean) as string[];
 
   if (failed.length) notes.push(`missing: ${failed.join(",")}`);
@@ -121,7 +244,7 @@ async function produceVnStockDetail(sym: string): Promise<{ detail: VnStockDetai
     technical,
     patterns,
     equity,
-    sharesOutstanding: equity?.listedShare ?? equity?.outstandingShare ?? null,
+    sharesOutstanding: equity?.sharesOutstanding ?? equity?.totalShares ?? null,
     profile,
     orderBook,
     foreignFlow,
@@ -130,8 +253,8 @@ async function produceVnStockDetail(sym: string): Promise<{ detail: VnStockDetai
     financialMeta,
     financialGrowth,
     financialTtm,
-    detailedRatios: null,
-    ratioMap: {},
+    detailedRatios,
+    ratioMap,
     metricsSources: sources,
     notes,
   };

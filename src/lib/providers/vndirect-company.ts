@@ -157,32 +157,71 @@ export async function getVndShareholders(symbol: string, size = 30): Promise<Vnd
   }
 }
 
-export async function getVndEquitySnapshot(symbol: string): Promise<VndEquitySnapshot | null> {
+export async function getVndValuationRatios(symbol: string): Promise<VndValuationRatios | null> {
   const sym = symbol.toUpperCase().replace(/[^A-Z0-9]/g, "");
   if (!sym) return null;
   try {
     const payload = (
       await vndirectJson<{ data?: Record<string, unknown>[] }>(
-        `/v4/stock_prices?q=code:${encodeURIComponent(sym)}&size=1&sort=date:desc`,
+        `/v4/ratios?q=code:${encodeURIComponent(sym)}&size=100&sort=reportDate:desc`,
         {
           provider: VND,
           timeoutMs: 10_000,
-          retries: 1,
-          accept: (value) => Array.isArray(value.data),
+          retries: 2,
+          accept: (value) => Array.isArray(value.data) && value.data.length > 0,
         },
       )
     ).data;
-    const row = payload.data?.[0];
-    if (!row) return null;
+    const rows = payload.data ?? [];
+    if (!rows.length) return null;
+
     const n = (v: unknown) => {
       const x = Number(v);
       return Number.isFinite(x) ? x : null;
     };
+
+    let pe: number | null = null;
+    let pb: number | null = null;
+    let ps: number | null = null;
+    let evEbitda: number | null = null;
+    let eps: number | null = null;
+    let bvps: number | null = null;
+    let roe: number | null = null;
+    let roa: number | null = null;
+    let dividendYield: number | null = null;
+    let marketCap: number | null = null;
+    let reportDate: string | null = null;
+
+    for (const r of rows) {
+      const rc = String(r.ratioCode ?? "").toUpperCase();
+      const val = n(r.value);
+      if (val == null) continue;
+      if (!reportDate && typeof r.reportDate === "string") reportDate = r.reportDate;
+
+      if (rc === "PRICE_TO_EARNINGS" && pe == null) pe = val;
+      if (rc === "PRICE_TO_BOOK" && pb == null) pb = val;
+      if (rc === "PRICE_TO_SALES" && ps == null) ps = val;
+      if (rc === "EV_EBITDA" && evEbitda == null) evEbitda = val;
+      if (rc === "EPS" && eps == null) eps = val;
+      if ((rc === "BVPS_CR" || rc === "BVPS") && bvps == null) bvps = val;
+      if (rc === "ROE" && roe == null) roe = val;
+      if (rc === "ROA" && roa == null) roa = val;
+      if (rc === "DIVIDEND_YIELD" && dividendYield == null) dividendYield = normalizeYieldRatio(val);
+      if (rc === "MARKETCAP" && marketCap == null) marketCap = val;
+    }
+
     return {
-      sharesOutstanding: n(row.listedShare) ?? n(row.sharesOutstanding),
-      totalShares: n(row.totalShare) ?? n(row.listedShare),
-      marketCapReported: n(row.marketCap),
-      reportDate: typeof row.date === "string" ? row.date : null,
+      pe,
+      pb,
+      ps,
+      evEbitda,
+      eps,
+      bvps,
+      roe,
+      roa,
+      dividendYield,
+      marketCap,
+      reportDate,
       source: "vndirect",
     };
   } catch {
@@ -190,39 +229,73 @@ export async function getVndEquitySnapshot(symbol: string): Promise<VndEquitySna
   }
 }
 
-export async function getVndValuationRatios(symbol: string): Promise<VndValuationRatios | null> {
+export async function getVndEquitySnapshot(symbol: string): Promise<VndEquitySnapshot | null> {
   const sym = symbol.toUpperCase().replace(/[^A-Z0-9]/g, "");
   if (!sym) return null;
   try {
-    const payload = (
-      await vndirectJson<{ data?: Record<string, unknown>[] }>(
-        `/v4/ratios?q=code:${encodeURIComponent(sym)}&size=1&sort=reportDate:desc`,
+    const [pricePayload, ratiosPayload] = await Promise.allSettled([
+      vndirectJson<{ data?: Record<string, unknown>[] }>(
+        `/v4/stock_prices?q=code:${encodeURIComponent(sym)}&size=1&sort=date:desc`,
         {
           provider: VND,
-          timeoutMs: 10_000,
+          timeoutMs: 8_000,
           retries: 1,
-          accept: (value) => Array.isArray(value.data) && value.data.length > 0,
+          accept: (value) => Array.isArray(value.data),
         },
-      )
-    ).data;
-    const row = payload.data?.[0];
-    if (!row) return null;
+      ),
+      vndirectJson<{ data?: Record<string, unknown>[] }>(
+        `/v4/ratios?q=code:${encodeURIComponent(sym)}&size=60&sort=reportDate:desc`,
+        {
+          provider: VND,
+          timeoutMs: 8_000,
+          retries: 1,
+          accept: (value) => Array.isArray(value.data),
+        },
+      ),
+    ]);
+
+    const priceRow =
+      pricePayload.status === "fulfilled" ? pricePayload.value.data?.data?.[0] : null;
+    const ratioRows =
+      ratiosPayload.status === "fulfilled" ? ratiosPayload.value.data?.data ?? [] : [];
+
     const n = (v: unknown) => {
       const x = Number(v);
       return Number.isFinite(x) ? x : null;
     };
+
+    let outstanding: number | null = null;
+    let total: number | null = null;
+    let marketCap: number | null = null;
+    let reportDate: string | null = null;
+
+    for (const r of ratioRows) {
+      const rc = String(r.ratioCode ?? "").toUpperCase();
+      const val = n(r.value);
+      if (val == null) continue;
+      if (!reportDate && typeof r.reportDate === "string") reportDate = r.reportDate;
+
+      if ((rc === "OUTSTANDING_SHARES" || rc === "LISTED_SHARES") && outstanding == null) {
+        outstanding = val;
+      }
+      if (rc === "TOTAL_SHARES" && total == null) total = val;
+      if (rc === "MARKETCAP" && marketCap == null) marketCap = val;
+    }
+
+    if (priceRow) {
+      if (outstanding == null) outstanding = n(priceRow.listedShare) ?? n(priceRow.sharesOutstanding);
+      if (total == null) total = n(priceRow.totalShare) ?? outstanding;
+      if (marketCap == null) marketCap = n(priceRow.marketCap);
+      if (!reportDate && typeof priceRow.date === "string") reportDate = priceRow.date;
+    }
+
+    if (outstanding == null && total == null && marketCap == null) return null;
+
     return {
-      pe: n(row.pe) ?? n(row.priceToEarning),
-      pb: n(row.pb) ?? n(row.priceToBook),
-      ps: n(row.ps) ?? n(row.priceToSales),
-      evEbitda: n(row.evEbitda),
-      eps: n(row.eps),
-      bvps: n(row.bvps) ?? n(row.bookValuePerShare),
-      roe: n(row.roe),
-      roa: n(row.roa),
-      dividendYield: normalizeYieldRatio(n(row.dividendYield)),
-      marketCap: n(row.marketCap),
-      reportDate: typeof row.reportDate === "string" ? row.reportDate : null,
+      sharesOutstanding: outstanding ?? total,
+      totalShares: total ?? outstanding,
+      marketCapReported: marketCap,
+      reportDate,
       source: "vndirect",
     };
   } catch {

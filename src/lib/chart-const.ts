@@ -92,34 +92,6 @@ export function vndDchartResolution(tf: string): "1" | "5" | "15" | "30" | "60" 
   }
 }
 
-export type VnStockChartPlan =
-  | { mode: "dchart"; resolution: "1" | "5" | "15" | "30" | "60"; want: number }
-  | { mode: "daily"; want: number }
-  | { mode: "aggregate"; from: "1h" | "1d"; resolution: "60" | "D"; tfMs: number; want: number };
-
-/**
- * Route a VN-stock chart request to the right VN data connection:
- *  - native intraday resolutions come from VNDirect dchart (1/5/15/30/60)
- *  - daily uses the multi-source daily race (VNDirect api-finfo ∥ public ∥ SSI)
- *  - 4h aggregates 1h dchart candles; 1w/1M/12M aggregate daily candles
- */
-export function vnStockChartPlan(tf: string, limit: number): VnStockChartPlan {
-  const want = Math.max(1, Math.floor(limit));
-  const native = vndDchartResolution(tf);
-  if (tf === "1d" || native === "D") return { mode: "daily", want: Math.min(want, 500) };
-  if (native) return { mode: "dchart", resolution: native, want: Math.min(want, 1_000) };
-  const tfMs = TF_MS[tf] ?? 86_400_000;
-  const hourly = tf === "4h";
-  const baseMs = hourly ? (TF_MS["1h"] ?? 3_600_000) : 86_400_000;
-  return {
-    mode: "aggregate",
-    from: hourly ? "1h" : "1d",
-    resolution: hourly ? "60" : "D",
-    tfMs,
-    want: Math.min(Math.max(Math.ceil((want * tfMs) / baseMs) + 5, 120), hourly ? 1_200 : 500),
-  };
-}
-
 /** Aggregate lower-TF candles into higher TF buckets (ms-aligned). */
 export function aggregateCandles(candles: ChartCandle[], tfMs: number): ChartCandle[] {
   if (!candles.length || tfMs <= 0) return candles;
