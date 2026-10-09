@@ -3,11 +3,12 @@ import { getVnStockDetail } from "@/lib/services/stocks";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
-export const maxDuration = 20;
+export const maxDuration = 30;
 
 /**
  * GET /api/v1/stocks/:symbol
- * Full core (quote + ≥20 bars) required. Parallel multi-source inside service.
+ * Prefer full core (quote + ≥20 bars). When partial, still return payload with meta.partial
+ * so the detail layout can render hero/quote while charts recover.
  */
 export async function GET(_req: Request, ctx: { params: Promise<{ symbol: string }> }) {
   const { symbol } = await ctx.params;
@@ -31,17 +32,35 @@ export async function GET(_req: Request, ctx: { params: Promise<{ symbol: string
         r.detail.bars.length >= 20,
     );
 
+  const isUsable = (r: Awaited<ReturnType<typeof getVnStockDetail>>) =>
+    Boolean(
+      (r?.detail?.quote?.price && r.detail.quote.price > 0) ||
+        (r?.detail?.bars && r.detail.bars.length >= 5) ||
+        r?.detail?.profile ||
+        r?.detail?.equity,
+    );
+
   try {
     let r = await load();
     if (!isFull(r)) {
+      // Single soft retry for transient provider blips
       r = await load();
     }
     if (isFull(r) && r?.detail) {
       return ok(r.detail, r.meta);
     }
+    if (isUsable(r) && r?.detail) {
+      return ok(r.detail, {
+        ...r.meta,
+        partial: true,
+        note:
+          r.meta?.note ??
+          `Partial ${sym}: đang đồng bộ giá/nến — hiển thị phần đã có.`,
+      });
+    }
     return unavailable(
       "vn-market",
-      `Chưa tải đủ dữ liệu ${sym} (cần giá + lịch sử nến ≥20). Thử lại.`,
+      `Chưa tải đủ dữ liệu ${sym} (cần giá hoặc lịch sử nến). Thử lại.`,
     );
   } catch (e) {
     console.error("[stocks/detail]", sym, e);

@@ -22,17 +22,17 @@ export async function fetchOhlcvResilient(
     {
       id: "vndirect-dchart",
       run: () => fetchVndDchartHistory(sym, "D", bars),
-      accept: (v: OhlcvBar[]) => Array.isArray(v) && v.length >= 30,
+      accept: (v: OhlcvBar[]) => Array.isArray(v) && v.length >= 20,
     },
     {
       id: "vndirect-ohlcv",
       run: () => (isIndex ? getVndIndexOhlcv(sym, bars) : getVndOhlcv(sym, bars)),
-      accept: (v: OhlcvBar[]) => Array.isArray(v) && v.length >= 30,
+      accept: (v: OhlcvBar[]) => Array.isArray(v) && v.length >= 20,
     },
     {
       id: "entrade-public-ohlcv",
       run: () => getPublicOhlcv(sym, bars, isIndex ? "index" : "stock"),
-      accept: (v: OhlcvBar[]) => Array.isArray(v) && v.length >= 30,
+      accept: (v: OhlcvBar[]) => Array.isArray(v) && v.length >= 20,
     },
   ];
 
