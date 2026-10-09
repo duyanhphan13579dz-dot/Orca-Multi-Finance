@@ -5,6 +5,7 @@ import { hubVnQuotes } from "../data-engine";
 import { getVndValuationRatios, priceQuoteToVnd } from "../providers/vndirect-company";
 import { getFundamentalSnapshots, mapPool, normalizeSymbols, type FundamentalSnapshot } from "../financial/snapshots";
 import { sectorOf, getSecurity } from "../vn/master";
+import { WORKERS_BUDGET } from "../data-engine/workers-budget";
 
 function exchangeOf(symbol: string): string | null {
   return getSecurity(symbol)?.exchange ?? null;
@@ -230,7 +231,7 @@ function passes(row: ValuationScreenRow, f: ValuationFilterOpts): boolean {
 
 export async function screenValuation(opts: ValuationFilterOpts = {}) {
   const symbols = normalizeSymbols(opts.symbols, DEFAULT_SYMBOLS.split(","), 80);
-  const key = `screener:valuation:v5:${symbols.join(",")}`;
+  const key = `screener:valuation:v6:${symbols.join(",")}`;
 
   const result = await cached(key, {
     ttlMs: 8 * 60_000,
@@ -238,13 +239,13 @@ export async function screenValuation(opts: ValuationFilterOpts = {}) {
     producer: async () => {
       const [quotes, snapPack] = await Promise.all([
         hubVnQuotes(symbols).catch(() => null),
-        getFundamentalSnapshots(symbols, { concurrency: 5 }),
+        getFundamentalSnapshots(symbols, { concurrency: WORKERS_BUDGET.snapshotConcurrency }),
       ]);
       const quoteMap = new Map((quotes?.quotes ?? []).map((q) => [q.symbol, q]));
       const snapMap = new Map(snapPack.snapshots.map((s) => [s.symbol, s]));
 
       const rows = (
-        await mapPool(symbols, 6, async (symbol): Promise<ValuationScreenRow | null> => {
+        await mapPool(symbols, Math.min(4, WORKERS_BUDGET.snapshotConcurrency + 1), async (symbol): Promise<ValuationScreenRow | null> => {
           const ratios = await getVndValuationRatios(symbol).catch(() => null);
           const price = quoteMap.get(symbol)?.price ?? null;
           return mergeValuation(symbol, price, ratios, snapMap.get(symbol));
@@ -277,7 +278,7 @@ export async function screenValuation(opts: ValuationFilterOpts = {}) {
       cached: result.cached,
       stale: result.stale,
       partial: result.value.scanned > result.value.withData,
-      note: `P/E·P/B·P/S·EV/EBITDA + PEG/FCF/Div yield · ${rows.length} khớp / ${result.value.withData} có data · BCTC ${result.value.bctcHit}`,
+      note: `P/E·P/B·P/S·EV/EBITDA · ${rows.length} khớp / ${result.value.withData} có data`,
     }),
   };
 }
