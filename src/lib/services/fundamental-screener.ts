@@ -8,11 +8,11 @@ import {
 } from "../financial/snapshots";
 import { hubVnQuotes } from "../data-engine";
 import { sectorOf, getSecurity, type VnExchange } from "../vn/master";
+import { resolveListedEquityUniverse, listedEquityUniverseSync } from "../financial/equity-universe";
 
 function exchangeOf(symbol: string): string | null {
   return getSecurity(symbol)?.exchange ?? null;
 }
-import { resolveListedEquityUniverse, listedEquityUniverseSync } from "../financial/equity-universe";
 
 export type FundamentalScreenRow = {
   symbol: string;
