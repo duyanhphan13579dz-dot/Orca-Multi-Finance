@@ -7,11 +7,11 @@ import { LIQUID_BOARD } from "@/lib/providers/public-vn-feed";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
-export const maxDuration = 45;
+export const maxDuration = 25;
 
 /**
  * GET /api/v1/stocks
- * Hardened: luôn cố trả partial board thay vì 502 khi một nhánh lỗi.
+ * Workers-safe: prefer cached board; light fallthrough only.
  */
 export async function GET(req: Request) {
   try {
@@ -65,13 +65,10 @@ export async function GET(req: Request) {
       /* fall through */
     }
 
-    const [idx, q] = await Promise.all([
-      getVnIndices().catch(() => null),
-      getVnQuotes(LIQUID_BOARD.slice(0, 40)).catch(() => null),
-    ]);
-    const indices = idx?.items ?? [];
+    // Light fallthrough — avoid racing heavy index multi-source + 40 quotes
+    const q = await getVnQuotes(LIQUID_BOARD.slice(0, 25)).catch(() => null);
     const quotes = q?.quotes ?? [];
-    if (!indices.length && !quotes.length) {
+    if (!quotes.length) {
       return unavailable(
         "vn-market",
         "Chưa kéo được thị trường VN từ nguồn công khai — đang thử lại.",
@@ -79,7 +76,7 @@ export async function GET(req: Request) {
     }
     return ok(
       {
-        indices,
+        indices: [],
         quotes,
         universeSize: quotes.length || LIQUID_BOARD.length,
         sessionDate: null,
@@ -87,11 +84,11 @@ export async function GET(req: Request) {
         count: quotes.length,
       },
       {
-        source: [idx?.meta.source, q?.meta.source].filter(Boolean).join("+") || "vn-partial",
+        source: q?.meta.source || "vn-partial",
         sourceTimestampMs: Date.now(),
         partial: true,
         degraded: true,
-        note: "Partial board — một phần nguồn public",
+        note: "Partial board — liquid quotes only",
       },
       { "Cache-Control": "private, max-age=5, stale-while-revalidate=20" },
     );
@@ -101,35 +98,27 @@ export async function GET(req: Request) {
     .split(",")
     .map((s) => s.trim().toUpperCase())
     .filter(Boolean)
-    .slice(0, 80);
+    .slice(0, 40);
 
-  const [indices, quotes] = await Promise.all([
-    getVnIndices().catch(() => null),
-    getVnQuotes(symbols).catch(() => null),
-  ]);
-  if (!indices?.items?.length && !quotes?.quotes?.length) {
-    return unavailable("vn-stocks", "Chỉ số và bảng giá VN không khả dụng.");
+  const quotes = await getVnQuotes(symbols).catch(() => null);
+  if (!quotes?.quotes?.length) {
+    return unavailable("vn-stocks", "Bảng giá VN không khả dụng.");
   }
-  const meta = quotes?.meta ?? indices?.meta;
+  const meta = quotes.meta;
   return ok(
     {
-      indices: indices?.items ?? null,
-      quotes: quotes?.quotes ?? null,
+      indices: null,
+      quotes: quotes.quotes,
       session,
-      count: quotes?.quotes?.length ?? 0,
+      count: quotes.quotes.length,
     },
     {
       source: meta?.source ?? "vndirect",
       sourceTimestampMs: meta?.sourceTimestamp ? Date.parse(meta.sourceTimestamp) : Date.now(),
       cached: meta?.cached,
       stale: meta?.stale,
-      degraded: !indices?.items?.length || !quotes?.quotes?.length,
-      partial: !indices?.items?.length || !quotes?.quotes?.length,
-      note: !indices?.items?.length
-        ? "Indices không khả dụng"
-        : !quotes?.quotes?.length
-          ? "Quotes không khả dụng"
-          : undefined,
+      partial: true,
+      note: "Quotes only (indices skipped to stay under Workers budget)",
     },
   );
 }
