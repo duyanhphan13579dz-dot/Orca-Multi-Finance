@@ -105,14 +105,25 @@ export function Dashboard() {
   });
 
   const {
-    data: board,
+    data: boardCore,
+    isLoading: boardCoreLoading,
+  } = useApi<StocksBoard>("/api/v1/stocks?board=vn30", {
+    refreshInterval: 20_000,
+    timeoutMs: 6_000,
+    keepPreviousData: true,
+  });
+
+  const {
+    data: boardFull,
     isLoading: boardLoading,
     mutate: mutateBoard,
   } = useApi<StocksBoard>("/api/v1/stocks?board=full", {
-    refreshInterval: 18_000,
+    refreshInterval: 22_000,
     timeoutMs: 12_000,
     keepPreviousData: true,
   });
+
+  const board = boardFull?.quotes?.length ? boardFull : boardCore;
 
   const { data: globalMkt } = useApi<GlobalMarket>("/api/v1/market/global", {
     refreshInterval: 45_000,
@@ -125,8 +136,7 @@ export function Dashboard() {
     return synthesizeIntel(board);
   }, [intel, board]);
 
-  // Progressive paint: board alone is enough to leave skeleton
-  const stillBooting = !displayIntel && isLoading && boardLoading;
+  const stillBooting = !displayIntel && isLoading && boardCoreLoading && boardLoading;
 
   if (stillBooting) {
     return <PageSkeleton variant="dashboard" title="Market Command Center" />;
