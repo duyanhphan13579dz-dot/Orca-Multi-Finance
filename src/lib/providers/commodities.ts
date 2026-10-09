@@ -172,6 +172,7 @@ export interface VnbGoodsSnapshot {
   parseMs: number;
   downloadMs: number;
   path?: string;
+  buildId?: string | null;
 }
 
 let cachedBuildId: { id: string; at: number } | null = null;
@@ -289,7 +290,9 @@ async function fetchViaHtml(): Promise<{ groups: Record<string, VnbItem[]>; down
   return { groups, downloadMs, buildId };
 }
 
-export async function fetchVietnambizGoods(): Promise<VnbGoodsSnapshot> {
+/** `hintBuildId`: buildId từ snapshot đã cache (isolate lạnh không có biến trong bộ nhớ) → đi thẳng đường JSON nhỏ. */
+export async function fetchVietnambizGoods(hintBuildId?: string | null): Promise<VnbGoodsSnapshot> {
+  if (hintBuildId && !cachedBuildId) rememberBuildId(hintBuildId);
   const tParse0 = Date.now();
   let groups: Record<string, VnbItem[]> | null = null;
   let downloadMs = 0;
@@ -338,7 +341,13 @@ export async function fetchVietnambizGoods(): Promise<VnbGoodsSnapshot> {
     parseMs: Date.now() - t1,
     downloadMs: downloadMs || Date.now() - tParse0,
     path,
+    buildId: cachedBuildId?.id ?? null,
   };
+}
+
+/** Chỉ dùng cho test. */
+export function __resetVnbBuildId(): void {
+  cachedBuildId = null;
 }
 
 export const COMMODITY_CATALOG: CommodityDef[] = [];
