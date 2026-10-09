@@ -247,6 +247,7 @@ export async function screenMinervini(args?: {
     perSymbolMs: WORKERS_BUDGET.ohlcvPerSymbolMs + 1_000,
     deadlineMs: WORKERS_BUDGET.techScreenWallMs + 10_000,
     resilient: true,
+    priority: uniq.slice(0, 30),
   });
   const packs: (RawPack | null)[] = [];
   for (const symbol of uniq) {
