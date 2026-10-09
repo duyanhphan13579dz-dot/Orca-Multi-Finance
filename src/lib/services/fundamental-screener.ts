@@ -7,12 +7,17 @@ import {
   type FundamentalSnapshot,
 } from "../financial/snapshots";
 import { hubVnQuotes } from "../data-engine";
-import { sectorOf } from "../vn/master";
+import { sectorOf, getSecurity, type VnExchange } from "../vn/master";
+
+function exchangeOf(symbol: string): string | null {
+  return getSecurity(symbol)?.exchange ?? null;
+}
 import { resolveListedEquityUniverse, listedEquityUniverseSync } from "../financial/equity-universe";
 
 export type FundamentalScreenRow = {
   symbol: string;
   sector: string | null;
+  exchange: string | null;
   price: number | null;
   roe: number | null;
   roa: number | null;
@@ -40,6 +45,8 @@ export type FundamentalScreenRow = {
 export type FundamentalFilterOpts = {
   symbols?: string[];
   sector?: string;
+  /** HOSE | HNX | UPCOM */
+  exchange?: VnExchange | string;
   minRoe?: number;
   maxRoe?: number;
   minRoa?: number;
@@ -52,13 +59,24 @@ export type FundamentalFilterOpts = {
   maxGrossMargin?: number;
   minNetMargin?: number;
   maxNetMargin?: number;
+  minOperatingMargin?: number;
+  maxOperatingMargin?: number;
   minDebtEquity?: number;
   maxDebtEquity?: number;
   minCurrentRatio?: number;
   maxCurrentRatio?: number;
   minCoverage?: number;
   minHealthScore?: number;
+  minQualityScore?: number;
   minNiYoy?: number;
+  maxNiYoy?: number;
+  minRevenueYoy?: number;
+  maxRevenueYoy?: number;
+  maxNetDebtEbitda?: number;
+  /** Require FCF TTM > 0 when true-ish (1) */
+  requirePositiveFcf?: boolean;
+  minPrice?: number;
+  maxPrice?: number;
   limit?: number;
 };
 
@@ -104,6 +122,11 @@ function computeScreenScore(s: FundamentalSnapshot): number {
 
 function passesFilters(row: FundamentalScreenRow, f: FundamentalFilterOpts): boolean {
   if (f.sector && row.sector !== f.sector) return false;
+  if (f.exchange) {
+    const ex = String(f.exchange).toUpperCase();
+    if (row.exchange && row.exchange.toUpperCase() !== ex) return false;
+    if (!row.exchange) return false;
+  }
   const check = (val: number | null, min?: number, max?: number) => {
     if (min != null && Number.isFinite(min) && (val == null || val < min)) return false;
     if (max != null && Number.isFinite(max) && (val == null || val > max)) return false;
@@ -115,8 +138,12 @@ function passesFilters(row: FundamentalScreenRow, f: FundamentalFilterOpts): boo
   if (!check(row.roic, f.minRoic, f.maxRoic)) return false;
   if (!check(row.grossMargin, f.minGrossMargin, f.maxGrossMargin)) return false;
   if (!check(row.netMargin, f.minNetMargin, f.maxNetMargin)) return false;
+  if (!check(row.operatingMargin, f.minOperatingMargin, f.maxOperatingMargin)) return false;
   if (!check(row.debtEquity, f.minDebtEquity, f.maxDebtEquity)) return false;
   if (!check(row.currentRatio, f.minCurrentRatio, f.maxCurrentRatio)) return false;
+  if (!check(row.price, f.minPrice, f.maxPrice)) return false;
+  if (!check(row.niYoyPct, f.minNiYoy, f.maxNiYoy)) return false;
+  if (!check(row.revenueYoyPct, f.minRevenueYoy, f.maxRevenueYoy)) return false;
   if (f.minCoverage != null && Number.isFinite(f.minCoverage) && row.coverage < f.minCoverage) return false;
   if (
     f.minHealthScore != null &&
@@ -124,8 +151,19 @@ function passesFilters(row: FundamentalScreenRow, f: FundamentalFilterOpts): boo
     (row.healthScore == null || row.healthScore < f.minHealthScore)
   )
     return false;
-  if (f.minNiYoy != null && Number.isFinite(f.minNiYoy) && (row.niYoyPct == null || row.niYoyPct < f.minNiYoy))
+  if (
+    f.minQualityScore != null &&
+    Number.isFinite(f.minQualityScore) &&
+    (row.qualityScore == null || row.qualityScore < f.minQualityScore)
+  )
     return false;
+  if (
+    f.maxNetDebtEbitda != null &&
+    Number.isFinite(f.maxNetDebtEbitda) &&
+    (row.netDebtToEbitda == null || row.netDebtToEbitda > f.maxNetDebtEbitda)
+  )
+    return false;
+  if (f.requirePositiveFcf && (row.fcfTtm == null || row.fcfTtm <= 0)) return false;
   return true;
 }
 
@@ -133,6 +171,7 @@ function toRow(s: FundamentalSnapshot, price: number | null): FundamentalScreenR
   return {
     symbol: s.symbol,
     sector: sectorOf(s.symbol),
+    exchange: exchangeOf(s.symbol),
     price,
     roe: s.roe,
     roa: s.roa,
@@ -169,7 +208,7 @@ export async function screenFundamental(opts: FundamentalFilterOpts = {}) {
     /* master fallback */
   }
   const symbols = normalizeSymbols(opts.symbols, fallback, opts.symbols?.length ? 600 : 500);
-  const cacheKey = `screener:fundamental:v3:${symbols.length}:${symbols.slice(0, 8).join(",")}`;
+  const cacheKey = `screener:fundamental:v4:${symbols.length}:${symbols.slice(0, 8).join(",")}`;
 
   const result = await cached(cacheKey, {
     ttlMs: 20 * 60_000,
