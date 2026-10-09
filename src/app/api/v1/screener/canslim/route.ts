@@ -1,25 +1,24 @@
-import { ok } from "@/lib/envelope";
 import { screenCanslim } from "@/lib/services/canslim-screener";
 import type { CanslimLetter } from "@/lib/engines/canslim";
+import { safeApi } from "@/lib/safe-api";
+import { WORKERS_BUDGET } from "@/lib/data-engine/workers-budget";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
-/** Realtime path targets ~22s; full phase may use more when explicitly requested. */
-export const maxDuration = 60;
+export const maxDuration = 30;
 
 const LETTERS = new Set<CanslimLetter>(["C", "A", "N", "S", "L", "I", "M"]);
 
-/**
- * GET /api/v1/screener/canslim — realtime-first, always usable when OHLCV works.
- *
- * Default (phase=auto):
- *   Phase A: quotes + OHLCV → N/S/L/M (guaranteed)
- *   Phase B: BCTC/ROE/NN best-effort under ~10s budget (hub cache-first)
- *
- * Never hard-fails to UNAVAILABLE if any bars exist; strict filters fall back to top-by-score.
- *
- * Query: ?phase=tech|full|auto  ?symbols=  ?minScore=  ?minPass=  ?letters=  ?sector=
- */
+const EMPTY_COVERAGE = {
+  withBars: 0,
+  withGrowth: 0,
+  withHealth: 0,
+  withForeign: 0,
+  withRatios: 0,
+  withEquity: 0,
+};
+
+/** GET /api/v1/screener/canslim — realtime-first */
 export async function GET(req: Request) {
   const url = new URL(req.url);
   const minScore =
@@ -40,85 +39,57 @@ export async function GET(req: Request) {
   const phase =
     phaseRaw === "tech" || phaseRaw === "full" ? (phaseRaw as "tech" | "full") : ("auto" as const);
 
-  try {
-    const payload = await screenCanslim({
-      symbols: symbols.length ? symbols : undefined,
-      minScore: Number.isFinite(minScore) ? minScore : 40,
-      minPass: Number.isFinite(minPass) ? minPass : 0,
-      requireLetters: requireLetters.length ? requireLetters : undefined,
-      sector,
-      limit,
-      phase,
-    });
-
-    const body = payload ?? {
-      rows: [] as NonNullable<typeof payload> extends infer R
-        ? R extends { rows: infer Rows }
-          ? Rows
-          : never
-        : never,
-      scanned: 0,
-      skipped: 0,
-      marketBullish: null as boolean | null,
-      marketDetail: "OHLCV tạm lỗi",
-      coverage: {
-        withBars: 0,
-        withGrowth: 0,
-        withHealth: 0,
-        withForeign: 0,
-        withRatios: 0,
-        withEquity: 0,
-      },
-      phase: "tech" as const,
-      meta: {
-        source: "canslim-realtime",
-        sourceTimestampMs: Date.now(),
-        hasData: false,
-        partial: true,
-        note: "OHLCV tạm lỗi — thử lại hoặc chọn ít mã hơn",
-      },
-    };
-
-    return ok(
-      {
+  return safeApi({
+    label: "screener-canslim",
+    guard: {
+      wallMs: WORKERS_BUDGET.techScreenWallMs,
+      maxSubrequests: 26,
+      maxConcurrent: 3,
+    },
+    produce: async () => {
+      const payload = await screenCanslim({
+        symbols: symbols.length ? symbols : undefined,
+        minScore: Number.isFinite(minScore) ? minScore : 40,
+        minPass: Number.isFinite(minPass) ? minPass : 0,
+        requireLetters: requireLetters.length ? requireLetters : undefined,
+        sector,
+        limit,
+        phase,
+      });
+      if (!payload) return null;
+      return {
+        data: {
+          universe: "canslim",
+          phase: payload.phase,
+          rows: payload.rows,
+          scanned: payload.scanned,
+          skipped: payload.skipped,
+          marketBullish: payload.marketBullish,
+          marketDetail: payload.marketDetail,
+          coverage: payload.coverage,
+        },
+        meta: payload.meta,
+      };
+    },
+    fallback: async () => ({
+      data: {
         universe: "canslim",
-        phase: body.phase,
-        rows: body.rows,
-        scanned: body.scanned,
-        skipped: body.skipped,
-        marketBullish: body.marketBullish,
-        marketDetail: body.marketDetail,
-        coverage: body.coverage,
-      },
-      body.meta,
-    );
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : "pipeline error";
-    return ok(
-      {
-        universe: "canslim",
-        phase: "tech",
+        phase: "tech" as const,
         rows: [],
         scanned: 0,
         skipped: 0,
         marketBullish: null,
-        marketDetail: msg.slice(0, 120),
-        coverage: {
-          withBars: 0,
-          withGrowth: 0,
-          withHealth: 0,
-          withForeign: 0,
-          withRatios: 0,
-          withEquity: 0,
-        },
+        marketDetail: "OHLCV tạm lỗi",
+        coverage: EMPTY_COVERAGE,
       },
-      {
-        source: "canslim-realtime",
-        sourceTimestampMs: Date.now(),
-        hasData: false,
+      meta: {
+        source: "canslim-shell",
         partial: true,
-        note: `CANSLIM lỗi tạm — ${msg.slice(0, 80)} — thử lại`,
+        stale: true,
+        note: "CANSLIM tạm trống — thử lại hoặc chọn ít mã hơn",
       },
-    );
-  }
+    }),
+    unavailableSource: "canslim-screener",
+    unavailableNote: "CANSLIM tạm không khả dụng",
+  });
 }
