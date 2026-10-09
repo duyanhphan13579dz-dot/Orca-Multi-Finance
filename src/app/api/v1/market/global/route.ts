@@ -2,13 +2,7 @@ import { safeApi } from "@/lib/safe-api";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
-export const maxDuration = 25;
-
-/**
- * GET /api/v1/market/global
- * US (Yahoo ETF primary) + crypto (pipeline) + Asia (Yahoo) + liquidity spark.
- * Soft partial — never hard-blank homepage global regime panel.
- */
+export const maxDuration = 20;
 
 const ASIA_YAHOO: { yahoo: string; key: string; label: string }[] = [
   { yahoo: "^N225", key: "N225", label: "Nikkei 225" },
@@ -47,20 +41,6 @@ async function loadUs(): Promise<{ rows: UsRow[]; source: string }> {
   } catch {
     /* */
   }
-  try {
-    const { getPolygonIndexSnapshots } = await import("@/lib/providers/polygon");
-    const poly = await getPolygonIndexSnapshots([...US_ETF]);
-    const rows = (poly.rows ?? [])
-      .filter((r: { symbol?: string; price?: number }) => r.symbol && r.price && r.price > 0)
-      .map((r: { symbol: string; price: number; changePercent?: number | null }) => ({
-        symbol: r.symbol,
-        price: r.price,
-        changePercent: r.changePercent ?? null,
-      }));
-    if (rows.length) return { rows, source: "polygon" };
-  } catch {
-    /* */
-  }
   return { rows: [], source: "none" };
 }
 
@@ -79,42 +59,6 @@ async function loadCrypto(): Promise<{ rows: CryptoRow[]; source: string }> {
         }));
       if (rows.length) return { rows, source: m.meta.source ?? "crypto" };
     }
-  } catch {
-    /* */
-  }
-  try {
-    const { getCoinGeckoSimplePrices } = await import("@/lib/providers/coingecko");
-    const cg = await getCoinGeckoSimplePrices();
-    const rows = cg.rows
-      .filter((r) => r.symbol === "BTCUSDT" || r.symbol === "ETHUSDT")
-      .map((r) => ({
-        symbol: r.symbol,
-        baseAsset: r.baseAsset,
-        price: r.price,
-        changePercent: r.changePercent,
-      }));
-    if (rows.length) return { rows, source: "coingecko" };
-  } catch {
-    /* */
-  }
-  try {
-    const { getYahooQuotes } = await import("@/lib/providers/yahoo");
-    const map = await getYahooQuotes(["BTC-USD", "ETH-USD"]);
-    const rows: CryptoRow[] = [];
-    for (const [ys, base] of [
-      ["BTC-USD", "BTC"],
-      ["ETH-USD", "ETH"],
-    ] as const) {
-      const q = map.get(ys);
-      if (!q || !(q.price > 0)) continue;
-      rows.push({
-        symbol: `${base}USDT`,
-        baseAsset: base,
-        price: q.price,
-        changePercent: q.changePercent ?? null,
-      });
-    }
-    if (rows.length) return { rows, source: "yahoo-crypto" };
   } catch {
     /* */
   }
@@ -158,9 +102,7 @@ async function loadLiqSpark(): Promise<{
       const slice = withVol.slice(-12);
       return {
         volumes: slice.map((b) => Number(b.volume) || 0),
-        times: slice.map((b) =>
-          b.time ? new Date(b.time).toISOString().slice(0, 10) : null,
-        ),
+        times: slice.map((b) => (b.time ? new Date(b.time).toISOString().slice(0, 10) : null)),
         source: pack?.meta?.source ?? "vn-ohlcv",
         symbol: "VNINDEX",
       };
@@ -174,7 +116,7 @@ async function loadLiqSpark(): Promise<{
 export async function GET() {
   return safeApi({
     label: "market-global",
-    guard: { wallMs: 18_000, maxSubrequests: 24, maxConcurrent: 4 },
+    guard: { wallMs: 12_000, maxSubrequests: 18, maxConcurrent: 3 },
     produce: async () => {
       const [usP, cryptoP, asiaP, liqP] = await Promise.all([
         loadUs(),
@@ -183,51 +125,13 @@ export async function GET() {
         loadLiqSpark(),
       ]);
 
-      const sources = [usP.source, cryptoP.source, asiaP.source].filter(
-        (s) => s && s !== "none",
-      );
+      const sources = [usP.source, cryptoP.source, asiaP.source].filter((s) => s && s !== "none");
       if (liqP) sources.push(`liq:${liqP.source}`);
-
-      let us = usP.rows;
-      let crypto = cryptoP.rows;
-      if (!crypto.length) {
-        try {
-          const { getCrossAsset } = await import("@/lib/services/cross-asset");
-          const ca = await getCrossAsset();
-          const btc = ca.items.find((i) => i.key === "BTC" && i.value != null);
-          const eth = ca.items.find((i) => i.key === "ETH" && i.value != null);
-          if (btc?.value) {
-            crypto = [
-              ...crypto,
-              {
-                symbol: "BTCUSDT",
-                baseAsset: "BTC",
-                price: btc.value,
-                changePercent: btc.changePercent,
-              },
-            ];
-            sources.push("cross-asset-btc");
-          }
-          if (eth?.value) {
-            crypto = [
-              ...crypto,
-              {
-                symbol: "ETHUSDT",
-                baseAsset: "ETH",
-                price: eth.value,
-                changePercent: eth.changePercent,
-              },
-            ];
-          }
-        } catch {
-          /* */
-        }
-      }
 
       return {
         data: {
-          us,
-          crypto,
+          us: usP.rows,
+          crypto: cryptoP.rows,
           asia: asiaP.rows,
           liquiditySpark: liqP,
           sources,
@@ -236,8 +140,8 @@ export async function GET() {
         meta: {
           source: sources.join("+") || "partial",
           sourceTimestampMs: Date.now(),
-          partial: !us.length || !crypto.length || !asiaP.rows.length,
-          note: `us=${us.length} crypto=${crypto.length} asia=${asiaP.rows.length}`,
+          partial: !usP.rows.length || !cryptoP.rows.length || !asiaP.rows.length,
+          note: `us=${usP.rows.length} crypto=${cryptoP.rows.length} asia=${asiaP.rows.length}`,
         },
         headers: {
           "Cache-Control": "private, max-age=20, stale-while-revalidate=90",
