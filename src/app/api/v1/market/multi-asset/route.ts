@@ -1,15 +1,11 @@
 import { safeApi } from "@/lib/safe-api";
 import { getMultiAssetBoard, getMultiAssetQuote } from "@/lib/services/multi-asset-board";
+import { putHot, getHot } from "@/lib/hot-snapshot";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 export const maxDuration = 20;
 
-/**
- * GET /api/v1/market/multi-asset
- *   ?symbol=BTC|ETH|XAU|XAG|EURUSD  → single quote
- * Default: full board BTC · ETH · XAU · XAG · major FOREX
- */
 export async function GET(req: Request) {
   const url = new URL(req.url);
   const symbol = (url.searchParams.get("symbol") ?? "").trim();
@@ -41,15 +37,28 @@ export async function GET(req: Request) {
     label: "multi-asset-board",
     guard: { wallMs: 14_000, maxSubrequests: 22, maxConcurrent: 3 },
     produce: async () => {
+      const fresh = await getHot("multi-asset");
+      if (fresh?.fresh && fresh.data) {
+        return {
+          data: fresh.data,
+          meta: { ...fresh.meta, note: `hot-fresh multi · ${Math.round(fresh.ageMs / 1000)}s` },
+          headers: {
+            "Cache-Control": "private, max-age=8, stale-while-revalidate=40",
+            "X-Orca-Hot": "fresh",
+          },
+        };
+      }
       const r = await getMultiAssetBoard();
       if (!r?.board.rows.length) return null;
+      const data = {
+        rows: r.board.rows,
+        byClass: r.board.byClass,
+        sources: r.board.sources,
+        count: r.board.rows.length,
+      };
+      putHot("multi-asset", data, { source: r.meta?.source, partial: r.meta?.partial });
       return {
-        data: {
-          rows: r.board.rows,
-          byClass: r.board.byClass,
-          sources: r.board.sources,
-          count: r.board.rows.length,
-        },
+        data,
         meta: r.meta,
         headers: {
           "Cache-Control": r.meta.stale
@@ -58,20 +67,34 @@ export async function GET(req: Request) {
         },
       };
     },
-    fallback: async () => ({
-      data: {
-        rows: [],
-        byClass: { crypto: [], metal: [], forex: [] },
-        sources: [],
-        count: 0,
-      },
-      meta: {
-        source: "multi-asset-shell",
-        partial: true,
-        stale: true,
-        note: "Board đa tài sản tạm trống — đang kết nối lại",
-      },
-    }),
+    fallback: async () => {
+      const snap = await getHot("multi-asset");
+      if (snap?.data) {
+        return {
+          data: snap.data,
+          meta: {
+            ...snap.meta,
+            note: `last-good multi · age ${Math.round(snap.ageMs / 1000)}s`,
+            partial: true,
+            stale: true,
+          },
+        };
+      }
+      return {
+        data: {
+          rows: [],
+          byClass: { crypto: [], metal: [], forex: [] },
+          sources: [],
+          count: 0,
+        },
+        meta: {
+          source: "multi-asset-shell",
+          partial: true,
+          stale: true,
+          note: "Board đa tài sản tạm trống — đang kết nối lại",
+        },
+      };
+    },
     unavailableSource: "multi-asset",
     unavailableNote: "Không tải được board BTC/ETH/XAU/XAG/FOREX",
   });
