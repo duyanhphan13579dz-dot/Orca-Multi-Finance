@@ -3,11 +3,6 @@ import type { OhlcvBar } from "../types";
 import type { DetectedCandlePattern } from "../engines/candlestick-patterns";
 import { rsi as rsiSeries, sma, ema } from "../engines/oscillators";
 
-/**
- * Shared technical features for screeners — pure math on bars.
- * Used to re-rank candlestick / divergence signals with market context.
- */
-
 export type TechContext = {
   rsi14: number | null;
   vsSma20Pct: number | null;
@@ -16,6 +11,7 @@ export type TechContext = {
   trend: "up" | "down" | "sideways" | "unknown";
   atrPct: number | null;
   macdHist: number | null;
+  bodyAtr: number | null;
 };
 
 function lastFinite(arr: (number | null)[]): number | null {
@@ -55,11 +51,13 @@ export function extractTechContext(bars: OhlcvBar[]): TechContext {
       trend: "unknown",
       atrPct: null,
       macdHist: null,
+      bodyAtr: null,
     };
   }
   const closes = bars.map((b) => b.close);
   const vols = bars.map((b) => (Number.isFinite(b.volume) ? b.volume : 0));
   const close = closes[closes.length - 1]!;
+  const last = bars[bars.length - 1]!;
 
   const rsiArr = rsiSeries(closes, 14);
   const rsi14 = lastFinite(rsiArr);
@@ -82,6 +80,8 @@ export function extractTechContext(bars: OhlcvBar[]): TechContext {
 
   const atr = atr14(bars);
   const atrPct = atr != null && close > 0 ? (atr / close) * 100 : null;
+  const body = Math.abs(last.close - last.open);
+  const bodyAtr = atr != null && atr > 0 ? body / atr : null;
 
   let macdHist: number | null = null;
   if (closes.length >= 35) {
@@ -102,13 +102,9 @@ export function extractTechContext(bars: OhlcvBar[]): TechContext {
     }
   }
 
-  return { rsi14, vsSma20Pct, vsSma50Pct, volRatio, trend, atrPct, macdHist };
+  return { rsi14, vsSma20Pct, vsSma50Pct, volRatio, trend, atrPct, macdHist, bodyAtr };
 }
 
-/**
- * Adjust pattern score with technical context for more accurate ranking.
- * Returns score clamped 0–100.
- */
 export function contextBoostPattern(p: DetectedCandlePattern, ctx: TechContext): number {
   let s = p.score;
   const bull = p.type === "bullish";
@@ -127,34 +123,42 @@ export function contextBoostPattern(p: DetectedCandlePattern, ctx: TechContext):
   }
 
   if (ctx.rsi14 != null) {
-    if (bull && ctx.rsi14 <= 35) s += 8;
-    else if (bull && ctx.rsi14 <= 45) s += 3;
-    else if (bull && ctx.rsi14 >= 65) s -= 6;
-    if (bear && ctx.rsi14 >= 65) s += 8;
-    else if (bear && ctx.rsi14 >= 55) s += 3;
-    else if (bear && ctx.rsi14 <= 35) s -= 6;
+    if (bull && ctx.rsi14 <= 32) s += 9;
+    else if (bull && ctx.rsi14 <= 42) s += 4;
+    else if (bull && ctx.rsi14 >= 68) s -= 7;
+    if (bear && ctx.rsi14 >= 68) s += 9;
+    else if (bear && ctx.rsi14 >= 58) s += 4;
+    else if (bear && ctx.rsi14 <= 32) s -= 7;
   }
 
-  if (p.volumeConfirmed) s += 4;
+  if (p.volumeConfirmed) s += 5;
   if (ctx.volRatio != null) {
-    if (ctx.volRatio >= 1.4) s += 5;
-    else if (ctx.volRatio >= 1.1) s += 2;
-    else if (ctx.volRatio < 0.7) s -= 3;
+    if (ctx.volRatio >= 1.5) s += 6;
+    else if (ctx.volRatio >= 1.15) s += 3;
+    else if (ctx.volRatio < 0.65) s -= 4;
   }
+
+  if (ctx.bodyAtr != null) {
+    if (ctx.bodyAtr >= 1.0) s += 4;
+    else if (ctx.bodyAtr < 0.25) s -= 5;
+  }
+
+  if (ctx.atrPct != null && ctx.atrPct < 0.4) s -= 4;
 
   if ((p.ageBars ?? 0) === 0) s += 2;
-  else if ((p.ageBars ?? 0) >= 3) s -= 3;
+  else if ((p.ageBars ?? 0) >= 3) s -= 4;
 
   if (ctx.macdHist != null) {
     if (bull && ctx.macdHist > 0) s += 3;
     if (bear && ctx.macdHist < 0) s += 3;
-    if (bull && ctx.macdHist < 0 && reversal) s += 2;
   }
+
+  if (p.reliability === "very_high") s += 3;
+  else if (p.reliability === "low") s -= 5;
 
   return Math.max(0, Math.min(100, Math.round(s)));
 }
 
-/** Rank patterns after context boost; mutates score field. */
 export function rankPatternsWithContext(
   patterns: DetectedCandlePattern[],
   bars: OhlcvBar[],
