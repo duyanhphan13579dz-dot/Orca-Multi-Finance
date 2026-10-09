@@ -21,6 +21,8 @@ import { getVietcapCompany } from "../providers/vietcap";
 import { getVpsQuotes } from "../providers/vps";
 import { getVnOrderBook, type VnOrderBook } from "./stock-orderbook";
 import { getVnQuotes, getVnOhlcv } from "./stocks-board";
+import { fetchOhlcvResilient } from "./screener-ohlcv";
+import { cached } from "../cache";
 
 export interface VnStockDetail {
   symbol: string;
@@ -54,19 +56,33 @@ export interface VnStockDetail {
   notes: string[];
 }
 
+/** Soft-timeout: never let one slow source hang the whole detail page. */
+async function soft<T>(p: Promise<T>, ms: number, label: string): Promise<T | null> {
+  try {
+    return await Promise.race([
+      p.then((v) => v).catch(() => null as T | null),
+      new Promise<null>((r) => setTimeout(() => r(null), ms)),
+    ]);
+  } catch {
+    return null;
+  }
+}
+
 async function produceVnStockDetail(sym: string): Promise<{ detail: VnStockDetail; meta: Meta } | null> {
   const failed: string[] = [];
   const notes: string[] = [];
-  const [quoteRes, ohlcvRes, profileRes, equityRes, bookRes, foreignRes, finRes, valRatioRes] = await Promise.all([
-    getVnQuotes([sym]).catch(() => null),
-    getVnOhlcv(sym, 320).catch(() => null),
-    getVndCompanyProfile(sym).catch(() => null),
-    getVndEquitySnapshot(sym).catch(() => null),
-    getVnOrderBook(sym).catch(() => null),
-    getVndSymbolForeignFlow(sym).catch(() => null),
-    getFinancialsForSymbol(sym).catch(() => null),
-    getVndValuationRatios(sym).catch(() => null),
-  ]);
+  const [quoteRes, ohlcvResilient, ohlcvLegacy, profileRes, equityRes, bookRes, foreignRes, finRes, valRatioRes] =
+    await Promise.all([
+      soft(getVnQuotes([sym]), 8_000, "quotes"),
+      soft(fetchOhlcvResilient(sym, 320), 10_000, "ohlcv-resilient"),
+      soft(getVnOhlcv(sym, 320), 8_000, "ohlcv-legacy"),
+      soft(getVndCompanyProfile(sym), 7_000, "profile"),
+      soft(getVndEquitySnapshot(sym), 7_000, "equity"),
+      soft(getVnOrderBook(sym), 5_000, "orderbook"),
+      soft(getVndSymbolForeignFlow(sym), 6_000, "foreign"),
+      soft(getFinancialsForSymbol(sym), 14_000, "financials"),
+      soft(getVndValuationRatios(sym), 7_000, "ratios"),
+    ]);
 
   let quote = quoteRes?.quotes?.[0] ?? null;
   if (!quote) {
@@ -170,7 +186,12 @@ async function produceVnStockDetail(sym: string): Promise<{ detail: VnStockDetai
 
   if (!quote) failed.push("quote");
   const name = quote?.name ?? (profile as { vnName?: string } | null)?.vnName ?? null;
-  const bars = ohlcvRes?.bars ?? [];
+  const bars =
+    (ohlcvResilient?.bars?.length ? ohlcvResilient.bars : null) ??
+    ohlcvLegacy?.bars ??
+    [];
+  if (ohlcvResilient?.bars?.length) notes.push(`ohlcv:${ohlcvResilient.pack?.meta?.source ?? "resilient"}`);
+  else if (ohlcvLegacy?.bars?.length) notes.push(`ohlcv:${ohlcvLegacy.meta?.source ?? "legacy"}`);
   if (!bars.length) failed.push("ohlcv");
 
   let technical: TechnicalSnapshot | null = null;
@@ -234,7 +255,7 @@ async function produceVnStockDetail(sym: string): Promise<{ detail: VnStockDetai
 
   const sources = [
     quoteRes?.meta?.source,
-    ohlcvRes?.meta?.source,
+    ohlcvResilient?.pack?.meta?.source ?? ohlcvLegacy?.meta?.source,
     finRes?.meta?.source,
     valRatioRes?.source,
   ].filter(Boolean) as string[];
@@ -275,48 +296,63 @@ async function produceVnStockDetail(sym: string): Promise<{ detail: VnStockDetai
   return { detail, meta };
 }
 
+function emptyShell(sym: string, note: string): { detail: VnStockDetail; meta: Meta } {
+  return {
+    detail: {
+      symbol: sym,
+      name: null,
+      quote: null,
+      bars: [],
+      technical: null,
+      patterns: [],
+      equity: null,
+      sharesOutstanding: null,
+      profile: null,
+      orderBook: null,
+      foreignFlow: null,
+      financials: null,
+      financialHealth: null,
+      financialMeta: null,
+      financialGrowth: null,
+      financialTtm: null,
+      detailedRatios: null,
+      ratioMap: {},
+      metricsSources: [],
+      notes: [note],
+    },
+    meta: buildMeta({
+      source: "degraded",
+      sourceTimestampMs: Date.now(),
+      note,
+      partial: true,
+    }),
+  };
+}
+
 export async function getVnStockDetail(
   symbol: string,
 ): Promise<{ detail: VnStockDetail; meta: Meta } | null> {
   const sym = symbol.toUpperCase().replace(/[^A-Z0-9]/g, "");
   if (!sym) return null;
+
   try {
-    const r = await produceVnStockDetail(sym);
-    if (r?.detail?.quote?.price && r.detail.quote.price > 0) return r;
-    // Retry once on partial
-    const r2 = await produceVnStockDetail(sym);
-    if (r2) return r2;
-    return r;
-  } catch (e) {
-    return {
-      detail: {
-        symbol: sym,
-        name: null,
-        quote: null,
-        bars: [],
-        technical: null,
-        patterns: [],
-        equity: null,
-        sharesOutstanding: null,
-        profile: null,
-        orderBook: null,
-        foreignFlow: null,
-        financials: null,
-        financialHealth: null,
-        financialMeta: null,
-        financialGrowth: null,
-        financialTtm: null,
-        detailedRatios: null,
-        ratioMap: {},
-        metricsSources: [],
-        notes: [e instanceof Error ? e.message : "detail_error"],
+    const hit = await cached(`vn:stock-detail:${sym}:v2`, {
+      ttlMs: 25_000,
+      staleMs: 180_000,
+      softSwr: true,
+      producer: async () => {
+        let r = await produceVnStockDetail(sym);
+        const hasPrice = Boolean(r?.detail?.quote?.price && r.detail.quote.price > 0);
+        const hasBars = Boolean(r?.detail?.bars && r.detail.bars.length >= 20);
+        if (!hasPrice && !hasBars) {
+          r = await produceVnStockDetail(sym);
+        }
+        if (!r) throw new Error(`detail unavailable: ${sym}`);
+        return r;
       },
-      meta: buildMeta({
-        source: "degraded",
-        sourceTimestampMs: Date.now(),
-        note: "partial shell — retry client-side",
-        partial: true,
-      }),
-    };
+    });
+    return hit.value;
+  } catch (e) {
+    return emptyShell(sym, e instanceof Error ? e.message : "detail_error");
   }
 }
