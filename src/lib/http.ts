@@ -6,7 +6,7 @@ import { isCircuitOpen, recordFailure, recordSuccess } from "./health";
  * timeout + retry with exponential backoff + circuit breaker + health recording.
  *
  * Domain timeouts (fail-fast, tuned for realtime screeners):
- *  quote ~3.5s · ohlcv/dchart ~4.5s · financials ~7s · default 7s
+ *  quote ~3.2s · ohlcv/dchart ~4.5s · financials ~7s · default 7s
  */
 
 const DEFAULT_UA =
@@ -14,7 +14,7 @@ const DEFAULT_UA =
 
 /** Soft domain budgets for callers that want a semantic default. */
 export const DOMAIN_TIMEOUT_MS = {
-  quote: 3_500,
+  quote: 3_200,
   ohlcv: 4_500,
   indices: 4_000,
   financials: 7_000,
@@ -46,9 +46,9 @@ const PROVIDER_TIMEOUT_MS: Record<string, number> = {
   entrade: 5_000,
   binance: 6_000,
   "binance-fapi": 6_000,
-  biquote: 5_000,
-  yahoo: 6_000,
-  "yahoo-fx": 6_000,
+  biquote: 4_000,
+  yahoo: 4_200,
+  "yahoo-fx": 4_200,
   simplize: 6_000,
   vietnambiz: 8_000,
   msn: 8_000,
@@ -130,8 +130,8 @@ function retryDelayMs(res: Response, attempt: number, backoffBase: number): numb
 async function httpRequestOnce<T>(url: string, opts: HttpOptions): Promise<HttpResult<T>> {
   const provider = opts.provider;
   const timeoutMs = resolveProviderTimeout(provider, opts.timeoutMs);
-  // Default 1 retry (was 2) — fail-fast for realtime; callers can raise retries
-  const retries = opts.retries ?? 1;
+  // P5-C: default 0 retries for fail-fast realtime; callers can raise retries
+  const retries = opts.retries ?? 0;
   const backoffBase = opts.backoffBaseMs ?? 180;
 
   if (isCircuitOpen(provider)) {
