@@ -10,6 +10,9 @@ import {
 } from "./data-engine/workers-guard";
 import type { Meta } from "./types";
 
+/** P5-E: coalesce concurrent identical produces (same label) within one isolate. */
+const produceInflight = new Map<string, Promise<{ data: unknown; meta?: Meta; headers?: Record<string, string> } | null>>();
+
 /**
  * Wrap heavy API handlers so they never surface as Worker 1102 when possible.
  * - Runs under request budget (subrequest + wall + concurrency)
@@ -54,10 +57,20 @@ export async function safeApi<T>(
   }
 
   try {
-    const result = await runGuarded(opts.produce, {
-      label: opts.label,
-      ...(opts.guard ?? {}),
-    });
+    // P5-E: share in-flight produce for same label (dashboard multi-call)
+    let result: { data: unknown; meta?: Meta; headers?: Record<string, string> } | null;
+    const coalesceKey = opts.label;
+    const existing = produceInflight.get(coalesceKey);
+    if (existing) {
+      result = await existing;
+    } else {
+      const p = runGuarded(opts.produce, {
+        label: opts.label,
+        ...(opts.guard ?? {}),
+      }).finally(() => produceInflight.delete(coalesceKey));
+      produceInflight.set(coalesceKey, p as Promise<{ data: unknown; meta?: Meta; headers?: Record<string, string> } | null>);
+      result = await p;
+    }
 
     const gm = guardMeta();
     if (result?.data != null) {
