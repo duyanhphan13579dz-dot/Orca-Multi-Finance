@@ -10,6 +10,7 @@ import { hubVnQuotes } from "../data-engine";
 import { sectorOf, getSecurity, type VnExchange } from "../vn/master";
 import { resolveListedEquityUniverse, listedEquityUniverseSync } from "../financial/equity-universe";
 import { WORKERS_BUDGET, clampUniverse } from "../data-engine/workers-budget";
+import { readLatestMarketScan } from "./market-screener-snapshots";
 
 function exchangeOf(symbol: string): string | null {
   return getSecurity(symbol)?.exchange ?? null;
@@ -231,10 +232,13 @@ function toRow(s: FundamentalSnapshot, price: number | null): FundamentalScreenR
 }
 
 export async function screenFundamental(opts: FundamentalFilterOpts = {}) {
+  const fullMarket = !opts.symbols?.length
+    ? await readLatestMarketScan<FundamentalScreenRow>("fundamental")
+    : null;
   const uniMax = clampUniverse(WORKERS_BUDGET.screenerUniverse);
   let fallback = listedEquityUniverseSync(uniMax);
   try {
-    if (!opts.symbols?.length) {
+    if (!opts.symbols?.length && !fullMarket) {
       const uni = await resolveListedEquityUniverse({ max: uniMax });
       if (uni.symbols.length) fallback = uni.symbols;
     }
@@ -250,13 +254,15 @@ export async function screenFundamental(opts: FundamentalFilterOpts = {}) {
   // for distinct custom scan lists and return another request's rows.
   const cacheKey = `screener:fundamental:v7:${symbols.join(",")}`;
 
-  const result = await cached(cacheKey, {
+  // Full-market runs are assembled from short cron slices and become visible only
+  // after every slice is committed. User requests never fan out across the market.
+  const result = fullMarket ? null : await cached(cacheKey, {
     ttlMs: 20 * 60_000,
     staleMs: 2 * 60 * 60_000,
     softSwr: true,
     producer: async () => {
       const [snapPack, quotes] = await Promise.all([
-        getFundamentalSnapshots(symbols, { concurrency: WORKERS_BUDGET.snapshotConcurrency, persist: true }),
+        getFundamentalSnapshots(symbols, { concurrency: WORKERS_BUDGET.snapshotConcurrency, persist: false }),
         hubVnQuotes(symbols).catch(() => null),
       ]);
       const quoteMap = new Map<string, { price?: number | null }>();
@@ -271,30 +277,31 @@ export async function screenFundamental(opts: FundamentalFilterOpts = {}) {
         rows.push(toRow(s, price));
       }
       rows.sort((a, b) => b.score - a.score || a.symbol.localeCompare(b.symbol));
-      return {
-        allRows: rows,
-        scanned: snapPack.scanned,
-        withData: snapPack.hit,
-      };
+      return { allRows: rows, scanned: snapPack.scanned, withData: snapPack.hit };
     },
   });
 
-  let rows = result.value.allRows.filter((r) => passesFilters(r, opts));
+  const allRows = fullMarket?.rows ?? result!.value.allRows;
+  const scanned = fullMarket?.scanned ?? result!.value.scanned;
+  const withData = fullMarket?.withData ?? result!.value.withData;
+  let rows = allRows.filter((r) => passesFilters(r, opts));
   if (opts.sector) rows = rows.filter((r) => r.sector === opts.sector);
   const limit = Math.min(opts.limit ?? 80, 100);
   rows = rows.slice(0, limit);
 
   return {
     rows,
-    scanned: result.value.scanned,
-    skipped: result.value.scanned - result.value.withData,
-    withData: result.value.withData,
+    scanned,
+    skipped: scanned - withData,
+    withData,
     meta: buildMeta({
-      source: "financial-snapshots+bctc",
-      cached: result.cached,
-      stale: result.stale,
-      partial: result.value.scanned > result.value.withData,
-      note: `BCTC · ${rows.length} khớp / ${result.value.withData} có data / ${result.value.scanned} quét`,
+      source: fullMarket ? "fundamental-market-snapshot" : "financial-snapshots+bctc",
+      cached: fullMarket != null || result?.cached,
+      stale: fullMarket ? fullMarket.ageMs > 24 * 60 * 60_000 : result?.stale,
+      partial: scanned > withData,
+      note: fullMarket
+        ? `Quét toàn thị trường · ${rows.length} khớp / ${withData} có data / ${scanned} mã · cycle ${fullMarket.cycle}`
+        : `BCTC · ${rows.length} khớp / ${withData} có data / ${scanned} quét`,
     }),
   };
 }

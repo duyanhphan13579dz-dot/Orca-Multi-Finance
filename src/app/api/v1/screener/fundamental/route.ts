@@ -1,6 +1,8 @@
-import { screenFundamental } from "@/lib/services/fundamental-screener";
+import { screenFundamental, type FundamentalScreenRow } from "@/lib/services/fundamental-screener";
 import { safeApi } from "@/lib/safe-api";
 import { WORKERS_BUDGET } from "@/lib/data-engine/workers-budget";
+import { getHot, putHot } from "@/lib/hot-snapshot";
+import { buildMeta } from "@/lib/freshness";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -19,9 +21,11 @@ function flag(v: string | null): boolean | undefined {
 
 export async function GET(req: Request) {
   const url = new URL(req.url);
-  const symbols = url.searchParams.get("symbols")?.split(/[,\s;]+/).filter(Boolean);
+  const symbols = url.searchParams.get("symbols")?.split(/[ ,\s;]+/).filter(Boolean);
   const sector = url.searchParams.get("sector") ?? undefined;
   const exchange = url.searchParams.get("exchange") ?? undefined;
+  const defaultScan = !symbols?.length && !sector && !exchange &&
+    [...url.searchParams.keys()].every((key) => key === "_");
 
   const filters = {
     symbols,
@@ -69,7 +73,7 @@ export async function GET(req: Request) {
     produce: async () => {
       const result = await screenFundamental(filters);
       if (!result) return null;
-      return {
+      const response = {
         data: {
           rows: result.rows,
           scanned: result.scanned,
@@ -78,16 +82,33 @@ export async function GET(req: Request) {
         },
         meta: result.meta,
       };
+      if (defaultScan) putHot("screener-fundamental", response.data, response.meta);
+      return response;
     },
-    fallback: async () => ({
-      data: { rows: [], scanned: 0, skipped: 0, withData: 0 },
-      meta: {
-        source: "fundamental-shell",
-        partial: true,
-        stale: true,
-        note: "Fundamental screener tạm trống — đang phục hồi",
-      },
-    }),
+    fallback: async () => {
+      if (defaultScan) {
+        const last = await getHot<{ rows: FundamentalScreenRow[]; scanned: number; skipped: number; withData: number }>("screener-fundamental");
+        if (last) return {
+          data: last.data,
+          meta: buildMeta({
+            source: "fundamental-last-good",
+            cached: true,
+            partial: true,
+            stale: true,
+            note: "Phục vụ last-good Fundamental snapshot trong khi nguồn đang phục hồi",
+          }),
+        };
+      }
+      return {
+        data: { rows: [] as FundamentalScreenRow[], scanned: 0, skipped: 0, withData: 0 },
+        meta: buildMeta({
+          source: "fundamental-shell",
+          partial: true,
+          stale: true,
+          note: "Fundamental screener tạm trống — đang phục hồi",
+        }),
+      };
+    },
     unavailableSource: "fundamental-screener",
     unavailableNote: "Không thể quét fundamental",
   });

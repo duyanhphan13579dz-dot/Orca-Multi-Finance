@@ -4,7 +4,9 @@ import { LIQUID_BOARD } from "@/lib/providers/public-vn-feed";
 import { DEFAULT_SYMBOLS } from "@/lib/services/valuation-screener";
 import { resolveListedEquityUniverse, listedEquityUniverseSync } from "@/lib/financial/equity-universe";
 import { warmCanslimDefault, CANSLIM_DEFAULT_CAP } from "@/lib/services/canslim-screener";
-import { batchVnOhlcv } from "@/lib/services/ohlcv-batch";
+import { screenFundamental } from "@/lib/services/fundamental-screener";
+import { screenMinervini, type MinerviniScreenRow } from "@/lib/services/minervini-screener";
+import { marketScanCycle, nextMarketScanOffset, writeMarketScanChunk } from "@/lib/services/market-screener-snapshots";
 import { cronUnauthorized } from "@/lib/cron-auth";
 
 export const dynamic = "force-dynamic";
@@ -26,12 +28,8 @@ function parsePhase(raw: string | null): Phase {
  * Warm BCTC / OHLCV / CANSLIM cache in 30s-safe phases (cronjob.org).
  *
  * Recommended (Asia/Ho_Chi_Minh), timeout 30s each:
- *   16:05  .../financials?phase=bctc&offset=0&limit=25
- *   16:07  .../financials?phase=bctc&offset=25&limit=25
- *   16:09  .../financials?phase=bctc&offset=50&limit=25
- *   … lặp offset += 25 tới hết universe (~400–600 mã)
- *   16:16  .../financials?phase=ohlcv
- *   16:18  .../financials?phase=canslim
+ *   Chạy phase=bctc và phase=ohlcv theo từng lát, offset += limit tới hết universe.
+ *   Chỉ snapshot đủ tất cả lát mới được công bố cho UI; các lát đang dở không ảnh hưởng dữ liệu đang phục vụ.
  */
 export async function GET(req: Request) {
   const denied = cronUnauthorized(req);
@@ -40,7 +38,8 @@ export async function GET(req: Request) {
   const t0 = Date.now();
   const url = new URL(req.url);
   const phase = parsePhase(url.searchParams.get("phase"));
-  const offset = Math.max(0, Number(url.searchParams.get("offset") ?? 0) || 0);
+  const explicitOffset = url.searchParams.has("offset");
+  const requestedOffset = Math.max(0, Number(url.searchParams.get("offset") ?? 0) || 0);
   const limit = Math.min(Math.max(Number(url.searchParams.get("limit") ?? 20) || 20, 1), 30);
   const custom = (url.searchParams.get("symbols") ?? "")
     .split(/[,\s;]+/)
@@ -59,6 +58,21 @@ export async function GET(req: Request) {
     }
   }
   const fullUniverse = [...new Set(board.map((s) => s.toUpperCase()))];
+  const cycle = marketScanCycle();
+  let offset = requestedOffset;
+  if (!custom.length && !explicitOffset && (phase === "bctc" || phase === "auto" || phase === "ohlcv")) {
+    const scanPhase = phase === "ohlcv" ? "minervini" : "fundamental";
+    const next = await nextMarketScanOffset({
+      phase: scanPhase,
+      cycle,
+      universeSize: fullUniverse.length,
+      chunkSize: limit,
+    });
+    if (next == null) {
+      return ok({ ok: true, phase, scanComplete: true, cycle, universeSize: fullUniverse.length, note: "all slices complete for today's market cycle" });
+    }
+    offset = next;
+  }
 
   try {
     const out: Record<string, unknown> = { ok: true, phase, durationMs: 0 };
@@ -76,21 +90,63 @@ export async function GET(req: Request) {
         });
       }
       const r = await warmFundamentalSnapshots(slice, { concurrency: 8 });
+      const screen = await screenFundamental({ symbols: slice, limit: slice.length });
+      const scan = screen && !custom.length
+        ? await writeMarketScanChunk({
+            phase: "fundamental",
+            cycle,
+            universeSize: fullUniverse.length,
+            chunkSize: limit,
+            chunk: {
+              offset,
+              scanned: screen.scanned,
+              withData: screen.withData,
+              skipped: screen.skipped,
+              rows: screen.rows,
+              generatedAt: Date.now(),
+            },
+          })
+        : null;
       out.scanned = r.scanned;
       out.warmed = r.warmed;
+      out.scanSnapshot = scan;
       out.offset = offset;
       out.limit = limit;
       out.sliceSize = slice.length;
       out.universeSize = fullUniverse.length;
-      out.note = `BCTC slice offset=${offset} limit=${limit} / universe ${fullUniverse.length} · 30s-safe`;
+      out.note = `BCTC + fundamental scan slice offset=${offset} limit=${limit} / universe ${fullUniverse.length}`;
     }
 
     if (phase === "ohlcv") {
-      const ohlcvBoard = fullUniverse.slice(0, CANSLIM_DEFAULT_CAP);
-      const map = await batchVnOhlcv(ohlcvBoard, { bars: 140, concurrency: 10 });
-      out.ohlcvWarmed = map.size;
-      out.board = ohlcvBoard.length;
-      out.note = "OHLCV pre-warm CANSLIM board";
+      const slice = fullUniverse.slice(offset, offset + limit);
+      if (!slice.length) {
+        return ok({ ok: true, phase, scanned: 0, universeSize: fullUniverse.length, note: "empty OHLCV slice" });
+      }
+      const screen = await screenMinervini({ symbols: slice, minPass: 0, limit: slice.length, skipQuotes: true });
+      const scan = screen && !custom.length
+        ? await writeMarketScanChunk<MinerviniScreenRow>({
+            phase: "minervini",
+            cycle,
+            universeSize: fullUniverse.length,
+            chunkSize: limit,
+            chunk: {
+              offset,
+              scanned: screen.scanned,
+              withData: Math.max(0, screen.scanned - screen.skipped),
+              skipped: screen.skipped,
+              rows: screen.rows,
+              generatedAt: Date.now(),
+            },
+          })
+        : null;
+      out.ohlcvWarmed = Math.max(0, (screen?.scanned ?? 0) - (screen?.skipped ?? 0));
+      out.scanned = screen?.scanned ?? 0;
+      out.skipped = screen?.skipped ?? slice.length;
+      out.offset = offset;
+      out.limit = limit;
+      out.universeSize = fullUniverse.length;
+      out.scanSnapshot = scan;
+      out.note = `Minervini + OHLCV slice offset=${offset} limit=${limit} / universe ${fullUniverse.length}`;
     }
 
     if (phase === "canslim") {

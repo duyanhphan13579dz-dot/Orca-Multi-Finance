@@ -86,6 +86,7 @@ interface HttpOptions {
   method?: string;
   body?: BodyInit | null;
   parse?: "json" | "text";
+  signal?: AbortSignal;
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -151,10 +152,15 @@ async function httpRequestOnce<T>(url: string, opts: HttpOptions): Promise<HttpR
   let attempts = 0;
 
   for (let attempt = 0; attempt <= retries; attempt++) {
+    if (opts.signal?.aborted) {
+      lastError = "aborted";
+      break;
+    }
     attempts = attempt + 1;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
+      const signal = opts.signal ? AbortSignal.any([controller.signal, opts.signal]) : controller.signal;
       const res = await fetch(url, {
         method: opts.method ?? "GET",
         headers: {
@@ -163,7 +169,7 @@ async function httpRequestOnce<T>(url: string, opts: HttpOptions): Promise<HttpR
           ...(opts.headers ?? {}),
         },
         body: opts.body ?? undefined,
-        signal: controller.signal,
+        signal,
         cache: "no-store",
       });
       lastStatus = res.status;
@@ -224,6 +230,10 @@ async function httpRequestOnce<T>(url: string, opts: HttpOptions): Promise<HttpR
       };
     } catch (e) {
       clearTimeout(timer);
+      if (opts.signal?.aborted) {
+        lastError = "aborted";
+        break;
+      }
       lastError =
         e instanceof Error ? (e.name === "AbortError" ? "timeout" : e.message) : "network_error";
       if (attempt < retries) {

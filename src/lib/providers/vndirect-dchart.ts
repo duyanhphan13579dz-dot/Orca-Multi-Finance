@@ -55,6 +55,7 @@ export async function fetchVndDchartHistory(
   symbol: string,
   resolution: "D" | "1" | "5" | "15" | "30" | "60" = "D",
   bars = 500,
+  signal?: AbortSignal,
 ): Promise<OhlcvBar[]> {
   const sym = toDchartSymbol(symbol);
   const cap = MAX_BARS[resolution] ?? 1_000;
@@ -83,6 +84,7 @@ export async function fetchVndDchartHistory(
   let lastErr: unknown = null;
   const maxAttempts = 3;
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    if (signal?.aborted) break;
     const hostIdx = (lastGoodHost + attempt) % DCHART_HOSTS.length;
     const host = DCHART_HOSTS[hostIdx]!;
     const url = `${host}/dchart/history?symbol=${encodeURIComponent(sym)}&resolution=${resolution}&from=${from}&to=${to}`;
@@ -94,7 +96,9 @@ export async function fetchVndDchartHistory(
           Origin: "https://dchart.vndirect.com.vn",
           Referer: "https://dchart.vndirect.com.vn/",
         },
-        signal: AbortSignal.timeout(attempt === 0 ? 8_000 : attempt === 1 ? 12_000 : 15_000),
+        signal: signal
+          ? AbortSignal.any([signal, AbortSignal.timeout(attempt === 0 ? 8_000 : attempt === 1 ? 12_000 : 15_000)])
+          : AbortSignal.timeout(attempt === 0 ? 8_000 : attempt === 1 ? 12_000 : 15_000),
         cache: "no-store",
       });
       if (!res.ok) throw new ProviderError(`vndirect dchart HTTP ${res.status} (${sym})`, "vndirect");
@@ -156,6 +160,7 @@ export async function fetchVndDchartHistory(
       return sliced;
     } catch (e) {
       lastErr = e;
+      if (signal?.aborted) break;
       if (attempt < maxAttempts - 1) await new Promise((r) => setTimeout(r, 200 + attempt * 250));
     }
   }

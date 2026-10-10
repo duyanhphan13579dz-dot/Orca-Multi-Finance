@@ -186,8 +186,8 @@ export async function getFundamentalSnapshots(
     persist: opts?.persist,
   });
 
-  const snapshots: FundamentalSnapshot[] = [];
-  for (const [symbol, bundle] of packages) {
+  const entries = [...packages.entries()];
+  const snapshots = (await mapPool(entries, Math.max(1, Math.min(4, opts?.concurrency ?? WORKERS_BUDGET.snapshotConcurrency)), async ([symbol, bundle]) => {
     const key = `fin:snap:v3:${symbol}`;
     try {
       const res = await cached(key, {
@@ -196,11 +196,11 @@ export async function getFundamentalSnapshots(
         softSwr: true,
         producer: async () => buildSnapshotFromBundle(bundle),
       });
-      snapshots.push(res.value);
+      return res.value;
     } catch {
-      snapshots.push(buildSnapshotFromBundle(bundle));
+      return buildSnapshotFromBundle(bundle);
     }
-  }
+  })).filter((snapshot): snapshot is FundamentalSnapshot => snapshot != null);
 
   return {
     snapshots,

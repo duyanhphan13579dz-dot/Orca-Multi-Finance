@@ -25,33 +25,33 @@ Base URL: `https://<your-app>.workers.dev` (or your custom domain)
 | stocks | `/api/v1/cron/stocks` | Every 5 min Mon–Fri 09:00–15:00 | 30s |
 | alerts | `/api/v1/cron/alerts` | Every 10 min Mon–Fri 09:00–15:30 | 30s |
 | reports | `/api/v1/cron/reports` | Session slots (morning/lunch/ATC…) | 30s |
-| **Financials BCTC #1** | `/api/v1/cron/financials?phase=bctc&offset=0&limit=20` | Mon–Fri **16:10** | **30s** |
-| **Financials BCTC #2** | `...?phase=bctc&offset=20&limit=20` | Mon–Fri **16:12** | **30s** |
-| **Financials BCTC #3** | `...?phase=bctc&offset=40&limit=20` | Mon–Fri **16:14** | **30s** |
-| **Financials OHLCV** | `...?phase=ohlcv` | Mon–Fri **16:16** | **30s** |
-| **Financials CANSLIM** | `...?phase=canslim` | Mon–Fri **16:18** | **30s** |
+| **Fundamental market scan** | `/api/v1/cron/financials?phase=bctc&limit=20` | Every 1 min Mon–Fri **16:00–16:59** | **30s** |
+| **Technical (Minervini) market scan** | `/api/v1/cron/financials?phase=ohlcv&limit=20` | Every 1 min Mon–Fri **17:00–17:59** | **30s** |
+| **Financials CANSLIM** | `/api/v1/cron/financials?phase=canslim` | Mon–Fri **18:00** | **30s** |
 | **crypto-warm** | `/api/v1/cron/crypto-warm` | **Every 60–90s** (24/7) | **15s** |
 | **multi-asset-warm** | `/api/v1/cron/multi-asset-warm` | **Every 60–90s** (24/7) | **18s** |
 | commodities | `/api/v1/cron/commodities` | Daily 00:05 | 30s |
 
-Optional late backup (17:30): repeat BCTC slices if morning/afternoon failed.
+Each scan URL advances its own cursor in Postgres and processes one 20-symbol slice per invocation. It returns `scanComplete=true` after all slices are done; a new Vietnam-local date starts a new cycle. The scan uses the existing `market_snapshots` table, so `DATABASE_URL` or a Cloudflare Hyperdrive binding must be configured. Without it the normal bounded live screener remains available, but there is no cross-Worker checkpoint/full-market result.
 
 ### Financials phases (30s-safe)
 
 | `phase` | Work | Notes |
 |---------|------|-------|
-| `bctc` | Warm fundamental packages for `offset..offset+limit` | Use limit ≤ 20–25 per job |
-| `ohlcv` | Pre-warm OHLCV for CANSLIM default board (28 mã) | Fast |
+| `bctc` | Warm financial packages, compute Fundamental rows, checkpoint slice | Default scan uses ≤20 symbols/invocation; explicit `offset` remains supported |
+| `ohlcv` | Compute Minervini/OHLCV rows and checkpoint slice across the listed-equity universe | ≤20 symbols/invocation; quotes are skipped in cron (close is used) |
 | `canslim` | Seed CANSLIM result cache (UI filter score≥50 pass≥3) | After bctc+ohlcv |
 | `auto` | Same as small `bctc` slice only | Default |
 
 Example URLs:
 
 ```text
-https://YOUR_DOMAIN/api/v1/cron/financials?phase=bctc&offset=0&limit=20&secret=SECRET
-https://YOUR_DOMAIN/api/v1/cron/financials?phase=ohlcv&secret=SECRET
+https://YOUR_DOMAIN/api/v1/cron/financials?phase=bctc&limit=20&secret=SECRET
+https://YOUR_DOMAIN/api/v1/cron/financials?phase=ohlcv&limit=20&secret=SECRET
 https://YOUR_DOMAIN/api/v1/cron/financials?phase=canslim&secret=SECRET
 ```
+
+Do not schedule a one-shot job for only `offset=0`; it intentionally scans one bounded slice. The recommended recurring URLs above auto-select the next missing offset. Users see the previous complete snapshot while a new cycle is being assembled; incomplete data is never exposed as a full-market result. Requests with explicit `symbols=` continue to run against that requested set.
 
 
 ## Board pre-warm (anti-blank `/stocks`)

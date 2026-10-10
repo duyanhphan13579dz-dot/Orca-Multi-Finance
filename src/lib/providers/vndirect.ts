@@ -94,11 +94,12 @@ export function getVndirectLatencyStats() {
   };
 }
 
-async function vndGet<T>(path: string, timeoutMs = 8_000): Promise<T> {
+async function vndGet<T>(path: string, timeoutMs = 8_000, signal?: AbortSignal): Promise<T> {
   const bases = vndBases();
   const t0 = performance.now();
   let lastErr = "unreachable";
   for (let i = 0; i < bases.length; i++) {
+    if (signal?.aborted) break;
     const idx = (lastGoodBase + i) % bases.length;
     const res = await httpJson<T>(`${bases[idx]}${path}`, {
       provider: VNDIRECT,
@@ -106,6 +107,7 @@ async function vndGet<T>(path: string, timeoutMs = 8_000): Promise<T> {
       retries: 2,
       backoffBaseMs: 220,
       headers: VND_HEADERS,
+      signal,
     });
     if (res.ok && res.data != null) {
       lastGoodBase = idx;
@@ -113,6 +115,7 @@ async function vndGet<T>(path: string, timeoutMs = 8_000): Promise<T> {
       return res.data;
     }
     lastErr = res.error ?? "unreachable";
+    if (signal?.aborted) break;
   }
   recordVndLatency(path, performance.now() - t0, false);
   throw new ProviderError(`vndirect: ${lastErr}`, VNDIRECT);
@@ -290,10 +293,11 @@ export async function getVndQuotes(symbols: string[]): Promise<{ quotes: Quote[]
   return { quotes, sourceTs: newest };
 }
 
-export async function getVndOhlcv(symbol: string, size = 250): Promise<OhlcvBar[]> {
+export async function getVndOhlcv(symbol: string, size = 250, signal?: AbortSignal): Promise<OhlcvBar[]> {
   const payload = await vndGet<Page<VndPriceRow>>(
     `/v4/stock_prices?q=code:${symbol.toUpperCase()}&size=${Math.min(size, 500)}&sort=date:asc`,
     10_000,
+    signal,
   );
   const rows = payload.data ?? [];
   const bars: OhlcvBar[] = [];
@@ -332,11 +336,12 @@ export function isVnIndexSymbol(symbol: string): boolean {
   return raw in INDEX_ALIASES || stripped in INDEX_ALIASES;
 }
 
-export async function getVndIndexOhlcv(code: string, size = 250): Promise<OhlcvBar[]> {
+export async function getVndIndexOhlcv(code: string, size = 250, signal?: AbortSignal): Promise<OhlcvBar[]> {
   const idx = vndIndexCode(code);
   const payload = await vndGet<Page<VndPriceRow>>(
     `/v4/vnmarket_prices?q=code:${idx}&size=${Math.min(size, 500)}&sort=date:asc`,
     10_000,
+    signal,
   );
   const bars: OhlcvBar[] = [];
   for (const r of payload.data ?? []) {

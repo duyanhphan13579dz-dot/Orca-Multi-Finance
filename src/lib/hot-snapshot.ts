@@ -15,7 +15,9 @@ export type HotSlot =
   | "intel"
   | "forex"
   | "global"
-  | "multi-asset";
+  | "multi-asset"
+  | "screener-fundamental"
+  | "screener-minervini";
 
 type SlotEntry = {
   data: unknown;
@@ -79,7 +81,7 @@ async function upstashGet(key: string): Promise<string | null> {
 export function putHot(
   slot: HotSlot,
   data: unknown,
-  meta: Record<string, unknown> = {},
+  meta: object = {},
 ): void {
   if (data == null) return;
   const entry: SlotEntry = {
@@ -158,7 +160,10 @@ export function peekHot<T = unknown>(
 
 export function hotStats(): Record<HotSlot, { ageMs: number | null; has: boolean }> {
   const now = Date.now();
-  const slots: HotSlot[] = ["board", "intel", "forex", "global", "multi-asset"];
+  const slots: HotSlot[] = [
+    "board", "intel", "forex", "global", "multi-asset",
+    "screener-fundamental", "screener-minervini",
+  ];
   const out = {} as Record<HotSlot, { ageMs: number | null; has: boolean }>;
   for (const s of slots) {
     const e = mem.get(s);

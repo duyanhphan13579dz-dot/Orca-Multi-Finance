@@ -147,12 +147,17 @@ export async function getVnOhlcv(
   symbol: string,
   limit = 250,
   kind: "stock" | "index" = "stock",
+  signal?: AbortSignal,
 ): Promise<{ bars: OhlcvBar[]; meta: Meta } | null> {
   const sym = symbol.toUpperCase().replace(/[^A-Z0-9]/g, "");
   if (!sym) return null;
 
   try {
-    const bars = await withTimeout(getPublicOhlcv(sym, limit, kind), 8_000);
+    if (signal?.aborted) return null;
+    const publicSignal = signal
+      ? AbortSignal.any([signal, AbortSignal.timeout(8_000)])
+      : AbortSignal.timeout(8_000);
+    const bars = await withTimeout(getPublicOhlcv(sym, limit, kind, publicSignal), 8_000);
     if (bars?.length) {
       return {
         bars,
@@ -164,7 +169,11 @@ export async function getVnOhlcv(
   }
 
   try {
-    const bars = await withTimeout(fetchVndDchartHistory(sym, "D", limit), 7_000);
+    if (signal?.aborted) return null;
+    const dchartSignal = signal
+      ? AbortSignal.any([signal, AbortSignal.timeout(7_000)])
+      : AbortSignal.timeout(7_000);
+    const bars = await withTimeout(fetchVndDchartHistory(sym, "D", limit, dchartSignal), 7_000);
     if (bars?.length) {
       return {
         bars,
@@ -176,8 +185,9 @@ export async function getVnOhlcv(
   }
 
   try {
+    if (signal?.aborted) return null;
     if (ssiFcConfigured()) {
-      const bars = await withTimeout(getSsiDailyOhlc(sym, limit), 6_000);
+      const bars = await withTimeout(getSsiDailyOhlc(sym, { pageSize: limit, signal }), 6_000);
       if (bars?.length) {
         return {
           bars,

@@ -233,12 +233,14 @@ export async function screenMinervini(args?: {
   sector?: string;
   minRs?: number;
   limit?: number;
+  skipQuotes?: boolean;
 }): Promise<{ rows: MinerviniScreenRow[]; scanned: number; skipped: number; meta: Meta } | null> {
   const uniq = [
     ...new Set((args?.symbols?.length ? args.symbols : LIQUID_BOARD).map((s) => s.toUpperCase()).filter(Boolean)),
   ].slice(0, 100);
 
-  const quotesPack = await getVnQuotes(uniq).catch(() => null);
+  const screenStartedAt = Date.now();
+  const quotesPack = args?.skipQuotes ? null : await getVnQuotes(uniq).catch(() => null);
   const quoteMap = new Map<string, Quote>();
   for (const quote of quotesPack?.quotes ?? []) {
     if (quote.symbol) quoteMap.set(quote.symbol, quote);
@@ -249,7 +251,7 @@ export async function screenMinervini(args?: {
     bars: 260,
     concurrency: WORKERS_BUDGET.ohlcvBatchConcurrency,
     perSymbolMs: WORKERS_BUDGET.ohlcvPerSymbolMs + 1_000,
-    deadlineMs: WORKERS_BUDGET.techScreenWallMs + 10_000,
+    deadlineMs: Math.max(1_000, WORKERS_BUDGET.techScreenWallMs - (Date.now() - screenStartedAt) - 1_500),
     resilient: true,
     priority: uniq.slice(0, 30),
   });

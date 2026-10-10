@@ -153,6 +153,7 @@ async function fetchEntradeOhlcv(
   to: number,
   kind: "stock" | "index",
   limit: number,
+  signal?: AbortSignal,
 ): Promise<OhlcvBar[]> {
   const host =
     kind === "index"
@@ -172,6 +173,7 @@ async function fetchEntradeOhlcv(
     provider: PUBLIC_VN,
     timeoutMs: 6_000,
     retries: 0,
+    signal,
     headers: { Accept: "application/json" },
   });
   if (!res.ok || !res.data?.t?.length) return [];
@@ -198,6 +200,7 @@ async function fetchVpsHistOhlcv(
   from: number,
   to: number,
   limit: number,
+  signal?: AbortSignal,
 ): Promise<OhlcvBar[]> {
   const url =
     `https://histdatafeed.vps.com.vn/tradingview/history` +
@@ -214,6 +217,7 @@ async function fetchVpsHistOhlcv(
     provider: PUBLIC_VN,
     timeoutMs: 6_000,
     retries: 0,
+    signal,
     headers: {
       Accept: "application/json",
       "User-Agent":
@@ -243,17 +247,18 @@ export async function getPublicOhlcv(
   symbol: string,
   limit = 250,
   kind: "stock" | "index" = "stock",
+  signal?: AbortSignal,
 ): Promise<OhlcvBar[]> {
   const sym = symbol.toUpperCase().replace(/[^A-Z0-9]/g, "");
   const now = Math.floor(Date.now() / 1000);
   const from = Math.floor(now - Math.max(limit, 30) * 86400 * 1.6);
 
   const settled = await Promise.allSettled([
-    fetchVpsHistOhlcv(sym, from, now, limit),
+    fetchVpsHistOhlcv(sym, from, now, limit, signal),
     import("./vndirect-dchart")
-      .then((m) => m.fetchVndDchartHistory(sym, "D", limit))
+      .then((m) => m.fetchVndDchartHistory(sym, "D", limit, signal))
       .catch(() => [] as OhlcvBar[]),
-    fetchEntradeOhlcv(sym, from, now, kind, limit),
+    fetchEntradeOhlcv(sym, from, now, kind, limit, signal),
   ]);
 
   const candidates: OhlcvBar[][] = [];
