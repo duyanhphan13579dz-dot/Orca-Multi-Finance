@@ -73,3 +73,23 @@ export {
 export type { GuardState, GuardOpts } from "./workers-guard";
 
 export { WORKERS_BUDGET, clampUniverse } from "./workers-budget";
+
+export {
+  validateSchemaContract,
+  checkMonotonicTimestamps,
+  assessDataFreshness,
+  detectPriceAnomalies,
+  evaluatePayloadQuality,
+} from "./quality";
+export type {
+  QualitySeverity,
+  QualityIssue,
+  QualityGrade,
+  SchemaContractResult,
+  TimestampMonotonicityResult,
+  FreshnessStatus,
+  DataFreshnessResult,
+  QuoteAnomaly,
+  AnomalyDetectionResult,
+  DataQualityReport,
+} from "./quality";
