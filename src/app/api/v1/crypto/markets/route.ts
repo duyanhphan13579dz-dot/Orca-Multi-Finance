@@ -1,5 +1,7 @@
 import { safeApi } from "@/lib/safe-api";
 import { getCryptoMarkets } from "@/lib/services/crypto";
+import { getHot, putHot } from "@/lib/hot-snapshot";
+import { buildMeta } from "@/lib/freshness";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -9,6 +11,7 @@ export async function GET(req: Request) {
   const url = new URL(req.url);
   const limit = Math.min(Number(url.searchParams.get("limit") ?? 60) || 60, 300);
   const sort = url.searchParams.get("sort");
+  const defaultScan = !sort && limit >= 60;
 
   return safeApi({
     label: "crypto-markets",
@@ -22,8 +25,10 @@ export async function GET(req: Request) {
       } else if (sort === "losers") {
         rows = [...rows].sort((a, b) => (a.changePercent ?? 0) - (b.changePercent ?? 0));
       }
+      const data = { rows: rows.slice(0, limit), summary: r.summary };
+      if (defaultScan) putHot("crypto", data, r.meta);
       return {
-        data: { rows: rows.slice(0, limit), summary: r.summary },
+        data,
         meta: r.meta,
         headers: {
           "Cache-Control": r.meta.stale
@@ -32,27 +37,54 @@ export async function GET(req: Request) {
         },
       };
     },
-    fallback: async () => ({
-      data: {
-        rows: [],
+    fallback: async () => {
+      const last = await getHot<{
+        rows: unknown[];
         summary: {
-          marketCount: 0,
-          advancers: 0,
-          decliners: 0,
-          avgChangePercent: 0,
-          totalQuoteVolume: 0,
-          btcChangePercent: null,
-          ethChangePercent: null,
-          fetchedAt: new Date().toISOString(),
+          marketCount: number;
+          advancers: number;
+          decliners: number;
+          avgChangePercent: number;
+          totalQuoteVolume: number;
+          btcChangePercent: number | null;
+          ethChangePercent: number | null;
+          fetchedAt: string;
+        };
+      }>("crypto");
+      if (last) {
+        return {
+          data: last.data,
+          meta: buildMeta({
+            source: "crypto-last-good",
+            cached: true,
+            partial: true,
+            stale: true,
+            note: `Phục vụ last-good crypto · age ${Math.round(last.ageMs / 1000)}s`,
+          }),
+        };
+      }
+      return {
+        data: {
+          rows: [],
+          summary: {
+            marketCount: 0,
+            advancers: 0,
+            decliners: 0,
+            avgChangePercent: 0,
+            totalQuoteVolume: 0,
+            btcChangePercent: null,
+            ethChangePercent: null,
+            fetchedAt: new Date().toISOString(),
+          },
         },
-      },
-      meta: {
-        source: "crypto-shell",
-        partial: true,
-        stale: true,
-        note: "Crypto markets tạm trống — đang kết nối lại",
-      },
-    }),
+        meta: {
+          source: "crypto-shell",
+          partial: true,
+          stale: true,
+          note: "Crypto markets tạm trống — đang kết nối lại",
+        },
+      };
+    },
     unavailableSource: "crypto",
     unavailableNote: "Crypto market data không khả dụng — thử lại sau.",
   });

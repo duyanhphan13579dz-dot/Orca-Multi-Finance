@@ -2,6 +2,7 @@ import { ok, unavailable } from "@/lib/envelope";
 import { getCryptoMarkets } from "@/lib/services/crypto";
 import { cronUnauthorized } from "@/lib/cron-auth";
 import { runGuarded, guardMeta } from "@/lib/data-engine/workers-guard";
+import { putHot } from "@/lib/hot-snapshot";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -31,6 +32,12 @@ export async function GET(req: Request) {
     if (!market?.rows?.length) {
       return unavailable("crypto-warm", "Crypto market warm failed — last-good may still serve UI");
     }
+
+    putHot(
+      "crypto",
+      { rows: market.rows.slice(0, 80), summary: market.summary },
+      market.meta,
+    );
 
     return ok(
       {
