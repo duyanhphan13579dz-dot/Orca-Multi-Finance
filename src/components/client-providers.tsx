@@ -11,28 +11,53 @@ import { prefetchApi } from "@/lib/hooks";
 const globalSwrCache = new Map();
 
 /**
- * P3-A: Warm critical APIs in staggered order so first paint is not blocked.
- * Priority: VN30 board (fast) → intel → global → forex → full board → crypto → screener defaults.
+ * Ưu tiên tải dữ liệu trang tổng quan trước tiên để giao diện xuất hiện nhanh nhất.
+ * Sau đó, khi máy rảnh (idle), mới tải ngầm dần dần các trang khác để giảm tải tài nguyên.
  */
 function WarmCriticalApis() {
   useEffect(() => {
-    // Fast path first — VN30 board for dashboard/stocks first paint
+    // 1. Chỉ nạp dữ liệu trang tổng quan trước tiên
     prefetchApi("/api/v1/stocks?board=vn30", 5_000);
-    const t1 = window.setTimeout(() => prefetchApi("/api/v1/market/intel", 12_000), 250);
-    const t2 = window.setTimeout(() => prefetchApi("/api/v1/market/global", 10_000), 600);
-    const t3 = window.setTimeout(() => prefetchApi("/api/v1/forex/markets", 12_000), 900);
-    const t4 = window.setTimeout(() => prefetchApi("/api/v1/stocks?board=full", 12_000), 1_200);
-    const t5 = window.setTimeout(() => prefetchApi("/api/v1/crypto/markets", 10_000), 1_600);
-    const t6 = window.setTimeout(() => prefetchApi("/api/v1/screener/fundamental", 14_000), 2_200);
-    const t7 = window.setTimeout(() => prefetchApi("/api/v1/screener/valuation", 14_000), 2_600);
+    const tIntel = window.setTimeout(() => prefetchApi("/api/v1/market/intel", 12_000), 250);
+    const tGlobal = window.setTimeout(() => prefetchApi("/api/v1/market/global", 10_000), 600);
+
+    // Không nạp ngầm nếu người dùng bật chế độ tiết kiệm dữ liệu mạng
+    const navAny = typeof navigator !== "undefined" ? (navigator as unknown as { connection?: { saveData?: boolean } }) : null;
+    if (navAny?.connection?.saveData) {
+      return () => {
+        clearTimeout(tIntel);
+        clearTimeout(tGlobal);
+      };
+    }
+
+    // 2. Sau đó mới tải ngầm dần dần các trang khác (giãn cách theo nhịp idle để không nghẽn băng thông)
+    const backgroundQueue: { url: string; timeout: number; delay: number }[] = [
+      { url: "/api/v1/crypto/markets", timeout: 10_000, delay: 5_000 },
+      { url: "/api/v1/forex/markets", timeout: 12_000, delay: 9_000 },
+      { url: "/api/v1/stocks?board=full", timeout: 12_000, delay: 13_000 },
+      { url: "/api/v1/commodities", timeout: 10_000, delay: 17_000 },
+      { url: "/api/v1/news", timeout: 10_000, delay: 21_000 },
+    ];
+
+    const timers: number[] = [];
+    for (const item of backgroundQueue) {
+      const t = window.setTimeout(() => {
+        if (typeof window !== "undefined" && "requestIdleCallback" in window) {
+          (window as unknown as { requestIdleCallback: (cb: () => void, opts: { timeout: number }) => number }).requestIdleCallback(
+            () => prefetchApi(item.url, item.timeout),
+            { timeout: 3_000 },
+          );
+        } else {
+          prefetchApi(item.url, item.timeout);
+        }
+      }, item.delay);
+      timers.push(t);
+    }
+
     return () => {
-      clearTimeout(t1);
-      clearTimeout(t2);
-      clearTimeout(t3);
-      clearTimeout(t4);
-      clearTimeout(t5);
-      clearTimeout(t6);
-      clearTimeout(t7);
+      window.clearTimeout(tIntel);
+      window.clearTimeout(tGlobal);
+      for (const t of timers) window.clearTimeout(t);
     };
   }, []);
   return null;

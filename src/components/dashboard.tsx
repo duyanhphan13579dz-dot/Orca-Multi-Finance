@@ -1,7 +1,7 @@
 "use client";
 
 import "./command-center/command-center.css";
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useApi } from "@/lib/hooks";
 import type { MarketIntel } from "@/lib/services/market-intel";
 import type { IndexQuote, Quote } from "@/lib/types";
@@ -113,11 +113,34 @@ export function Dashboard() {
     keepPreviousData: true,
   });
 
+  // Tải trang tổng quan trước: bảng đầy đủ (hàng nghìn mã) chỉ kích hoạt tải ngầm khi máy rảnh
+  const [loadFullBoard, setLoadFullBoard] = useState(false);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    let idleHandle: number | null = null;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    if ("requestIdleCallback" in window) {
+      idleHandle = (window as unknown as { requestIdleCallback: (cb: () => void, opts: { timeout: number }) => number }).requestIdleCallback(
+        () => setLoadFullBoard(true),
+        { timeout: 4_500 },
+      );
+    } else {
+      timer = setTimeout(() => setLoadFullBoard(true), 3_000);
+    }
+
+    return () => {
+      if (idleHandle !== null && "cancelIdleCallback" in window) {
+        (window as unknown as { cancelIdleCallback: (id: number) => void }).cancelIdleCallback(idleHandle);
+      }
+      if (timer) clearTimeout(timer);
+    };
+  }, []);
+
   const {
     data: boardFull,
-    isLoading: boardLoading,
     mutate: mutateBoard,
-  } = useApi<StocksBoard>("/api/v1/stocks?board=full", {
+  } = useApi<StocksBoard>(loadFullBoard ? "/api/v1/stocks?board=full" : null, {
     refreshInterval: 22_000,
     timeoutMs: 12_000,
     keepPreviousData: true,
@@ -136,7 +159,7 @@ export function Dashboard() {
     return synthesizeIntel(board);
   }, [intel, board]);
 
-  const stillBooting = !displayIntel && isLoading && boardCoreLoading && boardLoading;
+  const stillBooting = !displayIntel && isLoading && boardCoreLoading;
 
   if (stillBooting) {
     return <PageSkeleton variant="dashboard" title="Market Command Center" />;

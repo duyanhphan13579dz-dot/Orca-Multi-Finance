@@ -123,11 +123,14 @@ export function PatternAlertMonitorHost() {
     }
 
     void ensurePerm();
-    void tick();
-    timer = setInterval(() => void tick(), 90_000);
+    const initDelay = window.setTimeout(() => {
+      void tick();
+      timer = setInterval(() => void tick(), 90_000);
+    }, 12_000);
 
     return () => {
       cancelled = true;
+      clearTimeout(initDelay);
       if (timer) clearInterval(timer);
     };
   }, []);
