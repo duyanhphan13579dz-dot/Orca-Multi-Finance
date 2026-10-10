@@ -122,6 +122,13 @@ export function useApi<T>(
   const refreshInterval = visible && rt.liveUpdates && !inNavFreeze ? adaptiveBase : 0;
   const keepPrev = opts?.keepPreviousData !== false;
 
+  // P4-B: shorter timeout when client cache is warm — fail-fast to last-good paint
+  const effectiveTimeout = (() => {
+    const base = opts?.timeoutMs ?? FETCH_TIMEOUT_MS;
+    if (hasWarm) return Math.min(base, 5_000);
+    return base;
+  })();
+
   const fallbackData = useMemo(() => {
     if (!url || !keepPrev) return undefined;
     return clientCacheGet<ApiResponse<T>>(url);
@@ -129,7 +136,7 @@ export function useApi<T>(
 
   const { data, error, isLoading, isValidating, mutate } = useSWR<ApiResponse<T>>(
     url,
-    (key: string) => fetcher<T>(key, opts?.timeoutMs ?? FETCH_TIMEOUT_MS),
+    (key: string) => fetcher<T>(key, effectiveTimeout),
     {
       refreshInterval,
       revalidateOnFocus: rt.backgroundRefresh && !inNavFreeze,
