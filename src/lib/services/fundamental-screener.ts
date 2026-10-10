@@ -9,7 +9,7 @@ import {
 import { hubVnQuotes } from "../data-engine";
 import { sectorOf, getSecurity, type VnExchange } from "../vn/master";
 import { resolveListedEquityUniverse, listedEquityUniverseSync } from "../financial/equity-universe";
-import { WORKERS_BUDGET, clampUniverse } from "../data-engine/workers-budget";
+import { WORKERS_BUDGET, clampUniverse, resolveSnapshotConcurrency } from "../data-engine/workers-budget";
 import { readLatestMarketScan } from "./market-screener-snapshots";
 
 function exchangeOf(symbol: string): string | null {
@@ -261,7 +261,7 @@ export async function screenFundamental(opts: FundamentalFilterOpts = {}) {
         producer: async () => {
           const [snapPack, quotes] = await Promise.all([
             getFundamentalSnapshots(symbols, {
-              concurrency: WORKERS_BUDGET.snapshotConcurrency,
+              concurrency: resolveSnapshotConcurrency(),
               persist: false,
             }),
             hubVnQuotes(symbols).catch(() => null),
