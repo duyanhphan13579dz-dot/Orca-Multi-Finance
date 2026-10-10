@@ -23,13 +23,23 @@ export async function GET(req: Request, ctx: { params: Promise<{ symbol: string 
     produce: async () => {
       const r = await getCryptoDetail(symbol, interval);
       if (!r?.detail) return null;
-      return { data: r.detail, meta: r.meta };
+      const baseAsset = sym.replace(/USDT$/i, "");
+      const payload = {
+        ...r.detail,
+        baseAsset,
+        ticker: r.detail.quote,
+        klines: r.detail.bars,
+      };
+      return { data: payload, meta: r.meta };
     },
     fallback: async () => ({
       data: {
         symbol: sym.endsWith("USDT") ? sym : `${sym}USDT`,
+        baseAsset: sym.replace(/USDT$/i, ""),
         quote: null,
+        ticker: null,
         bars: [],
+        klines: [],
         technical: null,
         patterns: [],
         funding: null,

@@ -40,15 +40,17 @@ import {
 
 interface CryptoDetail {
   symbol: string;
-  baseAsset: string;
-  ticker: CryptoMarketRow;
-  klines: OhlcvBar[];
-  interval: string;
-  technical: TechnicalSnapshot | null;
-  patterns: CandlePattern[];
-  funding: { fundingRate: number; markPrice?: number; nextFundingTime?: number } | null;
-  openInterest: { openInterest: number; time: number } | null;
-  fundingStatus: "ok" | "unavailable";
+  baseAsset?: string;
+  ticker?: CryptoMarketRow | null;
+  quote?: CryptoMarketRow | null;
+  klines?: OhlcvBar[];
+  bars?: OhlcvBar[];
+  interval?: string;
+  technical?: TechnicalSnapshot | null;
+  patterns?: CandlePattern[];
+  funding?: { fundingRate: number; markPrice?: number; nextFundingTime?: number } | null;
+  openInterest?: { openInterest: number; time: number } | null;
+  fundingStatus?: "ok" | "unavailable";
 }
 
 interface NewsPayload {
@@ -120,7 +122,7 @@ export function CryptoDetailPage({ symbol }: { symbol: string }) {
     },
   );
 
-  const series = useMemo(() => toBars(data?.klines ?? []), [data?.klines]);
+  const series = useMemo(() => toBars(data?.klines ?? data?.bars ?? []), [data?.klines, data?.bars]);
   const orderFlow = useMemo(() => deriveOrderFlow(series), [series]);
   const seriesHigh = useMemo(() => {
     if (!series.length) return null;
@@ -131,8 +133,11 @@ export function CryptoDetailPage({ symbol }: { symbol: string }) {
     return Math.min(...series.slice(-48).map((b) => b.low));
   }, [series]);
 
-  if (isLoading && !data) return <Loading rows={12} />;
-  if (!data) {
+  const t = data?.ticker ?? data?.quote ?? null;
+  const price = t?.price;
+
+  if (isLoading && !t) return <Loading rows={12} />;
+  if (!data || !t || price == null || !Number.isFinite(price)) {
     return (
       <Unavailable
         title={`Không lấy được dữ liệu ${symbol}`}
@@ -142,10 +147,10 @@ export function CryptoDetailPage({ symbol }: { symbol: string }) {
     );
   }
 
-  const t = data.ticker;
-  const tech = data.technical;
+  const baseAsset = data.baseAsset || (data.symbol || symbol).toUpperCase().replace(/USDT$/i, "");
+  const sym = data.symbol || `${baseAsset}USDT`;
+  const tech = data.technical ?? null;
   const patterns = data.patterns ?? [];
-  const price = t.price;
   const digits = priceDigits(price);
   const chg = t.changePercent ?? null;
   const rMin = t.low ?? seriesLow ?? price;
@@ -168,16 +173,16 @@ export function CryptoDetailPage({ symbol }: { symbol: string }) {
               <ArrowLeft className="size-3" /> Crypto
             </Link>
             <div className="flex size-7 items-center justify-center rounded-lg border border-accent-primary/30 bg-accent-primary/10 text-[11px] font-bold text-accent-primary">
-              {data.baseAsset.slice(0, 1)}
+              {baseAsset.slice(0, 1)}
             </div>
             <div>
               <div className="flex items-center gap-1.5">
                 <h1 className="text-[15px] font-bold text-text-primary sm:text-[16px]">
-                  {data.baseAsset}
+                  {baseAsset}
                   <span className="text-[12px] font-normal text-text-muted">/USDT</span>
                 </h1>
-                <Badge tone="neutral">{data.symbol}</Badge>
-                <AddToWatchlist symbol={data.symbol} assetType="crypto" />
+                <Badge tone="neutral">{sym}</Badge>
+                <AddToWatchlist symbol={sym} assetType="crypto" />
               </div>
               <div className="num flex items-baseline gap-2 border-l border-border-subtle pl-2.5">
                 <span className="text-[18px] font-bold leading-none text-text-primary sm:text-[20px]">{fmtNum(price, digits)}</span>
@@ -229,7 +234,7 @@ export function CryptoDetailPage({ symbol }: { symbol: string }) {
               key={p}
               href={`/crypto/${p}`}
               className={`rounded-md px-2 py-0.5 text-[10px] font-medium transition-colors ${
-                p === data.symbol
+                p === sym
                   ? "bg-accent-primary/20 text-accent-primary"
                   : "bg-surface-elevated text-text-secondary hover:text-text-primary"
               }`}
@@ -276,7 +281,7 @@ export function CryptoDetailPage({ symbol }: { symbol: string }) {
       <div className="hidden xl:grid xl:grid-cols-12 xl:gap-2 xl:items-stretch">
         <div className="xl:col-span-3 flex min-h-[560px] flex-col gap-2">
           <FILL className="min-h-0 flex-[1.2]">
-            <CryptoTradeDesk symbol={data.symbol} mode="orderflow" />
+            <CryptoTradeDesk symbol={sym} mode="orderflow" />
           </FILL>
           <OrderFlowPanel flow={orderFlow} />
           <LiquidityZonesPanel
@@ -289,56 +294,56 @@ export function CryptoDetailPage({ symbol }: { symbol: string }) {
           />
         </div>
         <div className="xl:col-span-6 flex min-h-[560px] flex-col overflow-hidden rounded-xl border border-border-subtle bg-surface-primary">
-          <OrcaChart symbol={data.symbol} assetType="crypto" defaultTimeframe={interval} height={560} title={`${data.baseAsset}/USDT`} />
+          <OrcaChart symbol={sym} assetType="crypto" defaultTimeframe={interval} height={560} title={`${baseAsset}/USDT`} />
         </div>
         <div className="xl:col-span-3 flex min-h-[560px] flex-col gap-2">
           <FILL className="min-h-0 flex-1">
-            <ScalpPanel symbol={data.symbol} />
+            <ScalpPanel symbol={sym} />
           </FILL>
           <KeyZonesCompact price={price} digits={digits} supports={supports} resistances={resistances} />
-          <CryptoTradeDesk symbol={data.symbol} mode="leverage" />
+          <CryptoTradeDesk symbol={sym} mode="leverage" />
         </div>
       </div>
 
       <div className="space-y-2 xl:hidden">
         {mobileTab === "chart" && (
-          <OrcaChart symbol={data.symbol} assetType="crypto" defaultTimeframe={interval} height={400} title={`${data.baseAsset}/USDT`} />
+          <OrcaChart symbol={sym} assetType="crypto" defaultTimeframe={interval} height={400} title={`${baseAsset}/USDT`} />
         )}
         {mobileTab === "desk" && (
           <>
-            <CryptoTradeDesk symbol={data.symbol} mode="orderflow" />
+            <CryptoTradeDesk symbol={sym} mode="orderflow" />
             <OrderFlowPanel flow={orderFlow} />
             <LiquidityZonesPanel price={price} digits={digits} supports={supports} resistances={resistances} seriesLow={seriesLow} seriesHigh={seriesHigh} />
           </>
         )}
         {mobileTab === "scalp" && (
           <>
-            <ScalpPanel symbol={data.symbol} />
+            <ScalpPanel symbol={sym} />
             <KeyZonesCompact price={price} digits={digits} supports={supports} resistances={resistances} />
-            <CryptoTradeDesk symbol={data.symbol} mode="leverage" />
+            <CryptoTradeDesk symbol={sym} mode="leverage" />
           </>
         )}
         {mobileTab === "structure" && (
-          <MarketStructurePanel tab={structureTab} onTab={setStructureTab} pair={data.symbol} interval={interval} tech={tech} patterns={patterns} cur={t} series={series} assetType="crypto" />
+          <MarketStructurePanel tab={structureTab} onTab={setStructureTab} pair={sym} interval={interval} tech={tech} patterns={patterns} cur={t} series={series} assetType="crypto" />
         )}
         {mobileTab === "news" && (
           <div className="space-y-2">
             <DerivativesStrip fundingRate={fundingRate} oi={data.openInterest?.openInterest ?? null} vol={t.quoteVolume} />
-            <CryptoSentimentPanel symbol={data.symbol} ticker={t} tech={tech} />
-            <CryptoNewsPanel symbol={data.symbol} base={data.baseAsset} />
+            <CryptoSentimentPanel symbol={sym} ticker={t} tech={tech} />
+            <CryptoNewsPanel symbol={sym} base={baseAsset} />
           </div>
         )}
       </div>
 
       <div className="hidden xl:grid xl:grid-cols-12 xl:gap-2 xl:items-stretch">
         <div className="xl:col-span-7 flex min-h-[300px] flex-col">
-          <MarketStructurePanel tab={structureTab} onTab={setStructureTab} pair={data.symbol} interval={interval} tech={tech} patterns={patterns} cur={t} series={series} assetType="crypto" />
+          <MarketStructurePanel tab={structureTab} onTab={setStructureTab} pair={sym} interval={interval} tech={tech} patterns={patterns} cur={t} series={series} assetType="crypto" />
         </div>
         <div className="xl:col-span-5 flex min-h-[300px] flex-col gap-2">
           <DerivativesStrip fundingRate={fundingRate} oi={data.openInterest?.openInterest ?? null} vol={t.quoteVolume} />
           <div className="grid grid-cols-2 gap-2 min-h-0 flex-1">
-            <CryptoSentimentPanel symbol={data.symbol} ticker={t} tech={tech} />
-            <CryptoNewsPanel symbol={data.symbol} base={data.baseAsset} />
+            <CryptoSentimentPanel symbol={sym} ticker={t} tech={tech} />
+            <CryptoNewsPanel symbol={sym} base={baseAsset} />
           </div>
         </div>
       </div>

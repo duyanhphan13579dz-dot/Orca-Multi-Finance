@@ -57,7 +57,7 @@ export interface DerivativesSnapshot {
   note: string;
 }
 
-async function resolveVn30Spot(): Promise<{ price: number | null; source: string | null; ts: number | null }> {
+export async function resolveVn30Spot(): Promise<{ price: number | null; source: string | null; ts: number | null }> {
   try {
     const { getPublicIndices } = await import("../providers/public-vn-feed");
     const idx = await getPublicIndices(["VN30"]);
