@@ -17,6 +17,7 @@ export type HotSlot =
   | "global"
   | "multi-asset"
   | "screener-fundamental"
+  | "screener-valuation"
   | "screener-minervini";
 
 type SlotEntry = {
@@ -162,7 +163,7 @@ export function hotStats(): Record<HotSlot, { ageMs: number | null; has: boolean
   const now = Date.now();
   const slots: HotSlot[] = [
     "board", "intel", "forex", "global", "multi-asset",
-    "screener-fundamental", "screener-minervini",
+    "screener-fundamental", "screener-valuation", "screener-minervini",
   ];
   const out = {} as Record<HotSlot, { ageMs: number | null; has: boolean }>;
   for (const s of slots) {
