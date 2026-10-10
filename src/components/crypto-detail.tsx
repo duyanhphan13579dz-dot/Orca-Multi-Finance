@@ -112,7 +112,12 @@ export function CryptoDetailPage({ symbol }: { symbol: string }) {
 
   const { data, meta, isLoading } = useApi<CryptoDetail>(
     `/api/v1/crypto/${encodeURIComponent(symbol)}?interval=${interval}`,
-    { refreshInterval: 20_000 },
+    {
+      refreshInterval: 20_000,
+      // P6-C: soft paint + fail-fast
+      keepPreviousData: true,
+      timeoutMs: 12_000,
+    },
   );
 
   const series = useMemo(() => toBars(data?.klines ?? []), [data?.klines]);
@@ -423,55 +428,89 @@ function CryptoSentimentPanel({ symbol, ticker, tech }: { symbol: string; ticker
 
 function CryptoNewsPanel({ symbol, base }: { symbol: string; base: string }) {
   const q = encodeURIComponent(`${base} OR ${symbol} crypto`);
-  const { data, isLoading } = useApi<NewsPayload>(`/api/v1/news?q=${q}&limit=6`, { refreshInterval: 300_000 });
+  const { data, isLoading } = useApi<NewsPayload>(`/api/v1/news?q=${q}&limit=8`, {
+    refreshInterval: 120_000,
+  });
   const articles = data?.articles ?? [];
   return (
-    <Panel title={<span className="flex items-center gap-2"><Newspaper className="size-3.5 text-accent-primary" /> Tin crypto</span>}>
-      {isLoading && !articles.length && <Loading rows={2} />}
-      <div className="max-h-40 space-y-1 overflow-y-auto">
-        {articles.slice(0, 6).map((a, i) => (
-          <a key={i} href={a.url} target="_blank" rel="noreferrer" className="flex items-start gap-1.5 rounded-md border border-border-subtle/40 bg-surface-elevated/20 px-2 py-1 text-[10.5px] text-text-secondary transition-colors hover:border-border-default hover:text-text-primary">
-            <ExternalLink className="mt-0.5 size-3 shrink-0 text-text-muted" />
-            <span className="line-clamp-2 flex-1">{a.title}</span>
-          </a>
-        ))}
-        {!isLoading && !articles.length && <p className="text-[11px] text-text-muted">Chưa có tin liên quan.</p>}
-      </div>
+    <Panel
+      title={
+        <span className="flex items-center gap-2">
+          <Newspaper className="size-3.5 text-accent-primary" /> Tin crypto
+        </span>
+      }
+      right={
+        <a
+          href={`https://news.google.com/search?q=${q}&hl=vi&gl=VN&ceid=VN:vi`}
+          target="_blank"
+          rel="noreferrer"
+          className="inline-flex items-center gap-1 text-[10px] text-text-muted hover:text-accent-primary"
+        >
+          Google <ExternalLink className="size-3" />
+        </a>
+      }
+    >
+      {isLoading && !articles.length ? (
+        <Loading rows={3} />
+      ) : articles.length ? (
+        <ul className="space-y-1.5">
+          {articles.slice(0, 6).map((a, i) => (
+            <li key={i}>
+              <a
+                href={a.url}
+                target="_blank"
+                rel="noreferrer"
+                className="line-clamp-2 text-[11px] leading-snug text-text-secondary hover:text-accent-primary"
+              >
+                {a.title}
+              </a>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="text-[11px] text-text-muted">Chưa có tin gần đây.</p>
+      )}
     </Panel>
   );
 }
 
-function computeLocalSentiment(t: { changePercent?: number | null; price?: number }, tech: TechnicalSnapshot | null) {
-  let score = 0;
+function computeLocalSentiment(
+  t: { changePercent?: number | null; price?: number | null },
+  tech: TechnicalSnapshot | null,
+): { score: number; label: string; tone: "up" | "down" | "neutral"; factors: { w: number; text: string }[] } {
   const factors: { w: number; text: string }[] = [];
-  const chg = t.changePercent;
-  if (chg != null) {
-    const w = Math.max(-30, Math.min(30, chg * 4));
-    score += w;
-    factors.push({ w, text: `Biến động phiên ${chg >= 0 ? "+" : ""}${chg.toFixed(2)}%` });
+  let score = 0;
+  const chg = t.changePercent ?? 0;
+  if (chg > 2) {
+    score += 25;
+    factors.push({ w: 25, text: `Tăng mạnh 24h (+${chg.toFixed(1)}%)` });
+  } else if (chg < -2) {
+    score -= 25;
+    factors.push({ w: -25, text: `Giảm mạnh 24h (${chg.toFixed(1)}%)` });
+  } else {
+    factors.push({ w: 0, text: `Biến động hẹp (${chg.toFixed(1)}%)` });
   }
-  if (tech?.rsi14 != null) {
-    if (tech.rsi14 > 70) {
-      score -= 12;
-      factors.push({ w: -12, text: `RSI cao (${tech.rsi14.toFixed(0)}) — quá mua` });
-    } else if (tech.rsi14 < 30) {
-      score += 12;
-      factors.push({ w: 12, text: `RSI thấp (${tech.rsi14.toFixed(0)}) — quá bán` });
+  const rsi = tech?.rsi14;
+  if (rsi != null) {
+    if (rsi >= 70) {
+      score -= 15;
+      factors.push({ w: -15, text: `RSI quá mua (${rsi.toFixed(0)})` });
+    } else if (rsi <= 30) {
+      score += 15;
+      factors.push({ w: 15, text: `RSI quá bán (${rsi.toFixed(0)})` });
     } else {
-      factors.push({ w: 0, text: `RSI trung tính (${tech.rsi14.toFixed(0)})` });
+      factors.push({ w: 0, text: `RSI trung tính (${rsi.toFixed(0)})` });
     }
   }
-  if (tech?.trend?.label) {
-    const label = tech.trend.label;
-    if (/up|bull/i.test(label)) {
-      score += 10;
-      factors.push({ w: 10, text: `Trend: ${label}` });
-    } else if (/down|bear/i.test(label)) {
-      score -= 10;
-      factors.push({ w: -10, text: `Trend: ${label}` });
-    }
+  const trend = tech?.trend?.label;
+  if (trend === "up" || trend === "strong-up") {
+    score += 20;
+    factors.push({ w: 20, text: `Xu hướng ${trend}` });
+  } else if (trend === "down" || trend === "strong-down") {
+    score -= 20;
+    factors.push({ w: -20, text: `Xu hướng ${trend}` });
   }
-  score = Math.max(-100, Math.min(100, Math.round(score)));
+  score = Math.max(-100, Math.min(100, score));
   const label = score >= 20 ? "Bullish" : score <= -20 ? "Bearish" : "Neutral";
   const tone = score >= 20 ? ("up" as const) : score <= -20 ? ("down" as const) : ("neutral" as const);
   return { score, label, tone, factors };
