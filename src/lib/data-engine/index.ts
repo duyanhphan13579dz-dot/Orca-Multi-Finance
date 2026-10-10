@@ -106,3 +106,25 @@ export type {
   ReconcileFieldResult,
   ReconciliationReport,
 } from "./reconcile";
+
+export {
+  getVnDateTime,
+  getMarketSession,
+  getRecommendedPollInterval,
+  shouldIngest,
+} from "./scheduler";
+export type {
+  MarketSession,
+  MarketSessionInfo,
+} from "./scheduler";
+
+export {
+  recordSourceTelemetry,
+  getSourceTelemetry,
+  getAllSourcesTelemetry,
+  resetTelemetryState,
+} from "./telemetry";
+export type {
+  SourceCallRecord,
+  SourceTelemetryStats,
+} from "./telemetry";
