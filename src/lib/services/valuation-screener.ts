@@ -5,7 +5,7 @@ import { hubVnQuotes } from "../data-engine";
 import { getVndValuationRatios, priceQuoteToVnd } from "../providers/vndirect-company";
 import { getFundamentalSnapshots, mapPool, normalizeSymbols, type FundamentalSnapshot } from "../financial/snapshots";
 import { sectorOf, getSecurity } from "../vn/master";
-import { WORKERS_BUDGET } from "../data-engine/workers-budget";
+import { WORKERS_BUDGET, resolveSnapshotConcurrency } from "../data-engine/workers-budget";
 
 function exchangeOf(symbol: string): string | null {
   return getSecurity(symbol)?.exchange ?? null;
@@ -259,9 +259,10 @@ export async function screenValuation(opts: ValuationFilterOpts = {}) {
       ttlMs: 8 * 60_000,
       staleMs: 40 * 60_000,
       producer: async () => {
+        const snapConc = resolveSnapshotConcurrency();
         const [quotes, snapPack] = await Promise.all([
           hubVnQuotes(symbols).catch(() => null),
-          getFundamentalSnapshots(symbols, { concurrency: WORKERS_BUDGET.snapshotConcurrency }),
+          getFundamentalSnapshots(symbols, { concurrency: snapConc }),
         ]);
         const quoteMap = new Map<string, { price?: number | null }>();
         for (const quote of quotes?.quotes ?? []) {
@@ -270,7 +271,7 @@ export async function screenValuation(opts: ValuationFilterOpts = {}) {
         const snapMap = new Map(snapPack.snapshots.map((s) => [s.symbol, s]));
 
         const rows = (
-          await mapPool(symbols, Math.min(4, WORKERS_BUDGET.snapshotConcurrency + 1), async (symbol): Promise<ValuationScreenRow | null> => {
+          await mapPool(symbols, Math.min(4, snapConc + 1), async (symbol): Promise<ValuationScreenRow | null> => {
             const ratios = await getVndValuationRatios(symbol).catch(() => null);
             const price = quoteMap.get(symbol)?.price ?? null;
             return mergeValuation(symbol, price, ratios, snapMap.get(symbol));
