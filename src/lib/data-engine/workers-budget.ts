@@ -8,17 +8,20 @@ import { getVnSession } from "../vn/sessions";
  *
  * P2-B: snapshot concurrency is adaptive — lower during VN continuous trading
  * to avoid 1102; higher off-hours when hot-warm / screeners can fan out safely.
+ *
+ * P8c: user-facing walls capped ≤12s so platform never kills mid-response;
+ * cron jobs use separate higher budgets per focused domain.
  */
 
 export const WORKERS_BUDGET = {
   /** Parallel outbound provider calls inside one request */
-  maxParallelProviders: 3,
-  /** Approximate max subrequests per Worker invocation */
-  maxSubrequestsPerRequest: 28,
-  /** Wall budget for generic API handlers */
-  apiWallMs: 14_000,
-  /** Board load wall */
-  boardWallMs: 12_000,
+  maxParallelProviders: 2,
+  /** Approximate max subrequests per Worker invocation (user path) */
+  maxSubrequestsPerRequest: 16,
+  /** Wall budget for generic API handlers (P8c: ≤12s) */
+  apiWallMs: 12_000,
+  /** Board load wall (P8c: tighter) */
+  boardWallMs: 10_000,
   /**
    * Baseline bulk BCTC / snapshot concurrency (off-hours).
    * Use resolveSnapshotConcurrency() for live adaptive value.
@@ -31,21 +34,27 @@ export const WORKERS_BUDGET = {
   /** Technical screener universe (VN100-class) */
   techUniverse: 60,
   /** OHLCV batch concurrency for technical screeners (P2-C) */
-  ohlcvBatchConcurrency: 5,
+  ohlcvBatchConcurrency: 4,
   /** OHLCV bars for detail page */
   detailBars: 100,
   /** OHLCV bars for technical screener */
   screenerBars: 100,
   /** Soft timeout (ms) for a single provider call */
-  providerSoftMs: 4_000,
+  providerSoftMs: 3_500,
   /** Soft timeout for heavy FS package */
-  financialSoftMs: 7_000,
-  /** Wall budget for entire detail produce */
-  detailWallMs: 14_000,
-  /** Wall budget for technical screener (candlestick / divergence) */
-  techScreenWallMs: 16_000,
+  financialSoftMs: 6_000,
+  /** Wall budget for entire detail produce (P8c: ≤12s) */
+  detailWallMs: 12_000,
+  /** Wall budget for technical screener — still capped under CF kill */
+  techScreenWallMs: 14_000,
   /** Per-symbol OHLCV timeout in batch */
-  ohlcvPerSymbolMs: 2_200,
+  ohlcvPerSymbolMs: 2_000,
+  /** Soft produce deadline when hot miss (user path) */
+  softProduceMs: 5_000,
+  /** Cron per-domain wall (focused jobs) */
+  cronDomainWallMs: 14_000,
+  /** Cron max subrequests per focused job */
+  cronMaxSubrequests: 18,
 } as const;
 
 export function clampUniverse(n: number | undefined, fallback = WORKERS_BUDGET.screenerUniverse): number {
