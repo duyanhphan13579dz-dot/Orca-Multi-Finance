@@ -93,3 +93,16 @@ export type {
   AnomalyDetectionResult,
   DataQualityReport,
 } from "./quality";
+
+export {
+  reconcileNumericField,
+  reconcileQuotes,
+  reconcileFinancialMetrics,
+} from "./reconcile";
+export type {
+  ReconcileStatus,
+  OverallReconcileStatus,
+  ReconcileSourceValue,
+  ReconcileFieldResult,
+  ReconciliationReport,
+} from "./reconcile";
