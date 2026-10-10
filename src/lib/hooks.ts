@@ -107,10 +107,16 @@ export function useApi<T>(
   const visible = usePageVisible();
 
   const baseRefresh = resolveRefresh(opts?.refreshInterval);
-  const freshnessRef = useRef<string | undefined>(undefined);
+  const keepPrev = opts?.keepPreviousData !== false;
+  const fallbackData = useMemo(() => {
+    if (!url || !keepPrev) return undefined;
+    return clientCacheGet<ApiResponse<T>>(url);
+  }, [url, keepPrev]);
+
+  const currentFreshness = fallbackData?.meta?.freshness;
 
   const adaptiveBase = (() => {
-    const f = freshnessRef.current;
+    const f = currentFreshness;
     if (f === "STALE" || f === "UNAVAILABLE") return Math.max(baseRefresh, 40_000);
     if (f === "DELAYED" || f === "DEGRADED") return Math.max(baseRefresh, 24_000);
     if (f === "LIVE") return Math.max(8_000, Math.min(baseRefresh, 12_000));
@@ -120,7 +126,6 @@ export function useApi<T>(
   const inNavFreeze = isNavFrozen();
   const hasWarm = url ? clientCacheHas(url, 90_000) : false;
   const refreshInterval = visible && rt.liveUpdates && !inNavFreeze ? adaptiveBase : 0;
-  const keepPrev = opts?.keepPreviousData !== false;
 
   // P4-B: shorter timeout when client cache is warm — fail-fast to last-good paint
   const effectiveTimeout = (() => {
@@ -128,11 +133,6 @@ export function useApi<T>(
     if (hasWarm) return Math.min(base, 5_000);
     return base;
   })();
-
-  const fallbackData = useMemo(() => {
-    if (!url || !keepPrev) return undefined;
-    return clientCacheGet<ApiResponse<T>>(url);
-  }, [url, keepPrev]);
 
   const { data, error, isLoading, isValidating, mutate } = useSWR<ApiResponse<T>>(
     url,
@@ -153,16 +153,11 @@ export function useApi<T>(
       onSuccess: (payload) => {
         if (payload?.success) {
           clientCacheSet(url!, payload);
-          if (payload.meta?.freshness) freshnessRef.current = payload.meta.freshness;
         }
       },
       onError: () => {},
     },
   );
-
-  if (data?.success && data.meta?.freshness && freshnessRef.current !== data.meta.freshness) {
-    freshnessRef.current = data.meta.freshness;
-  }
 
   useEffect(() => {
     if (!url || !visible) return;

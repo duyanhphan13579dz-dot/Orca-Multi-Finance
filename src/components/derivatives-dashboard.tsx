@@ -91,7 +91,6 @@ export function DerivativesDashboard() {
   const [err, setErr] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    setLoading(true);
     setErr(null);
     try {
       const [snapRes, regimeRes, curveRes, alertsRes] = await Promise.all([
@@ -114,10 +113,36 @@ export function DerivativesDashboard() {
   }, []);
 
   useEffect(() => {
-    void load();
-    const id = setInterval(() => void load(), 30_000);
-    return () => clearInterval(id);
-  }, [load]);
+    let cancelled = false;
+    const run = async () => {
+      try {
+        const [snapRes, regimeRes, curveRes, alertsRes] = await Promise.all([
+          fetch("/api/v1/derivatives/snapshot?core=1").then((r) => r.json()),
+          fetch("/api/v1/derivatives/regime?underlying=VN30").then((r) => r.json()),
+          fetch("/api/v1/derivatives/curve?underlying=VN30").then((r) => r.json()),
+          fetch("/api/v1/derivatives/alerts?underlying=VN30").then((r) => r.json()),
+        ]);
+        if (cancelled) return;
+        setContracts(snapRes?.data?.contracts ?? []);
+        setFlow(snapRes?.data?.flow ?? []);
+        setMeta(snapRes?.meta ?? null);
+        setRegime(regimeRes?.data ?? null);
+        setCurve(curveRes?.data ?? null);
+        setAlerts(alertsRes?.data?.alerts ?? []);
+        setErr(null);
+      } catch (e) {
+        if (!cancelled) setErr(e instanceof Error ? e.message : "Load failed");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+    void run();
+    const id = setInterval(() => void run(), 30_000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, []);
 
   const tone =
     regime?.regime.tone === "positive"

@@ -231,22 +231,28 @@ export default function StockDetailPage({ params }: { params: Promise<{ symbol: 
   const isFull = Boolean(hasQuote && data?.bars && data.bars.length >= 20);
   const canPaint = hasQuote || hasBars || Boolean(data?.profile) || Boolean(data?.technical);
 
-  const coldRetryRef = useRef(0);
-  const hadPaintRef = useRef(false);
+  const [retried, setRetried] = useState(false);
+  const [hadPaint, setHadPaint] = useState(false);
+  const [prevSymbol, setPrevSymbol] = useState(symbol);
+
+  if (symbol !== prevSymbol) {
+    setPrevSymbol(symbol);
+    setHadPaint(false);
+    setRetried(false);
+  } else if (canPaint && !hadPaint) {
+    setHadPaint(true);
+  } else if (isFull && retried) {
+    setRetried(false);
+  }
+
   useEffect(() => {
-    if (!symbol) return;
-    if (isFull) {
-      coldRetryRef.current = 0;
-      return;
-    }
-    if (isLoading || isValidating) return;
-    if (coldRetryRef.current >= 1) return;
-    coldRetryRef.current = 1;
+    if (!symbol || isFull || isLoading || isValidating || retried) return;
     const t = window.setTimeout(() => {
+      setRetried(true);
       void mutate();
     }, 400);
     return () => window.clearTimeout(t);
-  }, [symbol, data, isLoading, isValidating, mutate, isFull]);
+  }, [symbol, isLoading, isValidating, mutate, isFull, retried]);
 
   useEffect(() => {
     if (!data?.symbol) return;
@@ -292,12 +298,10 @@ export default function StockDetailPage({ params }: { params: Promise<{ symbol: 
     nav.scrollTo({ left: nav.scrollLeft + delta, behavior: "smooth" });
   }, [activeSection]);
 
-  if (canPaint) hadPaintRef.current = true;
-
   // P6-B: only block on *first* cold load with zero payload
   const initialWait =
     !symbol ||
-    (!data && (isLoading || isValidating || coldRetryRef.current < 1));
+    (!data && (isLoading || isValidating || !retried));
 
   if (initialWait) {
     return (
@@ -310,7 +314,7 @@ export default function StockDetailPage({ params }: { params: Promise<{ symbol: 
     );
   }
 
-  if (!data || (!canPaint && !hadPaintRef.current)) {
+  if (!data || (!canPaint && !hadPaint)) {
     return (
       <div className="stock-workspace space-y-3">
         <Unavailable
@@ -325,7 +329,7 @@ export default function StockDetailPage({ params }: { params: Promise<{ symbol: 
           type="button"
           className="rounded-lg border border-border-subtle px-3 py-2 text-[12px] font-medium hover:border-accent-primary/40"
           onClick={() => {
-            coldRetryRef.current = 0;
+            setRetried(false);
             void mutate();
           }}
         >

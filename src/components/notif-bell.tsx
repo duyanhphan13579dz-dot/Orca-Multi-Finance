@@ -85,8 +85,14 @@ export function NotifBell() {
   const [open, setOpen] = useState(false);
   const [alertTick, setAlertTick] = useState(0);
   const [reportTick, setReportTick] = useState(0);
+  const [now, setNow] = useState(() => (typeof Date !== "undefined" ? Date.now() : 0));
   const notifiedRef = useRef<Set<string>>(new Set());
   const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const t = window.setInterval(() => setNow(Date.now()), 30_000);
+    return () => window.clearInterval(t);
+  }, []);
 
   useEffect(() => {
     const onDoc = (e: Event) => {
@@ -108,7 +114,6 @@ export function NotifBell() {
   }, [n.priceAlerts]);
 
   const articles = data?.articles ?? [];
-  const now = Date.now();
   const freshNews = n.marketNews
     ? articles.filter((a) => {
         const t = Date.parse(a.publishedAt);
@@ -136,15 +141,23 @@ export function NotifBell() {
     ["morning_brief", "intraday_brief", "market_summary"].includes(r.type),
   );
 
-  const recentReports = reportItems
-    .filter((r) => {
-      const t = Date.parse(r.generatedAt);
-      return Number.isFinite(t) && now - t < 18 * 60 * 60_000;
-    })
-    .slice(0, 5);
+  const recentReports = useMemo(() => {
+    return reportItems
+      .filter((r) => {
+        const t = Date.parse(r.generatedAt);
+        return Number.isFinite(t) && now - t < 18 * 60 * 60_000;
+      })
+      .slice(0, 5);
+  }, [reportItems, now]);
 
-  const seen = typeof window !== "undefined" ? seenReportIds() : new Set<string>();
-  const unreadReports = n.reportReady ? recentReports.filter((r) => !seen.has(r.id)) : [];
+  const seen = useMemo(() => {
+    void reportTick;
+    return typeof window !== "undefined" ? seenReportIds() : new Set<string>();
+  }, [reportTick]);
+  const unreadReports = useMemo(
+    () => (n.reportReady ? recentReports.filter((r) => !seen.has(r.id)) : []),
+    [n.reportReady, recentReports, seen],
+  );
 
   useEffect(() => {
     if (!n.reportReady || typeof window === "undefined") return;

@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect } from "react";
 
 export default function AppError({
@@ -31,18 +32,18 @@ export default function AppError({
         >
           Thử lại
         </button>
-        <a
+        <Link
           href="/screener"
           className="rounded-md border border-border-subtle px-3 py-1.5 text-[13px] text-text-secondary hover:border-border-default hover:text-text-primary"
         >
           Về bộ lọc
-        </a>
-        <a
+        </Link>
+        <Link
           href="/"
           className="rounded-md border border-border-subtle px-3 py-1.5 text-[13px] text-text-secondary hover:border-border-default hover:text-text-primary"
         >
           Tổng quan
-        </a>
+        </Link>
       </div>
     </div>
   );

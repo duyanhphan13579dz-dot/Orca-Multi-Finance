@@ -26,10 +26,15 @@ export function StockTabs({ symbol }: { symbol: string }) {
   const [pendingHref, setPendingHref] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
 
+  const [prevPathname, setPrevPathname] = useState(pathname);
+  if (prevPathname !== pathname) {
+    setPrevPathname(pathname);
+    setPendingHref(null);
+  }
+
   useEffect(() => {
     const active = navRef.current?.querySelector<HTMLElement>("[data-active=true]");
     active?.scrollIntoView({ inline: "center", block: "nearest", behavior: "smooth" });
-    setPendingHref(null);
   }, [pathname]);
 
   const onRefresh = () => {

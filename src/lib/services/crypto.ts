@@ -146,10 +146,16 @@ async function loadBinanceMarkets(): Promise<AllMarket> {
   const tickers = await binance.getAllSpotTickers();
   if (!tickers?.length) throw new Error("binance empty");
 
+  // Fast pre-filter USDT pairs to avoid heavy parsing of 2,500+ instruments
+  const usdtTickers = tickers.filter((t) => {
+    const s = t.symbol;
+    return typeof s === "string" && s.endsWith("USDT") && Number(t.lastPrice) > 0;
+  });
+
   const rows: CryptoMarketRow[] = [];
   let invalid = 0;
   let suspect = 0;
-  for (const t of tickers) {
+  for (const t of usdtTickers) {
     const row = toRow(t);
     if (!row) {
       invalid += 1;
@@ -169,14 +175,21 @@ async function loadBinanceMarkets(): Promise<AllMarket> {
     );
     if (q.status === "INVALID") {
       invalid += 1;
-      void logQualityEvent("binance", `crypto quote ${row.symbol}`, q);
       continue;
     }
     if (q.status === "SUSPECT" || q.status === "STALE") {
       suspect += 1;
-      void logQualityEvent("binance", `crypto quote ${row.symbol}`, q);
     }
     rows.push(row);
+  }
+
+  // Aggregate single quality log instead of 50+ DB subrequests in loop
+  if (invalid > 0 || suspect > 0) {
+    void logQualityEvent("binance", `crypto batch quality (invalid=${invalid}, suspect=${suspect} of ${usdtTickers.length})`, {
+      status: invalid > 0 ? "SUSPECT" : "VALID",
+      score: 0.9,
+      flags: [{ check: "batch_quality", severity: "warn", message: `batch issues: invalid=${invalid}, suspect=${suspect}` }],
+    });
   }
 
   let overlaid = 0;
@@ -210,8 +223,10 @@ async function loadBinanceMarkets(): Promise<AllMarket> {
 
   rows.sort((a, b) => (b.quoteVolume ?? 0) - (a.quoteVolume ?? 0));
   if (!rows.length) throw new Error("binance no valid rows");
+  // Retain top 250 pairs by liquidity to prevent Worker memory spikes & huge JSON serialization
+  const topRows = rows.slice(0, 250);
   return {
-    rows,
+    rows: topRows,
     fetchedAt: Date.now(),
     overlaid,
     invalid,
@@ -465,13 +480,24 @@ export async function getCryptoDetail(
   const pair = sym.endsWith("USDT") ? sym : `${sym}USDT`;
 
   try {
-    const [markets, klinesPack, funding, oi] = await Promise.all([
-      getCryptoMarkets().catch(() => null),
+    const quotePromise = (async (): Promise<CryptoMarketRow | null> => {
+      try {
+        const spot = await binance.getSpotTicker(pair);
+        const row = toRow(spot);
+        if (row) return row;
+      } catch {
+        /* fallback */
+      }
+      const markets = await getCryptoMarkets().catch(() => null);
+      return markets?.rows.find((r) => r.symbol === pair) ?? null;
+    })();
+
+    const [quote, klinesPack, funding, oi] = await Promise.all([
+      quotePromise,
       getCryptoKlines(pair, interval, 200).catch(() => null),
       binance.getFundingRate(pair).catch(() => null),
       binance.getOpenInterest(pair).catch(() => null),
     ]);
-    const quote = markets?.rows.find((r) => r.symbol === pair) ?? null;
     const bars = klinesPack?.bars ?? [];
     let technical: TechnicalSnapshot | null = null;
     let patterns: CandlePattern[] = [];
@@ -500,7 +526,7 @@ export async function getCryptoDetail(
       openInterest: oi,
     };
     const sources = [
-      markets?.meta?.source,
+      quote ? "binance-spot" : null,
       klinesPack?.meta?.source,
       funding ? "binance-funding" : null,
     ].filter(Boolean);

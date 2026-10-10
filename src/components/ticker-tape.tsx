@@ -92,19 +92,21 @@ export const TickerTape = memo(function TickerTape() {
   });
   const trackRef = useRef<HTMLDivElement>(null);
   const [paused, setPaused] = useState(false);
-  const [narrow, setNarrow] = useState(false);
+  const [narrow, setNarrow] = useState(() => (typeof window !== "undefined" ? window.matchMedia("(max-width: 767px)").matches : false));
   const hydrated = useHydrated();
   const [seed, setSeed] = useState<MarketSnapshot | null>(null);
 
   useEffect(() => {
-    setSeed(stickySnap ?? readSessionSnap());
     prefetchMarketSnapshot();
+    const s = stickySnap ?? readSessionSnap();
+    if (s) {
+      window.setTimeout(() => setSeed(s), 0);
+    }
   }, []);
 
   useEffect(() => {
     const mq = window.matchMedia("(max-width: 767px)");
     const apply = () => setNarrow(mq.matches);
-    apply();
     mq.addEventListener("change", apply);
     return () => mq.removeEventListener("change", apply);
   }, []);

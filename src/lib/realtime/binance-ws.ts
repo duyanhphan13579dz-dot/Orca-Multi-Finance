@@ -1,6 +1,7 @@
 import "server-only";
 import { recordFailure, recordSuccess } from "../health";
 import { eventBus } from "../events";
+import { isRealtimeWsDisabled } from "./ws-policy";
 
 /**
  * CENTRALIZED BINANCE WEBSOCKET INGESTION ENGINE (low-latency)
@@ -149,7 +150,8 @@ class BinanceRealtimeEngine {
   private emitWindowStart = Date.now();
 
   private enabled(): boolean {
-    return process.env.BINANCE_WS_DISABLED !== "true";
+    if (process.env.CLOUDFLARE_WORKERS === "1" || process.env.NEXT_RUNTIME === "edge") return false;
+    return !isRealtimeWsDisabled("BINANCE_WS_DISABLED");
   }
 
   requestKline(symbol: string, interval: string): () => void {

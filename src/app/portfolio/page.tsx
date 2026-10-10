@@ -51,16 +51,23 @@ export default function SmartPortfolioPage() {
 
   /** Pipeline nhật ký → Data Hub: marks đa loại tài sản. */
   const [hubMarks, setHubMarks] = useState<PortfolioMark[]>([]);
+  const hasPositions = Boolean(trades.some((t) => t.exit == null) || watchlist.length);
+  const [prevHasPositions, setPrevHasPositions] = useState(hasPositions);
+
+  if (prevHasPositions !== hasPositions) {
+    setPrevHasPositions(hasPositions);
+    if (!hasPositions && hubMarks.length) {
+      setHubMarks([]);
+    }
+  }
+
   useEffect(() => {
     const open = trades.filter((t) => t.exit == null);
     const positions = [
       ...open.map((t) => ({ assetType: t.assetType, symbol: t.symbol })),
       ...watchlist.map((w) => ({ assetType: w.assetType, symbol: w.symbol })),
     ].slice(0, 80);
-    if (!positions.length) {
-      setHubMarks([]);
-      return;
-    }
+    if (!positions.length) return;
     let cancelled = false;
     const pull = async () => {
       try {

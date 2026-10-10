@@ -69,11 +69,13 @@ function DailyReportView({ type }: { type: Exclude<Tab, "company"> }) {
     { refreshInterval: 120_000 },
   );
 
-  useEffect(() => {
+  const [prevType, setPrevType] = useState(type);
+  if (prevType !== type) {
+    setPrevType(type);
     setCurrent(null);
     setError(null);
     firstLoad.current = true;
-  }, [type]);
+  }
 
   useEffect(() => {
     if (firstLoad.current && history?.items.length && !current) {

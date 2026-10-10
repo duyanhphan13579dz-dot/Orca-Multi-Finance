@@ -50,14 +50,17 @@ type TabId = (typeof TABS)[number]["id"];
 export function SettingsPage() {
   const params = useSearchParams();
   const router = useRouter();
-  const initial = (params.get("tab") as TabId) || "profile";
-  const [tab, setTab] = useState<TabId>(TABS.some((t) => t.id === initial) ? initial : "profile");
+  const urlTab = params.get("tab") as TabId | null;
+  const validUrlTab = urlTab && TABS.some((t) => t.id === urlTab) ? urlTab : null;
+  const [tab, setTab] = useState<TabId>(validUrlTab || "profile");
+  const [prevUrlTab, setPrevUrlTab] = useState(validUrlTab);
 
-  useEffect(() => {
-    const q = params.get("tab") as TabId | null;
-    if (q && TABS.some((t) => t.id === q) && q !== tab) setTab(q);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [params]);
+  if (validUrlTab !== prevUrlTab) {
+    setPrevUrlTab(validUrlTab);
+    if (validUrlTab && validUrlTab !== tab) {
+      setTab(validUrlTab);
+    }
+  }
 
   const selectTab = (id: TabId) => {
     setTab(id);

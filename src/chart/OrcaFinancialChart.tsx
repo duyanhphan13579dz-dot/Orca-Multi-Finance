@@ -215,12 +215,13 @@ function OrcaFinancialChartInner({ symbol, assetType, defaultTimeframe, height =
       }
     })();
 
+    const hostEl = hostRef.current;
     return () => {
       cancelled = true;
       ro?.disconnect();
       try {
         chart?.remove();
-        if (hostRef.current) hostRef.current.innerHTML = "";
+        if (hostEl) hostEl.innerHTML = "";
       } catch {
         /* */
       }
@@ -337,13 +338,19 @@ function OrcaFinancialChartInner({ symbol, assetType, defaultTimeframe, height =
     }
   }, [data, smcOn, engineReady, tf]);
 
+  const companions = companionTimeframes(tf, tfs);
+  const shouldRunMtf = Boolean(symbol && companions.length >= 2);
+  const [prevShouldRunMtf, setPrevShouldRunMtf] = useState(shouldRunMtf);
+  if (prevShouldRunMtf !== shouldRunMtf) {
+    setPrevShouldRunMtf(shouldRunMtf);
+    if (!shouldRunMtf && mtfBias != null) {
+      setMtfBias(null);
+    }
+  }
+
   useEffect(() => {
     let cancelled = false;
-    const companions = companionTimeframes(tf, tfs);
-    if (!symbol || companions.length < 2) {
-      setMtfBias(null);
-      return;
-    }
+    if (!shouldRunMtf) return;
     const runMtf = async () => {
       try {
         const seriesByTf: Record<string, OhlcvBar[]> = {};
@@ -391,13 +398,21 @@ function OrcaFinancialChartInner({ symbol, assetType, defaultTimeframe, height =
       cancelled = true;
       clearTimeout(t);
     };
-  }, [symbol, tf, assetType, tfs]);
+  }, [symbol, tf, assetType, tfs, companions, shouldRunMtf]);
+
+  const supportsLive = supportsLiveChart(assetType);
+  const canLive = Boolean(engineReady && supportsLive && symbol);
+  const [prevCanLive, setPrevCanLive] = useState(canLive);
+  if (prevCanLive !== canLive) {
+    setPrevCanLive(canLive);
+    if (!canLive && liveState != null) {
+      setLiveState(null);
+    }
+  }
 
   useEffect(() => {
-    const supportsLive = supportsLiveChart(assetType);
-    if (!engineReady || !supportsLive || !symbol) {
+    if (!canLive) {
       liveRef.current?.stop();
-      setLiveState(null);
       return;
     }
 
@@ -475,7 +490,7 @@ function OrcaFinancialChartInner({ symbol, assetType, defaultTimeframe, height =
     return () => {
       live.stop();
     };
-  }, [symbol, tf, assetType, engineReady, mutate]);
+  }, [symbol, tf, assetType, engineReady, mutate, canLive]);
 
   const setKind = (kind: ChartKind) => {
     if (kind === kindRef.current) return;

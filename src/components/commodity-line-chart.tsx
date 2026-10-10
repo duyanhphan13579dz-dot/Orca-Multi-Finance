@@ -82,14 +82,19 @@ export function CommodityLineChart({ options, height = 320 }: Props) {
   // Reset when catalog options change identity
   useEffect(() => {
     if (!options.length) {
-      window.setTimeout(() => setChartSymbol(""), 0);
+      window.setTimeout(() => {
+        setChartSymbol("");
+        setFallbackNote(null);
+      }, 0);
       return;
     }
     if (!options.some((o) => o.chartSymbol === chartSymbol)) {
       autoSwitched.current = false;
       triedEmpty.current.clear();
-      setFallbackNote(null);
-      window.setTimeout(() => setChartSymbol(pickDefaultSymbol(options)), 0);
+      window.setTimeout(() => {
+        setFallbackNote(null);
+        setChartSymbol(pickDefaultSymbol(options));
+      }, 0);
     }
   }, [options, chartSymbol]);
 
@@ -133,7 +138,9 @@ export function CommodityLineChart({ options, height = 320 }: Props) {
   const chartRef = useRef<any>(null);
   const seriesRef = useRef<any>(null);
   const dataRef = useRef(data);
-  dataRef.current = data;
+  useEffect(() => {
+    dataRef.current = data;
+  }, [data]);
 
   useEffect(() => {
     if (!visible || !hostRef.current) return;

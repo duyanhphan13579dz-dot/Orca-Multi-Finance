@@ -119,6 +119,15 @@ async function pollOnce(): Promise<void> {
 
 function ensureLoop(): void {
   if (pollTimer) return;
+  if (
+    process.env.CLOUDFLARE_WORKERS === "1" ||
+    process.env.NEXT_RUNTIME === "edge" ||
+    process.env.BIQUOTE_POLL_DISABLED === "true"
+  ) {
+    // Cloudflare Workers limit subrequests and CPU; avoid persistent setInterval in isolate
+    void pollOnce();
+    return;
+  }
   pollTimer = setInterval(() => {
     void pollOnce();
   }, POLL_MS);

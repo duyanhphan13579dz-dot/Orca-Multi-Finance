@@ -45,7 +45,9 @@
     "REPORT_AUTO_DAILY": "true",
     "REPORT_MORNING_TIME": "08:20",
     "REPORT_SUMMARY_TIME": "15:50",
-    "VNDIRECT_WS_DISABLED": "true"
+    "VNDIRECT_WS_DISABLED": "true",
+    "BINANCE_WS_DISABLED": "true",
+    "BIQUOTE_POLL_DISABLED": "true"
     // "NEXT_PUBLIC_SITE_URL": "https://<domain-cua-ban>"
   }
   // Provision with `wrangler hyperdrive create orca-postgres --connection-string="$DATABASE_URL"`,

@@ -132,10 +132,16 @@ export function ShellInner({ children }: { children: ReactNode }) {
   const [sideAnimating, setSideAnimating] = useState(false);
   const sideAnimTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  const [prevPathname, setPrevPathname] = useState(pathname);
+  if (prevPathname !== pathname) {
+    setPrevPathname(pathname);
+    setMobileOpen(false);
+  }
+
   useEffect(() => {
     try {
       const v = localStorage.getItem("orca:sidebar:collapsed");
-      if (v === "1") setCollapsed(true);
+      if (v === "1") window.setTimeout(() => setCollapsed(true), 0);
     } catch {
       /* ignore */
     }
@@ -145,15 +151,11 @@ export function ShellInner({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    setMobileOpen(false);
-  }, [pathname]);
-
-  useEffect(() => {
     const syncTab = (event?: Event) => {
       const requestedTab = event instanceof CustomEvent ? (event.detail as string) : window.location.hash.slice(1);
       setActivePersonalTab(requestedTab || "dashboard");
     };
-    syncTab();
+    window.setTimeout(() => syncTab(), 0);
     window.addEventListener("hashchange", syncTab);
     window.addEventListener("orca:personal-finance-tab", syncTab);
     return () => {

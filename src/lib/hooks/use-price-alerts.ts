@@ -281,11 +281,12 @@ export function usePriceAlertMonitor(pollMs = 15_000) {
 }
 
 export function usePriceAlertsList() {
-  const [alerts, setAlerts] = useState<PriceAlert[]>([]);
+  const [alerts, setAlerts] = useState<PriceAlert[]>(() =>
+    typeof window !== "undefined" ? loadAlerts() : [],
+  );
   const refresh = useCallback(() => setAlerts(loadAlerts()), []);
 
   useEffect(() => {
-    refresh();
     const onStorage = (e: StorageEvent) => {
       if (e.key === "orca.price-alerts.v1") refresh();
     };
@@ -302,15 +303,9 @@ export function usePriceAlertsList() {
 }
 
 export function useNotificationPermission() {
-  const [permission, setPermission] = useState<PermissionState>("default");
-
-  useEffect(() => {
-    if (typeof window === "undefined" || !("Notification" in window)) {
-      setPermission("unsupported");
-      return;
-    }
-    setPermission(Notification.permission);
-  }, []);
+  const [permission, setPermission] = useState<PermissionState>(() =>
+    typeof window !== "undefined" && "Notification" in window ? Notification.permission : "unsupported",
+  );
 
   const request = useCallback(async () => {
     const p = await requestNotificationPermission();

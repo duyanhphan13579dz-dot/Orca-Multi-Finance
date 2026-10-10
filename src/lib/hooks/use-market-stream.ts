@@ -32,9 +32,17 @@ export function useMarketStream(
     .sort()
     .join(",");
 
+  const isStreamActive = Boolean(enabled && key);
+  const [prevStreamActive, setPrevStreamActive] = useState(isStreamActive);
+  if (prevStreamActive !== isStreamActive) {
+    setPrevStreamActive(isStreamActive);
+    if (!isStreamActive && status !== "idle") {
+      setStatus("idle");
+    }
+  }
+
   useEffect(() => {
     if (!enabled || !key) {
-      setStatus("idle");
       esRef.current?.close();
       esRef.current = null;
       return;

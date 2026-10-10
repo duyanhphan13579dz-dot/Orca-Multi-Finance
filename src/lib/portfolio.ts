@@ -1,3 +1,5 @@
+import { tradeFeesValue } from "./settings";
+
 export type PortfolioAssetType = "stock" | "crypto" | "forex" | "commodity";
 export type PortfolioSide = "long" | "short";
 
@@ -142,10 +144,6 @@ function pnl(trade: PortfolioTrade, price: number | null): number | null {
   // Trừ phí giao dịch (cấu hình trong Settings → Giao dịch & Phí) cho lệnh đã đóng.
   // Lệnh đang mở chỉ tính phí entry.
   try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { tradeFeesValue } = require("./settings") as {
-      tradeFeesValue: (a: PortfolioTrade["assetType"], s: PortfolioTrade["side"], e: number, x: number | null, sz: number | null, lv: number | null) => number;
-    };
     const fees = tradeFeesValue(trade.assetType, trade.side, trade.entry, price, trade.size, trade.leverage);
     return gross - fees;
   } catch {
