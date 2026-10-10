@@ -94,14 +94,15 @@ export default function StockFundamentalsPage({
     params.then((p) => setSymbol(p.symbol.toUpperCase()));
   }, [params]);
 
-  const { res, data, isLoading, meta } = useApi<FundPayload>(
+  // P7-B: soft timeout + keepPrevious; paint when fund or val arrives
+  const { res, data, isLoading, meta, mutate } = useApi<FundPayload>(
     symbol ? `/api/v1/stocks/${encodeURIComponent(symbol)}/fundamentals` : null,
-    { refreshInterval: 90_000 },
+    { refreshInterval: 90_000, timeoutMs: 15_000, keepPreviousData: true },
   );
 
   const { data: valData } = useApi<ValPayload>(
     symbol ? `/api/v1/stocks/${encodeURIComponent(symbol)}/valuation` : null,
-    { refreshInterval: 120_000 },
+    { refreshInterval: 120_000, timeoutMs: 12_000, keepPreviousData: true },
   );
 
   const metrics = useMemo(() => {
@@ -200,13 +201,27 @@ export default function StockFundamentalsPage({
     return { income, roe, cashflow };
   }, [data]);
 
-  if (!symbol || (isLoading && !res)) return <Loading rows={8} />;
-  if (!res?.success || !data || !metrics) {
+  if (!symbol) return <Loading rows={6} label="Đang mở phân tích cơ bản…" />;
+  if (isLoading && !data && !valData) {
+    return <Loading rows={6} label="Đang tải chỉ số cơ bản (tối đa ~15 giây)…" />;
+  }
+  if (!data || !metrics) {
     const msg =
       (res && !res.success && typeof (res as { error?: { message?: string } }).error?.message === "string"
         ? (res as { error: { message: string } }).error.message
         : null) ?? "Nguồn BCTC/giá đang gián đoạn. Thử lại sau vài giây.";
-    return <Unavailable title={`Không lấy được phân tích cơ bản ${symbol || ""}`} note={msg} />;
+    return (
+      <div className="space-y-3">
+        <Unavailable title={`Không lấy được phân tích cơ bản ${symbol || ""}`} note={msg} />
+        <button
+          type="button"
+          className="rounded-lg border border-border-subtle px-3 py-2 text-[12px] font-medium hover:border-accent-primary/40"
+          onClick={() => void mutate()}
+        >
+          Thử tải lại
+        </button>
+      </div>
+    );
   }
 
   const tabs: { key: TabKey; label: string }[] = [
