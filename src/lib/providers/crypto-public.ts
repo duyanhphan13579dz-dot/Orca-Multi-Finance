@@ -46,8 +46,8 @@ export async function getCoinCapAssets(limit = 80): Promise<{
     }>;
   }>(`https://api.coincap.io/v2/assets?limit=${Math.min(100, Math.max(10, limit))}`, {
     provider: COINCAP,
-    timeoutMs: 6_000,
-    retries: 1,
+    timeoutMs: 2_500,
+    retries: 0,
     headers: { Accept: "application/json" },
   });
   if (!res.ok || !res.data?.data?.length) {

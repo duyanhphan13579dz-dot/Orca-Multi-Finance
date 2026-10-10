@@ -11,7 +11,11 @@ const PRIMARY_BASE = () =>
 
 function vndBases(): string[] {
   const primary = PRIMARY_BASE();
-  const alts = ["https://api-finfo.vndirect.com.vn", "https://finfo-api.vndirect.com.vn"];
+  const envFallbacks = (process.env.VNDIRECT_FALLBACK_BASE_URLS ?? "")
+    .split(/[;,\s]+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const alts = [...envFallbacks, "https://api-finfo.vndirect.com.vn", "https://finfo-api.vndirect.com.vn"];
   const out: string[] = [];
   for (const b of [primary, ...alts]) {
     const n = b.replace(/\/$/, "");

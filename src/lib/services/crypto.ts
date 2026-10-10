@@ -316,8 +316,8 @@ export async function getCryptoMarkets(): Promise<{
             [
               { id: "binance", run: async () => loadBinanceMarkets() },
               { id: "okx-public", run: async () => loadOkxMarkets() },
-              { id: "coincap", run: async () => loadCoinCapMarkets() },
               { id: "coingecko", run: async () => loadCoinGeckoMarkets() },
+              { id: "coincap", run: async () => loadCoinCapMarkets() },
             ],
             { budgetMs: 10_000, perAttemptMs: 6_000, label: "crypto-markets" },
           );

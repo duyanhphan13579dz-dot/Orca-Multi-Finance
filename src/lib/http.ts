@@ -130,8 +130,8 @@ function retryDelayMs(res: Response, attempt: number, backoffBase: number): numb
 async function httpRequestOnce<T>(url: string, opts: HttpOptions): Promise<HttpResult<T>> {
   const provider = opts.provider;
   const timeoutMs = resolveProviderTimeout(provider, opts.timeoutMs);
-  // P5-C: default 0 retries for fail-fast realtime; callers can raise retries
-  const retries = opts.retries ?? 0;
+  // Default 1 retry for transient blips (502/503/429/network reset); callers can pass retries: 0 for strict fail-fast
+  const retries = opts.retries ?? 1;
   const backoffBase = opts.backoffBaseMs ?? 180;
 
   if (isCircuitOpen(provider)) {
@@ -166,6 +166,7 @@ async function httpRequestOnce<T>(url: string, opts: HttpOptions): Promise<HttpR
         headers: {
           "User-Agent": DEFAULT_UA,
           Accept: "application/json, text/plain, */*",
+          "Accept-Language": "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7",
           ...(opts.headers ?? {}),
         },
         body: opts.body ?? undefined,

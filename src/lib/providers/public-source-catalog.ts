@@ -184,7 +184,7 @@ export const PUBLIC_SOURCE_CATALOG: PublicSourceDefinition[] = [
     cadence: "intraday",
     url: "https://api.coincap.io/v2/assets",
     apiKeyRequired: false,
-    notes: "Top assets by rank — public fallback, no API key.",
+    notes: "Top assets by rank — public fallback (upstream thường gián đoạn DNS; hệ thống tự ưu tiên Binance/OKX/CoinGecko trước).",
   },
   {
     id: "yahoo-crypto",
