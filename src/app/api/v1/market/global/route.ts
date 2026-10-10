@@ -130,14 +130,31 @@ export async function GET() {
           },
         };
       }
-      const [usP, cryptoP, asiaP, liqP] = await Promise.all([
-        loadUs(),
-        loadCrypto(),
-        loadAsia(),
-        loadLiqSpark(),
-      ]);
+      // P5-B: stage-1 US + crypto in parallel (fast path for dashboard)
+      const [usP, cryptoP] = await Promise.all([loadUs(), loadCrypto()]);
 
-      const sources = [usP.source, cryptoP.source, asiaP.source].filter((s) => s && s !== "none");
+      // stage-2 asia + liq only if we still have budget and primary has data
+      let asiaP: { rows: AsiaRow[]; source: string } = { rows: [], source: "skipped" };
+      let liqP: Awaited<ReturnType<typeof loadLiqSpark>> = null;
+      const primaryOk = usP.rows.length > 0 || cryptoP.rows.length > 0;
+      if (primaryOk) {
+        const secondary = await Promise.all([
+          Promise.race([
+            loadAsia(),
+            new Promise<{ rows: AsiaRow[]; source: string }>((r) =>
+              setTimeout(() => r({ rows: [], source: "asia-timeout" }), 3_500),
+            ),
+          ]),
+          Promise.race([
+            loadLiqSpark(),
+            new Promise<null>((r) => setTimeout(() => r(null), 2_500)),
+          ]),
+        ]);
+        asiaP = secondary[0];
+        liqP = secondary[1];
+      }
+
+      const sources = [usP.source, cryptoP.source, asiaP.source].filter((s) => s && s !== "none" && s !== "skipped");
       if (liqP) sources.push(`liq:${liqP.source}`);
 
       const data = {

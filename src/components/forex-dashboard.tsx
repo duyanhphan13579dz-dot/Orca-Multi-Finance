@@ -11,7 +11,8 @@ export function ForexDashboard() {
   const { data, meta, isLoading } = useApi<ForexMarket>("/api/v1/forex/markets", {
     refreshInterval: 25_000,
     keepPreviousData: true,
-    timeoutMs: 16_000,
+    // P5-A: tighter client timeout — hot snapshot / last-good cover cold path
+    timeoutMs: 10_000,
   });
   if (isLoading && !data) return <Loading rows={10} />;
   if (!data) {
