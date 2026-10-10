@@ -16,6 +16,9 @@ type FilterTab = "all" | "volume" | "gainers" | "losers";
 export function CryptoMarketPage() {
   const { data, meta, isLoading } = useApi<MarketsData>("/api/v1/crypto/markets?limit=120", {
     refreshInterval: 15_000,
+    keepPreviousData: true,
+    // P5-A: tighter timeout — crypto hot-snapshot serves cold path
+    timeoutMs: 10_000,
   });
   const { fmtUsd } = usePrefCurrency();
   const [tab, setTab] = useState<FilterTab>("volume");
