@@ -491,7 +491,7 @@ export function ShellInner({ children }: { children: ReactNode }) {
                   </Link>
                   <Link
                     href="/settings"
-                    className="grid size-8 shrink-0 place-items-center rounded-lg text-text-secondary transition-colors hover:bg-surface-elevated hover:text-text-primary active:scale-95"
+                    className="grid size-9 shrink-0 place-items-center rounded-lg text-text-secondary transition-colors hover:bg-surface-elevated hover:text-text-primary active:scale-95"
                     aria-label="Cài đặt"
                   >
                     <Settings className="size-4" />

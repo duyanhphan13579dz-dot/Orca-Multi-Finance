@@ -226,8 +226,8 @@ export function DerivativesDashboard() {
       </div>
 
       <Panel title="Hợp đồng VN30" subtitle="Quote live hoặc N/A">
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
+        <div className="table-scroll-wrap">
+          <table className="w-full min-w-[540px] text-sm">
             <thead>
               <tr className="text-left text-text-muted border-b border-border/50">
                 <th className="py-2 pr-2">Symbol</th>

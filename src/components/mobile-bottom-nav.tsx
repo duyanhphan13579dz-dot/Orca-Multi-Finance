@@ -140,11 +140,11 @@ export function MobileBottomNav({
                 key={tab.id}
                 type="button"
                 onClick={onOpenDrawer}
-                className="flex flex-col items-center justify-center gap-0.5 rounded-lg text-text-muted transition-transform active:scale-90 hover:text-text-primary"
+                className="flex h-full min-w-0 flex-col items-center justify-center gap-0.5 rounded-lg text-text-muted transition-transform active:scale-90 hover:text-text-primary"
                 aria-label="Mở tất cả menu"
               >
                 <Icon className="size-5" />
-                <span className="text-[10px] font-medium leading-none tracking-tight">
+                <span className="max-w-[58px] truncate text-[10px] font-medium leading-none tracking-tight">
                   {tab.label}
                 </span>
               </button>
@@ -159,7 +159,7 @@ export function MobileBottomNav({
               href={tab.href}
               onClick={(e) => onNav(tab.href, e)}
               className={
-                "relative flex flex-col items-center justify-center gap-0.5 rounded-lg transition-transform active:scale-90 " +
+                "relative flex h-full min-w-0 flex-col items-center justify-center gap-0.5 rounded-lg transition-transform active:scale-90 " +
                 (isActive
                   ? isPersonalFinanceMode
                     ? "font-semibold text-amber-300"
@@ -198,7 +198,7 @@ export function MobileBottomNav({
                 <Icon className={"size-5 transition-transform " + (isActive ? "scale-110" : "")} />
               )}
 
-              <span className="text-[10px] leading-none tracking-tight truncate max-w-[64px]">
+              <span className="text-[10px] leading-none tracking-tight truncate max-w-[58px]">
                 {tab.label}
               </span>
 
