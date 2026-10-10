@@ -13,7 +13,12 @@ export async function requireInternalSession(): Promise<Response | null> {
     .split(",")
     .map((e) => e.trim().toLowerCase())
     .filter(Boolean);
-  if (!allow.length) return null;
+  if (!allow.length) {
+    if (process.env.NODE_ENV === "production") {
+      return fail("FORBIDDEN", "ADMIN_EMAILS chưa được cấu hình trên production. Truy cập bị từ chối.", 403);
+    }
+    return null;
+  }
   const user = await getUserById(session.id).catch(() => null);
   if (!user || !allow.includes(user.email.toLowerCase())) {
     return fail("FORBIDDEN", "Tài khoản không có quyền truy cập API vận hành", 403);

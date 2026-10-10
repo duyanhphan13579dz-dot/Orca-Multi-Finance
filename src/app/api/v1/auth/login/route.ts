@@ -25,6 +25,7 @@ export async function POST(req: Request) {
     await db.insert(auditLogs).values({ userId: user.id, action: "login" }).catch(() => {});
     return ok({ user: { id: user.id, email: user.email, name: user.name } }, { source: "orca-auth" });
   } catch (e) {
-    return fail("LOGIN_FAILED", e instanceof Error ? e.message : "unknown", 500);
+    console.error("[auth-login] Unexpected error:", e);
+    return fail("LOGIN_FAILED", "Đã xảy ra lỗi máy chủ khi đăng nhập. Vui lòng thử lại sau.", 500);
   }
 }

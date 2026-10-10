@@ -3,7 +3,7 @@ import crypto from "crypto";
 import { SignJWT, jwtVerify } from "jose";
 import { cookies, headers } from "next/headers";
 import { eq, and, gt } from "drizzle-orm";
-import { db } from "@/db";
+import { db, databaseConfigured } from "@/db";
 import { sessions, users } from "@/db/schema";
 import { env } from "./env";
 
@@ -132,6 +132,14 @@ export async function getSessionUser(): Promise<SessionUser | null> {
       .where(and(eq(sessions.tokenHash, hash), gt(sessions.expiresAt, new Date())))
       .limit(1)
       .catch(() => []);
+
+    if (databaseConfigured()) {
+      // Khi DB kết nối, nếu bản ghi session không tồn tại (đã bị thu hồi hoặc hết hạn), từ chối phiên
+      if (!row) return null;
+      return { id: payload.sub, sessionId: row.id };
+    }
+
+    // Môi trường dev không kết nối DB thật
     return { id: payload.sub, sessionId: row?.id };
   } catch {
     return null;

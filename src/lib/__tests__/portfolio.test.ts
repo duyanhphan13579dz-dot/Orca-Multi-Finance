@@ -130,3 +130,17 @@ test("collectPortfolioSymbols buckets by asset class", () => {
   assert.deepEqual(buckets.stock, ["FPT"]);
   assert.deepEqual(buckets.crypto, ["BTCUSDT"]);
 });
+
+test("buildPortfolioSnapshot with includeFees option separates gross and net PnL", () => {
+  const snapshot = buildPortfolioSnapshot(
+    [baseTrade()],
+    [{ assetType: "crypto", symbol: "BTCUSDT", addedAt: Date.now() }],
+    [{ assetType: "crypto", symbol: "BTCUSDT", price: 110, changePercent: 2 }],
+    { includeFees: true },
+  );
+
+  assert.equal(snapshot.positions[0]?.unrealizedGrossPnl, 20);
+  assert.ok(snapshot.positions[0]?.unrealizedPnl! < 20);
+  assert.equal(snapshot.unrealizedGrossPnl, 20);
+  assert.ok(snapshot.totalFees! > 0);
+});

@@ -19,9 +19,24 @@ export function loadWatchlist(): WatchItem[] {
   }
 }
 
+let syncTimer: ReturnType<typeof setTimeout> | null = null;
+
+export function scheduleWatchlistServerSync(items: WatchItem[]) {
+  if (typeof window === "undefined") return;
+  if (syncTimer) clearTimeout(syncTimer);
+  syncTimer = setTimeout(() => {
+    void fetch("/api/v1/watchlist", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ items }),
+    }).catch(() => {});
+  }, 600);
+}
+
 export function saveWatchlist(items: WatchItem[]) {
   localStorage.setItem(KEY, JSON.stringify(items));
   window.dispatchEvent(new Event("orca:watchlist"));
+  scheduleWatchlistServerSync(items);
 }
 
 export function AddToWatchlist({ assetType, symbol }: { assetType: WatchItem["assetType"]; symbol: string }) {

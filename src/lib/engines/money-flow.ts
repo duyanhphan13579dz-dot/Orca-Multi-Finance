@@ -66,6 +66,8 @@ export interface SwingPoint {
   price: number;
   kind: SwingKind;
   type: "high" | "low";
+  confirmedAtIndex: number;
+  isProvisional?: boolean;
 }
 
 export interface FairValueGap {
@@ -233,11 +235,12 @@ function findSwings(bars: OhlcvBar[], halfWindow: number, kind: SwingKind): Swin
     const hi = Math.max(...window.map((b) => b.high));
     const lo = Math.min(...window.map((b) => b.low));
     const bar = bars[i]!;
+    const confirmedAtIndex = i + halfWindow;
     if (bar.high === hi) {
-      out.push({ index: i, time: bar.time, price: bar.high, kind, type: "high" });
+      out.push({ index: i, time: bar.time, price: bar.high, kind, type: "high", confirmedAtIndex, isProvisional: false });
     }
     if (bar.low === lo) {
-      out.push({ index: i, time: bar.time, price: bar.low, kind, type: "low" });
+      out.push({ index: i, time: bar.time, price: bar.low, kind, type: "low", confirmedAtIndex, isProvisional: false });
     }
   }
   return out;
