@@ -8,7 +8,7 @@ export const runtime = "nodejs";
 export const maxDuration = 28;
 
 /**
- * P0/P2-D unified hot-warm — board/intel/forex/global/multi-asset + fundamental/valuation screeners.
+ * P0/P2-D/P4-C unified hot-warm — board/intel/forex/global/multi-asset/commodities + screeners.
  * GET /api/v1/cron/hot-warm?secret=...
  * Recommended cadence: every 45–60s (24/7).
  */
@@ -17,7 +17,7 @@ export async function GET(req: Request) {
   if (denied) return denied;
 
   const t0 = Date.now();
-  const HARD_MS = 26_000; // P2-D: room for screener warm
+  const HARD_MS = 28_000; // P2-D/P4-C: room for screener + commodities warm
   const remaining = () => Math.max(0, HARD_MS - (Date.now() - t0));
   const results: Record<string, { ok: boolean; ms: number; note?: string }> = {};
 
@@ -279,6 +279,66 @@ export async function GET(req: Request) {
       }
     } catch (e) {
       results["screener-valuation"] = {
+        ok: false,
+        ms: Date.now() - s,
+        note: e instanceof Error ? e.message : "err",
+      };
+    }
+  }
+
+  // P4-C: warm commodities last-good
+  if (remaining() > 2_500) {
+    const s = Date.now();
+    try {
+      const pack = await runGuarded(
+        async () => {
+          const { getCommodityMarket } = await import("@/lib/services/commodities");
+          return getCommodityMarket().catch(() => null);
+        },
+        {
+          label: "hot-warm-commodities",
+          wallMs: Math.min(7_000, remaining()),
+          maxSubrequests: 12,
+          maxConcurrent: 2,
+        },
+      );
+      if (pack?.data?.rows?.length) {
+        const { GROUP_LABELS } = await import("@/lib/services/commodities");
+        const catalog = pack.data.catalog.map((c) => ({
+          key: c.key,
+          name: c.name,
+          nameVi: c.nameVi,
+          group: c.group,
+          symbol: c.symbol,
+          unit: c.unit,
+          vnImpact: c.vnImpact ?? null,
+        }));
+        putHot(
+          "commodities",
+          {
+            rows: pack.data.rows,
+            unavailable: pack.data.unavailable,
+            sourcesUsed: pack.data.sourcesUsed,
+            errors: pack.data.errors,
+            catalog,
+            groups: GROUP_LABELS,
+          },
+          {
+            source: pack.meta?.source ?? "commodities-warm",
+            partial: pack.meta?.partial,
+            note: pack.meta?.note,
+          },
+        );
+        results.commodities = {
+          ok: true,
+          ms: Date.now() - s,
+          note: `${pack.data.rows.length} rows`,
+        };
+      } else {
+        results.commodities = { ok: false, ms: Date.now() - s, note: "empty" };
+      }
+    } catch (e) {
+      results.commodities = {
         ok: false,
         ms: Date.now() - s,
         note: e instanceof Error ? e.message : "err",
