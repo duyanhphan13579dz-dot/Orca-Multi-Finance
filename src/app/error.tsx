@@ -23,13 +23,27 @@ export default function AppError({
       {error?.digest ? (
         <p className="text-[11px] text-text-muted">Mã lỗi: {error.digest}</p>
       ) : null}
-      <button
-        type="button"
-        onClick={() => reset()}
-        className="rounded-md bg-accent-primary px-3 py-1.5 text-[13px] font-medium text-background-primary"
-      >
-        Thử lại
-      </button>
+      <div className="flex flex-wrap items-center justify-center gap-2">
+        <button
+          type="button"
+          onClick={() => reset()}
+          className="rounded-md bg-accent-primary px-3 py-1.5 text-[13px] font-medium text-background-primary"
+        >
+          Thử lại
+        </button>
+        <a
+          href="/screener"
+          className="rounded-md border border-border-subtle px-3 py-1.5 text-[13px] text-text-secondary hover:border-border-default hover:text-text-primary"
+        >
+          Về bộ lọc
+        </a>
+        <a
+          href="/"
+          className="rounded-md border border-border-subtle px-3 py-1.5 text-[13px] text-text-secondary hover:border-border-default hover:text-text-primary"
+        >
+          Tổng quan
+        </a>
+      </div>
     </div>
   );
 }
