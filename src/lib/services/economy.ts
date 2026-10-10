@@ -49,14 +49,16 @@ export function economicMeta(
   };
 }
 
-/** On-demand only: no calls from market snapshots, the ticker, reports, agents or cron. */
+/** Không gọi từ market snapshot/ticker/report/agent; chỉ on-demand hoặc cron economy-warm làm nóng cache. */
 export async function getEconomicData(
   dataset: EconomicDataset,
+  opts?: { refresh?: boolean },
 ): Promise<{ data: EconomicSnapshot; meta: Meta } | null> {
   try {
     const result = await cached(ECONOMIC_CACHE_KEYS[dataset], {
       ttlMs: ECONOMIC_TTL_MS,
       staleMs: ECONOMIC_STALE_MS,
+      skipCache: opts?.refresh === true,
       producer: () => fetchVietnambizEconomy(dataset),
     });
     return {

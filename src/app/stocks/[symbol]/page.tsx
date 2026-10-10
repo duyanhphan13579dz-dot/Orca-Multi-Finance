@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { OrcaChart } from "@/components/orca-chart";
 import { StockNewsSentiment } from "@/components/stocks/news-sentiment-chip";
+import { CompanyNewsPanel } from "@/components/stocks/company-news-panel";
 import { OrderBookPanel } from "@/components/stocks/order-book-panel";
 import { MarketBreadthCard } from "@/components/stocks/market-breadth-card";
 
@@ -404,6 +405,7 @@ export default function StockDetailPage({ params }: { params: Promise<{ symbol: 
           <span className="stock-section-index">03</span>
         </div>
         <StockNewsSentiment symbol={data.symbol} />
+        <CompanyNewsPanel symbol={data.symbol} />
       </section>
     </div>
   );

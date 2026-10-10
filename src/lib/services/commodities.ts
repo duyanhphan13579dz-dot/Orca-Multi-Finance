@@ -1,5 +1,5 @@
 import "server-only";
-import { cached, invalidate } from "../cache";
+import { cached, peekStale } from "../cache";
 import { buildMeta } from "../freshness";
 import {
   fetchVietnambizGoods,
@@ -30,6 +30,8 @@ export interface CommodityMarket {
   sourcesUsed: string[];
   errors: string[];
   catalog: CommodityDef[];
+  /** buildId của data.vietnambiz.vn — để isolate khác đi đường nhanh. */
+  buildId?: string | null;
 }
 
 const GROUP_ORDER: CommodityGroup[] = [
@@ -62,7 +64,7 @@ const YAHOO_ENRICH: Array<{ match: RegExp; yahoo: string; label: string }> = [
 
 async function fetchAll(): Promise<CommodityMarket> {
   const [snap, yahooMap] = await Promise.all([
-    fetchVietnambizGoods(),
+    fetchVietnambizGoods(peekStale<CommodityMarket>(CACHE_KEY)?.value.buildId ?? null),
     (async () => {
       const out = new Map<string, { price: number; ts: number }>();
       try {
@@ -159,6 +161,7 @@ async function fetchAll(): Promise<CommodityMarket> {
     sourcesUsed: [...sourcesUsed],
     errors: [],
     catalog,
+    buildId: snap.buildId ?? null,
   };
 }
 
@@ -223,8 +226,8 @@ export async function refreshCommodityMarket(): Promise<{
 }> {
   const t0 = Date.now();
   try {
-    invalidate(CACHE_KEY);
-    const res = await cached(CACHE_KEY, { ttlMs: TTL_MS, staleMs: STALE_MS, producer: fetchAll });
+    // skipCache: làm mới thật, nếu nguồn lỗi vẫn giữ bản cũ (invalidate trước đây xoá luôn bản dự phòng).
+    const res = await cached(CACHE_KEY, { ttlMs: TTL_MS, staleMs: STALE_MS, skipCache: true, producer: fetchAll });
     void persistQuotes(res.value.rows);
     let latestTs: number | null = null;
     for (const r of res.value.rows) {

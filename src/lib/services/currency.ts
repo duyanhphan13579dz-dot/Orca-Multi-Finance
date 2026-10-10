@@ -64,30 +64,29 @@ async function loadErApiRates(): Promise<FxLatest> {
 }
 
 export async function getCurrencyRates(): Promise<CurrencyRates> {
-  const er = await loadErApiRates();
+  // Hai nguồn độc lập → chạy song song; ER-API lỗi không làm hỏng tỷ giá USD→VND của VietnamBiz.
+  const [erRes, econRes] = await Promise.allSettled([loadErApiRates(), getEconomicData("currency-interest-rate")]);
+  const er: FxLatest | null = erRes.status === "fulfilled" ? erRes.value : null;
   const base: Partial<Record<ConvertibleCurrency, number>> = {
     USD: 1,
-    VND: er.rates.VND,
-    CNY: er.rates.CNY,
-    JPY: er.rates.JPY,
-    MYR: er.rates.MYR,
-    EUR: er.rates.EUR,
-    GBP: er.rates.GBP,
+    VND: er?.rates.VND,
+    CNY: er?.rates.CNY,
+    JPY: er?.rates.JPY,
+    MYR: er?.rates.MYR,
+    EUR: er?.rates.EUR,
+    GBP: er?.rates.GBP,
   };
 
   let usdVndVietnamBiz: CurrencyRates["usdVndVietnamBiz"] = null;
-  try {
-    const econ = await getEconomicData("currency-interest-rate");
-    if (econ?.data?.rows?.length) {
-      const vnbUsdVnd = pickVnbUsdVnd(econ.data.rows);
-      if (vnbUsdVnd) {
-        base.VND = vnbUsdVnd.rate;
-        usdVndVietnamBiz = vnbUsdVnd;
-      }
+  const econ = econRes.status === "fulfilled" ? econRes.value : null;
+  if (econ?.data?.rows?.length) {
+    const vnbUsdVnd = pickVnbUsdVnd(econ.data.rows);
+    if (vnbUsdVnd) {
+      base.VND = vnbUsdVnd.rate;
+      usdVndVietnamBiz = vnbUsdVnd;
     }
-  } catch {
-    /* portal lỗi → dùng ER-API VND */
   }
+  if (!er && !usdVndVietnamBiz) throw new Error("currency: cả VietnamBiz và exchangerate-api đều lỗi");
 
   const rates = {} as Record<ConvertibleCurrency, number>;
   for (const c of CONVERTIBLE_CURRENCIES) {
@@ -102,9 +101,11 @@ export async function getCurrencyRates(): Promise<CurrencyRates> {
     rates,
     usdVndVietnamBiz,
     source: usdVndVietnamBiz
-      ? "VietnamBiz Data (currency-interest-rate) + exchangerate-api (open)"
+      ? er
+        ? "VietnamBiz Data (currency-interest-rate) + exchangerate-api (open)"
+        : "VietnamBiz Data (currency-interest-rate)"
       : "exchangerate-api (open)",
-    timestamp: er.ts,
+    timestamp: er?.ts ?? null,
   };
 }
 

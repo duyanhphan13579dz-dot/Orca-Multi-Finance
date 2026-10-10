@@ -1,4 +1,5 @@
 import "server-only";
+import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { env } from "./env";
 
 /**
@@ -8,6 +9,16 @@ import { env } from "./env";
  *  - optional Redis TCP (Node only)
  *  - stale-while-revalidate + in-flight dedupe
  */
+
+/** Chạy việc nền; trên Workers gắn vào ctx.waitUntil để không bị huỷ khi response kết thúc. */
+function defer(p: Promise<unknown>): void {
+  const safe = p.catch(() => undefined);
+  try {
+    getCloudflareContext().ctx.waitUntil(safe);
+  } catch {
+    /* ngoài Worker: promise tự chạy tiếp */
+  }
+}
 
 interface Entry {
   value: unknown;
@@ -162,7 +173,7 @@ function storeEntry(key: string, value: unknown, ttlMs: number, staleMs: number)
     producedAt: Date.now(),
   };
   mem.set(key, entry);
-  void mirrorSet(key, JSON.stringify(entry), ttlMs, staleMs).catch(() => undefined);
+  defer(mirrorSet(key, JSON.stringify(entry), ttlMs, staleMs));
   return entry;
 }
 
@@ -197,58 +208,66 @@ export async function cached<T>(
   if (opts.skipCache) {
     return runProducer(key, ttlMs, staleMs, producer);
   }
+
+  const refreshInBackground = () => {
+    if (inflight.has(key)) return;
+    bgRefresh++;
+    const task = runProducer(key, ttlMs, staleMs, producer);
+    inflight.set(key, task as Promise<unknown>);
+    defer(task);
+  };
+
   const now = Date.now();
   const e = mem.get(key);
-
-  if (e) {
-    if (now < e.expiresAt) {
-      hits++;
-      return { value: e.value as T, cached: true, stale: false, producedAt: e.producedAt };
-    }
-    if (softSwr && now < e.staleUntil) {
-      hits++;
-      staleServed++;
-      if (!inflight.has(key)) {
-        bgRefresh++;
-        const task = runProducer(key, ttlMs, staleMs, producer);
-        inflight.set(key, task as Promise<unknown>);
-        void task.catch(() => undefined);
-      }
-      return { value: e.value as T, cached: true, stale: true, producedAt: e.producedAt };
-    }
-    try {
-      const raw = await mirrorGet(key);
-      if (raw) {
-        const parsed = JSON.parse(raw) as Entry & { value: T };
-        if (Date.now() < parsed.expiresAt) {
-          mem.set(key, parsed);
-          hits++;
-          return { value: parsed.value, cached: true, stale: false, producedAt: parsed.producedAt };
-        }
-        if (softSwr && Date.now() < parsed.staleUntil) {
-          mem.set(key, parsed);
-          hits++;
-          staleServed++;
-          if (!inflight.has(key)) {
-            bgRefresh++;
-            const task = runProducer(key, ttlMs, staleMs, producer);
-            inflight.set(key, task as Promise<unknown>);
-            void task.catch(() => undefined);
-          }
-          return { value: parsed.value, cached: true, stale: true, producedAt: parsed.producedAt };
-        }
-      }
-    } catch {
-      /* */
-    }
+  if (e && now < e.expiresAt) {
+    hits++;
+    return { value: e.value as T, cached: true, stale: false, producedAt: e.producedAt };
+  }
+  if (e && softSwr && now < e.staleUntil) {
+    hits++;
+    staleServed++;
+    refreshInBackground();
+    return { value: e.value as T, cached: true, stale: true, producedAt: e.producedAt };
   }
 
+  // Một request đang chạy cho cùng key → dùng chung, không gọi mirror/upstream lần nữa.
   const pending = inflight.get(key);
   if (pending) return (await pending) as CacheResult<T>;
 
+  // Isolate lạnh (hoặc entry hết hạn hẳn): thử mirror dùng chung (Upstash/Redis) trước khi gọi upstream.
+  try {
+    const raw = await mirrorGet(key);
+    if (raw) {
+      const parsed = JSON.parse(raw) as Entry & { value: T };
+      const t = Date.now();
+      if (t < parsed.expiresAt) {
+        mem.set(key, parsed);
+        hits++;
+        return { value: parsed.value, cached: true, stale: false, producedAt: parsed.producedAt };
+      }
+      if (softSwr && t < parsed.staleUntil) {
+        mem.set(key, parsed);
+        hits++;
+        staleServed++;
+        refreshInBackground();
+        return { value: parsed.value, cached: true, stale: true, producedAt: parsed.producedAt };
+      }
+    }
+  } catch {
+    /* mirror hỏng → gọi producer */
+  }
+
+  const racing = inflight.get(key);
+  if (racing) return (await racing) as CacheResult<T>;
   const task = runProducer(key, ttlMs, staleMs, producer);
   inflight.set(key, task as Promise<unknown>);
   return task;
+}
+
+/** Xoá cache bộ nhớ của isolate này (dùng cho test / mô phỏng isolate lạnh). */
+export function clearMemoryCache(): void {
+  mem.clear();
+  inflight.clear();
 }
 
 export function peekStale<T>(key: string): CacheResult<T> | null {
