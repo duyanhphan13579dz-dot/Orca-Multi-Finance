@@ -181,12 +181,13 @@ export default function StockFinancialsPage({ params }: { params: Promise<{ symb
     params.then((p) => setSymbol(p.symbol.toUpperCase()));
   }, [params]);
 
-  const { res, data, isLoading, error } = useApi<FinTablePayload>(
+  // P7-A: fail-fast client + keep previous rows; soft shell with DStock links
+  const { res, data, isLoading, error, mutate } = useApi<FinTablePayload>(
     symbol ? financialsApiUrl(symbol) : null,
-    { refreshInterval: 300_000, timeoutMs: 55_000 },
+    { refreshInterval: 300_000, timeoutMs: 18_000, keepPreviousData: true },
   );
 
-  if (!symbol || (isLoading && !res)) return <Loading rows={8} />;
+  if (!symbol) return <Loading rows={6} label="Đang mở BCTC…" />;
 
   const failNote = (() => {
     if (res && !res.success) {
@@ -198,9 +199,59 @@ export default function StockFinancialsPage({ params }: { params: Promise<{ symb
     return "Nguồn báo cáo đang gián đoạn. Thử lại sau hoặc mở link DStock bên dưới.";
   })();
 
-  if (!res?.success || !data?.financials) {
+  if (isLoading && !data) {
     return (
-      <Unavailable title={`Không lấy được BCTC ${symbol || ""}`} note={failNote} />
+      <div className="stock-workspace space-y-3">
+        <Loading rows={6} label="Đang tải BCTC (tối đa ~18 giây)…" />
+        <Panel title="Nguồn đối chiếu (VNDIRECT DStock)">
+          <ul className="space-y-1.5 text-[12px]">
+            <li>
+              <a className="text-accent underline-offset-2 hover:underline" href={`https://dstock.vndirect.com.vn/bao-cao-ket-qua-kinh-doanh/${symbol}`} target="_blank" rel="noopener noreferrer">
+                KQKD {symbol} ↗
+              </a>
+            </li>
+            <li>
+              <a className="text-accent underline-offset-2 hover:underline" href={`https://dstock.vndirect.com.vn/bang-can-doi-ke-toan/${symbol}`} target="_blank" rel="noopener noreferrer">
+                Cân đối kế toán {symbol} ↗
+              </a>
+            </li>
+          </ul>
+        </Panel>
+      </div>
+    );
+  }
+
+  if (!data?.financials) {
+    return (
+      <div className="stock-workspace space-y-3">
+        <Unavailable title={`Không lấy được BCTC ${symbol || ""}`} note={failNote} />
+        <button
+          type="button"
+          className="rounded-lg border border-border-subtle px-3 py-2 text-[12px] font-medium hover:border-accent-primary/40"
+          onClick={() => void mutate()}
+        >
+          Thử tải lại
+        </button>
+        <Panel title="Nguồn đối chiếu (VNDIRECT DStock)">
+          <ul className="space-y-1.5 text-[12px]">
+            <li>
+              <a className="break-all text-accent underline-offset-2 hover:underline" href={`https://dstock.vndirect.com.vn/bang-can-doi-ke-toan/${symbol}`} target="_blank" rel="noopener noreferrer">
+                dstock…/bang-can-doi-ke-toan/{symbol}
+              </a>
+            </li>
+            <li>
+              <a className="break-all text-accent underline-offset-2 hover:underline" href={`https://dstock.vndirect.com.vn/bao-cao-ket-qua-kinh-doanh/${symbol}`} target="_blank" rel="noopener noreferrer">
+                dstock…/bao-cao-ket-qua-kinh-doanh/{symbol}
+              </a>
+            </li>
+            <li>
+              <a className="break-all text-accent underline-offset-2 hover:underline" href={`https://dstock.vndirect.com.vn/bao-cao-luu-chuyen-tien-te/${symbol}`} target="_blank" rel="noopener noreferrer">
+                dstock…/bao-cao-luu-chuyen-tien-te/{symbol}
+              </a>
+            </li>
+          </ul>
+        </Panel>
+      </div>
     );
   }
 
