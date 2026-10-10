@@ -8,7 +8,7 @@ import { searchSecurities, VN_INDICES, sectorOf } from "@/lib/vn/master";
 import { looksLikeVnTicker } from "@/lib/vn/ipo-seeds";
 import type { CryptoSummary } from "@/lib/services/crypto";
 import type { CryptoMarketRow } from "@/lib/types";
-import { CandlestickChart, Coins, Home, ListTree, Search as SearchIcon, TrendingUp } from "lucide-react";
+import { CandlestickChart, Coins, Home, ListTree, Search as SearchIcon, TrendingUp, X } from "lucide-react";
 
 /**
  * VIETNAM-FIRST SEARCH — static master + live VNDirect universe (IPO mới).
@@ -203,23 +203,24 @@ export function GlobalSearch() {
   };
 
   return (
-    <div className="relative w-full max-w-sm">
+    <div className="relative w-full sm:max-w-sm">
       <button
         onClick={() => setOpen(true)}
-        className="flex w-full items-center gap-2 rounded-lg border border-border-subtle bg-surface-elevated px-3 py-1.5 text-[12px] text-text-muted transition-colors hover:border-border-default"
+        className="flex h-9 w-9 sm:h-auto sm:w-full items-center justify-center sm:justify-start gap-2 rounded-lg border border-border-subtle bg-surface-elevated p-0 sm:px-3 sm:py-1.5 text-[12px] text-text-muted transition-all hover:border-border-default hover:text-text-primary active:scale-95"
         aria-label="Tìm kiếm (Ctrl+K)"
+        title="Tìm kiếm mã cổ phiếu, crypto, forex..."
       >
-        <SearchIcon className="size-3.5" />
-        <span className="hidden sm:block">HPA, TCX, VCK, HPG, BTC…</span>
+        <SearchIcon className="size-4 sm:size-3.5" />
+        <span className="hidden sm:inline truncate">HPA, TCX, VCK, HPG, BTC…</span>
         <kbd className="ml-auto hidden rounded border border-border-subtle px-1 text-[10px] sm:block">Ctrl K</kbd>
       </button>
 
       {open && (
         <>
-          <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-[2px]" onClick={() => setOpen(false)} />
-          <div className="absolute left-0 right-0 top-0 z-50 mt-1 overflow-hidden rounded-xl border border-border-default bg-surface-modal shadow-2xl">
-            <div className="flex items-center gap-2 border-b border-border-subtle px-3 py-2.5">
-              <SearchIcon className="size-4 text-text-muted" />
+          <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm transition-opacity" onClick={() => setOpen(false)} />
+          <div className="fixed inset-x-3 top-3 z-50 sm:absolute sm:inset-x-0 sm:top-0 sm:mt-1 overflow-hidden rounded-2xl border border-border-default bg-surface-modal shadow-2xl max-h-[85vh] flex flex-col">
+            <div className="flex items-center gap-2.5 border-b border-border-subtle px-3.5 py-3">
+              <SearchIcon className="size-4 shrink-0 text-accent-primary" />
               <input
                 ref={inputRef}
                 autoFocus
@@ -240,14 +241,22 @@ export function GlobalSearch() {
                   }
                   if (e.key === "Escape") setOpen(false);
                 }}
-                placeholder="Mã CP (HPA, TCX…), tên công ty, crypto, forex…"
-                className="w-full bg-transparent text-[13px] text-text-primary placeholder:text-text-muted focus:outline-none"
+                placeholder="Mã CP (HPA, TCX…), crypto, forex…"
+                className="w-full bg-transparent text-[14px] sm:text-[13px] text-text-primary placeholder:text-text-muted focus:outline-none"
               />
+              <button
+                type="button"
+                onClick={() => setOpen(false)}
+                className="grid size-8 shrink-0 place-items-center rounded-lg text-text-muted hover:bg-surface-elevated hover:text-text-primary"
+                aria-label="Đóng tìm kiếm"
+              >
+                <X className="size-4" />
+              </button>
             </div>
-            <ul className="max-h-80 overflow-y-auto py-1">
+            <ul className="max-h-[60vh] sm:max-h-80 overflow-y-auto py-1 overscroll-contain">
               {items.length === 0 && (
-                <li className="px-3 py-3 text-[12px] text-text-muted">
-                  Không có kết quả — Enter mở mã nếu đúng dạng ticker VN.
+                <li className="px-4 py-4 text-center text-[12.5px] text-text-muted">
+                  Không có kết quả — Gõ mã và Enter để mở trực tiếp.
                 </li>
               )}
               {items.map((it, i) => (

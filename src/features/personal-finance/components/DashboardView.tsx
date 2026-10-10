@@ -92,31 +92,33 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   return (
     <div className="space-y-6">
       {/* Cute Mascot Greeting Banner (Brighter & Decluttered) */}
-      <div className="bg-gradient-to-r from-[#172d63] via-[#1f3c85] to-[#172e66] border border-sky-400/40 p-5 rounded-3xl shadow-xl flex flex-wrap items-center justify-between gap-5">
-        <div className="flex items-center gap-4">
-          <OrcaMascot mood={mascotMood} size={80} bubbleText={welcomeMessage} />
+      <div className="bg-gradient-to-r from-[#172d63] via-[#1f3c85] to-[#172e66] border border-sky-400/40 p-3.5 sm:p-5 rounded-2xl sm:rounded-3xl shadow-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3.5 sm:gap-5">
+        <div className="flex items-center gap-3 sm:gap-4">
+          <div className="shrink-0 scale-90 sm:scale-100 origin-left">
+            <OrcaMascot mood={mascotMood} size={64} bubbleText={welcomeMessage} />
+          </div>
           <div>
             <div className="flex items-center gap-2">
-              <span className="text-amber-300 text-xs font-bold font-mono tracking-wider uppercase">
+              <span className="text-amber-300 text-[10px] sm:text-xs font-bold font-mono tracking-wider uppercase">
                 KỲ SỔ SÁCH {currentSnapshot.period}
               </span>
               <span className="text-slate-400">·</span>
-              <span className="text-xs text-sky-200 font-semibold">Bé Orca Finance</span>
+              <span className="text-[11px] sm:text-xs text-sky-200 font-semibold">Bé Orca Finance</span>
             </div>
-            <h2 className="text-lg sm:text-xl font-bold text-white mt-0.5">
+            <h2 className="text-base sm:text-xl font-bold text-white mt-0.5">
               Túi tiền của cậu hôm nay thế nào rồi nè?
             </h2>
-            <p className="text-xs text-sky-100 mt-1">
+            <p className="text-[11px] sm:text-xs text-sky-100 mt-1 hidden sm:block">
               Cậu có thể nhập nhanh thu nhập ở bảng tính bên dưới hoặc bấm Check-in để cập nhật sổ nha! 🐳
             </p>
           </div>
         </div>
 
-        <div className="flex items-center gap-2.5">
+        <div className="flex items-center gap-2 w-full sm:w-auto">
           {onNavigateToAskOrca && (
             <button
               onClick={onNavigateToAskOrca}
-              className="px-4 py-2 bg-gradient-to-r from-sky-500 via-sky-400 to-blue-500 hover:from-sky-400 hover:to-blue-400 text-slate-950 font-bold text-xs rounded-xl shadow-md transition-all cursor-pointer hover:scale-105 flex items-center gap-1.5"
+              className="flex-1 sm:flex-initial justify-center px-3 sm:px-4 py-2 bg-gradient-to-r from-sky-500 via-sky-400 to-blue-500 hover:from-sky-400 hover:to-blue-400 text-slate-950 font-bold text-xs rounded-xl shadow-md transition-all cursor-pointer active:scale-95 flex items-center gap-1.5"
             >
               <span>💬 Hỏi Bé Orca AI</span>
             </button>
@@ -124,33 +126,33 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
           <button
             onClick={onNavigateToCheckin}
-            className="px-4 py-2 bg-gradient-to-r from-amber-400 via-amber-300 to-amber-400 hover:from-amber-300 hover:to-amber-200 text-slate-950 font-bold text-xs rounded-xl shadow-md transition-all cursor-pointer hover:scale-105"
+            className="flex-1 sm:flex-initial justify-center px-3 sm:px-4 py-2 bg-gradient-to-r from-amber-400 via-amber-300 to-amber-400 hover:from-amber-300 hover:to-amber-200 text-slate-950 font-bold text-xs rounded-xl shadow-md transition-all cursor-pointer active:scale-95 flex items-center gap-1.5"
           >
-            📝 Monthly Check-in (~5 ph)
+            <span>📝 Check-in <span className="hidden xs:inline">(~5 ph)</span></span>
           </button>
         </div>
       </div>
 
       {/* QUICK CASHFLOW CALCULATOR SECTION (Requested by User) */}
       <div className="space-y-3">
-        <div className="flex items-center justify-between bg-[#152756] border border-[#2d4d98] px-4 py-3 rounded-2xl shadow-md">
-          <div className="flex items-center gap-2.5">
-            <span className="text-lg">⚡</span>
+        <div className="flex items-center justify-between bg-[#152756] border border-[#2d4d98] px-3.5 sm:px-4 py-2.5 sm:py-3 rounded-2xl shadow-md">
+          <div className="flex items-center gap-2">
+            <span className="text-base sm:text-lg">⚡</span>
             <div>
-              <span className="text-xs font-bold text-white tracking-wide uppercase">
-                BẢNG NHẬP & TÍNH TOÁN DÒNG TIỀN CÙNG BÉ ORCA (LIVE CALCULATOR)
+              <span className="text-[11px] sm:text-xs font-bold text-white tracking-wide uppercase">
+                BẢNG TÍNH DÒNG TIỀN (LIVE CALCULATOR)
               </span>
-              <span className="text-xs text-sky-200 ml-2 hidden sm:inline">
-                · Gõ lương, thưởng, chi tiêu vào đây để bé Orca tính ngay thu nhập về ví nhé!
+              <span className="text-xs text-sky-200 ml-2 hidden lg:inline">
+                · Gõ lương, thưởng, chi tiêu để bé Orca tính ngay thu nhập về ví!
               </span>
             </div>
           </div>
 
           <button
             onClick={() => setShowQuickCalc(!showQuickCalc)}
-            className="flex items-center gap-1.5 text-xs font-mono text-amber-300 hover:text-white px-3.5 py-1.5 bg-[#1b326e] hover:bg-[#234292] rounded-xl border border-amber-400/40 transition-all cursor-pointer"
+            className="flex items-center gap-1 text-[11px] sm:text-xs font-mono text-amber-300 hover:text-white px-2.5 sm:px-3.5 py-1 sm:py-1.5 bg-[#1b326e] hover:bg-[#234292] rounded-xl border border-amber-400/40 transition-all cursor-pointer active:scale-95"
           >
-            <span>{showQuickCalc ? 'Thu gọn bảng tính ∧' : 'Mở bảng tính dòng tiền ∨'}</span>
+            <span>{showQuickCalc ? 'Thu gọn ∧' : 'Mở bảng tính ∨'}</span>
           </button>
         </div>
 
@@ -162,110 +164,118 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         )}
       </div>
 
-      {/* TOP 4 PRIMARY KPIS - Brighter & Cleaner Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      {/* TOP 4 PRIMARY KPIS - Responsive 2x2 Grid on Mobile, 4 Cols on Desktop */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-4">
         {/* KPI 1: Tài sản ròng */}
-        <div className="bg-[#142552] border border-[#2b4b96] p-4.5 rounded-2xl shadow-md relative hover:border-amber-400/60 transition-all">
-          <div className="flex items-center justify-between text-xs text-slate-200 mb-1">
-            <span className="font-bold text-[11px] uppercase tracking-wider text-sky-300 flex items-center gap-1">
-              <span>💎</span>
-              <span>1. TÀI SẢN RÒNG</span>
-            </span>
-            <Wallet className="w-4 h-4 text-amber-300" />
+        <div className="bg-[#142552] border border-[#2b4b96] p-3 sm:p-4.5 rounded-2xl shadow-md relative hover:border-amber-400/60 transition-all flex flex-col justify-between">
+          <div>
+            <div className="flex items-center justify-between text-xs text-slate-200 mb-1">
+              <span className="font-bold text-[10px] sm:text-[11px] uppercase tracking-wider text-sky-300 flex items-center gap-1 truncate">
+                <span>💎</span>
+                <span className="truncate">TÀI SẢN RÒNG</span>
+              </span>
+              <Wallet className="w-3.5 sm:w-4 h-3.5 sm:h-4 text-amber-300 shrink-0" />
+            </div>
+            <div className="font-mono text-base sm:text-2xl font-bold text-white tracking-tight my-0.5 sm:my-1 truncate">
+              {metrics.netWorth.toLocaleString('vi-VN')} <span className="text-xs sm:text-sm font-normal text-slate-300">₫</span>
+            </div>
           </div>
-          <div className="font-mono text-2xl font-bold text-white tracking-tight my-1">
-            {metrics.netWorth.toLocaleString('vi-VN')} <span className="text-sm font-normal text-slate-300">₫</span>
-          </div>
-          <div className="flex items-center gap-2 text-xs pt-2 border-t border-[#233f82] mt-2">
+          <div className="flex items-center gap-1 sm:gap-2 text-[10px] sm:text-xs pt-1.5 sm:pt-2 border-t border-[#233f82] mt-1 sm:mt-2 truncate">
             {prevSnapshot ? (
-              <div className={`flex items-center gap-1 font-mono font-medium ${nwDeltaAmount >= 0 ? 'text-emerald-300' : 'text-rose-300'}`}>
-                {nwDeltaAmount >= 0 ? <TrendingUp className="w-3.5 h-3.5" /> : <TrendingDown className="w-3.5 h-3.5" />}
-                <span>
-                  {nwDeltaAmount >= 0 ? '+' : ''}{nwDeltaAmount.toLocaleString('vi-VN')} ₫ ({nwDeltaAmount >= 0 ? '+' : ''}{nwDeltaPercent}%)
+              <div className={`flex items-center gap-0.5 font-mono font-medium truncate ${nwDeltaAmount >= 0 ? 'text-emerald-300' : 'text-rose-300'}`}>
+                {nwDeltaAmount >= 0 ? <TrendingUp className="w-3 h-3 shrink-0" /> : <TrendingDown className="w-3 h-3 shrink-0" />}
+                <span className="truncate">
+                  {nwDeltaAmount >= 0 ? '+' : ''}{nwDeltaPercent}%
                 </span>
               </div>
             ) : (
-              <span className="text-slate-300 font-mono text-[11px]">Kỳ đầu tiên ghi nhận</span>
+              <span className="text-slate-300 font-mono text-[10px]">Kỳ đầu tiên</span>
             )}
-            <span className="text-slate-400 text-[10px]">so với tháng trước</span>
+            <span className="text-slate-400 text-[9px] sm:text-[10px] hidden sm:inline">so với kỳ trước</span>
           </div>
         </div>
 
         {/* KPI 2: Tiết kiệm tháng này */}
-        <div className="bg-[#142552] border border-[#2b4b96] p-4.5 rounded-2xl shadow-md relative hover:border-emerald-400/60 transition-all">
-          <div className="flex items-center justify-between text-xs text-slate-200 mb-1">
-            <span className="font-bold text-[11px] uppercase tracking-wider text-emerald-300 flex items-center gap-1">
-              <span>🐷</span>
-              <span>2. TIẾT KIỆM THÁNG NÀY</span>
-            </span>
-            <PiggyBank className="w-4 h-4 text-emerald-300" />
+        <div className="bg-[#142552] border border-[#2b4b96] p-3 sm:p-4.5 rounded-2xl shadow-md relative hover:border-emerald-400/60 transition-all flex flex-col justify-between">
+          <div>
+            <div className="flex items-center justify-between text-xs text-slate-200 mb-1">
+              <span className="font-bold text-[10px] sm:text-[11px] uppercase tracking-wider text-emerald-300 flex items-center gap-1 truncate">
+                <span>🐷</span>
+                <span className="truncate">TIẾT KIỆM KỲ NÀY</span>
+              </span>
+              <PiggyBank className="w-3.5 sm:w-4 h-3.5 sm:h-4 text-emerald-300 shrink-0" />
+            </div>
+            <div className="font-mono text-base sm:text-2xl font-bold text-white tracking-tight my-0.5 sm:my-1 truncate">
+              {metrics.monthlySavings.toLocaleString('vi-VN')} <span className="text-xs sm:text-sm font-normal text-slate-300">₫</span>
+            </div>
           </div>
-          <div className="font-mono text-2xl font-bold text-white tracking-tight my-1">
-            {metrics.monthlySavings.toLocaleString('vi-VN')} <span className="text-sm font-normal text-slate-300">₫</span>
-          </div>
-          <div className="flex items-center justify-between text-xs pt-2 border-t border-[#233f82] mt-2 font-mono">
-            <span className={`font-bold ${metrics.savingsRate >= 20 ? 'text-emerald-300' : 'text-amber-300'}`}>
-              Đạt: {metrics.savingsRate}% lương
+          <div className="flex items-center justify-between text-[10px] sm:text-xs pt-1.5 sm:pt-2 border-t border-[#233f82] mt-1 sm:mt-2 font-mono">
+            <span className={`font-bold truncate ${metrics.savingsRate >= 20 ? 'text-emerald-300' : 'text-amber-300'}`}>
+              Đạt: {metrics.savingsRate}%
             </span>
-            <span className="text-slate-300 text-[11px]">Mục tiêu: &ge; 20%</span>
+            <span className="text-slate-300 text-[9px] sm:text-[11px] hidden xs:inline">Mục tiêu &ge;20%</span>
           </div>
         </div>
 
         {/* KPI 3: Điểm sức khỏe tài chính */}
-        <div className="bg-[#142552] border border-[#2b4b96] p-4.5 rounded-2xl shadow-md relative hover:border-amber-400/60 transition-all">
-          <div className="flex items-center justify-between text-xs text-slate-200 mb-1">
-            <span className="font-bold text-[11px] uppercase tracking-wider text-amber-300 flex items-center gap-1">
-              <span>🌟</span>
-              <span>3. ĐIỂM SỨC KHỎE</span>
-            </span>
-            <HeartPulse className="w-4 h-4 text-rose-300" />
+        <div className="bg-[#142552] border border-[#2b4b96] p-3 sm:p-4.5 rounded-2xl shadow-md relative hover:border-amber-400/60 transition-all flex flex-col justify-between">
+          <div>
+            <div className="flex items-center justify-between text-xs text-slate-200 mb-1">
+              <span className="font-bold text-[10px] sm:text-[11px] uppercase tracking-wider text-amber-300 flex items-center gap-1 truncate">
+                <span>🌟</span>
+                <span className="truncate">SỨC KHỎE VÍ</span>
+              </span>
+              <HeartPulse className="w-3.5 sm:w-4 h-3.5 sm:h-4 text-rose-300 shrink-0" />
+            </div>
+            <div className="flex items-baseline gap-1.5 my-0.5 sm:my-1">
+              <span className="font-mono text-base sm:text-2xl font-bold text-white">
+                {metrics.healthScore.total}
+              </span>
+              <span className="font-mono text-[10px] sm:text-xs text-slate-300">/ 100</span>
+              <span
+                className="text-[10px] sm:text-xs font-bold px-2 py-0.5 ml-auto rounded-full border truncate"
+                style={{
+                  borderColor: metrics.healthScore.ratingText === 'Xuất sắc' ? '#34d399' : '#fbbf24',
+                  color: metrics.healthScore.ratingText === 'Xuất sắc' ? '#34d399' : '#fbbf24',
+                  backgroundColor: 'rgba(20, 37, 82, 0.95)',
+                }}
+              >
+                {metrics.healthScore.ratingText}
+              </span>
+            </div>
           </div>
-          <div className="flex items-baseline gap-2 my-1">
-            <span className="font-mono text-2xl font-bold text-white">
-              {metrics.healthScore.total}
-            </span>
-            <span className="font-mono text-xs text-slate-300">/ 100</span>
-            <span
-              className="text-xs font-bold px-2.5 py-0.5 ml-auto rounded-full border"
-              style={{
-                borderColor: metrics.healthScore.ratingText === 'Xuất sắc' ? '#34d399' : '#fbbf24',
-                color: metrics.healthScore.ratingText === 'Xuất sắc' ? '#34d399' : '#fbbf24',
-                backgroundColor: 'rgba(20, 37, 82, 0.95)',
-              }}
-            >
-              {metrics.healthScore.ratingText}
-            </span>
-          </div>
-          <div className="flex items-center gap-2 text-xs pt-2 border-t border-[#233f82] mt-2 font-mono text-[11px]">
-            <span className="text-slate-300">
-              5 nhóm: Dòng tiền, Quỹ dự phòng, Nợ, Tích lũy & Kỷ luật
+          <div className="flex items-center gap-2 text-[10px] pt-1.5 sm:pt-2 border-t border-[#233f82] mt-1 sm:mt-2 font-mono truncate">
+            <span className="text-slate-300 truncate">
+              Dòng tiền, Quỹ, Nợ, Tích lũy
             </span>
           </div>
         </div>
 
         {/* KPI 4: Quỹ khẩn cấp */}
-        <div className="bg-[#142552] border border-[#2b4b96] p-4.5 rounded-2xl shadow-md relative hover:border-sky-400/60 transition-all">
-          <div className="flex items-center justify-between text-xs text-slate-200 mb-1">
-            <span className="font-bold text-[11px] uppercase tracking-wider text-sky-300 flex items-center gap-1">
-              <span>🛡️</span>
-              <span>4. QUỸ DỰ PHÒNG</span>
-            </span>
-            <Clock className="w-4 h-4 text-sky-300" />
+        <div className="bg-[#142552] border border-[#2b4b96] p-3 sm:p-4.5 rounded-2xl shadow-md relative hover:border-sky-400/60 transition-all flex flex-col justify-between">
+          <div>
+            <div className="flex items-center justify-between text-xs text-slate-200 mb-1">
+              <span className="font-bold text-[10px] sm:text-[11px] uppercase tracking-wider text-sky-300 flex items-center gap-1 truncate">
+                <span>🛡️</span>
+                <span className="truncate">QUỸ DỰ PHÒNG</span>
+              </span>
+              <Clock className="w-3.5 sm:w-4 h-3.5 sm:h-4 text-sky-300 shrink-0" />
+            </div>
+            <div className="flex items-baseline gap-1 my-0.5 sm:my-1">
+              <span className="font-mono text-base sm:text-2xl font-bold text-white">
+                {metrics.emergencyFundMonths}
+              </span>
+              <span className="text-xs sm:text-sm font-normal text-slate-300">tháng</span>
+              <span className="text-[10px] font-mono text-slate-300 ml-auto truncate hidden xs:inline">
+                ({(metrics.liquidAssets / 1_000_000).toFixed(1)} tr)
+              </span>
+            </div>
           </div>
-          <div className="flex items-baseline gap-2 my-1">
-            <span className="font-mono text-2xl font-bold text-white">
-              {metrics.emergencyFundMonths}
+          <div className="flex items-center justify-between text-[10px] sm:text-xs pt-1.5 sm:pt-2 border-t border-[#233f82] mt-1 sm:mt-2 font-mono">
+            <span className={`font-medium truncate ${metrics.emergencyFundMonths >= 3.0 ? 'text-emerald-300' : 'text-rose-300'}`}>
+              {metrics.emergencyFundMonths >= 3.0 ? '✓ Đạt an toàn' : '⚠️ Cần thêm'}
             </span>
-            <span className="text-sm font-normal text-slate-300">tháng</span>
-            <span className="text-xs font-mono text-slate-300 ml-auto">
-              ({metrics.liquidAssets.toLocaleString('vi-VN')} ₫)
-            </span>
-          </div>
-          <div className="flex items-center justify-between text-xs pt-2 border-t border-[#233f82] mt-2 font-mono">
-            <span className={metrics.emergencyFundMonths >= 3.0 ? 'text-emerald-300 font-medium' : 'text-rose-300 font-medium'}>
-              {metrics.emergencyFundMonths >= 3.0 ? '✓ Đạt chuẩn an toàn' : '⚠️ Cần thêm dự phòng'}
-            </span>
-            <span className="text-slate-300 text-[11px]">Chuẩn: 3 - 6 tháng</span>
+            <span className="text-slate-300 text-[9px] sm:text-[11px] hidden xs:inline">Chuẩn 3-6 th</span>
           </div>
         </div>
       </div>

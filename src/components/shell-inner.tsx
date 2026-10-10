@@ -46,6 +46,7 @@ import {
 import { TickerTape } from "@/components/ticker-tape";
 import { GlobalSearch } from "@/components/search";
 import { OrcaWordmark, OrcaMark, OrcaMobileBrand } from "@/components/logo";
+import { MobileBottomNav } from "@/components/mobile-bottom-nav";
 import { useApi } from "@/lib/hooks";
 import { useSettings } from "@/lib/settings";
 import { ErrorBoundary } from "@/components/error-boundary";
@@ -180,9 +181,11 @@ export function ShellInner({ children }: { children: ReactNode }) {
   }, []);
 
   const onNav = useCallback(
-    (href: string, e: MouseEvent<HTMLAnchorElement>) => {
-      if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
-      e.preventDefault();
+    (href: string, e?: MouseEvent<HTMLElement>) => {
+      if (e) {
+        if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
+        e.preventDefault();
+      }
       const hashTab = href.split("#")[1];
       if (hashTab) window.dispatchEvent(new CustomEvent("orca:personal-finance-tab", { detail: hashTab }));
       markAppNavigating(320);
@@ -421,66 +424,98 @@ export function ShellInner({ children }: { children: ReactNode }) {
         </div>
 
         <div className="flex min-w-0 flex-1 flex-col">
-          <header className="flex h-12 shrink-0 items-center gap-2 border-b border-border-subtle px-3">
-            <button
-              type="button"
-              className="grid size-9 place-items-center rounded-lg text-text-secondary transition-colors hover:bg-surface-elevated md:hidden"
-              onClick={() => setMobileOpen(true)}
-              aria-label="Mở menu"
-            >
-              <Menu className="size-4.5" />
-            </button>
-            <div className="flex shrink-0 items-center rounded-lg border border-border-subtle bg-surface-base p-0.5 text-[11px] sm:text-xs">
+          <header className="flex h-12 shrink-0 items-center justify-between gap-1.5 sm:gap-2 border-b border-border-subtle bg-surface-base/95 backdrop-blur-md px-2.5 sm:px-3 sticky top-0 z-30">
+            <div className="flex items-center gap-1.5 sm:gap-2 min-w-0">
               <button
                 type="button"
-                aria-pressed={!isPersonalFinanceMode}
-                onClick={() => router.push("/")}
-                className={
-                  !isPersonalFinanceMode
-                    ? "rounded-md bg-accent-primary/15 px-2.5 py-1.5 font-semibold text-accent-primary"
-                    : "rounded-md px-2.5 py-1.5 text-text-muted hover:text-text-primary"
-                }
+                className="grid size-9 shrink-0 place-items-center rounded-lg text-text-secondary transition-all hover:bg-surface-elevated active:scale-95 md:hidden"
+                onClick={() => setMobileOpen(true)}
+                aria-label="Mở menu"
               >
-                Đầu tư
+                <Menu className="size-4.5" />
               </button>
-              <button
-                type="button"
-                aria-pressed={isPersonalFinanceMode}
-                onClick={() => router.push("/personal-finance")}
-                className={
-                  isPersonalFinanceMode
-                    ? "rounded-md bg-accent-primary/15 px-2.5 py-1.5 font-semibold text-accent-primary"
-                    : "rounded-md px-2.5 py-1.5 text-text-muted hover:text-text-primary"
-                }
-              >
-                Tài chính cá nhân
-              </button>
-            </div>
-            {!isPersonalFinanceMode && (
-              <div className="min-w-0 flex-1">
-                <GlobalSearch />
+              <div className="flex shrink-0 items-center rounded-lg border border-border-subtle bg-surface-elevated/70 p-0.5 text-[11px] sm:text-xs">
+                <button
+                  type="button"
+                  aria-pressed={!isPersonalFinanceMode}
+                  onClick={() => router.push("/")}
+                  className={
+                    !isPersonalFinanceMode
+                      ? "rounded-md bg-accent-primary/20 px-2 sm:px-2.5 py-1 sm:py-1.5 font-bold text-accent-primary shadow-xs"
+                      : "rounded-md px-2 sm:px-2.5 py-1 sm:py-1.5 text-text-muted hover:text-text-primary"
+                  }
+                >
+                  <span className="sm:hidden">📈 Đầu tư</span>
+                  <span className="hidden sm:inline">Đầu tư</span>
+                </button>
+                <button
+                  type="button"
+                  aria-pressed={isPersonalFinanceMode}
+                  onClick={() => router.push("/personal-finance")}
+                  className={
+                    isPersonalFinanceMode
+                      ? "rounded-md bg-amber-400/20 px-2 sm:px-2.5 py-1 sm:py-1.5 font-bold text-amber-300 shadow-xs"
+                      : "rounded-md px-2 sm:px-2.5 py-1 sm:py-1.5 text-text-muted hover:text-text-primary"
+                  }
+                >
+                  <span className="sm:hidden">👛 Cá nhân</span>
+                  <span className="hidden sm:inline">Tài chính cá nhân</span>
+                </button>
               </div>
-            )}
-            {!isPersonalFinanceMode && <NotifBell />}
-            {!isPersonalFinanceMode && (
-              <Link
-                href="/settings"
-                className="grid size-9 place-items-center rounded-lg text-text-secondary transition-colors hover:bg-surface-elevated hover:text-text-primary"
-                aria-label="Cài đặt"
-              >
-                <Settings className="size-4" />
-              </Link>
-            )}
+            </div>
+
+            <div className="flex items-center gap-1 sm:gap-2 min-w-0 justify-end flex-1">
+              {!isPersonalFinanceMode ? (
+                <>
+                  <div className="min-w-0 flex-1 max-w-xs flex justify-end">
+                    <GlobalSearch />
+                  </div>
+                  <NotifBell />
+                  <Link
+                    href="/settings"
+                    className="grid size-9 shrink-0 place-items-center rounded-lg text-text-secondary transition-colors hover:bg-surface-elevated hover:text-text-primary active:scale-95"
+                    aria-label="Cài đặt"
+                  >
+                    <Settings className="size-4" />
+                  </Link>
+                </>
+              ) : (
+                <div className="flex items-center gap-1.5">
+                  <Link
+                    href="/personal-finance#checkin"
+                    onClick={(e) => onNav("/personal-finance#checkin", e)}
+                    className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-amber-400/15 border border-amber-400/30 text-amber-300 text-[11px] font-semibold hover:bg-amber-400/25 active:scale-95 transition-all"
+                  >
+                    <ClipboardList className="size-3 text-amber-300" />
+                    <span>Check-in</span>
+                  </Link>
+                  <Link
+                    href="/settings"
+                    className="grid size-8 shrink-0 place-items-center rounded-lg text-text-secondary transition-colors hover:bg-surface-elevated hover:text-text-primary active:scale-95"
+                    aria-label="Cài đặt"
+                  >
+                    <Settings className="size-4" />
+                  </Link>
+                </div>
+              )}
+            </div>
           </header>
-          <main className="orca-main-scroll min-h-0 flex-1 overflow-y-auto">
+          <main className="orca-main-scroll min-h-0 flex-1 overflow-y-auto pb-[calc(4.25rem+env(safe-area-inset-bottom))] md:pb-0">
             <ErrorBoundary name="page" resetKey={pathname}>
-              <div key={pathname} className="orca-page-transition p-3 sm:p-4">
+              <div key={pathname} className="orca-page-transition p-2.5 sm:p-4">
                 {children}
               </div>
             </ErrorBoundary>
           </main>
         </div>
       </div>
+      <MobileBottomNav
+        isPersonalFinanceMode={isPersonalFinanceMode}
+        pathname={pathname}
+        activePersonalTab={activePersonalTab}
+        onOpenDrawer={() => setMobileOpen(true)}
+        onNav={onNav}
+      />
     </div>
   );
 }
