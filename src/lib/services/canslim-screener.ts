@@ -319,7 +319,9 @@ async function screenCanslimCore(args?: {
     }),
   ]);
 
-  const quoteMap = new Map((quotesPack?.quotes ?? []).map((q) => [q.symbol as string, q]));
+  const quoteMap = new Map<string, any>(
+    (quotesPack?.quotes ?? []).map((q) => [String(q.symbol), q]),
+  );
 
   const valid: Pack[] = [];
   let skipped = 0;

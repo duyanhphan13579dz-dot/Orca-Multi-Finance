@@ -298,7 +298,7 @@ export function buildFlowForRow(row: DerivativeContractRow): DerivativeFlowSigna
       source: q.source ?? null,
     });
   }
-  return signal as DerivativeFlowSignal;
+  return signal as unknown as DerivativeFlowSignal;
 }
 
 export interface DerivativesSnapshotWithFlow extends DerivativesSnapshot {

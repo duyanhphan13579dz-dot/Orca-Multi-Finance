@@ -5,7 +5,7 @@ import { getVnQuotes } from "./stocks";
 import { LIQUID_BOARD } from "../providers/public-vn-feed";
 import { fetchOhlcvResilient, mapPool } from "./screener-ohlcv";
 import { getSecurity, sectorOf } from "../vn/master";
-import type { Meta } from "../types";
+import type { Meta, Quote } from "../types";
 
 export interface AlphaBetaScreenRow {
   symbol: string;
@@ -67,8 +67,8 @@ export async function screenAlphaBeta(args?: {
   }
 
   const quotes = await getVnQuotes(universe).catch(() => null);
-  const qMap = new Map(
-    (quotes?.quotes ?? []).map((q) => [String(q.symbol).toUpperCase(), q] as const),
+  const qMap = new Map<string, Quote>(
+    (quotes?.quotes ?? []).map((q) => [String(q.symbol).toUpperCase(), q]),
   );
 
   let scanned = 0;

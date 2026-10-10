@@ -132,7 +132,8 @@ function analyzeBars(symbol: string, bars: OhlcvBar[]): RawPack | null {
   const lookHigh = bars.slice(-252);
   const highs = lookHigh.map((b) => b.high);
   const lows = lookHigh.map((b) => b.low);
-  const hasFull52w = lookHigh.length >= 252;
+  // Thị trường VN có ~245-248 phiên/năm (nghỉ Tết); 200+ phiên tương đương ~40 tuần/1 năm giao dịch
+  const hasFull52w = lookHigh.length >= 200;
   const high52w = hasFull52w && highs.length ? Math.max(...highs) : null;
   const low52w = hasFull52w && lows.length ? Math.min(...lows) : null;
 
@@ -147,7 +148,7 @@ function analyzeBars(symbol: string, bars: OhlcvBar[]): RawPack | null {
     high52w,
     low52w,
     ret126: closes.length > 126 ? pctRet(closes, 126) : null,
-    ret252: closes.length > 252 ? pctRet(closes, 252) : null,
+    ret252: closes.length >= 240 ? pctRet(closes, Math.min(252, closes.length - 1)) : null,
     volume20: avgVol(bars, 20),
     volume60: avgVol(bars, 60),
   };

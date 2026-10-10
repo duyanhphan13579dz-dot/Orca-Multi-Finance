@@ -4,7 +4,7 @@ import { analyzeElliott, type ElliottPattern, type ElliottSnapshot } from "../en
 import { getVnQuotes } from "./stocks";
 import { LIQUID_BOARD } from "../providers/public-vn-feed";
 import { getSecurity, sectorOf } from "../vn/master";
-import type { Meta } from "../types";
+import type { Meta, Quote } from "../types";
 import { fetchOhlcvResilient, mapPool } from "./screener-ohlcv";
 
 export interface ElliottScreenRow {
@@ -38,7 +38,7 @@ export async function screenElliott(args?: {
   ].slice(0, 90);
 
   const quotesPack = await getVnQuotes(uniq).catch(() => null);
-  const quoteMap = new Map((quotesPack?.quotes ?? []).map((q) => [q.symbol, q]));
+  const quoteMap = new Map<string, Quote>((quotesPack?.quotes ?? []).map((q) => [q.symbol, q]));
   let skipped = 0;
 
   const analyzed = await mapPool(uniq, 8, async (symbol) => {

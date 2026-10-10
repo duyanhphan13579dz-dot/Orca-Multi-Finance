@@ -82,6 +82,7 @@ function bandCr(v: number | null): { band: RatioBand; label: string } {
 
 function bandDe(v: number | null): { band: RatioBand; label: string } {
   if (v == null) return { band: "na", label: "Không đủ dữ liệu" };
+  if (v < 0) return { band: "risk", label: "Rủi ro cao (Âm VCSH)" };
   if (v < 1) return { band: "safe", label: "An toàn" };
   if (v <= 2) return { band: "ok", label: "Chấp nhận" };
   return { band: "risk", label: "Rủi ro cao" };
@@ -201,8 +202,8 @@ export function computeDetailedRatios(input: RatioEngineInput): RatioEngineResul
   const debtAssets = div(totalDebt, assets);
   const equityRatio = div(equity, assets);
   const netDebtEquity = div(netDebt, equity);
-  const debtEbitda = div(totalDebt, ebitda);
-  const netDebtEbitda = div(netDebt, ebitda);
+  const debtEbitda = ebitda != null && ebitda > 0 ? div(totalDebt, ebitda) : null;
+  const netDebtEbitda = ebitda != null && ebitda > 0 ? div(netDebt, ebitda) : null;
   const interestCover = div(ebit, interest != null ? Math.abs(interest) : null);
   const deB = bandDe(debtEquity);
   const icB = bandIc(interestCover);

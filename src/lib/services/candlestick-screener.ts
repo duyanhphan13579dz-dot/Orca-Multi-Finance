@@ -7,7 +7,7 @@ import { getVnQuotes } from "./stocks";
 import { batchVnOhlcv, SCREENER_UNIVERSE_CAP } from "./ohlcv-batch";
 import { rankPatternsWithContext } from "./screener-tech";
 import { WORKERS_BUDGET } from "../data-engine/workers-budget";
-import type { Meta } from "../types";
+import type { Meta, Quote } from "../types";
 
 export type CandlestickScreenRow = {
   symbol: string;
@@ -93,7 +93,7 @@ export async function screenCandlestickPatterns(
     }),
     getVnQuotes(universe).catch(() => null),
   ]);
-  const quoteBy = new Map((quotesPack?.quotes ?? []).map((q) => [q.symbol.toUpperCase(), q]));
+  const quoteBy = new Map<string, Quote>((quotesPack?.quotes ?? []).map((q) => [q.symbol.toUpperCase(), q]));
 
   const rows: CandlestickScreenRow[] = [];
   let skipped = 0;

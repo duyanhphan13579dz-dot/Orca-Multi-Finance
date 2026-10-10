@@ -214,7 +214,7 @@ const AL = {
   totalLiabilities: ["totalliabilities", "nophaitra", "tongno"],
   currentLiabilities: ["currentliabilities", "nonganhan"],
   equity: ["equity", "vonchusohuu", "ownerequity"],
-  cash: ["cashandequivalents", "cashequivalents", "tienvatuongduong"],
+  cash: ["cash", "cashandequivalents", "cashequivalents", "tienvatuongduong", "tien"],
   shortDebt: ["shorttermdebt", "vaynganhan"],
   longDebt: ["longtermdebt", "vaydaihan"],
   inventory: ["inventories", "inventory", "hangtonkho"],
@@ -427,10 +427,13 @@ export function computeFinancialHealth(
         div(ebit, interestExpense != null ? Math.abs(interestExpense) : null),
         2,
       ),
-      netDebtToEbitda: zz(
-        div(totalDebt != null && cash != null ? totalDebt - cash : null, ebitdaTtm),
-        2,
-      ),
+      netDebtToEbitda:
+        ebitdaTtm != null && ebitdaTtm > 0
+          ? zz(
+              div(totalDebt != null && cash != null ? totalDebt - cash : null, ebitdaTtm),
+              2,
+            )
+          : null,
     },
     cashflow: {
       ocfToSales: zz(div(ocfTtm, revenue), 4),
@@ -471,6 +474,8 @@ export function computeFinancialHealth(
       if (v > 0) return 40;
       return 20;
     }
+    // invert = true (như debtToEquity): Nếu v < 0 nghĩa là VCSH âm, rủi ro vỡ nợ tối đa (10 điểm)
+    if (v < 0) return 10;
     if (v <= good) return 90;
     if (v <= mid) return 65;
     if (v < mid * 2) return 40;
@@ -501,6 +506,20 @@ export function computeFinancialHealth(
   const roe = groups.profitability.roe;
   const ic = groups.leverage.interestCoverage;
   const nde = groups.leverage.netDebtToEbitda;
+
+  if (equity != null && equity < 0) {
+    riskFlags.push("Vốn chủ sở hữu âm — rủi ro kiệt quệ tài chính hoặc đình chỉ giao dịch");
+  }
+  if (
+    ebitdaTtm != null &&
+    ebitdaTtm <= 0 &&
+    totalDebt != null &&
+    cash != null &&
+    totalDebt > cash
+  ) {
+    riskFlags.push("EBITDA âm trong khi có nợ vay ròng — không thể đảm bảo nghĩa vụ nợ từ HĐKD");
+  }
+
   if (profile?.flags) {
     const de = groups.leverage.debtToEquity;
     const cr = groups.liquidity.currentRatio;

@@ -64,7 +64,7 @@ export async function buildUniverseOverview(): Promise<AgentBuilt> {
     const p = mkt.snapshot.pulse;
     sections.push(`### Thị trường Việt Nam\n**${p.headline}**\n\n${p.body.slice(0, 3).join("\n\n")}`);
     sectionsUsed.push("market-snapshot");
-    freshnesses.push(...Object.values(mkt.meta.sections ?? {}), mkt.meta.freshness);
+    freshnesses.push(...(Object.values(mkt.meta.sections ?? {}) as FreshnessStatus[]), mkt.meta.freshness);
     contract.vn_pulse = p;
   }
 

@@ -107,17 +107,19 @@ function computeScreenScore(s: FundamentalSnapshot): number {
   const nmS = bandScore(nm, [[20, 95], [12, 85], [7, 70], [3, 55], [0, 40]]);
   const gmS = bandScore(gm, [[40, 90], [25, 75], [15, 60], [8, 45]]);
   const deS =
-    s.debtEquity == null || !Number.isFinite(s.debtEquity) || s.debtEquity < 0
+    s.debtEquity == null || !Number.isFinite(s.debtEquity)
       ? null
-      : s.debtEquity < 0.5
-        ? 90
-        : s.debtEquity < 1
-          ? 75
-          : s.debtEquity < 1.5
-            ? 55
-            : s.debtEquity < 2.5
-              ? 35
-              : 20;
+      : s.debtEquity < 0
+        ? 10
+        : s.debtEquity < 0.5
+          ? 90
+          : s.debtEquity < 1
+            ? 75
+            : s.debtEquity < 1.5
+              ? 55
+              : s.debtEquity < 2.5
+                ? 35
+                : 20;
   const crS = bandScore(s.currentRatio, [[2, 90], [1.5, 75], [1.1, 60], [0.8, 40]]);
   const covS = s.coverage >= 0.7 ? 90 : s.coverage >= 0.4 ? 65 : s.coverage > 0.2 ? 45 : 25;
 

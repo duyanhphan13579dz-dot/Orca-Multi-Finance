@@ -130,5 +130,24 @@ console.log("\n=== Growth unit conversion ===");
   assert(snapshot.revenueYoyPct === 400, "a 4.0 growth ratio is converted to 400%, not 4%");
 }
 
+console.log("\n=== Distressed balance sheet & Negative EBITDA ===");
+{
+  const distressed = computeFinancialHealth({
+    income: [{ year: 2024, periodType: "year", revenue: 100, grossProfit: 10, netProfit: -50, ebit: -40, ebitda: -30 }],
+    balance: [{ year: 2024, periodType: "year", totalAssets: 100, equity: -20, shortTermDebt: 30, longTermDebt: 40, cash: 5 }],
+    cashflow: [],
+  }, { symbol: "DISTRESSED" });
+
+  // Debt/Equity is negative (-3.5), must NOT receive 90 points (safest). It should receive 10 points.
+  assert(distressed.scores.leverage != null && distressed.scores.leverage <= 25,
+    "negative equity receives high leverage risk penalty (<=25), not 90");
+  assert(distressed.groups.leverage.netDebtToEbitda == null,
+    "negative EBITDA leaves net debt/EBITDA as null, not false negative multiple");
+  assert(distressed.riskFlags.some((f) => f.includes("Vốn chủ sở hữu âm")),
+    "negative equity produces an explicit insolvency risk flag");
+  assert(distressed.riskFlags.some((f) => f.includes("EBITDA âm")),
+    "negative EBITDA with net debt produces an operating debt service risk flag");
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

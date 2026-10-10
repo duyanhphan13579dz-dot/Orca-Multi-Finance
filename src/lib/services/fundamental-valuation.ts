@@ -64,30 +64,37 @@ function deriveValuationCashFlowInputs(
   const ordered = (periods ?? []).filter((p) => p.periodType !== "ttm");
   const latest = ordered[0];
   const prior = ordered[1];
-  const ebitTtm = ttm?.ebit ?? latest?.ebit ?? null;
-  const daTtm = ttm?.da ?? latest?.da ?? null;
-  const capexTtm =
-    ttm?.capex != null
-      ? Math.abs(ttm.capex)
-      : latest?.capex != null
-        ? Math.abs(latest.capex)
-        : null;
-  const taxRate =
-    latest?.taxExpense != null && latest?.preTaxIncome != null && latest.preTaxIncome !== 0
-      ? Math.min(0.4, Math.max(0, latest.taxExpense / latest.preTaxIncome))
-      : 0.2;
-  const debt = (x: typeof latest) =>
-    x && (x.shortTermDebt != null || x.longTermDebt != null)
-      ? (x.shortTermDebt ?? 0) + (x.longTermDebt ?? 0)
+  const ebitTtm = ttm?.metrics?.ebit ?? latest?.metrics?.ebit ?? null;
+  const ebitdaTtm = ttm?.metrics?.ebitda ?? latest?.metrics?.ebitda ?? null;
+  const daTtm =
+    ebitdaTtm != null && ebitTtm != null && ebitdaTtm >= ebitTtm
+      ? ebitdaTtm - ebitTtm
       : null;
+  const capexTtm =
+    ttm?.metrics?.capex != null
+      ? Math.abs(ttm.metrics.capex)
+      : latest?.metrics?.capex != null
+        ? Math.abs(latest.metrics.capex)
+        : null;
+  const preTax = latest?.metrics?.profitBeforeTax ?? null;
+  const taxExp = latest?.metrics?.taxExpense ?? null;
+  const taxRate =
+    taxExp != null && preTax != null && preTax !== 0
+      ? Math.min(0.4, Math.max(0, taxExp / preTax))
+      : 0.2;
+  const debt = (x: typeof latest) => {
+    const st = x?.metrics?.shortTermDebt;
+    const lt = x?.metrics?.longTermDebt;
+    return st != null || lt != null ? (st ?? 0) + (lt ?? 0) : null;
+  };
   const operatingNwc = (x: typeof latest) => {
-    if (!x || x.currentAssets == null || x.currentLiabilities == null) return null;
-    return (
-      x.currentAssets -
-      (x.cash ?? 0) -
-      (x.shortTermInvestments ?? 0) -
-      (x.currentLiabilities - (x.shortTermDebt ?? 0))
-    );
+    const ca = x?.metrics?.currentAssets;
+    const cl = x?.metrics?.currentLiabilities;
+    if (ca == null || cl == null) return null;
+    const cash = x?.metrics?.cash ?? 0;
+    const sti = x?.metrics?.shortTermInvestments ?? 0;
+    const stDebt = x?.metrics?.shortTermDebt ?? 0;
+    return ca - cash - sti - (cl - stDebt);
   };
   const latestNwc = operatingNwc(latest);
   const priorNwc = operatingNwc(prior);

@@ -1,5 +1,6 @@
 import "server-only";
 import type { Meta, OhlcvBar } from "../types";
+import { buildMeta } from "../freshness";
 import { getVnOhlcv } from "./stocks";
 import { WORKERS_BUDGET } from "../data-engine/workers-budget";
 
@@ -109,10 +110,9 @@ async function fetchOne(
       if (hit?.bars?.length) {
         return {
           bars: hit.bars,
-          meta: (hit.pack as { meta?: Meta } | null)?.meta ?? {
-            source: "screener-ohlcv-resilient",
-            sourceTimestampMs: Date.now(),
-          },
+          meta:
+            (hit.pack as { meta?: Meta } | null)?.meta ??
+            buildMeta({ source: "screener-ohlcv-resilient" }),
         };
       }
     } catch {

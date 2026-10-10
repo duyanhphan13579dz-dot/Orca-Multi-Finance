@@ -211,6 +211,7 @@ export function buildTechnicalSnapshot(barsIn: OhlcvBar[]): TechnicalSnapshot | 
           macd: macdFull.macd[closes.length - 1] as number,
           signal: (macdFull.signal[closes.length - 1] as number) ?? 0,
           histogram: (macdFull.histogram[closes.length - 1] as number) ?? 0,
+          hist: (macdFull.histogram[closes.length - 1] as number) ?? 0,
         }
       : null;
   const sma20 = sma(closes, 20)[closes.length - 1] ?? null;
@@ -264,15 +265,7 @@ export function buildTechnicalSnapshot(barsIn: OhlcvBar[]): TechnicalSnapshot | 
             : "sideways";
 
   const moneyFlowAnalysis = analyzeMoneyFlow(bars);
-  const flow = moneyFlowAnalysis
-    ? {
-        cmf20: moneyFlowAnalysis.cmf20,
-        obvTrend: moneyFlowAnalysis.obvTrend,
-        volumeRatio20: moneyFlowAnalysis.volumeRatio20,
-        pressure: moneyFlowAnalysis.pressure,
-        label: moneyFlowAnalysis.label,
-      }
-    : moneyFlow(bars);
+  const flow = moneyFlow(bars);
 
   const divergences = detectDivergences(bars);
   const candlePatterns = detectCandlePatterns(bars);
