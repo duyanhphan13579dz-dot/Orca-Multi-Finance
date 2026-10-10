@@ -174,11 +174,12 @@ function overloadBucket(): OverloadBucket {
   return g.__orcaOverload;
 }
 
+/** P5-D: shorter cooldown (30s) so transient 1102 recovers faster. */
 export function markIsolateOverload() {
   const b = overloadBucket();
   b.count += 1;
   if (b.count >= 2) {
-    b.until = Date.now() + 60_000;
+    b.until = Date.now() + 30_000;
     b.count = 0;
   }
 }
