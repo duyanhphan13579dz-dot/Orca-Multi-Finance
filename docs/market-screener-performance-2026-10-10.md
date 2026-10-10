@@ -44,7 +44,7 @@ Keep the configured cron secret out of source control and attach it using the ex
 
 ## Validation
 
-- `npm test`: **35 passed, 0 failed**.
+- `npm test` on the final rebased tree: **46 passed, 0 failed**.
 - ESLint on all changed TypeScript modules: **passed**.
 - `git diff --check`: **passed**.
 - `npm run typecheck`: still reports **108 project errors in unrelated/pre-existing modules**; none of the changed files appears in the final error list. This project-wide typecheck is not currently clean, so it should not be represented as a clean build.
