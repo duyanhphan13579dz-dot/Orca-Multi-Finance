@@ -2,7 +2,7 @@ import "server-only";
 import { env } from "./env";
 
 /**
- * P0 last-good snapshots for hot APIs.
+ * P0/P3 last-good snapshots for hot APIs.
  * Survives isolate recycling via Upstash REST when configured;
  * always has in-memory L1 for the current isolate.
  *
@@ -16,6 +16,8 @@ export type HotSlot =
   | "forex"
   | "global"
   | "multi-asset"
+  | "crypto"
+  | "commodities"
   | "screener-fundamental"
   | "screener-valuation"
   | "screener-minervini";
@@ -163,6 +165,7 @@ export function hotStats(): Record<HotSlot, { ageMs: number | null; has: boolean
   const now = Date.now();
   const slots: HotSlot[] = [
     "board", "intel", "forex", "global", "multi-asset",
+    "crypto", "commodities",
     "screener-fundamental", "screener-valuation", "screener-minervini",
   ];
   const out = {} as Record<HotSlot, { ageMs: number | null; has: boolean }>;

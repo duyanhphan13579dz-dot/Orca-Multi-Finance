@@ -10,17 +10,29 @@ import { prefetchApi } from "@/lib/hooks";
 
 const globalSwrCache = new Map();
 
-/** Warm critical APIs in staggered order so first paint is not blocked. */
+/**
+ * P3-A: Warm critical APIs in staggered order so first paint is not blocked.
+ * Priority: VN30 board (fast) → intel → global → forex → full board → crypto → screener defaults.
+ */
 function WarmCriticalApis() {
   useEffect(() => {
-    prefetchApi("/api/v1/stocks?board=full", 12_000);
-    const t1 = window.setTimeout(() => prefetchApi("/api/v1/market/intel", 14_000), 400);
-    const t2 = window.setTimeout(() => prefetchApi("/api/v1/market/global", 12_000), 900);
-    const t3 = window.setTimeout(() => prefetchApi("/api/v1/forex/markets", 14_000), 1_200);
+    // Fast path first — VN30 board for dashboard/stocks first paint
+    prefetchApi("/api/v1/stocks?board=vn30", 5_000);
+    const t1 = window.setTimeout(() => prefetchApi("/api/v1/market/intel", 12_000), 250);
+    const t2 = window.setTimeout(() => prefetchApi("/api/v1/market/global", 10_000), 600);
+    const t3 = window.setTimeout(() => prefetchApi("/api/v1/forex/markets", 12_000), 900);
+    const t4 = window.setTimeout(() => prefetchApi("/api/v1/stocks?board=full", 12_000), 1_200);
+    const t5 = window.setTimeout(() => prefetchApi("/api/v1/crypto/markets", 10_000), 1_600);
+    const t6 = window.setTimeout(() => prefetchApi("/api/v1/screener/fundamental", 14_000), 2_200);
+    const t7 = window.setTimeout(() => prefetchApi("/api/v1/screener/valuation", 14_000), 2_600);
     return () => {
       clearTimeout(t1);
       clearTimeout(t2);
       clearTimeout(t3);
+      clearTimeout(t4);
+      clearTimeout(t5);
+      clearTimeout(t6);
+      clearTimeout(t7);
     };
   }, []);
   return null;
