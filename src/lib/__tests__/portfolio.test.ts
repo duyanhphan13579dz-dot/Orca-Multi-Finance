@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildPortfolioSnapshot, collectPortfolioSymbols, type PortfolioTrade } from "@/lib/portfolio";
+import { buildPortfolioSnapshot, collectPortfolioSymbols, type PortfolioAlert, type PortfolioTrade } from "../portfolio";
 
 const baseTrade = (overrides: Partial<PortfolioTrade> = {}): PortfolioTrade => ({
   id: crypto.randomUUID(),
@@ -58,7 +58,7 @@ test("buildPortfolioSnapshot measures closed performance and drawdown", () => {
 
 test("open positions without stop loss create a discipline alert", () => {
   const snapshot = buildPortfolioSnapshot([baseTrade({ stopLoss: null })], [], []);
-  assert.equal(snapshot.alerts.some((alert) => alert.title === "Thiếu stop loss"), true);
+  assert.equal(snapshot.alerts.some((alert: PortfolioAlert) => alert.title === "Thiếu stop loss"), true);
   assert.equal(snapshot.totalRisk, null);
 });
 
@@ -70,7 +70,7 @@ test("high asset volatility creates an automatic risk alert", () => {
   );
 
   assert.equal(snapshot.volatilityByAsset[0]?.level, "extreme");
-  assert.equal(snapshot.alerts.some((alert) => alert.title === "Biến động cực cao"), true);
+  assert.equal(snapshot.alerts.some((alert: PortfolioAlert) => alert.title === "Biến động cực cao"), true);
 });
 
 test("stock marks from source feed portfolio status and asset status", () => {

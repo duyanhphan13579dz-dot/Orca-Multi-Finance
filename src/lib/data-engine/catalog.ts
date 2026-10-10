@@ -3,6 +3,12 @@ import "server-only";
 /**
  * Canonical catalog of ORCA external sources.
  * Used for health, routing docs, and hub key namespaces.
+ *
+ * Phase 3 — SLA freshness contracts added to every source entry:
+ *   liveSlaMs:    data is considered LIVE (real-time) up to this age
+ *   freshSlaMs:   data is considered FRESH up to this age
+ *   staleSlaMs:   data becomes STALE beyond this age (alert-worthy)
+ *   expectedSchema: field names the adapter must always provide (contract testing)
  */
 
 export type SourceDomain =
@@ -28,6 +34,16 @@ export type SourceCatalogEntry = {
   timeoutMs?: number;
   /** Cross-request cache TTL hint (ms) — informational; cache.ts owns enforcement */
   ttlMs?: number;
+
+  // Phase 3 — SLA freshness contracts
+  /** Age (ms) within which data is considered LIVE. Default: 20_000 */
+  liveSlaMs?: number;
+  /** Age (ms) within which data is considered FRESH. Default: 120_000 */
+  freshSlaMs?: number;
+  /** Age (ms) beyond which data is considered STALE (alert-worthy). Default: 900_000 */
+  staleSlaMs?: number;
+  /** Expected field names in the response payload (contract testing). */
+  expectedSchema?: string[];
 };
 
 export const SOURCE_CATALOG: SourceCatalogEntry[] = [
@@ -39,6 +55,10 @@ export const SOURCE_CATALOG: SourceCatalogEntry[] = [
     description: "VN market quotes, OHLCV, universe (DStock)",
     timeoutMs: 3500,
     ttlMs: 15_000,
+    liveSlaMs: 15_000,
+    freshSlaMs: 60_000,
+    staleSlaMs: 300_000,
+    expectedSchema: ["quotes", "meta"],
   },
   {
     id: "ssi-fcdata",
@@ -49,6 +69,10 @@ export const SOURCE_CATALOG: SourceCatalogEntry[] = [
     envHints: ["SSI_API_KEY", "SSI_API_SECRET"],
     timeoutMs: 3500,
     ttlMs: 15_000,
+    liveSlaMs: 15_000,
+    freshSlaMs: 60_000,
+    staleSlaMs: 300_000,
+    expectedSchema: ["quotes"],
   },
   {
     id: "ssi-iboard",
@@ -56,6 +80,9 @@ export const SOURCE_CATALOG: SourceCatalogEntry[] = [
     role: "secondary",
     module: "providers/ssi-iboard.ts",
     description: "SSI iBoard board / secondary feed",
+    liveSlaMs: 30_000,
+    freshSlaMs: 120_000,
+    staleSlaMs: 600_000,
   },
   {
     id: "vps",
@@ -63,6 +90,9 @@ export const SOURCE_CATALOG: SourceCatalogEntry[] = [
     role: "secondary",
     module: "providers/vps.ts",
     description: "VPS market feed",
+    liveSlaMs: 10_000,
+    freshSlaMs: 30_000,
+    staleSlaMs: 300_000,
   },
   {
     id: "vietcap",
@@ -70,6 +100,9 @@ export const SOURCE_CATALOG: SourceCatalogEntry[] = [
     role: "secondary",
     module: "providers/vietcap.ts",
     description: "Vietcap market / research endpoints",
+    liveSlaMs: 60_000,
+    freshSlaMs: 300_000,
+    staleSlaMs: 1_800_000,
   },
   {
     id: "public-vn-feed",
@@ -77,6 +110,8 @@ export const SOURCE_CATALOG: SourceCatalogEntry[] = [
     role: "enrichment",
     module: "providers/public-vn-feed.ts",
     description: "Public VN board enrichment",
+    freshSlaMs: 300_000,
+    staleSlaMs: 1_800_000,
   },
   {
     id: "vndirect-fs",
@@ -84,6 +119,9 @@ export const SOURCE_CATALOG: SourceCatalogEntry[] = [
     role: "primary",
     module: "financial/vndirect-fs.ts",
     description: "BCTC / financial statements PRIMARY",
+    freshSlaMs: 24 * 3600_000,     // financial statements are daily
+    staleSlaMs: 7 * 24 * 3600_000, // stale after 7 days
+    expectedSchema: ["periods", "source"],
   },
   {
     id: "vnstock",
@@ -91,6 +129,8 @@ export const SOURCE_CATALOG: SourceCatalogEntry[] = [
     role: "enrichment",
     module: "providers/vnstock.ts",
     description: "VNStock enrichment metrics",
+    freshSlaMs: 6 * 3600_000,
+    staleSlaMs: 48 * 3600_000,
   },
   {
     id: "vndirect-company",
@@ -98,6 +138,8 @@ export const SOURCE_CATALOG: SourceCatalogEntry[] = [
     role: "enrichment",
     module: "providers/vndirect-company.ts",
     description: "Company profile enrichment",
+    freshSlaMs: 24 * 3600_000,
+    staleSlaMs: 7 * 24 * 3600_000,
   },
   {
     id: "vndirect-events",
@@ -107,6 +149,9 @@ export const SOURCE_CATALOG: SourceCatalogEntry[] = [
     description: "Corporate events / dividends (DStock /v4/events)",
     timeoutMs: 10_000,
     ttlMs: 30 * 60_000,
+    freshSlaMs: 3 * 3600_000,
+    staleSlaMs: 24 * 3600_000,
+    expectedSchema: ["events"],
   },
   {
     id: "ssc-official",
@@ -114,6 +159,8 @@ export const SOURCE_CATALOG: SourceCatalogEntry[] = [
     role: "primary",
     module: "financial/official/*",
     description: "SSC / official document pipeline",
+    freshSlaMs: 24 * 3600_000,
+    staleSlaMs: 30 * 24 * 3600_000,
   },
   {
     id: "binance",
@@ -123,6 +170,10 @@ export const SOURCE_CATALOG: SourceCatalogEntry[] = [
     description: "Crypto spot / klines",
     timeoutMs: 3000,
     ttlMs: 10_000,
+    liveSlaMs: 10_000,
+    freshSlaMs: 30_000,
+    staleSlaMs: 120_000,
+    expectedSchema: ["symbol", "price"],
   },
   {
     id: "coingecko",
@@ -130,6 +181,9 @@ export const SOURCE_CATALOG: SourceCatalogEntry[] = [
     role: "fallback",
     module: "providers/coingecko.ts",
     description: "Crypto metadata / fallback prices",
+    liveSlaMs: 60_000,
+    freshSlaMs: 300_000,
+    staleSlaMs: 1_800_000,
   },
   {
     id: "okx-public",
@@ -139,6 +193,9 @@ export const SOURCE_CATALOG: SourceCatalogEntry[] = [
     description: "OKX public spot tickers",
     timeoutMs: 7000,
     ttlMs: 15_000,
+    liveSlaMs: 15_000,
+    freshSlaMs: 60_000,
+    staleSlaMs: 300_000,
   },
   {
     id: "coincap",
@@ -148,6 +205,9 @@ export const SOURCE_CATALOG: SourceCatalogEntry[] = [
     description: "CoinCap top assets",
     timeoutMs: 6000,
     ttlMs: 30_000,
+    liveSlaMs: 30_000,
+    freshSlaMs: 120_000,
+    staleSlaMs: 600_000,
   },
   {
     id: "forex-feed",
@@ -157,6 +217,10 @@ export const SOURCE_CATALOG: SourceCatalogEntry[] = [
     description: "FX pairs",
     timeoutMs: 3000,
     ttlMs: 30_000,
+    liveSlaMs: 30_000,
+    freshSlaMs: 120_000,
+    staleSlaMs: 600_000,
+    expectedSchema: ["rows"],
   },
   {
     id: "yahoo",
@@ -164,6 +228,8 @@ export const SOURCE_CATALOG: SourceCatalogEntry[] = [
     role: "fallback",
     module: "providers/yahoo.ts",
     description: "Yahoo fallback for global symbols",
+    freshSlaMs: 300_000,
+    staleSlaMs: 1_800_000,
   },
   {
     id: "commodities",
@@ -173,6 +239,9 @@ export const SOURCE_CATALOG: SourceCatalogEntry[] = [
     description: "Gold oil softs",
     timeoutMs: 4000,
     ttlMs: 60_000,
+    freshSlaMs: 5 * 60_000,
+    staleSlaMs: 30 * 60_000,
+    expectedSchema: ["rows"],
   },
   {
     id: "cafef",
@@ -180,6 +249,8 @@ export const SOURCE_CATALOG: SourceCatalogEntry[] = [
     role: "primary",
     module: "providers/cafef.ts",
     description: "CafeF news",
+    freshSlaMs: 15 * 60_000,
+    staleSlaMs: 60 * 60_000,
   },
   {
     id: "news-bundle",
@@ -187,6 +258,9 @@ export const SOURCE_CATALOG: SourceCatalogEntry[] = [
     role: "primary",
     module: "providers/news.ts",
     description: "Aggregated news providers",
+    freshSlaMs: 15 * 60_000,
+    staleSlaMs: 60 * 60_000,
+    expectedSchema: ["articles"],
   },
   {
     id: "vietnambiz-economy",
@@ -194,6 +268,8 @@ export const SOURCE_CATALOG: SourceCatalogEntry[] = [
     role: "primary",
     module: "providers/vietnambiz-economy.ts",
     description: "Macro / economy articles",
+    freshSlaMs: 60 * 60_000,
+    staleSlaMs: 6 * 3600_000,
   },
   {
     id: "economic-data",
@@ -201,6 +277,8 @@ export const SOURCE_CATALOG: SourceCatalogEntry[] = [
     role: "primary",
     module: "economic-data.ts",
     description: "Structured macro series",
+    freshSlaMs: 24 * 3600_000,
+    staleSlaMs: 7 * 24 * 3600_000,
   },
   {
     id: "worldbank",
@@ -210,6 +288,8 @@ export const SOURCE_CATALOG: SourceCatalogEntry[] = [
     description: "World Bank structured annual macro (VN-first, no API key)",
     timeoutMs: 10_000,
     ttlMs: 6 * 60 * 60_000,
+    freshSlaMs: 24 * 3600_000,
+    staleSlaMs: 90 * 24 * 3600_000, // annual data — stale after 90 days
   },
 ];
 
@@ -223,4 +303,17 @@ export function catalogSummary() {
     byDomain[s.domain] = (byDomain[s.domain] ?? 0) + 1;
   }
   return { total: SOURCE_CATALOG.length, byDomain, sources: SOURCE_CATALOG };
+}
+
+/**
+ * Phase 3 — Returns the effective freshness SLA thresholds for a source,
+ * falling back to platform defaults when not specified.
+ */
+export function getSourceSla(sourceId: string): { liveSlaMs: number; freshSlaMs: number; staleSlaMs: number } {
+  const entry = SOURCE_CATALOG.find((s) => s.id === sourceId);
+  return {
+    liveSlaMs: entry?.liveSlaMs ?? 20_000,
+    freshSlaMs: entry?.freshSlaMs ?? 120_000,
+    staleSlaMs: entry?.staleSlaMs ?? 900_000,
+  };
 }
