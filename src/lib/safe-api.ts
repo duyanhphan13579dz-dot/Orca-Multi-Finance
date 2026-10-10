@@ -132,7 +132,7 @@ export async function safeApi<T>(
     } catch {
       /* */
     }
-    const msg = e instanceof Error ? e.message : "Lỗi không xác định";
+    const msg = opts.unavailableNote ?? (e instanceof Error ? e.message : "Lỗi không xác định");
     return unavailable(opts.unavailableSource ?? opts.label, msg);
   }
 }
