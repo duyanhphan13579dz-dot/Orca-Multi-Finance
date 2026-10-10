@@ -2,18 +2,10 @@
 
 import { useSearchParams } from "next/navigation";
 import { Suspense, useState } from "react";
-import { WyckoffScreener } from "@/components/wyckoff-screener";
-import { CanslimScreener } from "@/components/canslim-screener";
-import { MinerviniScreener } from "@/components/minervini-screener";
-import { ElliottScreener } from "@/components/elliott-screener";
-import { ValuationScreener } from "@/components/valuation-screener";
-import { FundamentalScreener } from "@/components/fundamental-screener";
-import { CandlestickScreener } from "@/components/candlestick-screener";
-import { DivergenceScreener } from "@/components/divergence-screener";
-import { AlphaBetaScreener } from "@/components/alpha-beta-screener";
+import dynamic from "next/dynamic";
 import { Loading, Panel } from "@/components/ui";
 import { FlatsIcon } from "@/components/screener-icons";
-import { VnScreener, CryptoScreener } from "./screener-panels";
+import { ErrorBoundary } from "@/components/error-boundary";
 
 type Universe =
   | "stocks"
@@ -48,9 +40,121 @@ function parseUniverse(raw: string | null): Universe {
   return "stocks";
 }
 
+const PanelFallback = () => <Loading rows={6} />;
+
+/** Lazy panels — one broken module cannot take down the whole /screener route. */
+const VnScreener = dynamic(
+  () => import("./screener-panels").then((m) => m.VnScreener),
+  { ssr: false, loading: PanelFallback },
+);
+const CryptoScreener = dynamic(
+  () => import("./screener-panels").then((m) => m.CryptoScreener),
+  { ssr: false, loading: PanelFallback },
+);
+const AlphaBetaScreener = dynamic(
+  () => import("@/components/alpha-beta-screener").then((m) => m.AlphaBetaScreener),
+  { ssr: false, loading: PanelFallback },
+);
+const DivergenceScreener = dynamic(
+  () => import("@/components/divergence-screener").then((m) => m.DivergenceScreener),
+  { ssr: false, loading: PanelFallback },
+);
+const CandlestickScreener = dynamic(
+  () => import("@/components/candlestick-screener").then((m) => m.CandlestickScreener),
+  { ssr: false, loading: PanelFallback },
+);
+const WyckoffScreener = dynamic(
+  () => import("@/components/wyckoff-screener").then((m) => m.WyckoffScreener),
+  { ssr: false, loading: PanelFallback },
+);
+const CanslimScreener = dynamic(
+  () => import("@/components/canslim-screener").then((m) => m.CanslimScreener),
+  { ssr: false, loading: PanelFallback },
+);
+const MinerviniScreener = dynamic(
+  () => import("@/components/minervini-screener").then((m) => m.MinerviniScreener),
+  { ssr: false, loading: PanelFallback },
+);
+const ElliottScreener = dynamic(
+  () => import("@/components/elliott-screener").then((m) => m.ElliottScreener),
+  { ssr: false, loading: PanelFallback },
+);
+const ValuationScreener = dynamic(
+  () => import("@/components/valuation-screener").then((m) => m.ValuationScreener),
+  { ssr: false, loading: PanelFallback },
+);
+const FundamentalScreener = dynamic(
+  () => import("@/components/fundamental-screener").then((m) => m.FundamentalScreener),
+  { ssr: false, loading: PanelFallback },
+);
+
+function SoftPanel({
+  name,
+  resetKey,
+  children,
+}: {
+  name: string;
+  resetKey: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <ErrorBoundary
+      name={`screener:${name}`}
+      resetKey={resetKey}
+      fallback={
+        <div className="mx-auto max-w-lg rounded-xl border border-border-subtle bg-surface-elevated/80 px-4 py-6 text-center">
+          <p className="text-[13px] font-semibold text-text-primary">Bộ lọc này gặp lỗi tạm thời</p>
+          <p className="mt-1 text-[12px] text-text-muted">
+            Tab khác vẫn dùng được. Chọn bộ lọc khác hoặc thử lại.
+          </p>
+        </div>
+      }
+    >
+      {children}
+    </ErrorBoundary>
+  );
+}
+
 function ScreenerInner() {
   const params = useSearchParams();
   const [universe, setUniverse] = useState<Universe>(() => parseUniverse(params.get("universe")));
+  const sector = params.get("sector");
+
+  let body: React.ReactNode;
+  switch (universe) {
+    case "crypto":
+      body = <CryptoScreener />;
+      break;
+    case "alpha-beta":
+      body = <AlphaBetaScreener defaultSector={sector} />;
+      break;
+    case "divergence":
+      body = <DivergenceScreener />;
+      break;
+    case "candlestick":
+      body = <CandlestickScreener defaultSector={sector} />;
+      break;
+    case "wyckoff":
+      body = <WyckoffScreener defaultSector={sector} />;
+      break;
+    case "canslim":
+      body = <CanslimScreener defaultSector={sector} />;
+      break;
+    case "minervini":
+      body = <MinerviniScreener defaultSector={sector} />;
+      break;
+    case "elliott":
+      body = <ElliottScreener defaultSector={sector} />;
+      break;
+    case "valuation":
+      body = <ValuationScreener defaultSector={sector} />;
+      break;
+    case "fundamental":
+      body = <FundamentalScreener defaultSector={sector} />;
+      break;
+    default:
+      body = <VnScreener defaultSector={sector} />;
+  }
 
   return (
     <div className="space-y-3">
@@ -85,29 +189,9 @@ function ScreenerInner() {
           <p className="mt-1.5 text-[10px] text-text-muted sm:hidden">← Vuốt ngang để chọn thêm bộ lọc →</p>
         </div>
       </Panel>
-      {universe === "crypto" ? (
-        <CryptoScreener />
-      ) : universe === "alpha-beta" ? (
-        <AlphaBetaScreener defaultSector={params.get("sector")} />
-      ) : universe === "divergence" ? (
-        <DivergenceScreener />
-      ) : universe === "candlestick" ? (
-        <CandlestickScreener defaultSector={params.get("sector")} />
-      ) : universe === "wyckoff" ? (
-        <WyckoffScreener defaultSector={params.get("sector")} />
-      ) : universe === "canslim" ? (
-        <CanslimScreener defaultSector={params.get("sector")} />
-      ) : universe === "minervini" ? (
-        <MinerviniScreener defaultSector={params.get("sector")} />
-      ) : universe === "elliott" ? (
-        <ElliottScreener defaultSector={params.get("sector")} />
-      ) : universe === "valuation" ? (
-        <ValuationScreener defaultSector={params.get("sector")} />
-      ) : universe === "fundamental" ? (
-        <FundamentalScreener defaultSector={params.get("sector")} />
-      ) : (
-        <VnScreener defaultSector={params.get("sector")} />
-      )}
+      <SoftPanel name={universe} resetKey={universe}>
+        {body}
+      </SoftPanel>
     </div>
   );
 }
