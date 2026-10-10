@@ -6,6 +6,7 @@ import dynamic from "next/dynamic";
 import { Loading, Panel } from "@/components/ui";
 import { FlatsIcon } from "@/components/screener-icons";
 import { ErrorBoundary } from "@/components/error-boundary";
+import { prefetchApi } from "@/lib/hooks";
 
 type Universe =
   | "stocks"
@@ -177,6 +178,12 @@ function ScreenerInner() {
                   aria-selected={universe === tab.id}
                   data-active={universe === tab.id}
                   onClick={() => setUniverse(tab.id)}
+                  onMouseEnter={() => {
+                    // P5-A: warm screener API on tab hover
+                    if (tab.id === "fundamental") prefetchApi("/api/v1/screener/fundamental", 12_000);
+                    else if (tab.id === "valuation") prefetchApi("/api/v1/screener/valuation", 12_000);
+                    else if (tab.id === "crypto") prefetchApi("/api/v1/crypto/markets?limit=120", 8_000);
+                  }}
                 >
                   {tab.label}
                 </button>
