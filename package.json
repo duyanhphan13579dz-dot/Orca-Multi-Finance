@@ -9,14 +9,20 @@
     "dev": "next dev -p 3000 -H 0.0.0.0",
     "build": "next build",
     "start": "next start",
+    "preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
+    "deploy": "opennextjs-cloudflare build && opennextjs-cloudflare deploy",
+    "upload": "opennextjs-cloudflare build && opennextjs-cloudflare upload",
+    "cf-typegen": "wrangler types --env-interface CloudflareEnv cloudflare-env.d.ts",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --import ./test/test-setup/register-stub.mjs --require ./test/test-setup/patch-server-only.cjs --test src/lib/__tests__/chart-engine.test.ts src/lib/__tests__/divergence.test.ts src/lib/__tests__/candlestick-patterns.test.ts src/lib/__tests__/valuation-phase1.test.ts src/lib/__tests__/valuation-phase2.test.ts src/lib/__tests__/valuation-phase3.test.ts src/lib/__tests__/valuation-phase4.test.ts src/lib/__tests__/valuation-phase5.test.ts src/lib/__tests__/valuation-phase6.test.ts src/lib/__tests__/valuation-pipeline.test.ts",
+    "test": "node --import tsx --import ./test/test-setup/register-stub.mjs --require ./test/test-setup/patch-server-only.cjs --test src/lib/__tests__/canslim-engine.test.ts src/lib/__tests__/chart-engine.test.ts src/lib/__tests__/divergence.test.ts src/lib/__tests__/candlestick-patterns.test.ts src/lib/__tests__/fundamental-ratio-regressions.test.ts src/lib/__tests__/valuation-phase1.test.ts src/lib/__tests__/valuation-phase2.test.ts src/lib/__tests__/valuation-phase3.test.ts src/lib/__tests__/valuation-phase4.test.ts src/lib/__tests__/valuation-phase5.test.ts src/lib/__tests__/valuation-phase6.test.ts src/lib/__tests__/valuation-pipeline.test.ts src/lib/__tests__/http-cache.test.ts src/lib/__tests__/cron-auth.test.ts src/lib/__tests__/vnb-goods.test.ts src/lib/__tests__/vnd-news.test.ts src/lib/__tests__/money-flow.test.ts src/lib/__tests__/mtf-bias.test.ts src/lib/__tests__/portfolio.test.ts src/lib/ai/__tests__/chat-format.test.ts src/lib/ai/__tests__/chat-store.test.ts src/lib/services/__tests__/stock-summary.test.ts src/components/agent/__tests__/chat-message.test.tsx src/features/personal-finance/engines/__tests__/engineTests.ts src/lib/__tests__/agent-router.test.ts src/lib/__tests__/data-quality.test.ts src/lib/__tests__/data-reconcile.test.ts src/lib/__tests__/data-scheduler.test.ts src/lib/__tests__/data-telemetry.test.ts src/lib/__tests__/data-state-view.test.ts src/lib/__tests__/responsive-viewport.test.ts src/lib/__tests__/phase6-integration-resilience.test.ts",
     "test:divergence": "node --import tsx --import ./test/test-setup/register-stub.mjs --require ./test/test-setup/patch-server-only.cjs --test src/lib/__tests__/divergence.test.ts",
     "ssc:install-browser": "npx playwright install chromium",
-    "ssc:crawl": "node --import tsx -e \"const { refreshSscListingIndex } = require('./src/lib/financial/official/ssc-listing-index.ts'); refreshSscListingIndex().then(i => console.log(JSON.stringify({ tickers: i.tickerCount, rows: i.rowCount, at: i.builtAt }, null, 2))).catch(e => { console.error(e); process.exit(1); })\""
+    "ssc:crawl": "node --import tsx -e \"const { refreshSscListingIndex } = require('./src/lib/financial/official/ssc-listing-index.ts'); refreshSscListingIndex().then(i => console.log(JSON.stringify({ tickers: i.tickerCount, rows: i.rowCount, at: i.builtAt }, null, 2))).catch(e => { console.error(e); process.exit(1); })\"",
+    "check:sources": "node --import tsx scripts/check-sources.ts"
   },
   "dependencies": {
+    "@opennextjs/cloudflare": "1.20.9",
     "@tailwindcss/postcss": "4.1.17",
     "@types/node": "22.19.15",
     "@types/pg": "8.18.0",
@@ -30,9 +36,10 @@
     "lightweight-charts": "^5.2.1",
     "lucide-react": "^0.545.0",
     "mammoth": "^1.13.0",
-    "next": "16.2.6",
+    "next": "16.3.8",
     "pg": "8.20.0",
-    "postcss": "8.5.8",
+    "pg-cloudflare": "1.2.7",
+    "postcss": "8.5.29",
     "react": "19.2.6",
     "react-dom": "19.2.6",
     "server-only": "^0.0.1",
@@ -44,9 +51,7 @@
   "devDependencies": {
     "drizzle-kit": "0.31.10",
     "eslint": "9.39.4",
-    "eslint-config-next": "16.2.6"
-  },
-  "optionalDependencies": {
-    "playwright": "^1.49.0"
+    "eslint-config-next": "16.3.8",
+    "wrangler": "^4.148.0"
   }
 }

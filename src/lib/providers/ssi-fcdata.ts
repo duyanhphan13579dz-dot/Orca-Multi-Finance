@@ -191,6 +191,7 @@ async function ssiGet<T>(
   path: string,
   query: Record<string, string | number | boolean | undefined>,
   timeoutMs = 14_000,
+  signal?: AbortSignal,
 ): Promise<T> {
   const token = await getSsiAccessToken();
   const qs = new URLSearchParams();
@@ -204,6 +205,7 @@ async function ssiGet<T>(
     provider: SSI_FCDATA,
     timeoutMs,
     retries: 0,
+    signal,
     headers: {
       Accept: "application/json",
       Authorization: `Bearer ${token}`,
@@ -217,6 +219,7 @@ async function ssiGet<T>(
       provider: SSI_FCDATA,
       timeoutMs,
       retries: 0,
+      signal,
       headers: {
         Accept: "application/json",
         Authorization: `Bearer ${token2}`,
@@ -256,7 +259,7 @@ type DailyOhlcRow = {
 
 export async function getSsiDailyOhlc(
   symbol: string,
-  opts?: { fromDate?: string; toDate?: string; pageSize?: number },
+  opts?: { fromDate?: string; toDate?: string; pageSize?: number; signal?: AbortSignal },
 ): Promise<OhlcvBar[]> {
   const sym = symbol.toUpperCase();
   const fromDate = opts?.fromDate ?? daysAgoSsi(400);
@@ -276,7 +279,7 @@ export async function getSsiDailyOhlc(
     pageSize,
     Ascending: true,
     ascending: true,
-  });
+  }, 14_000, opts?.signal);
 
   const rows = Array.isArray(body.data) ? body.data : [];
   const bars = rows

@@ -48,7 +48,11 @@ export async function dispatchReportReadyNotify(payload: ReportNotifyPayload): P
     description:
       `${payload.title}\n` +
       (payload.subtitle ? `_${payload.subtitle}_\n` : "") +
-      `\n[Mở Bản tin](https://orca-multi-finance.vercel.app/reports)`,
+      `\n[Mở Bản tin](${
+        process.env.NEXT_PUBLIC_SITE_URL?.startsWith("http")
+          ? process.env.NEXT_PUBLIC_SITE_URL.replace(/\/+$/, "")
+          : "https://orca-multi-finance.workers.dev"
+      }/reports)`,
     color: TYPE_COLOR[payload.type] ?? 0x6366f1,
     username: "ORCA Reports",
     fields: [

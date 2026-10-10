@@ -120,6 +120,8 @@ test("structure exposes internal and external swings", () => {
   const result = analyzeMoneyFlow(shaped);
   assert.ok(result);
   assert.ok(result.structure.swings.length > 0);
+  assert.ok(result.structure.swings.every((s) => s.confirmedAtIndex > s.index));
+  assert.ok(result.structure.swings.every((s) => s.isProvisional === false));
   assert.ok(
     result.structure.internal.swingHigh != null ||
       result.structure.external.swingHigh != null ||

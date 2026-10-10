@@ -32,9 +32,17 @@ export function useMarketStream(
     .sort()
     .join(",");
 
+  const isStreamActive = Boolean(enabled && key);
+  const [prevStreamActive, setPrevStreamActive] = useState(isStreamActive);
+  if (prevStreamActive !== isStreamActive) {
+    setPrevStreamActive(isStreamActive);
+    if (!isStreamActive && status !== "idle") {
+      setStatus("idle");
+    }
+  }
+
   useEffect(() => {
     if (!enabled || !key) {
-      setStatus("idle");
       esRef.current?.close();
       esRef.current = null;
       return;
@@ -43,6 +51,34 @@ export function useMarketStream(
     let cancelled = false;
     let retry = 0;
     let timer: number | undefined;
+    let pollTimer: number | undefined;
+    let sseFailures = 0;
+
+    // Fallback khi SSE không bền (Cloudflare Workers): poll JSON mỗi 3s.
+    const startPolling = () => {
+      if (cancelled || pollTimer) return;
+      const pollOnce = async () => {
+        try {
+          const r = await fetch(
+            `/api/v1/market/stream?mode=poll&symbols=${encodeURIComponent(key)}&asset=${asset}`,
+            { cache: "no-store" },
+          );
+          if (!r.ok) throw new Error(String(r.status));
+          const j = (await r.json()) as { data?: { quotes?: Record<string, StreamQuote> } };
+          if (cancelled) return;
+          setQuotes((prev) => ({ ...prev, ...(j.data?.quotes ?? {}) }));
+          setStatus("open");
+          setLastError(null);
+        } catch {
+          if (!cancelled) {
+            setStatus("error");
+            setLastError("poll failed");
+          }
+        }
+      };
+      void pollOnce();
+      pollTimer = window.setInterval(() => void pollOnce(), 3_000);
+    };
 
     const connect = () => {
       if (cancelled) return;
@@ -71,6 +107,12 @@ export function useMarketStream(
 
       es.onerror = () => {
         if (cancelled) return;
+        if (++sseFailures >= 2) {
+          es.close();
+          esRef.current = null;
+          startPolling();
+          return;
+        }
         setStatus("error");
         setLastError("stream disconnected");
         es.close();
@@ -85,6 +127,7 @@ export function useMarketStream(
     return () => {
       cancelled = true;
       if (timer) window.clearTimeout(timer);
+      if (pollTimer) window.clearInterval(pollTimer);
       esRef.current?.close();
       esRef.current = null;
       setStatus("closed");

@@ -72,9 +72,8 @@ test("detectDivergences: signals have valid contract shape", () => {
     assert.ok(s.barsBetween >= 5);
     assert.equal(s.pricePivots.length, 2);
     assert.equal(s.oscPivots.length, 2);
-    assert.equal(s.confirmed, true);
-    assert.equal(s.forming, false);
-    assert.ok(s.confirmedAt.length > 0);
+    assert.ok(Number.isFinite(s.detectedAt));
+    assert.ok(s.barsBetween > 0);
     assert.ok(Number.isFinite(s.pricePivots[0].price));
     assert.ok(Number.isFinite(s.oscPivots[0].value));
   }
@@ -134,7 +133,7 @@ test("analyzeSeries includes divergences array", () => {
   assert.ok(t);
   assert.ok(Array.isArray(t.divergences));
   for (const d of t.divergences ?? []) {
-    assert.ok(d.confirmed);
+    assert.ok(Number.isFinite(d.detectedAt));
     assert.ok(Number.isFinite(d.confidence));
   }
 });
@@ -171,10 +170,9 @@ test("Phase 6: buildDivergenceConfluence requires ≥2 TFs", () => {
       { index: 0, time: 1, price: 1, value: 25 },
       { index: 10, time: 2, price: 0.9, value: 35 },
     ] as [{ index: number; time: number; price: number; value: number }, { index: number; time: number; price: number; value: number }],
-    structure: "single" as const,
-    confirmed: true,
-    confirmedAt: new Date().toISOString(),
-    forming: false,
+    structure: "double" as const,
+    volumeConfirmed: null,
+    detectedAt: 2,
   });
   const one = buildDivergenceConfluence([{ timeframe: "1h", signals: [mk("1h", 0.8)] }]);
   assert.equal(one.length, 0);

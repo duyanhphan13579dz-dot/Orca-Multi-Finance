@@ -61,12 +61,10 @@ const LETTER_VI: Record<CanslimLetter, string> = {
   M: "Market direction",
 };
 
-/** Đổi changePct (tỉ lệ 0.25) → phần trăm 25; nếu đã là % (|x|>3) giữ nguyên. */
+/** Đổi changePct (tỉ lệ 0.25) → phần trăm 25 (đồng bộ chuẩn hóa như snapshots.ts). */
 function toPct(raw: number | null | undefined): number | null {
   if (raw == null || !Number.isFinite(raw)) return null;
-  // Growth engine trả 0.25; một số API ratios có thể đã là 25
-  if (Math.abs(raw) <= 3) return raw * 100;
-  return raw;
+  return Number((raw * 100).toFixed(2));
 }
 
 function growthOf(g: GrowthSnapshot | null | undefined, metric: string, kind: "yoy" | "qoq" = "yoy"): number | null {
@@ -77,13 +75,19 @@ function growthOf(g: GrowthSnapshot | null | undefined, metric: string, kind: "y
 
 function annualNiCagr(periods: NormalizedPeriod[] | null | undefined): number | null {
   if (!periods?.length) return null;
-  const years = periods
-    .filter((p) => p.periodType === "year" && p.metrics.netIncome != null)
-    .sort((a, b) => (a.year ?? 0) - (b.year ?? 0));
-  if (years.length >= 2) {
-    const first = years[0]!.metrics.netIncome!;
-    const last = years[years.length - 1]!.metrics.netIncome!;
-    const n = years.length - 1;
+  const byYear = new Map<number, number>();
+  for (const p of periods) {
+    if (p.periodType === "year" && p.year != null && p.metrics.netIncome != null) {
+      byYear.set(p.year, p.metrics.netIncome);
+    }
+  }
+  const sortedYears = Array.from(byYear.keys()).sort((a, b) => a - b);
+  if (sortedYears.length >= 2) {
+    const firstYear = sortedYears[0]!;
+    const lastYear = sortedYears[sortedYears.length - 1]!;
+    const first = byYear.get(firstYear)!;
+    const last = byYear.get(lastYear)!;
+    const n = lastYear - firstYear;
     if (first > 0 && last > 0 && n > 0) {
       return (Math.pow(last / first, 1 / n) - 1) * 100;
     }

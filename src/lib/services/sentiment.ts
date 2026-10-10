@@ -223,12 +223,12 @@ export async function getCryptoSentiment(symbolRaw: string): Promise<{ data: Sen
   const symbol = symbolRaw.toUpperCase().replace(/[^A-Z0-9]/g, "");
   const detail = await getCryptoDetail(symbol, "1h");
   if (!detail) return null;
-  const t = detail.detail.ticker;
+  const q = detail.detail.quote;
   const tech = detail.detail.technical;
   const patterns = detail.detail.patterns ?? [];
   const quant = computeQuantSentiment({
-    changePercent: t.changePercent,
-    price: t.price,
+    changePercent: q?.changePercent ?? 0,
+    price: q?.price ?? 0,
     tech,
     patterns,
     mode: "crypto",
@@ -236,9 +236,9 @@ export async function getCryptoSentiment(symbolRaw: string): Promise<{ data: Sen
   const contract = {
     assetType: "crypto",
     symbol: detail.detail.symbol,
-    price: t.price,
-    changePercent: t.changePercent,
-    quoteVolume: t.quoteVolume,
+    price: q?.price ?? 0,
+    changePercent: q?.changePercent ?? 0,
+    quoteVolume: q?.quoteVolume ?? 0,
     rsi14: tech?.rsi14 ?? null,
     trend: tech?.trend ?? null,
     sma50: tech?.sma.sma50 ?? null,

@@ -37,12 +37,18 @@ export async function coalesce<T>(
   }
 
   const run = (async () => {
-    const t0 = Date.now();
-    if (store) {
-      store.touches.push({ key, sourceId: sourceIds[0] ?? "fetch", at: t0, hit: "fetch" });
-    }
+    const t0 = performance.now();
     try {
       const value = await producer();
+      const dur = performance.now() - t0;
+      if (sourceIds.length > 0) {
+        const { recordSourceTelemetry } = await import("./telemetry");
+        recordSourceTelemetry({
+          sourceId: sourceIds[0]!,
+          durationMs: dur,
+          success: true,
+        });
+      }
       if (store) {
         const entry: HubEntry = {
           key,
@@ -63,6 +69,16 @@ export async function coalesce<T>(
       }
       return value;
     } catch (e) {
+      const dur = performance.now() - t0;
+      if (sourceIds.length > 0) {
+        const { recordSourceTelemetry } = await import("./telemetry").catch(() => ({ recordSourceTelemetry: null }));
+        recordSourceTelemetry?.({
+          sourceId: sourceIds[0]!,
+          durationMs: dur,
+          success: false,
+          error: e instanceof Error ? e.message : String(e),
+        });
+      }
       if (store) store.inflight.delete(key);
       else globalInflight.delete(key);
       throw e;

@@ -6,8 +6,9 @@ import {
   Badge,
   Chg,
   Loading,
-  ErrorNote,
-  Unavailable,
+  ErrorState,
+  EmptyState,
+  FreshnessAlertBanner,
   FreshnessDot,
   fmtNum,
   fmtCompact,
@@ -84,7 +85,7 @@ export function ForecastPanel({
   symbol: string;
   compact?: boolean;
 }) {
-  const { data, meta, isLoading, error } = useApi<ForecastPayload>(
+  const { data, meta, isLoading, error, mutate } = useApi<ForecastPayload>(
     symbol ? `/api/v1/stocks/${encodeURIComponent(symbol)}/forecast` : null,
     { refreshInterval: 180_000 },
   );
@@ -92,7 +93,7 @@ export function ForecastPanel({
   if (isLoading && !data) {
     return (
       <Panel title="Dự báo BCTC & định giá cuối kỳ">
-        <Loading rows={5} />
+        <Loading rows={5} label={`Đang phân tích và dự báo doanh thu ${symbol}…`} />
       </Panel>
     );
   }
@@ -100,7 +101,11 @@ export function ForecastPanel({
   if (error && !data) {
     return (
       <Panel title="Dự báo BCTC & định giá cuối kỳ">
-        <ErrorNote message={String(error)} />
+        <ErrorState
+          title={`Không thể dựng dự báo ${symbol}`}
+          message={error instanceof Error ? error.message : String(error)}
+          onRetry={() => void mutate()}
+        />
       </Panel>
     );
   }
@@ -108,9 +113,11 @@ export function ForecastPanel({
   if (!data) {
     return (
       <Panel title="Dự báo BCTC & định giá cuối kỳ">
-        <Unavailable
+        <EmptyState
           title="Chưa dựng được dự báo"
-          note={`Cần chuỗi BCTC lịch sử cho ${symbol}.`}
+          description={`Cần tối thiểu chuỗi BCTC lịch sử và dữ liệu giá gần nhất của ${symbol} để chạy mô hình.`}
+          actionLabel="Tải lại"
+          onAction={() => void mutate()}
         />
       </Panel>
     );
@@ -141,6 +148,15 @@ export function ForecastPanel({
           </span>
         }
       >
+        {meta?.freshness && (meta.freshness === "DELAYED" || meta.freshness === "STALE" || meta.degraded) && (
+          <FreshnessAlertBanner
+            state={meta.freshness === "STALE" ? "stale" : meta.degraded ? "degraded" : "delayed"}
+            ageMs={meta.ageMs}
+            note={meta.note}
+            source={meta.source}
+            className="mb-3"
+          />
+        )}
         <div className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-6">
           <Assump label="Tăng trưởng DT/năm" value={pct(a.revenueGrowthYoy)} />
           <Assump label="Biên LNST" value={pct(a.netMargin)} />

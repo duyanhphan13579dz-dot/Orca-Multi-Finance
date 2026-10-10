@@ -21,12 +21,16 @@ export interface VndCompanyProfile {
   enName: string | null;
   foundDate: string | null;
   taxCode: string | null;
+  /** Mã đăng ký kinh doanh (thường trùng MST). */
+  registrationCode: string | null;
   vnAddress: string | null;
+  enAddress: string | null;
   phone: string | null;
   fax: string | null;
   website: string | null;
   email: string | null;
   employees: number | null;
+  branches: number | null;
   vnSummary: string | null;
   enSummary: string | null;
 }
@@ -38,6 +42,29 @@ export interface VndShareholder {
   shares: number | null;
   ownershipPct: number | null;
   effectiveDate: string | null;
+}
+
+/** Công ty con / liên doanh / công ty mẹ / kiểm toán / tư vấn niêm yết. */
+export type VndRelationType =
+  | "SUBSIDIARY"
+  | "ASSOCIATE"
+  | "PARENT"
+  | "AUDITOR"
+  | "LISTCONSUL"
+  | "OTHER"
+  | string;
+
+export interface VndCompanyRelation {
+  code: string;
+  relationType: VndRelationType;
+  nameVn: string;
+  nameEn: string | null;
+  relationId: number | null;
+  ownershipPct: number | null;
+  investmentCapital: number | null;
+  unit: string | null;
+  effectiveDate: string | null;
+  year: string | null;
 }
 
 export interface VndEquitySnapshot {
@@ -77,12 +104,15 @@ function mapProfileRow(sym: string, row: Record<string, unknown>): VndCompanyPro
     enName: s(row.enName),
     foundDate: s(row.foundDate),
     taxCode: s(row.taxCode),
+    registrationCode: s(row.registrationCode) ?? s(row.taxCode),
     vnAddress: s(row.vnAddress),
+    enAddress: s(row.enAddress),
     phone: s(row.phone),
     fax: s(row.fax),
     website: s(row.website),
     email: s(row.email),
     employees: n(row.employees),
+    branches: n(row.branches),
     vnSummary: s(row.vnSummary),
     enSummary: s(row.enSummary),
   };
@@ -157,36 +187,80 @@ export async function getVndShareholders(symbol: string, size = 30): Promise<Vnd
   }
 }
 
-export async function getVndEquitySnapshot(symbol: string): Promise<VndEquitySnapshot | null> {
+/**
+ * Quan hệ doanh nghiệp: công ty con, liên doanh/liên kết, công ty mẹ, kiểm toán, tư vấn niêm yết.
+ * Dedup theo (relationType + nameVn), giữ bản ghi mới nhất theo effectiveDate/year.
+ */
+export async function getVndCompanyRelations(
+  symbol: string,
+  size = 80,
+): Promise<VndCompanyRelation[]> {
   const sym = symbol.toUpperCase().replace(/[^A-Z0-9]/g, "");
-  if (!sym) return null;
+  if (!sym) return [];
+
   try {
     const payload = (
       await vndirectJson<{ data?: Record<string, unknown>[] }>(
-        `/v4/stock_prices?q=code:${encodeURIComponent(sym)}&size=1&sort=date:desc`,
+        `/v4/company_relations?q=code:${encodeURIComponent(sym)}&size=${Math.max(1, Math.min(200, size))}`,
         {
           provider: VND,
-          timeoutMs: 10_000,
-          retries: 1,
+          timeoutMs: 12_000,
+          retries: 2,
           accept: (value) => Array.isArray(value.data),
         },
       )
     ).data;
-    const row = payload.data?.[0];
-    if (!row) return null;
+    const rows = payload.data ?? [];
     const n = (v: unknown) => {
       const x = Number(v);
       return Number.isFinite(x) ? x : null;
     };
-    return {
-      sharesOutstanding: n(row.listedShare) ?? n(row.sharesOutstanding),
-      totalShares: n(row.totalShare) ?? n(row.listedShare),
-      marketCapReported: n(row.marketCap),
-      reportDate: typeof row.date === "string" ? row.date : null,
-      source: "vndirect",
-    };
+    const s = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : null);
+
+    const mapped: VndCompanyRelation[] = rows
+      .map((r) => {
+        const nameVn = s(r.relationNameVn) ?? s(r.relationNameEn) ?? "";
+        return {
+          code: String(r.code ?? sym),
+          relationType: (s(r.relationType) ?? "OTHER") as VndRelationType,
+          nameVn,
+          nameEn: s(r.relationNameEn),
+          relationId: n(r.relationId),
+          ownershipPct: n(r.ownershipPct),
+          investmentCapital: n(r.investmentCapital),
+          unit: s(r.unit),
+          effectiveDate: s(r.effectiveDate),
+          year: s(r.year),
+        };
+      })
+      .filter((x) => x.nameVn);
+
+    const byKey = new Map<string, VndCompanyRelation>();
+    for (const row of mapped) {
+      const key = `${row.relationType}::${row.nameVn.toLowerCase()}`;
+      const prev = byKey.get(key);
+      if (!prev) {
+        byKey.set(key, row);
+        continue;
+      }
+      const prevScore = (prev.effectiveDate ?? prev.year ?? "") + "";
+      const nextScore = (row.effectiveDate ?? row.year ?? "") + "";
+      if (nextScore >= prevScore) byKey.set(key, row);
+    }
+
+    const preferredOrder = ["PARENT", "SUBSIDIARY", "ASSOCIATE", "AUDITOR", "LISTCONSUL"];
+    return [...byKey.values()].sort((a, b) => {
+      const ia = preferredOrder.indexOf(String(a.relationType).toUpperCase());
+      const ib = preferredOrder.indexOf(String(b.relationType).toUpperCase());
+      const ra = ia < 0 ? 99 : ia;
+      const rb = ib < 0 ? 99 : ib;
+      if (ra !== rb) return ra - rb;
+      const oa = a.ownershipPct ?? -1;
+      const ob = b.ownershipPct ?? -1;
+      return ob - oa;
+    });
   } catch {
-    return null;
+    return [];
   }
 }
 
@@ -196,33 +270,139 @@ export async function getVndValuationRatios(symbol: string): Promise<VndValuatio
   try {
     const payload = (
       await vndirectJson<{ data?: Record<string, unknown>[] }>(
-        `/v4/ratios?q=code:${encodeURIComponent(sym)}&size=1&sort=reportDate:desc`,
+        `/v4/ratios?q=code:${encodeURIComponent(sym)}&size=100&sort=reportDate:desc`,
         {
           provider: VND,
           timeoutMs: 10_000,
-          retries: 1,
+          retries: 2,
           accept: (value) => Array.isArray(value.data) && value.data.length > 0,
         },
       )
     ).data;
-    const row = payload.data?.[0];
-    if (!row) return null;
+    const rows = payload.data ?? [];
+    if (!rows.length) return null;
+
     const n = (v: unknown) => {
       const x = Number(v);
       return Number.isFinite(x) ? x : null;
     };
+
+    let pe: number | null = null;
+    let pb: number | null = null;
+    let ps: number | null = null;
+    let evEbitda: number | null = null;
+    let eps: number | null = null;
+    let bvps: number | null = null;
+    let roe: number | null = null;
+    let roa: number | null = null;
+    let dividendYield: number | null = null;
+    let marketCap: number | null = null;
+    let reportDate: string | null = null;
+
+    for (const r of rows) {
+      const rc = String(r.ratioCode ?? "").toUpperCase();
+      const val = n(r.value);
+      if (val == null) continue;
+      if (!reportDate && typeof r.reportDate === "string") reportDate = r.reportDate;
+
+      if (rc === "PRICE_TO_EARNINGS" && pe == null) pe = val;
+      if (rc === "PRICE_TO_BOOK" && pb == null) pb = val;
+      if (rc === "PRICE_TO_SALES" && ps == null) ps = val;
+      if (rc === "EV_EBITDA" && evEbitda == null) evEbitda = val;
+      if (rc === "EPS" && eps == null) eps = val;
+      if ((rc === "BVPS_CR" || rc === "BVPS") && bvps == null) bvps = val;
+      if (rc === "ROE" && roe == null) roe = val;
+      if (rc === "ROA" && roa == null) roa = val;
+      if (rc === "DIVIDEND_YIELD" && dividendYield == null) dividendYield = normalizeYieldRatio(val);
+      if (rc === "MARKETCAP" && marketCap == null) marketCap = val;
+    }
+
     return {
-      pe: n(row.pe) ?? n(row.priceToEarning),
-      pb: n(row.pb) ?? n(row.priceToBook),
-      ps: n(row.ps) ?? n(row.priceToSales),
-      evEbitda: n(row.evEbitda),
-      eps: n(row.eps),
-      bvps: n(row.bvps) ?? n(row.bookValuePerShare),
-      roe: n(row.roe),
-      roa: n(row.roa),
-      dividendYield: normalizeYieldRatio(n(row.dividendYield)),
-      marketCap: n(row.marketCap),
-      reportDate: typeof row.reportDate === "string" ? row.reportDate : null,
+      pe,
+      pb,
+      ps,
+      evEbitda,
+      eps,
+      bvps,
+      roe,
+      roa,
+      dividendYield,
+      marketCap,
+      reportDate,
+      source: "vndirect",
+    };
+  } catch {
+    return null;
+  }
+}
+
+export async function getVndEquitySnapshot(symbol: string): Promise<VndEquitySnapshot | null> {
+  const sym = symbol.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  if (!sym) return null;
+  try {
+    const [pricePayload, ratiosPayload] = await Promise.allSettled([
+      vndirectJson<{ data?: Record<string, unknown>[] }>(
+        `/v4/stock_prices?q=code:${encodeURIComponent(sym)}&size=1&sort=date:desc`,
+        {
+          provider: VND,
+          timeoutMs: 8_000,
+          retries: 1,
+          accept: (value) => Array.isArray(value.data),
+        },
+      ),
+      vndirectJson<{ data?: Record<string, unknown>[] }>(
+        `/v4/ratios?q=code:${encodeURIComponent(sym)}&size=60&sort=reportDate:desc`,
+        {
+          provider: VND,
+          timeoutMs: 8_000,
+          retries: 1,
+          accept: (value) => Array.isArray(value.data),
+        },
+      ),
+    ]);
+
+    const priceRow =
+      pricePayload.status === "fulfilled" ? pricePayload.value.data?.data?.[0] : null;
+    const ratioRows =
+      ratiosPayload.status === "fulfilled" ? ratiosPayload.value.data?.data ?? [] : [];
+
+    const n = (v: unknown) => {
+      const x = Number(v);
+      return Number.isFinite(x) ? x : null;
+    };
+
+    let outstanding: number | null = null;
+    let total: number | null = null;
+    let marketCap: number | null = null;
+    let reportDate: string | null = null;
+
+    for (const r of ratioRows) {
+      const rc = String(r.ratioCode ?? "").toUpperCase();
+      const val = n(r.value);
+      if (val == null) continue;
+      if (!reportDate && typeof r.reportDate === "string") reportDate = r.reportDate;
+
+      if ((rc === "OUTSTANDING_SHARES" || rc === "LISTED_SHARES") && outstanding == null) {
+        outstanding = val;
+      }
+      if (rc === "TOTAL_SHARES" && total == null) total = val;
+      if (rc === "MARKETCAP" && marketCap == null) marketCap = val;
+    }
+
+    if (priceRow) {
+      if (outstanding == null) outstanding = n(priceRow.listedShare) ?? n(priceRow.sharesOutstanding);
+      if (total == null) total = n(priceRow.totalShare) ?? outstanding;
+      if (marketCap == null) marketCap = n(priceRow.marketCap);
+      if (!reportDate && typeof priceRow.date === "string") reportDate = priceRow.date;
+    }
+
+    if (outstanding == null && total == null && marketCap == null) return null;
+
+    return {
+      sharesOutstanding: outstanding ?? total,
+      totalShares: total ?? outstanding,
+      marketCapReported: marketCap,
+      reportDate,
       source: "vndirect",
     };
   } catch {

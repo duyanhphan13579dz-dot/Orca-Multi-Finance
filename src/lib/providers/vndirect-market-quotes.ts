@@ -50,19 +50,22 @@ const VND_HEADERS: Record<string, string> = {
   Accept: "application/json, text/plain, */*",
   Origin: "https://dstock.vndirect.com.vn",
   Referer: "https://dstock.vndirect.com.vn/",
+  "User-Agent":
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
   "X-Requested-With": "XMLHttpRequest",
 };
 
-async function vndGet<T>(path: string, timeoutMs = 8_000): Promise<T> {
+async function vndGet<T>(path: string, timeoutMs = 5_000): Promise<T> {
   const bases = vndBases();
   let lastErr = "unreachable";
-  for (let i = 0; i < bases.length; i++) {
+  const tryN = Math.min(2, bases.length);
+  for (let i = 0; i < tryN; i++) {
     const idx = (lastGoodBase + i) % bases.length;
     const res = await httpJson<T>(`${bases[idx]}${path}`, {
       provider: VNDIRECT_MQ,
       timeoutMs,
-      retries: 2,
-      backoffBaseMs: 220,
+      retries: 1,
+      backoffBaseMs: 150,
       headers: VND_HEADERS,
     });
     if (res.ok && res.data != null) {
@@ -99,22 +102,33 @@ function mapVndPriceRow(r: VndPriceRow): Quote | null {
 let _sessionDateCache: { date: string; until: number } | null = null;
 async function getSessionDate(): Promise<string> {
   if (_sessionDateCache && Date.now() < _sessionDateCache.until) return _sessionDateCache.date;
-  const payload = await vndGet<Page<{ date?: string }>>("/v4/stock_prices?size=1&sort=date:desc", 5_000);
+  const payload = await vndGet<Page<{ date?: string }>>("/v4/stock_prices?size=1&sort=date:desc", 4_000);
   const d = payload.data?.[0]?.date;
   if (!d) throw new ProviderError("vndirect: no session date", VNDIRECT_MQ);
   const date = String(d).slice(0, 10);
-  _sessionDateCache = { date, until: Date.now() + 60_000 };
+  _sessionDateCache = { date, until: Date.now() + 120_000 };
   return date;
 }
 
-/** Page 1 first, then remaining pages in parallel batches of 4. Cap 8 pages. */
+/**
+ * Workers-safe market board fetch.
+ * Cap 3 pages × batch 2 — enough coverage without blowing subrequest limit (Error 1102).
+ */
 export async function fetchVndMarketQuotesParallel(
   sessionDate?: string,
 ): Promise<{ quotes: Quote[]; sourceTs: number | null; sessionDate: string }> {
-  const date = sessionDate ?? (await getSessionDate());
+  let date = sessionDate;
+  if (!date) {
+    try {
+      date = await getSessionDate();
+    } catch {
+      const now = new Date(Date.now() + 7 * 3600_000);
+      date = now.toISOString().slice(0, 10);
+    }
+  }
   const pageSize = 500;
-  const MAX_PAGES = 8;
-  const PAGE_TIMEOUT = 7_000;
+  const MAX_PAGES = 3;
+  const PAGE_TIMEOUT = 4_500;
   const quotes: Quote[] = [];
   let newest: number | null = null;
 
@@ -128,16 +142,28 @@ export async function fetchVndMarketQuotesParallel(
     }
   };
 
-  const first = await vndGet<Page<VndPriceRow>>(
-    `/v4/stock_prices?q=date:${date}~type:STOCK&size=${pageSize}&page=1`,
-    PAGE_TIMEOUT,
-  );
+  let first: Page<VndPriceRow>;
+  try {
+    first = await vndGet<Page<VndPriceRow>>(
+      `/v4/stock_prices?q=date:${date}~type:STOCK&size=${pageSize}&page=1`,
+      PAGE_TIMEOUT,
+    );
+  } catch {
+    first = await vndGet<Page<VndPriceRow>>(
+      `/v4/stock_prices?q=type:STOCK&size=${pageSize}&page=1&sort=date:desc`,
+      PAGE_TIMEOUT,
+    );
+  }
   ingest(first.data ?? []);
-  const totalPages = Math.min(MAX_PAGES, Math.max(1, Number(first.totalPages) || 1));
 
+  if (quotes.length >= 400) {
+    return { quotes, sourceTs: newest, sessionDate: date };
+  }
+
+  const totalPages = Math.min(MAX_PAGES, Math.max(1, Number(first.totalPages) || 1));
   if (totalPages > 1) {
     const remaining = Array.from({ length: totalPages - 1 }, (_, i) => i + 2);
-    const BATCH = 4;
+    const BATCH = 2;
     for (let i = 0; i < remaining.length; i += BATCH) {
       const batch = remaining.slice(i, i + BATCH);
       const settled = await Promise.allSettled(
@@ -151,6 +177,7 @@ export async function fetchVndMarketQuotesParallel(
       for (const s of settled) {
         if (s.status === "fulfilled") ingest(s.value.data ?? []);
       }
+      if (quotes.length >= 900) break;
     }
   }
 

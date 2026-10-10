@@ -55,7 +55,6 @@ function mergeQuotes(
   return { quotes: [...bySym.values()], sourceTs: newest, sources: [...used] };
 }
 
-/** Race VPS ∥ SSI iBoard ∥ Vietcap — no API key. */
 export async function getPublicQuotes(symbols: string[]): Promise<{
   quotes: Quote[];
   sourceTs: number | null;
@@ -154,6 +153,7 @@ async function fetchEntradeOhlcv(
   to: number,
   kind: "stock" | "index",
   limit: number,
+  signal?: AbortSignal,
 ): Promise<OhlcvBar[]> {
   const host =
     kind === "index"
@@ -173,6 +173,7 @@ async function fetchEntradeOhlcv(
     provider: PUBLIC_VN,
     timeoutMs: 6_000,
     retries: 0,
+    signal,
     headers: { Accept: "application/json" },
   });
   if (!res.ok || !res.data?.t?.length) return [];
@@ -199,6 +200,7 @@ async function fetchVpsHistOhlcv(
   from: number,
   to: number,
   limit: number,
+  signal?: AbortSignal,
 ): Promise<OhlcvBar[]> {
   const url =
     `https://histdatafeed.vps.com.vn/tradingview/history` +
@@ -215,7 +217,12 @@ async function fetchVpsHistOhlcv(
     provider: PUBLIC_VN,
     timeoutMs: 6_000,
     retries: 0,
-    headers: { Accept: "application/json" },
+    signal,
+    headers: {
+      Accept: "application/json",
+      "User-Agent":
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+    },
   });
   if (!res.ok || res.data?.s === "no_data" || !res.data?.t?.length) return [];
   const bars: OhlcvBar[] = [];
@@ -240,14 +247,18 @@ export async function getPublicOhlcv(
   symbol: string,
   limit = 250,
   kind: "stock" | "index" = "stock",
+  signal?: AbortSignal,
 ): Promise<OhlcvBar[]> {
   const sym = symbol.toUpperCase().replace(/[^A-Z0-9]/g, "");
   const now = Math.floor(Date.now() / 1000);
   const from = Math.floor(now - Math.max(limit, 30) * 86400 * 1.6);
 
   const settled = await Promise.allSettled([
-    fetchEntradeOhlcv(sym, from, now, kind, limit),
-    fetchVpsHistOhlcv(sym, from, now, limit),
+    fetchVpsHistOhlcv(sym, from, now, limit, signal),
+    import("./vndirect-dchart")
+      .then((m) => m.fetchVndDchartHistory(sym, "D", limit, signal))
+      .catch(() => [] as OhlcvBar[]),
+    fetchEntradeOhlcv(sym, from, now, kind, limit, signal),
   ]);
 
   const candidates: OhlcvBar[][] = [];
@@ -265,6 +276,16 @@ export async function getPublicOhlcv(
   });
   return candidates[0]!.slice(-limit);
 }
+
+/** VN30 constituents — first-paint board (≤30 symbols). */
+export const VN30_BOARD = [
+  "ACB", "BCM", "BID", "BVH", "CTG",
+  "FPT", "GAS", "GVR", "HDB", "HPG",
+  "MBB", "MSN", "MWG", "PLX", "POW",
+  "SAB", "SHB", "SSB", "SSI", "STB",
+  "TCB", "TPB", "VCB", "VHM", "VIB",
+  "VIC", "VJC", "VNM", "VPB", "VRE",
+] as const;
 
 /** Liquid universe for board fallback (not full HOSE). */
 export const LIQUID_BOARD = [

@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { useApi } from "@/lib/hooks";
 import type { CommodityMarket } from "@/lib/services/commodities";
-import { Badge, Chg, fmtNum, FreshnessDot, Loading, MetaLine, Unavailable } from "@/components/ui";
+import { Badge, Chg, fmtNum, FreshnessDot, Loading, MetaLine, Unavailable, ErrorState, EmptyState, FreshnessAlertBanner } from "@/components/ui";
 import { AddToWatchlist } from "@/components/watchlist-button";
 import { CurrencyConverter } from "@/components/currency-converter";
 import {
@@ -48,7 +48,7 @@ function chartRank(sym: string): number {
 export default function CommoditiesPage() {
   const [q, setQ] = useState("");
   const [group, setGroup] = useState("");
-  const { data, meta, isLoading } = useApi<Data>("/api/v1/commodities", { refreshInterval: 5 * 60_000 });
+  const { data, meta, isLoading, mutate } = useApi<Data>("/api/v1/commodities", { refreshInterval: 5 * 60_000 });
 
   const groups = useMemo(() => {
     if (data?.groups) {
@@ -161,8 +161,34 @@ export default function CommoditiesPage() {
 
       <CommodityLineChart options={chartOptions} height={320} />
 
+      {meta?.freshness && (meta.freshness === "DELAYED" || meta.freshness === "STALE" || meta.degraded) && (
+        <FreshnessAlertBanner
+          state={meta.freshness === "STALE" ? "stale" : meta.degraded ? "degraded" : "delayed"}
+          ageMs={meta.ageMs}
+          note={meta.note}
+          source="VietnamBiz"
+          className="my-3"
+        />
+      )}
+
       {!data ? (
-        <Unavailable title="VietnamBiz Data chưa phản hồi bảng giá" meta={meta} />
+        <ErrorState
+          title="VietnamBiz Data chưa phản hồi bảng giá"
+          message={meta?.note || "Không nhận được phản hồi từ máy chủ bảng giá hàng hóa. Bấm nút bên dưới để thử lại."}
+          onRetry={() => void mutate()}
+          className="mt-3"
+        />
+      ) : catalog.length === 0 ? (
+        <EmptyState
+          title="Không tìm thấy mặt hàng"
+          description={`Không có mặt hàng nào khớp với từ khóa "${q}" trong nhóm này.`}
+          actionLabel="Xóa bộ lọc"
+          onAction={() => {
+            setQ("");
+            setGroup("");
+          }}
+          className="mt-3"
+        />
       ) : (
         <div className="grid grid-cols-1 gap-2.5 md:grid-cols-2 xl:grid-cols-3">
           {catalog.map((d) => {

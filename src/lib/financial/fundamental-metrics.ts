@@ -65,28 +65,52 @@ function bandInterestCover(v: number | null): { band: Band; label: string } {
 
 function bandFcfEbit(v: number | null): { band: Band; label: string } {
   if (v == null) return { band: "na", label: "Không đủ dữ liệu" };
-  if (v < 0.5) return { band: "risk", label: "Yếu" };
-  if (v <= 1) return { band: "ok", label: "Chấp nhận" };
-  return { band: "safe", label: "Cao" };
+  if (v < 0) return { band: "risk", label: "FCF âm" };
+  if (v < 0.5) return { band: "ok", label: "Trung bình" };
+  return { band: "safe", label: "Tốt" };
 }
 
-function periodLabel(r: Record<string, unknown>): string {
-  if (typeof r.period === "string" && r.period) return r.period;
-  if (r.year != null && r.quarter != null) return `${r.year}-Q${r.quarter}`;
-  if (r.year != null) return String(r.year);
-  return "—";
+function bandPe(v: number | null): { band: Band; label: string } {
+  if (v == null) return { band: "na", label: "Không đủ dữ liệu" };
+  if (v < 0) return { band: "risk", label: "LN âm" };
+  if (v < 10) return { band: "safe", label: "Rẻ (PE thấp)" };
+  if (v <= 20) return { band: "ok", label: "Hợp lý" };
+  if (v <= 35) return { band: "ok", label: "Cao" };
+  return { band: "risk", label: "Đắt (PE cao)" };
+}
+
+function bandPb(v: number | null): { band: Band; label: string } {
+  if (v == null) return { band: "na", label: "Không đủ dữ liệu" };
+  if (v < 0) return { band: "risk", label: "VCSH âm" };
+  if (v < 1) return { band: "safe", label: "Dưới sổ sách" };
+  if (v <= 2.5) return { band: "ok", label: "Hợp lý" };
+  return { band: "risk", label: "Cao so với sổ sách" };
+}
+
+function bandCurrentRatio(v: number | null): { band: Band; label: string } {
+  if (v == null) return { band: "na", label: "Không đủ dữ liệu" };
+  if (v < 1) return { band: "risk", label: "Thanh khoản yếu" };
+  if (v <= 1.5) return { band: "ok", label: "Chấp nhận" };
+  return { band: "safe", label: "An toàn" };
+}
+
+function bandNetDebtEbitda(v: number | null): { band: Band; label: string } {
+  if (v == null) return { band: "na", label: "Không đủ dữ liệu" };
+  if (v < 0) return { band: "safe", label: "Net cash" };
+  if (v <= 2) return { band: "safe", label: "An toàn" };
+  if (v <= 4) return { band: "ok", label: "Chấp nhận" };
+  return { band: "risk", label: "Đòn bẩy cao" };
 }
 
 export interface SnapshotBundle {
   income: Record<string, unknown>[];
   balance: Record<string, unknown>[];
   cashflow: Record<string, unknown>[];
+  shares: number | null;
   price: number | null;
   closes: number[];
-  shares: number | null;
   growthYoy: { metric: string; changePct: number | null }[];
   growthQoq: { metric: string; changePct: number | null }[];
-  /** Hiệu suất đã tính server (ưu tiên) */
   performance?: {
     tsr?: number | null;
     tsr1y?: number | null;
@@ -145,7 +169,6 @@ export function buildSnapshotMetrics(b: SnapshotBundle) {
   const std = n(b0.shortTermDebt);
   const ltd = n(b0.longTermDebt);
   const totalLiab = n(b0.totalLiabilities);
-  // Do not treat the entire balance-sheet liability total as interest-bearing debt.
   const debt = std != null || ltd != null ? (std ?? 0) + (ltd ?? 0) : null;
 
   const ocf = n(c0.operatingCashFlow);
@@ -161,12 +184,11 @@ export function buildSnapshotMetrics(b: SnapshotBundle) {
 
   const yoyRev =
     b.growthYoy.find((g) => /revenue|doanh thu/i.test(g.metric))?.changePct ??
-    (rev != null && revPrev != null && revPrev !== 0 ? (rev - revPrev) / revPrev : null);
+    (rev != null && revPrev != null && revPrev !== 0 ? (rev - revPrev) / Math.abs(revPrev) : null);
   const yoyNi =
-    b.growthYoy.find((g) => /netIncome|lnst|lợi nhuận/i.test(g.metric))?.changePct ??
-    (ni != null && niPrev != null && niPrev !== 0 ? (ni - niPrev) / niPrev : null);
-  const qoqRev =
-    b.growthQoq.find((g) => /revenue|doanh thu/i.test(g.metric))?.changePct ?? null;
+    b.growthYoy.find((g) => /net.?income|lợi nhuận/i.test(g.metric))?.changePct ??
+    (ni != null && niPrev != null && niPrev !== 0 ? (ni - niPrev) / Math.abs(niPrev) : null);
+  const qoqRev = b.growthQoq.find((g) => /revenue|doanh thu/i.test(g.metric))?.changePct ?? null;
 
   const grossMargin = div(gp, rev);
   const ebitdaMargin = div(ebitda, rev);
@@ -174,15 +196,17 @@ export function buildSnapshotMetrics(b: SnapshotBundle) {
   const roe = div(ni, equity);
   const roa = div(ni, assets);
   const nopat = ebit != null ? ebit * 0.8 : null;
-  const invested =
+  const investedCapital =
     equity != null && debt != null && cash != null
       ? equity + debt - cash
-      : null;
-  const roic = div(nopat, invested);
+      : equity != null && debt != null
+        ? equity + debt
+        : null;
+  const roic = div(nopat, investedCapital);
+
   const assetTurnover = div(rev, assets);
   const invTurnover = div(rev, inventory);
   const recvTurnover = div(rev, receivables);
-
   const dio = invTurnover != null && invTurnover > 0 ? 365 / invTurnover : null;
   const dso = recvTurnover != null && recvTurnover > 0 ? 365 / recvTurnover : null;
   const ccc = dio != null || dso != null ? (dio ?? 0) + (dso ?? 0) : null;
@@ -192,6 +216,8 @@ export function buildSnapshotMetrics(b: SnapshotBundle) {
   const interestCover = div(ebit, interest != null ? Math.abs(interest) : null);
   const fcfEbit = div(fcf, ebit);
   const debtEbitda = div(debt, ebitda);
+  const netDebt = debt != null && cash != null ? debt - cash : debt;
+  const netDebtEbitda = div(netDebt, ebitda != null && ebitda > 0 ? ebitda : null);
   const currentRatio = div(currentAssets, currentLiab);
   const quickRatio = div(
     currentAssets != null && inventory != null ? currentAssets - inventory : currentAssets,
@@ -242,8 +268,12 @@ export function buildSnapshotMetrics(b: SnapshotBundle) {
     b.overrides?.peg ??
     (pe != null && yoyNi != null && yoyNi > 0 ? pe / (yoyNi * 100) : null);
 
+  let grahamVnd: number | null = null;
+  if (epsVnd != null && epsVnd > 0 && bvpsVnd != null && bvpsVnd > 0) {
+    grahamVnd = Math.sqrt(22.5 * epsVnd * bvpsVnd);
+  }
   const dcfBase = b.overrides?.dcfBase ?? null;
-  const grahamQuote = b.overrides?.graham ?? null;
+  const grahamQuote = b.overrides?.graham ?? vndPerShareToQuote(grahamVnd);
   let upsidePct = b.overrides?.upsidePct ?? null;
   if (upsidePct == null && dcfBase != null && priceQuote != null && priceQuote > 0) {
     upsidePct = (dcfBase / priceQuote - 1) * 100;
@@ -261,8 +291,11 @@ export function buildSnapshotMetrics(b: SnapshotBundle) {
   const alpha = perf?.alpha ?? null;
   const divY = perf?.dividendYield ?? b.overrides?.dividendYield ?? null;
   const payout = perf?.payoutRatio ?? null;
-  const perfNote = perf?.note;
 
+  const peBand = bandPe(pe);
+  const pbBand = bandPb(pb);
+  const crBand = bandCurrentRatio(currentRatio);
+  const ndeBand = bandNetDebtEbitda(netDebtEbitda);
   const deBand = bandDebtEquity(debtEquity);
   const eaBand = bandEbitdaAssets(ebitdaAssets);
   const icBand = bandInterestCover(interestCover);
@@ -279,182 +312,66 @@ export function buildSnapshotMetrics(b: SnapshotBundle) {
     { key: "roa", labelVi: "ROA", value: roa, format: "pct" },
     { key: "roic", labelVi: "ROIC (ước tính)", value: roic, format: "pct", note: "NOPAT≈EBIT×0.8" },
     { key: "at", labelVi: "Vòng quay tài sản", value: assetTurnover, format: "x" },
-    { key: "it", labelVi: "Vòng quay tồn kho", value: invTurnover, format: "x" },
-    { key: "rt", labelVi: "Vòng quay phải thu", value: recvTurnover, format: "x" },
-    {
-      key: "ccc",
-      labelVi: "Chu kỳ tiền mặt (CCC)",
-      value: ccc,
-      format: "days",
-      note: "Ước tính DIO+DSO",
-    },
   ];
 
-  const investment: MetricCell[] = [
-    {
-      key: "eps",
-      labelVi: "EPS",
-      value: vndPerShareToQuote(epsVnd),
-      format: "money",
-      note: shares == null ? "Thiếu SL cổ phiếu" : "Đơn vị giá quote",
-    },
-    { key: "epsG", labelVi: "Tăng trưởng EPS YoY", value: yoyNi, format: "pct", note: "Xấp xỉ theo LNST YoY" },
-    {
-      key: "divY",
-      labelVi: "Tỷ suất cổ tức",
-      value: divY,
-      format: "pct",
-      note: divY != null ? "VNDirect ratios" : "Chưa có lịch sử cổ tức",
-    },
-    {
-      key: "payout",
-      labelVi: "Tỷ lệ chi trả cổ tức",
-      value: payout,
-      format: "pct",
-      note: payout != null ? "Ước tính" : "Không đủ dữ liệu",
-    },
-    {
-      key: "tsr",
-      labelVi: "Total Shareholder Return",
-      value: tsr,
-      format: "pct",
-      note: perf?.tsr1y != null ? "~12 tháng (giá, chưa gồm cổ tức)" : "Theo chuỗi giá (chưa gồm cổ tức)",
-    },
-    {
-      key: "beta",
-      labelVi: "Beta",
-      value: beta,
-      format: "num",
-      note: beta != null ? (perfNote ?? "vs VNINDEX") : "Cần hiệp phương sai với VN-Index",
-    },
-    {
-      key: "sharpe",
-      labelVi: "Sharpe Ratio",
-      value: sharpe,
-      format: "num",
-      note: sharpe != null ? "rf≈5%, annualized" : "Không đủ dữ liệu",
-    },
-    {
-      key: "alpha",
-      labelVi: "Alpha vs VN-Index",
-      value: alpha,
-      format: "pct",
-      note: alpha != null ? "Jensen, annualized" : "Không đủ dữ liệu",
-    },
-  ];
-
-  const debtPillars: MetricCell[] = [
-    {
-      key: "de",
-      labelVi: "① Cơ cấu nợ (Nợ/VCSH)",
-      value: debtEquity,
-      format: "x",
-      band: deBand.band,
-      bandLabel: deBand.label,
-    },
-    {
-      key: "ea",
-      labelVi: "② Hiệu quả TS (EBITDA/TTS)",
-      value: ebitdaAssets,
-      format: "pct",
-      band: eaBand.band,
-      bandLabel: eaBand.label,
-    },
-    {
-      key: "ic",
-      labelVi: "③ Khả năng trả lãi",
-      value: interestCover,
-      format: "x",
-      band: icBand.band,
-      bandLabel: icBand.label,
-    },
-    {
-      key: "fe",
-      labelVi: "④ Chất lượng DT (FCF/EBIT)",
-      value: fcfEbit,
-      format: "pct",
-      band: feBand.band,
-      bandLabel: feBand.label,
-    },
-  ];
-
-  const healthExtra: MetricCell[] = [
-    { key: "debitda", labelVi: "Debt/EBITDA", value: debtEbitda, format: "x" },
-    { key: "cr", labelVi: "Current Ratio", value: currentRatio, format: "x" },
-    { key: "qr", labelVi: "Quick Ratio", value: quickRatio, format: "x" },
-    {
-      key: "z",
-      labelVi: "Altman Z-Score",
-      value: altman,
-      format: "num",
-      band: altman == null ? "na" : altman > 2.99 ? "safe" : altman > 1.81 ? "ok" : "risk",
-      bandLabel:
-        altman == null ? "Không đủ dữ liệu" : altman > 2.99 ? "An toàn" : altman > 1.81 ? "Cảnh báo" : "Nguy hiểm",
-      note: "Công thức gốc cho DN phi tài chính",
-    },
-  ];
-
-  const valuation: MetricCell[] = [
-    { key: "pe", labelVi: "P/E", value: pe, format: "x" },
-    { key: "pb", labelVi: "P/B", value: pb, format: "x" },
-    { key: "ps", labelVi: "P/S", value: ps, format: "x" },
-    { key: "eve", labelVi: "EV/EBITDA", value: evEbitda, format: "x" },
-    { key: "peg", labelVi: "PEG", value: peg, format: "x" },
-    {
-      key: "upside",
-      labelVi: "Upside định giá",
-      value: upsidePct != null ? upsidePct / 100 : null,
-      format: "pct",
-    },
+  const leverage: MetricCell[] = [
+    { key: "de", labelVi: "Nợ / VCSH", value: debtEquity, format: "x", band: deBand.band, bandLabel: deBand.label },
+    { key: "ndEbitda", labelVi: "Net Debt / EBITDA", value: netDebtEbitda, format: "x", band: ndeBand.band, bandLabel: ndeBand.label },
+    { key: "debtEbitda", labelVi: "Nợ / EBITDA", value: debtEbitda, format: "x" },
+    { key: "ic", labelVi: "Interest coverage", value: interestCover, format: "x", band: icBand.band, bandLabel: icBand.label },
+    { key: "cr", labelVi: "Current ratio", value: currentRatio, format: "x", band: crBand.band, bandLabel: crBand.label },
+    { key: "qr", labelVi: "Quick ratio", value: quickRatio, format: "x" },
+    { key: "ea", labelVi: "EBITDA / Assets", value: ebitdaAssets, format: "pct", band: eaBand.band, bandLabel: eaBand.label },
+    { key: "altman", labelVi: "Altman Z (ước tính)", value: altman, format: "num", note: "Công thức cổ điển" },
   ];
 
   const cashflow: MetricCell[] = [
-    { key: "ocf", labelVi: "CFO (HĐKD)", value: ocf, format: "money" },
-    { key: "fcf", labelVi: "FCF", value: fcf, format: "money", note: "CFO − |Capex|" },
-    { key: "capex", labelVi: "Capex", value: capex != null ? -Math.abs(capex) : null, format: "money" },
-    {
-      key: "fcfYield",
-      labelVi: "FCF Yield",
-      value: mcap != null && fcf != null && mcap > 0 ? fcf / mcap : null,
-      format: "pct",
-    },
-    {
-      key: "ocfNi",
-      labelVi: "CFO / LNST",
-      value: div(ocf, ni),
-      format: "x",
-    },
+    { key: "ocf", labelVi: "OCF", value: ocf, format: "money" },
+    { key: "fcf", labelVi: "FCF", value: fcf, format: "money" },
+    { key: "fcfEbit", labelVi: "FCF / EBIT", value: fcfEbit, format: "x", band: feBand.band, bandLabel: feBand.label },
+    { key: "ccc", labelVi: "Cash conversion (ngày)", value: ccc, format: "days" },
   ];
 
-  return {
-    operating,
-    investment,
-    debtPillars,
-    healthExtra,
-    valuation,
-    cashflow,
-    period: periodLabel(i0),
-  };
+  const valuation: MetricCell[] = [
+    { key: "pe", labelVi: "P/E", value: pe, format: "x", band: peBand.band, bandLabel: peBand.label },
+    { key: "pb", labelVi: "P/B", value: pb, format: "x", band: pbBand.band, bandLabel: pbBand.label },
+    { key: "ps", labelVi: "P/S", value: ps, format: "x" },
+    { key: "evEbitda", labelVi: "EV/EBITDA", value: evEbitda, format: "x" },
+    { key: "peg", labelVi: "PEG", value: peg, format: "x" },
+    { key: "graham", labelVi: "Graham (quote)", value: grahamQuote, format: "num", note: "√(22.5×EPS×BVPS)" },
+    { key: "dcf", labelVi: "DCF base (quote)", value: dcfBase, format: "num" },
+    { key: "upside", labelVi: "Upside vs DCF %", value: upsidePct, format: "pct" },
+  ];
+
+  const performance: MetricCell[] = [
+    { key: "tsr", labelVi: "TSR / lợi nhuận giá", value: tsr, format: "pct" },
+    { key: "beta", labelVi: "Beta", value: beta, format: "num" },
+    { key: "sharpe", labelVi: "Sharpe", value: sharpe, format: "num" },
+    { key: "alpha", labelVi: "Alpha", value: alpha, format: "pct" },
+    { key: "divY", labelVi: "Dividend yield", value: divY, format: "pct" },
+    { key: "payout", labelVi: "Payout ratio", value: payout, format: "pct" },
+  ];
+
+  return { operating, leverage, cashflow, valuation, performance };
 }
 
 export function formatMetric(m: MetricCell): string {
-  if (m.value == null || !Number.isFinite(m.value)) return "Không đủ dữ liệu";
+  if (m.value == null || !Number.isFinite(m.value)) return "—";
   const v = m.value;
   switch (m.format) {
     case "pct":
       return `${(v * 100).toFixed(Math.abs(v) >= 0.1 ? 1 : 2)}%`;
     case "x":
-      return `${v.toFixed(v >= 10 ? 1 : 2)}x`;
-    case "days":
-      return `${Math.round(v)} ngày`;
+      return `${v.toFixed(2)}x`;
     case "money": {
       const abs = Math.abs(v);
-      if (abs >= 1e12) return `${(v / 1e12).toFixed(2)}T`;
-      if (abs >= 1e9) return `${(v / 1e9).toFixed(2)}B`;
-      if (abs >= 1e6) return `${(v / 1e6).toFixed(2)}M`;
-      if (abs >= 1000) return v.toLocaleString("vi-VN", { maximumFractionDigits: 0 });
-      return v.toLocaleString("vi-VN", { maximumFractionDigits: 2 });
+      if (abs >= 1e12) return `${(v / 1e12).toFixed(2)} nghìn tỷ`;
+      if (abs >= 1e9) return `${(v / 1e9).toFixed(2)} tỷ`;
+      if (abs >= 1e6) return `${(v / 1e6).toFixed(1)} tr`;
+      return v.toLocaleString("vi-VN");
     }
+    case "days":
+      return `${Math.round(v)} ngày`;
     default:
       return v.toLocaleString("vi-VN", { maximumFractionDigits: 2 });
   }

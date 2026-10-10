@@ -22,10 +22,13 @@ export default function StockSymbolLayout({
     params.then((p) => setSymbol(p.symbol.toUpperCase()));
   }, [params]);
 
+  // P6-A: soft shell — keepPreviousData + short timeout; never gate children on full payload
   const { res, data, meta, isLoading } = useApi<VnStockDetail>(
     symbol ? `/api/v1/stocks/${symbol}` : null,
     {
       refreshInterval: 12_000,
+      keepPreviousData: true,
+      timeoutMs: 12_000,
     },
   );
 
@@ -61,7 +64,6 @@ export default function StockSymbolLayout({
     }
   }, [symbol]);
 
-  // Collapse the sticky hero to a slim bar once it pins to the top.
   useEffect(() => {
     const sentinel = sentinelRef.current;
     if (!sentinel) return;
@@ -73,11 +75,11 @@ export default function StockSymbolLayout({
     return () => io.disconnect();
   }, []);
 
-  if (!symbol || (isLoading && !res)) {
-    // Single brand loader — do not render children (page has its own Loading)
+  // P6-A: only wait for symbol resolve — render soft hero + children immediately
+  if (!symbol) {
     return (
       <div className="stock-workspace stock-page-body">
-        <Loading rows={6} full label="Đang tải dữ liệu cổ phiếu" />
+        <Loading rows={4} full label="Đang mở trang cổ phiếu…" />
       </div>
     );
   }
@@ -90,6 +92,7 @@ export default function StockSymbolLayout({
     ff != null &&
     [ff.buyVal, ff.sellVal, ff.netVal].some((v) => v != null && Number(v) !== 0);
   const floor = data?.profile?.floor ?? null;
+  const heroLoading = isLoading && !data && !res;
 
   return (
     <div className="stock-workspace stock-page-body">
@@ -103,6 +106,8 @@ export default function StockSymbolLayout({
                 {floor ? <span className="stock-floor-badge">{floor}</span> : null}
                 {(data?.name || q?.name) ? (
                   <span className="stock-hero-name">{data?.name || q?.name}</span>
+                ) : heroLoading ? (
+                  <span className="stock-hero-name text-text-muted">Đang tải…</span>
                 ) : null}
                 <FreshnessDot status={meta?.freshness} ageMs={meta?.ageMs} />
                 <AddToWatchlist assetType="stock" symbol={symbol} />
@@ -149,7 +154,9 @@ export default function StockSymbolLayout({
                 </div>
               ) : (
                 <p className="stock-hero-empty mt-2">
-                  Giá phiên tạm chưa có — xem các tab bên dưới.
+                  {heroLoading
+                    ? "Đang lấy giá phiên…"
+                    : "Giá phiên tạm chưa có — xem các tab bên dưới."}
                 </p>
               )}
             </div>
@@ -227,6 +234,7 @@ export default function StockSymbolLayout({
           <StockTabs symbol={symbol} />
         </Panel>
       </div>
+      {/* P6-A: children always mount — parallel section paint */}
       {children}
     </div>
   );

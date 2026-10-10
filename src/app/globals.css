@@ -228,3 +228,94 @@ a {
   color: inherit;
   text-decoration: none;
 }
+
+/* Touch Action Optimization: Eliminate 300ms tap delay on mobile devices */
+button,
+a,
+input,
+select,
+textarea,
+[role="button"] {
+  touch-action: manipulation;
+}
+
+/* Utilities for Mobile smooth experience */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Phase 5: Zero-Overflow Media & Text Foundations */
+img,
+video,
+canvas,
+svg {
+  max-width: 100%;
+}
+
+pre,
+code {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.truncate-safe {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.break-word-safe {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+/* Phase 5: Standard Responsive Table Scrolling with iOS inertial scroll */
+.table-scroll-wrap,
+.table-scroll,
+.table-responsive {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+}
+
+/* Base stock table styles */
+.stock-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-variant-numeric: tabular-nums;
+}
+.stock-table th,
+.stock-table td {
+  padding: 0.45rem 0.6rem;
+  font-size: 0.75rem;
+  line-height: 1.3;
+}
+
+/* Phase 5: Touch Target Usability (Mobile Thumb-Friendly >= 40-44px) */
+@media (max-width: 768px) {
+  .touch-target {
+    min-width: 44px;
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .touch-target-sm {
+    min-width: 40px;
+    min-height: 40px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+}
+

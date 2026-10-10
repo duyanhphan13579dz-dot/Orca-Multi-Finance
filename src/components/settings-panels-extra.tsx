@@ -179,23 +179,31 @@ export function ProfileTab({ onOpenSecurity }: { onOpenSecurity?: () => void }) 
   const { data: me, mutate } = useApi<{ user: { id: string; email: string; name: string | null } }>(
     "/api/v1/auth/me",
   );
-  const [name, setName] = useState("");
-  const [bio, setBio] = useState("");
+  const defaultName = p.displayName || me?.user?.name || "";
+  const defaultBio = p.bio || "";
+  const [name, setName] = useState(defaultName);
+  const [bio, setBio] = useState(defaultBio);
+  const [prevDefaultName, setPrevDefaultName] = useState(defaultName);
+  const [prevDefaultBio, setPrevDefaultBio] = useState(defaultBio);
   const [dirty, setDirty] = useState(false);
   const [bioDirty, setBioDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [copied, setCopied] = useState(false);
 
-  useEffect(() => {
-    if (dirty) return;
-    setName(p.displayName || me?.user?.name || "");
-  }, [p.displayName, me?.user?.name, dirty]);
+  if (prevDefaultName !== defaultName) {
+    setPrevDefaultName(defaultName);
+    if (!dirty) {
+      setName(defaultName);
+    }
+  }
 
-  useEffect(() => {
-    if (bioDirty) return;
-    setBio(p.bio || "");
-  }, [p.bio, bioDirty]);
+  if (prevDefaultBio !== defaultBio) {
+    setPrevDefaultBio(defaultBio);
+    if (!bioDirty) {
+      setBio(defaultBio);
+    }
+  }
 
   const displayName = name;
   const email = me?.user?.email ?? null;

@@ -306,8 +306,12 @@ export function computeStockTechReco(
   const patternHits: PatternHit[] = patterns.slice(0, 6).map((p) => ({
     name: p.name,
     nameVi: p.nameVi,
-    type: p.type,
-    reliability: p.reliability,
+    type: (p.type === "bullish" || p.type === "bearish" || p.type === "neutral"
+      ? p.type
+      : "neutral") as PatternHit["type"],
+    reliability: (p.reliability === "high" || p.reliability === "low" || p.reliability === "medium"
+      ? p.reliability
+      : "medium") as PatternHit["reliability"],
   }));
   const top = [...factors].sort((a, b) => Math.abs(b.weight) - Math.abs(a.weight)).slice(0, 3);
   const summary =
@@ -388,7 +392,7 @@ async function enrichLlm(
   if (!llmConfigured()) return { llm: null, status: "skipped" };
   const started = Date.now();
   try {
-    const res = await llmChat({
+    const res = await llmChat("analysis", {
       system: SYS,
       user: JSON.stringify({ quant, contract }),
       temperature: 0.2,

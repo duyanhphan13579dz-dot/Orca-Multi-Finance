@@ -25,9 +25,10 @@ export interface VnProviderLayout {
 }
 
 export function vnProviderLayout(): VnProviderLayout {
-  // VNDIRECT là primary cho market data (chỉ số, bảng giá, quote, OHLCV, universe).
-  // SSI FastConnect là fallbackMarket khi đã cấu hình.
-  // Financial statements primary vẫn là VNDIRECT.
+  // Market + BCTC ưu tiên nguồn công khai (không API key).
+  // VNDirect DStock/api-finfo = primary public cho quotes + financial statements.
+  // SSI FastConnect (credential) chỉ là optional enrichment — không bắt buộc.
+  // VNStock API (key) = secondary BCTC khi có cấu hình.
   const ssiLive = ssiFcConfigured();
   return {
     market: {
@@ -55,7 +56,7 @@ const vndirectProvider: FinancialProvider = {
       sourceId: "vndirect-fs",
       role: "PRIMARY_SOURCE_OF_TRUTH",
       priority: 1,
-      note: "VNDirect DStock / api-finfo financial_statements — nguồn chính",
+      note: "VNDirect DStock / api-finfo financial_statements — nguồn công khai (không API key)",
     };
   },
 };

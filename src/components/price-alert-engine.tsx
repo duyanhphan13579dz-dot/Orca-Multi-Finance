@@ -22,21 +22,24 @@ export function PriceAlertEngine() {
   const [pollMs, setPollMs] = useState(5_000);
   const [symbols, setSymbols] = useState<string[]>([]);
 
+  const [prevEnabled, setPrevEnabled] = useState(enabled);
+  if (prevEnabled !== enabled) {
+    setPrevEnabled(enabled);
+    if (!enabled) setSymbols([]);
+  }
+
   useEffect(() => {
     const sync = () => {
       const cfg = loadWebhookConfig();
       setPollMs(cfg.pollMs && cfg.pollMs >= 3000 ? cfg.pollMs : 5_000);
     };
-    sync();
+    window.setTimeout(() => sync(), 0);
     window.addEventListener("orca-webhook-changed", sync as EventListener);
     return () => window.removeEventListener("orca-webhook-changed", sync as EventListener);
   }, []);
 
   useEffect(() => {
-    if (!enabled) {
-      setSymbols([]);
-      return;
-    }
+    if (!enabled) return;
     const refresh = () => {
       const alerts = loadAlerts().filter((a) => a.status === "active");
       const syms = new Set(activeSymbols(alerts));
@@ -56,7 +59,7 @@ export function PriceAlertEngine() {
       }
       setSymbols([...syms].slice(0, 40));
     };
-    refresh();
+    window.setTimeout(() => refresh(), 0);
     const t = window.setInterval(refresh, 15_000);
     window.addEventListener("orca-alerts-changed", refresh as EventListener);
     return () => {

@@ -3,7 +3,7 @@ import type { ProviderStatus } from "./types";
 
 /**
  * Provider health registry + circuit breaker (in-process, persisted best-effort).
- * Softened: threshold 8 failures, open 12s — recovers faster, fewer unavailable states.
+ * P4-D: threshold 6 failures, open 8s — recover faster under Workers transient blips.
  */
 
 interface ProviderState {
@@ -22,8 +22,8 @@ interface ProviderState {
   events: { at: string; event: string; message: string | null; latencyMs: number | null }[];
 }
 
-const CIRCUIT_FAILURE_THRESHOLD = 8;
-const CIRCUIT_OPEN_MS = 12_000;
+const CIRCUIT_FAILURE_THRESHOLD = 6;
+const CIRCUIT_OPEN_MS = 8_000;
 const MAX_EVENTS = 20;
 
 const registry = new Map<string, ProviderState>();

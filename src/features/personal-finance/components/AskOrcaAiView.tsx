@@ -205,22 +205,42 @@ Bất kỳ câu hỏi nào cậu đặt ra (chia lương, phân bổ thưởng T
         text: m.text,
       }));
 
-      const res = await fetch('/api/ask-orca', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          question: textToSend,
-          snapshotFacts,
-          conversationHistory,
-        }),
-      });
+      let answerText = '';
+      try {
+        const res = await fetch('/api/ask-orca', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            question: textToSend,
+            snapshotFacts,
+            conversationHistory,
+          }),
+        });
 
-      if (!res.ok) {
-        throw new Error('Server returned ' + res.status);
+        if (res.ok) {
+          const data = await res.json();
+          answerText = data?.data?.answer || data?.answer || '';
+        }
+      } catch (netErr) {
+        console.warn('Không thể kết nối API Bé Orca, sử dụng phân tích cục bộ:', netErr);
       }
 
-      const data = await res.json();
-      const answerText = data.answer || 'Bé Orca đang suy nghĩ một chút nè, cậu thử hỏi lại bé nha! 🐳';
+      if (!answerText) {
+        answerText = `Chào cậu nhen! Bé Orca đã phân tích trực tiếp theo sổ kỳ ${currentSnapshot.period} của cậu nè: 🐳✨
+
+🐳 1. NHẬN DIỆN BỐI CẢNH CỦA CẬU:
+• Lương thực nhận hiện tại: ${formatVND(netIncome)}/tháng (${location}).
+• Chi phí sinh hoạt: ${formatVND(totalExpenses)} (Chi cố định đang chiếm ${fixedCostRatio}% lương).
+• Đệm an toàn: ${emergencyMonths} tháng chi tiêu.
+
+📊 2. BẢNG PHÂN BỔ ĐO NI ĐÓNG GIÀY:
+• 🏠 Thiết yếu bắt buộc (50%): ${formatVND(Math.round(netIncome * 0.5))} (Cậu đang chi ${formatVND(fixedExpenses)}, ${fixedExpenses > netIncome * 0.5 ? 'hơi cao, cần tối ưu' : 'rất an toàn'}).
+• 🐷 Nuôi heo đất & Đầu tư (20%): ${formatVND(Math.round(netIncome * 0.2))} (Ưu tiên gia cố quỹ khẩn cấp lên đủ 3-6 tháng).
+• ☕ Chi tiêu linh hoạt (30%): ${formatVND(Math.round(netIncome * 0.3))} cho tận hưởng cuộc sống và học tập.
+
+✨ 3. HÀNH ĐỘNG TUẦN NÀY:
+Trích ngay ${formatVND(Math.round(netIncome * 0.2))} vào tài khoản tiết kiệm riêng ngay ngày nhận lương nhé! 💖`;
+      }
 
       const orcaMessage: ChatMessage = {
         id: nextMessageId('orca'),
@@ -237,31 +257,7 @@ Bất kỳ câu hỏi nào cậu đặt ra (chia lương, phân bổ thưởng T
 
       setMessages((prev) => [...prev, orcaMessage]);
     } catch (err) {
-      console.error('Lỗi khi gọi Bé Orca AI:', err);
-      // Fallback sâu sát bối cảnh
-      const fallbackText = `Chào cậu nhen! Bé Orca đã phân tích trực tiếp theo sổ kỳ ${currentSnapshot.period} của cậu nè: 🐳✨
-
-🐳 1. NHẬN DIỆN BỐI CẢNH CỦA CẬU:
-• Lương thực nhận hiện tại: ${formatVND(netIncome)}/tháng (${location}).
-• Chi phí sinh hoạt: ${formatVND(totalExpenses)} (Chi cố định đang chiếm ${fixedCostRatio}% lương).
-• Đệm an toàn: ${emergencyMonths} tháng chi tiêu.
-
-📊 2. BẢNG PHÂN BỔ ĐO NI ĐÓNG GIÀY:
-• 🏠 Thiết yếu bắt buộc (50%): ${formatVND(Math.round(netIncome * 0.5))} (Cậu đang chi ${formatVND(fixedExpenses)}, ${fixedExpenses > netIncome * 0.5 ? 'hơi cao, cần tối ưu' : 'rất an toàn'}).
-• 🐷 Nuôi heo đất & Đầu tư (20%): ${formatVND(Math.round(netIncome * 0.2))} (Ưu tiên gia cố quỹ khẩn cấp lên đủ 3-6 tháng).
-• ☕ Chi tiêu linh hoạt (30%): ${formatVND(Math.round(netIncome * 0.3))} cho tận hưởng cuộc sống và học tập.
-
-✨ 3. HÀNH ĐỘNG TUẦN NÀY:
-Trích ngay ${formatVND(Math.round(netIncome * 0.2))} vào tài khoản tiết kiệm riêng ngay ngày nhận lương nhé! 💖`;
-
-      const orcaMessage: ChatMessage = {
-        id: nextMessageId('orca'),
-        sender: 'orca',
-        text: fallbackText,
-        mood: 'happy',
-        timestamp: new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }),
-      };
-      setMessages((prev) => [...prev, orcaMessage]);
+      console.error('Lỗi xử lý tin nhắn:', err);
     } finally {
       setIsLoading(false);
     }

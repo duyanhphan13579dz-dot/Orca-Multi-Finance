@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
 
 /**
@@ -16,12 +16,12 @@ export function RouteProgress() {
   const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
   const pathnameRef = useRef(pathname);
 
-  const clearTimers = () => {
+  const clearTimers = useCallback(() => {
     for (const t of timers.current) clearTimeout(t);
     timers.current = [];
-  };
+  }, []);
 
-  const start = () => {
+  const start = useCallback(() => {
     clearTimers();
     setVisible(true);
     setActive(true);
@@ -33,9 +33,9 @@ export function RouteProgress() {
       setTimeout(() => setWidth(78), 420),
       setTimeout(() => setWidth(86), 900),
     );
-  };
+  }, [clearTimers]);
 
-  const finish = () => {
+  const finish = useCallback(() => {
     clearTimers();
     setWidth(100);
     setActive(false);
@@ -45,7 +45,7 @@ export function RouteProgress() {
         setWidth(0);
       }, 220),
     );
-  };
+  }, [clearTimers]);
 
   useEffect(() => {
     const onStart = () => start();
@@ -54,14 +54,14 @@ export function RouteProgress() {
       window.removeEventListener("orca:nav-start", onStart);
       clearTimers();
     };
-  }, []);
+  }, [start, clearTimers]);
 
   useEffect(() => {
     if (pathnameRef.current === pathname) return;
     pathnameRef.current = pathname;
     // Route committed — complete the bar
     finish();
-  }, [pathname]);
+  }, [pathname, finish]);
 
   if (!visible && width === 0) return null;
 

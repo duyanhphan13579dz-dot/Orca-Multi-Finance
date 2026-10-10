@@ -5,7 +5,9 @@ import { getSecurity, sectorOf } from "../vn/master";
 import { defaultTechnicalUniverse } from "../vn/vn100";
 import { getVnQuotes } from "./stocks";
 import { batchVnOhlcv, SCREENER_UNIVERSE_CAP } from "./ohlcv-batch";
-import type { Meta } from "../types";
+import { rankPatternsWithContext } from "./screener-tech";
+import { WORKERS_BUDGET } from "../data-engine/workers-budget";
+import type { Meta, Quote } from "../types";
 
 export type CandlestickScreenRow = {
   symbol: string;
@@ -72,7 +74,6 @@ function isAlertWorthy(top: DetectedCandlePattern): boolean {
 export async function screenCandlestickPatterns(
   opts: CandlestickScreenOpts = {},
 ): Promise<CandlestickScreenResult> {
-  // Ưu tiên rổ VN100 — quét mẫu nến 2–3 cây mới nhất
   const universe = (opts.symbols?.length ? opts.symbols : defaultTechnicalUniverse(SCREENER_UNIVERSE_CAP))
     .map((s) => s.toUpperCase())
     .filter(Boolean)
@@ -84,14 +85,15 @@ export async function screenCandlestickPatterns(
 
   const [ohlcvMap, quotesPack] = await Promise.all([
     batchVnOhlcv(universe, {
-      bars: 60,
-      concurrency: 16,
-      perSymbolMs: 2_500,
-      deadlineMs: 22_000,
+      bars: Math.max(60, Math.min(90, WORKERS_BUDGET.screenerBars)),
+      concurrency: WORKERS_BUDGET.ohlcvBatchConcurrency,
+      perSymbolMs: WORKERS_BUDGET.ohlcvPerSymbolMs,
+      deadlineMs: WORKERS_BUDGET.techScreenWallMs,
+      resilient: true,
     }),
     getVnQuotes(universe).catch(() => null),
   ]);
-  const quoteBy = new Map((quotesPack?.quotes ?? []).map((q) => [q.symbol.toUpperCase(), q]));
+  const quoteBy = new Map<string, Quote>((quotesPack?.quotes ?? []).map((q) => [q.symbol.toUpperCase(), q]));
 
   const rows: CandlestickScreenRow[] = [];
   let skipped = 0;
@@ -114,15 +116,10 @@ export async function screenCandlestickPatterns(
     patterns = patterns.filter((p) => p.category !== "neutral" || p.score >= 70);
     if (!patterns.length) continue;
 
-    patterns.sort((a, b) => {
-      const ra = isReversal(a) ? 1 : 0;
-      const rb = isReversal(b) ? 1 : 0;
-      if (rb !== ra) return rb - ra;
-      const ageA = a.ageBars ?? 0;
-      const ageB = b.ageBars ?? 0;
-      if (ageA !== ageB) return ageA - ageB;
-      return b.score - a.score;
-    });
+    // Re-rank with RSI / trend / volume / MACD context for higher precision
+    patterns = rankPatternsWithContext(patterns, pack.bars);
+    patterns = patterns.filter((p) => p.score >= minScore);
+    if (!patterns.length) continue;
 
     const top = patterns[0]!;
     const q = quoteBy.get(sym);
@@ -140,7 +137,6 @@ export async function screenCandlestickPatterns(
     });
   }
 
-  // Ưu tiên: cảnh báo → nến mới nhất (ageBars) → điểm cao
   rows.sort((a, b) => {
     if (a.alertWorthy !== b.alertWorthy) return a.alertWorthy ? -1 : 1;
     const ageA = a.topPattern.ageBars ?? 99;
@@ -156,7 +152,7 @@ export async function screenCandlestickPatterns(
     meta: buildMeta({
       source: "candlestick-engine+ohlcv",
       sourceTimestampMs: Date.now(),
-      note: `VN100 · mẫu nến 2–3 cây mới nhất · minScore≥${minScore} · ${cat}`,
+      note: `VN100 · nến 2–3 cây + context RSI/trend/vol · minScore≥${minScore} · ${cat}`,
       hasData: rows.length > 0,
       partial: skipped > 0,
     }),
@@ -200,7 +196,9 @@ export async function screenCryptoCandlePatterns(
       if (cat !== "all") patterns = patterns.filter((p) => p.category === cat);
       patterns = patterns.filter((p) => p.score >= minScore && p.category !== "neutral");
       if (!patterns.length) continue;
-      patterns.sort((a, b) => (isReversal(b) ? 1 : 0) - (isReversal(a) ? 1 : 0) || b.score - a.score);
+      patterns = rankPatternsWithContext(patterns, bars);
+      patterns = patterns.filter((p) => p.score >= minScore);
+      if (!patterns.length) continue;
       const top = patterns[0]!;
       const last = bars[bars.length - 1]!;
       const prev = bars.length >= 2 ? bars[bars.length - 2]! : null;
@@ -229,7 +227,7 @@ export async function screenCryptoCandlePatterns(
     meta: buildMeta({
       source: "candlestick-crypto+binance",
       sourceTimestampMs: Date.now(),
-      note: `crypto daily · reversal last 2–3 · minScore≥${minScore}`,
+      note: `crypto daily · reversal + context · minScore≥${minScore}`,
       partial: skipped > 0,
     }),
   };
@@ -278,7 +276,9 @@ export async function screenForexCandlePatterns(
       if (cat !== "all") patterns = patterns.filter((p) => p.category === cat);
       patterns = patterns.filter((p) => p.score >= minScore && p.category !== "neutral");
       if (!patterns.length) continue;
-      patterns.sort((a, b) => (isReversal(b) ? 1 : 0) - (isReversal(a) ? 1 : 0) || b.score - a.score);
+      patterns = rankPatternsWithContext(patterns, ohlcv);
+      patterns = patterns.filter((p) => p.score >= minScore);
+      if (!patterns.length) continue;
       const top = patterns[0]!;
       const last = bars[bars.length - 1]!;
       const prev = bars.length >= 2 ? bars[bars.length - 2]! : null;
@@ -307,7 +307,7 @@ export async function screenForexCandlePatterns(
     meta: buildMeta({
       source: "candlestick-forex+chart",
       sourceTimestampMs: Date.now(),
-      note: `forex/XAU · reversal last 2–3 · minScore≥${minScore}`,
+      note: `forex/XAU · reversal + context · minScore≥${minScore}`,
       partial: skipped > 0,
     }),
   };
@@ -348,7 +348,7 @@ export async function screenMultiAssetCandlePatterns(
     meta: buildMeta({
       source: "candlestick-multi-asset",
       sourceTimestampMs: Date.now(),
-      note: "stock+crypto+forex · recent reversal cluster",
+      note: "stock+crypto+forex · recent reversal + context",
       partial: skipped > 0,
     }),
   };

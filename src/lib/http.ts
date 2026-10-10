@@ -6,7 +6,7 @@ import { isCircuitOpen, recordFailure, recordSuccess } from "./health";
  * timeout + retry with exponential backoff + circuit breaker + health recording.
  *
  * Domain timeouts (fail-fast, tuned for realtime screeners):
- *  quote ~3.5s · ohlcv/dchart ~4.5s · financials ~7s · default 7s
+ *  quote ~3.2s · ohlcv/dchart ~4.5s · financials ~7s · default 7s
  */
 
 const DEFAULT_UA =
@@ -14,7 +14,7 @@ const DEFAULT_UA =
 
 /** Soft domain budgets for callers that want a semantic default. */
 export const DOMAIN_TIMEOUT_MS = {
-  quote: 3_500,
+  quote: 3_200,
   ohlcv: 4_500,
   indices: 4_000,
   financials: 7_000,
@@ -46,9 +46,9 @@ const PROVIDER_TIMEOUT_MS: Record<string, number> = {
   entrade: 5_000,
   binance: 6_000,
   "binance-fapi": 6_000,
-  biquote: 5_000,
-  yahoo: 6_000,
-  "yahoo-fx": 6_000,
+  biquote: 4_000,
+  yahoo: 4_200,
+  "yahoo-fx": 4_200,
   simplize: 6_000,
   vietnambiz: 8_000,
   msn: 8_000,
@@ -86,6 +86,7 @@ interface HttpOptions {
   method?: string;
   body?: BodyInit | null;
   parse?: "json" | "text";
+  signal?: AbortSignal;
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -98,10 +99,38 @@ export async function httpText(url: string, opts: HttpOptions): Promise<HttpResu
   return httpRequest<never>(url, { ...opts, parse: "text" });
 }
 
-async function httpRequest<T>(url: string, opts: HttpOptions): Promise<HttpResult<T>> {
+/**
+ * Gộp các GET giống hệt đang chạy cùng lúc (cùng provider + url + header) thành một lượt gọi upstream.
+ * Trang dashboard thường gọi cùng một nguồn từ nhiều service song song → giảm tải và độ trễ.
+ */
+const inflightGets = new Map<string, Promise<HttpResult<unknown>>>();
+
+function httpRequest<T>(url: string, opts: HttpOptions): Promise<HttpResult<T>> {
+  const method = (opts.method ?? "GET").toUpperCase();
+  if (method !== "GET" || opts.body) return httpRequestOnce<T>(url, opts);
+  const key = `${opts.provider}|${opts.parse ?? "json"}|${url}|${JSON.stringify(opts.headers ?? {})}`;
+  const existing = inflightGets.get(key);
+  if (existing) return existing as Promise<HttpResult<T>>;
+  const p = httpRequestOnce<T>(url, opts).finally(() => inflightGets.delete(key));
+  inflightGets.set(key, p as Promise<HttpResult<unknown>>);
+  return p;
+}
+
+/** 4xx do yêu cầu sai/không tồn tại (mã không có dữ liệu…) không phải lỗi của provider → không tính vào circuit breaker. */
+const CLIENT_ERRORS_NOT_COUNTED = new Set([400, 404, 410, 422]);
+/** Lỗi tạm thời đáng thử lại. */
+const RETRYABLE_STATUS = new Set([429, 502, 503, 504]);
+
+function retryDelayMs(res: Response, attempt: number, backoffBase: number): number {
+  const ra = Number(res.headers.get("retry-after"));
+  if (Number.isFinite(ra) && ra > 0) return Math.min(2_000, ra * 1_000);
+  return backoffBase * 2 ** attempt + Math.random() * 80;
+}
+
+async function httpRequestOnce<T>(url: string, opts: HttpOptions): Promise<HttpResult<T>> {
   const provider = opts.provider;
   const timeoutMs = resolveProviderTimeout(provider, opts.timeoutMs);
-  // Default 1 retry (was 2) — fail-fast for realtime; callers can raise retries
+  // Default 1 retry for transient blips (502/503/429/network reset); callers can pass retries: 0 for strict fail-fast
   const retries = opts.retries ?? 1;
   const backoffBase = opts.backoffBaseMs ?? 180;
 
@@ -123,28 +152,40 @@ async function httpRequest<T>(url: string, opts: HttpOptions): Promise<HttpResul
   let attempts = 0;
 
   for (let attempt = 0; attempt <= retries; attempt++) {
+    if (opts.signal?.aborted) {
+      lastError = "aborted";
+      break;
+    }
     attempts = attempt + 1;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
+      const signal = opts.signal ? AbortSignal.any([controller.signal, opts.signal]) : controller.signal;
       const res = await fetch(url, {
         method: opts.method ?? "GET",
         headers: {
           "User-Agent": DEFAULT_UA,
           Accept: "application/json, text/plain, */*",
+          "Accept-Language": "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7",
           ...(opts.headers ?? {}),
         },
         body: opts.body ?? undefined,
-        signal: controller.signal,
+        signal,
         cache: "no-store",
       });
-      clearTimeout(timer);
       lastStatus = res.status;
+      // Timeout bao cả lúc đọc body (trước đây chỉ bao headers → body treo sẽ chặn vô hạn).
       const text = await res.text();
+      clearTimeout(timer);
       if (!res.ok) {
         lastError = `http_${res.status}`;
-        recordFailure(provider, lastError);
-        if (attempt < retries && res.status >= 500) {
+        const retryable = attempt < retries && RETRYABLE_STATUS.has(res.status);
+        if (!CLIENT_ERRORS_NOT_COUNTED.has(res.status) && !retryable) recordFailure(provider, lastError);
+        if (retryable) {
+          await sleep(retryDelayMs(res, attempt, backoffBase));
+          continue;
+        }
+        if (res.status >= 500 && attempt < retries) {
           await sleep(backoffBase * 2 ** attempt + Math.random() * 80);
           continue;
         }
@@ -190,6 +231,10 @@ async function httpRequest<T>(url: string, opts: HttpOptions): Promise<HttpResul
       };
     } catch (e) {
       clearTimeout(timer);
+      if (opts.signal?.aborted) {
+        lastError = "aborted";
+        break;
+      }
       lastError =
         e instanceof Error ? (e.name === "AbortError" ? "timeout" : e.message) : "network_error";
       if (attempt < retries) {

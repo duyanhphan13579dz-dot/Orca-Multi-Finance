@@ -7,8 +7,14 @@
  * shared place rather than mixing units inside valuation formulas.
  */
 export type VnPriceScale = 1 | 1_000;
+export type VnQuoteUnit = "VND" | "kVND" | "auto";
 
-export function vnPriceScale(priceQuote: number | null | undefined): VnPriceScale {
+export function vnPriceScale(
+  priceQuote: number | null | undefined,
+  hintUnit: VnQuoteUnit = "auto",
+): VnPriceScale {
+  if (hintUnit === "VND") return 1;
+  if (hintUnit === "kVND") return 1_000;
   if (typeof priceQuote !== "number" || !Number.isFinite(priceQuote) || priceQuote <= 0) {
     // VN market quote APIs default to thousand-VND units when no quote is present.
     return 1_000;
@@ -16,11 +22,14 @@ export function vnPriceScale(priceQuote: number | null | undefined): VnPriceScal
   return priceQuote < 500 ? 1_000 : 1;
 }
 
-export function vnPriceQuoteToVnd(priceQuote: number | null | undefined): number | null {
+export function vnPriceQuoteToVnd(
+  priceQuote: number | null | undefined,
+  hintUnit: VnQuoteUnit = "auto",
+): number | null {
   if (typeof priceQuote !== "number" || !Number.isFinite(priceQuote) || priceQuote <= 0) {
     return null;
   }
-  return priceQuote * vnPriceScale(priceQuote);
+  return priceQuote * vnPriceScale(priceQuote, hintUnit);
 }
 
 export function vnVndPerShareToQuote(

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { refreshCommodityMarket } from "@/lib/services/commodities";
 import { buildMeta } from "@/lib/freshness";
+import { cronUnauthorized } from "@/lib/cron-auth";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -11,25 +12,9 @@ export const maxDuration = 60;
  * Auth: Authorization: Bearer $CRON_SECRET  OR  ?secret=$CRON_SECRET
  * Auth: Bearer CRON_SECRET or ?secret= (cronjob.org / any HTTP scheduler). See docs/CRONJOB_ORG.md.
  */
-function authorized(req: Request): boolean {
-  const secret = process.env.CRON_SECRET?.trim();
-  if (!secret) {
-    return process.env.NODE_ENV !== "production";
-  }
-  const auth = req.headers.get("authorization") ?? "";
-  if (auth === `Bearer ${secret}`) return true;
-  const url = new URL(req.url);
-  if (url.searchParams.get("secret") === secret) return true;
-  return false;
-}
-
 export async function GET(req: Request) {
-  if (!authorized(req)) {
-    return NextResponse.json(
-      { success: false, error: { code: "UNAUTHORIZED", message: "Invalid cron secret" } },
-      { status: 401 },
-    );
-  }
+  const denied = cronUnauthorized(req);
+  if (denied) return denied;
   const result = await refreshCommodityMarket();
   const meta = buildMeta({
     source: "cron:commodities",

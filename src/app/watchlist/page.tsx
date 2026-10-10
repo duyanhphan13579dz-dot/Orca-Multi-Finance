@@ -30,6 +30,25 @@ export default function WatchlistPage() {
     const load = () => setItems(loadWatchlist());
     load();
     window.addEventListener("orca:watchlist", load);
+
+    fetch("/api/v1/watchlist")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((res) => {
+        if (res?.ok && Array.isArray(res.data?.items) && res.data.items.length > 0) {
+          const current = loadWatchlist();
+          const merged = [...current];
+          for (const s of res.data.items as WatchItem[]) {
+            if (!merged.some((m) => m.symbol === s.symbol && m.assetType === s.assetType)) {
+              merged.push(s);
+            }
+          }
+          if (merged.length !== current.length) {
+            saveWatchlist(merged);
+          }
+        }
+      })
+      .catch(() => {});
+
     return () => window.removeEventListener("orca:watchlist", load);
   }, []);
 

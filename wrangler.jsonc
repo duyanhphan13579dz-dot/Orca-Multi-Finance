@@ -1,0 +1,56 @@
+{
+  // ==========================================================================
+  // ORCA Financial — Cloudflare Workers config (OpenNext adapter)
+  // Secrets KHÔNG đặt ở đây: `wrangler secret put <KEY>` hoặc Dashboard Secret.
+  // Plain vars dưới đây phải khớp Dashboard → Variables (không nhạy cảm).
+  // ==========================================================================
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "orca-multi-finance",
+  "main": ".open-next/worker.js",
+  "compatibility_date": "2026-10-06",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS"
+  },
+  "placement": { "mode": "smart" },
+  "observability": { "enabled": true },
+  // Rate limiting (src/lib/rate-limit.ts). Giới hạn theo IP, theo từng datacenter, nhất quán dần.
+  //  RL_AI   : agent / journal-analyze / backtest (tốn tiền LLM) — 10 lần / 60s
+  //  RL_AUTH : đăng nhập / đăng ký (chống dò mật khẩu)           — 10 lần / 60s
+  // namespace_id là số nguyên dạng chuỗi, duy nhất trong tài khoản Cloudflare của bạn.
+  "ratelimits": [
+    { "name": "RL_AI", "namespace_id": "71001", "simple": { "limit": 10, "period": 60 } },
+    { "name": "RL_AUTH", "namespace_id": "71002", "simple": { "limit": 10, "period": 60 } }
+  ],
+  // Secrets (Dashboard / wrangler secret put) — không commit giá trị:
+  //   DATABASE_URL, DATABASE_URL_UNPOOLED, JWT_SECRET, CRON_SECRET,
+  //   OPENROUTER_API_KEY, GROQ_API_KEY, SSI_*, UPSTASH_REDIS_*
+  "vars": {
+    "AI_LLM_CASCADE_MODE": "race",
+    "AI_LLM_FALLBACK_BACKEND": "groq",
+    "AI_LLM_MAX_CASCADE": "3",
+    "AI_MODEL_ANALYSIS": "qwen/qwen3.8-27b:free",
+    "AI_MODEL_ANALYSIS_FALLBACKS": "inclusionai/ling-3.0-flash-fin:free",
+    "AI_MODEL_REASONING": "inclusionai/ling-3.0-flash-fin:free",
+    "AI_MODEL_REASONING_FALLBACKS": "qwen/qwen3.8-27b:free",
+    "AI_MODEL_REPORT": "qwen/qwen3.8-27b:free",
+    "AI_MODEL_REPORT_FALLBACKS": "inclusionai/ling-3.0-flash-fin:free",
+    "CLOUDFLARE_WORKERS": "1",
+    "GROQ_MODEL": "llama-3.3-70b-versatile",
+    "MULTI_SOURCE_MODE": "parallel",
+    "NEXT_TELEMETRY_DISABLED": "1",
+    "NODE_ENV": "production",
+    "OPENROUTER_MODEL": "qwen/qwen3.8-27b:free",
+    "REPORT_AUTO_DAILY": "true",
+    "REPORT_MORNING_TIME": "08:20",
+    "REPORT_SUMMARY_TIME": "15:50",
+    "VNDIRECT_WS_DISABLED": "true",
+    "BINANCE_WS_DISABLED": "true",
+    "BIQUOTE_POLL_DISABLED": "true"
+    // "NEXT_PUBLIC_SITE_URL": "https://<domain-cua-ban>"
+  }
+  // Provision with `wrangler hyperdrive create orca-postgres --connection-string="$DATABASE_URL"`,
+  // then uncomment and set the returned id. Worker DB code prefers this request-scoped binding.
+  // "hyperdrive": [{ "binding": "HYPERDRIVE", "id": "<hyperdrive-config-id>" }]
+}

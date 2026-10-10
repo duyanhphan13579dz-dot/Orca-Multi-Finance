@@ -7,9 +7,10 @@ import { ProviderError } from "./binance";
  * Source: https://data.vietnambiz.vn/goods
  *
  * Fetch strategy (resilience):
- *  1. Next.js data JSON  /_next/data/{buildId}/goods.json  (~12KB, preferred)
- *  2. HTML page __NEXT_DATA__ fallback (gzip, longer timeout)
- * buildId is cached in-process and refreshed when JSON returns 404.
+ *  1. Next.js data JSON when this isolate already knows the buildId.
+ *  2. Otherwise fetch and parse the HTML page once; this also learns the buildId.
+ * A cold isolate must not download the multi-megabyte HTML just to discover buildId,
+ * then make a second request for the same page's JSON payload.
  */
 
 export const VIETNAMBIZ = "vietnambiz-data";
@@ -171,6 +172,7 @@ export interface VnbGoodsSnapshot {
   parseMs: number;
   downloadMs: number;
   path?: string;
+  buildId?: string | null;
 }
 
 let cachedBuildId: { id: string; at: number } | null = null;
@@ -244,27 +246,13 @@ const BROWSER_HEADERS: Record<string, string> = {
   "Cache-Control": "no-cache",
 };
 
-async function discoverBuildId(): Promise<string | null> {
-  if (cachedBuildId && Date.now() - cachedBuildId.at < BUILD_ID_TTL_MS) return cachedBuildId.id;
-  const res = await httpText(VNB_GOODS_URL, {
-    provider: VIETNAMBIZ,
-    timeoutMs: 18_000,
-    retries: 2,
-    headers: BROWSER_HEADERS,
-  });
-  if (!res.ok || !res.text) return null;
-  const id = extractBuildId(res.text);
-  if (id) rememberBuildId(id);
-  return id;
-}
-
 async function fetchViaNextData(buildId: string): Promise<{ groups: Record<string, VnbItem[]>; downloadMs: number } | null> {
   const t0 = Date.now();
   const url = `${VNB_DATA_ORIGIN}/_next/data/${encodeURIComponent(buildId)}/goods.json`;
   const res = await httpJson<{ pageProps?: { data?: Record<string, VnbItem[]> } }>(url, {
     provider: VIETNAMBIZ,
-    timeoutMs: 12_000,
-    retries: 2,
+    timeoutMs: 8_000,
+    retries: 0,
     headers: { ...BROWSER_HEADERS, Accept: "application/json" },
   });
   const downloadMs = Date.now() - t0;
@@ -281,8 +269,8 @@ async function fetchViaHtml(): Promise<{ groups: Record<string, VnbItem[]>; down
   const t0 = Date.now();
   const res = await httpText(VNB_GOODS_URL, {
     provider: VIETNAMBIZ,
-    timeoutMs: 22_000,
-    retries: 2,
+    timeoutMs: 15_000,
+    retries: 0,
     headers: BROWSER_HEADERS,
   });
   const downloadMs = Date.now() - t0;
@@ -302,24 +290,25 @@ async function fetchViaHtml(): Promise<{ groups: Record<string, VnbItem[]>; down
   return { groups, downloadMs, buildId };
 }
 
-export async function fetchVietnambizGoods(): Promise<VnbGoodsSnapshot> {
+/** `hintBuildId`: buildId từ snapshot đã cache (isolate lạnh không có biến trong bộ nhớ) → đi thẳng đường JSON nhỏ. */
+export async function fetchVietnambizGoods(hintBuildId?: string | null): Promise<VnbGoodsSnapshot> {
+  if (hintBuildId && !cachedBuildId) rememberBuildId(hintBuildId);
   const tParse0 = Date.now();
   let groups: Record<string, VnbItem[]> | null = null;
   let downloadMs = 0;
   let path = "none";
 
-  try {
-    const buildId = await discoverBuildId();
-    if (buildId) {
-      const via = await fetchViaNextData(buildId);
+  if (cachedBuildId && Date.now() - cachedBuildId.at < BUILD_ID_TTL_MS) {
+    try {
+      const via = await fetchViaNextData(cachedBuildId.id);
       if (via?.groups) {
         groups = via.groups;
         downloadMs = via.downloadMs;
         path = "next-data";
       }
+    } catch {
+      /* refresh buildId through HTML below */
     }
-  } catch {
-    /* fall through */
   }
 
   if (!groups) {
@@ -329,23 +318,9 @@ export async function fetchVietnambizGoods(): Promise<VnbGoodsSnapshot> {
         groups = via.groups;
         downloadMs = via.downloadMs;
         path = "html";
-        if (via.buildId) void fetchViaNextData(via.buildId).catch(() => null);
       }
     } catch {
       /* fall through */
-    }
-  }
-
-  if (!groups && cachedBuildId) {
-    try {
-      const via = await fetchViaNextData(cachedBuildId.id);
-      if (via?.groups) {
-        groups = via.groups;
-        downloadMs = via.downloadMs;
-        path = "next-data-retry";
-      }
-    } catch {
-      /* */
     }
   }
 
@@ -366,7 +341,13 @@ export async function fetchVietnambizGoods(): Promise<VnbGoodsSnapshot> {
     parseMs: Date.now() - t1,
     downloadMs: downloadMs || Date.now() - tParse0,
     path,
+    buildId: cachedBuildId?.id ?? null,
   };
+}
+
+/** Chỉ dùng cho test. */
+export function __resetVnbBuildId(): void {
+  cachedBuildId = null;
 }
 
 export const COMMODITY_CATALOG: CommodityDef[] = [];

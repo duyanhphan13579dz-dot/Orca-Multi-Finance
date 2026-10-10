@@ -56,8 +56,8 @@ export const AssumptionsAndMarketView: React.FC<AssumptionsAndMarketViewProps> =
           </span>
         </div>
 
-        <div className="overflow-x-auto">
-          <table className="w-full text-xs font-mono border-collapse">
+        <div className="table-scroll-wrap">
+          <table className="w-full min-w-[620px] text-xs font-mono border-collapse">
             <thead>
               <tr className="bg-[#0d182e] border-b border-[#1c3258] text-slate-400 text-left">
                 <th className="py-2.5 px-3">CHỈ SỐ THỊ TRƯỜNG</th>

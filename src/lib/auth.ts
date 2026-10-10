@@ -3,7 +3,7 @@ import crypto from "crypto";
 import { SignJWT, jwtVerify } from "jose";
 import { cookies, headers } from "next/headers";
 import { eq, and, gt } from "drizzle-orm";
-import { db } from "@/db";
+import { db, databaseConfigured } from "@/db";
 import { sessions, users } from "@/db/schema";
 import { env } from "./env";
 
@@ -12,7 +12,33 @@ import { env } from "./env";
  * cookie, DB-backed session records (revocable, listed in Security settings).
  */
 
-const key = new TextEncoder().encode(env.jwtSecret);
+/** Khóa chỉ dùng cho `next dev` / test cục bộ. KHÔNG bao giờ được dùng ở production. */
+const DEV_ONLY_SECRET = "orca-local-dev-only-secret-never-use-in-production";
+const MIN_SECRET_LEN = 32;
+
+let cachedKey: Uint8Array | null = null;
+
+/**
+ * Lấy khóa ký JWT, tính lười (lúc có request) để `next build` không bị ảnh hưởng.
+ * Production mà thiếu JWT_SECRET (hoặc ngắn hơn 32 ký tự) → ném lỗi, tức là từ chối đăng nhập
+ * thay vì âm thầm ký bằng một khóa công khai trong mã nguồn.
+ */
+function getKey(): Uint8Array {
+  if (cachedKey) return cachedKey;
+  const secret = env.jwtSecret;
+  if (env.nodeEnv === "production") {
+    if (!secret || secret.length < MIN_SECRET_LEN || secret === DEV_ONLY_SECRET) {
+      throw new Error(
+        "JWT_SECRET chưa được cấu hình đúng trên server (cần chuỗi ngẫu nhiên >= 32 ký tự, tạo bằng: openssl rand -hex 32)",
+      );
+    }
+    cachedKey = new TextEncoder().encode(secret);
+  } else {
+    cachedKey = new TextEncoder().encode(secret ?? DEV_ONLY_SECRET);
+  }
+  return cachedKey;
+}
+
 const COOKIE = "orca_session";
 const SESSION_DAYS = 7;
 
@@ -37,7 +63,13 @@ async function requestMeta(): Promise<{ userAgent: string | null; ip: string | n
     const h = await headers();
     return {
       userAgent: h.get("user-agent"),
-      ip: h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
+      // Cloudflare edge IP is authoritative; x-forwarded-for is spoofable.
+      ip:
+        h.get("cf-connecting-ip")?.trim() ||
+        h.get("true-client-ip")?.trim() ||
+        h.get("x-real-ip")?.trim() ||
+        h.get("x-forwarded-for")?.split(",")[0]?.trim() ||
+        null,
     };
   } catch {
     return { userAgent: null, ip: null };
@@ -49,7 +81,7 @@ export async function createSessionCookie(userId: string) {
     .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()
     .setExpirationTime(`${SESSION_DAYS}d`)
-    .sign(key);
+    .sign(getKey());
   const jar = await cookies();
   jar.set(COOKIE, token, {
     httpOnly: true,
@@ -91,7 +123,7 @@ export async function getSessionUser(): Promise<SessionUser | null> {
     const jar = await cookies();
     const token = jar.get(COOKIE)?.value;
     if (!token) return null;
-    const { payload } = await jwtVerify(token, key);
+    const { payload } = await jwtVerify(token, getKey());
     if (!payload.sub) return null;
     const hash = sha256(token);
     const [row] = await db
@@ -100,6 +132,14 @@ export async function getSessionUser(): Promise<SessionUser | null> {
       .where(and(eq(sessions.tokenHash, hash), gt(sessions.expiresAt, new Date())))
       .limit(1)
       .catch(() => []);
+
+    if (databaseConfigured()) {
+      // Khi DB kết nối, nếu bản ghi session không tồn tại (đã bị thu hồi hoặc hết hạn), từ chối phiên
+      if (!row) return null;
+      return { id: payload.sub, sessionId: row.id };
+    }
+
+    // Môi trường dev không kết nối DB thật
     return { id: payload.sub, sessionId: row?.id };
   } catch {
     return null;

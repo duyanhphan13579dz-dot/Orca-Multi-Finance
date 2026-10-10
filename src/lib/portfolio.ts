@@ -1,3 +1,5 @@
+import { tradeFeesValue } from "./settings";
+
 export type PortfolioAssetType = "stock" | "crypto" | "forex" | "commodity";
 export type PortfolioSide = "long" | "short";
 
@@ -43,6 +45,8 @@ export type PortfolioMark = {
 export type PortfolioPosition = PortfolioTrade & {
   mark: number | null;
   unrealizedPnl: number | null;
+  unrealizedGrossPnl?: number | null;
+  feesPaid?: number;
   exposure: number;
   riskToStop: number | null;
   distanceToStopPct: number | null;
@@ -110,7 +114,10 @@ export type PortfolioSnapshot = {
   positions: PortfolioPosition[];
   closed: PortfolioTrade[];
   realizedPnl: number;
+  realizedGrossPnl?: number;
   unrealizedPnl: number | null;
+  unrealizedGrossPnl?: number | null;
+  totalFees?: number;
   totalExposure: number;
   totalRisk: number | null;
   winRate: number | null;
@@ -135,22 +142,36 @@ export type PortfolioSymbolBuckets = {
   commodity: string[];
 };
 
-function pnl(trade: PortfolioTrade, price: number | null): number | null {
+export function grossPnl(trade: PortfolioTrade, price: number | null): number | null {
   if (price == null || !Number.isFinite(price) || !Number.isFinite(trade.entry)) return null;
   const direction = trade.side === "short" ? -1 : 1;
-  const gross = (price - trade.entry) * direction * (trade.size ?? 1) * (trade.leverage ?? 1);
-  // Trừ phí giao dịch (cấu hình trong Settings → Giao dịch & Phí) cho lệnh đã đóng.
-  // Lệnh đang mở chỉ tính phí entry.
+  return (price - trade.entry) * direction * (trade.size ?? 1) * (trade.leverage ?? 1);
+}
+
+export function calcTradeFees(trade: PortfolioTrade, price: number | null, isOpen = false): number {
+  if (price == null || !Number.isFinite(price) || !Number.isFinite(trade.entry)) return 0;
   try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { tradeFeesValue } = require("./settings") as {
-      tradeFeesValue: (a: PortfolioTrade["assetType"], s: PortfolioTrade["side"], e: number, x: number | null, sz: number | null, lv: number | null) => number;
-    };
-    const fees = tradeFeesValue(trade.assetType, trade.side, trade.entry, price, trade.size, trade.leverage);
-    return gross - fees;
+    return (
+      tradeFeesValue(
+        trade.assetType,
+        trade.side,
+        trade.entry,
+        isOpen ? null : price,
+        trade.size,
+        trade.leverage,
+      ) || 0
+    );
   } catch {
-    return gross;
+    return 0;
   }
+}
+
+export function pnl(trade: PortfolioTrade, price: number | null, includeFees = false, isOpen = false): number | null {
+  const gross = grossPnl(trade, price);
+  if (gross == null) return null;
+  if (!includeFees) return gross;
+  const fees = calcTradeFees(trade, price, isOpen);
+  return gross - fees;
 }
 
 function percent(from: number, to: number, side: PortfolioSide): number | null {
@@ -312,7 +333,9 @@ export function buildPortfolioSnapshot(
   trades: PortfolioTrade[],
   watchlist: PortfolioWatchItem[],
   marks: PortfolioMark[],
+  opts?: { includeFees?: boolean },
 ): PortfolioSnapshot {
+  const withFees = opts?.includeFees ?? false;
   const markMap = new Map(marks.map((mark) => [`${mark.assetType}:${mark.symbol.toUpperCase()}`, mark]));
   const open = trades.filter((trade) => trade.exit == null);
   const closed = trades.filter((trade) => trade.exit != null);
@@ -326,10 +349,15 @@ export function buildPortfolioSnapshot(
         ? null
         : Math.abs((trade.entry - trade.stopLoss) * (trade.size ?? 1) * (trade.leverage ?? 1));
     const assetStatus = analyzeAssetStatus(trade.assetType, trade.symbol, markRow);
+    const unGross = mark == null ? null : grossPnl(trade, mark);
+    const fee = mark == null ? 0 : calcTradeFees(trade, mark, true);
+    const unNet = unGross == null ? null : unGross - fee;
     return {
       ...trade,
       mark,
-      unrealizedPnl: mark == null ? null : pnl(trade, mark),
+      unrealizedPnl: withFees ? unNet : unGross,
+      unrealizedGrossPnl: unGross,
+      feesPaid: fee,
       exposure,
       riskToStop,
       distanceToStopPct:
@@ -340,13 +368,18 @@ export function buildPortfolioSnapshot(
     };
   });
 
-  const closedPnls = closed.map((trade) => pnl(trade, trade.exit)).filter((value): value is number => value != null);
+  const closedPnls = closed.map((trade) => pnl(trade, trade.exit, withFees, false)).filter((value): value is number => value != null);
+  const closedGrossPnls = closed.map((trade) => grossPnl(trade, trade.exit)).filter((value): value is number => value != null);
   const wins = closedPnls.filter((value) => value > 0);
   const losses = closedPnls.filter((value) => value < 0);
   const grossLoss = Math.abs(losses.reduce((sum, value) => sum + value, 0));
   const realizedPnl = closedPnls.reduce((sum, value) => sum + value, 0);
+  const realizedGrossPnl = closedGrossPnls.reduce((sum, value) => sum + value, 0);
   const unrealizedValues = positions.map((p) => p.unrealizedPnl).filter((v): v is number => v != null);
   const unrealizedPnl = unrealizedValues.length ? unrealizedValues.reduce((s, v) => s + v, 0) : null;
+  const unrealizedGrossValues = positions.map((p) => p.unrealizedGrossPnl).filter((v): v is number => v != null);
+  const unrealizedGrossPnl = unrealizedGrossValues.length ? unrealizedGrossValues.reduce((s, v) => s + v, 0) : null;
+  const totalFees = closed.reduce((sum, t) => sum + calcTradeFees(t, t.exit, false), 0) + positions.reduce((sum, p) => sum + (p.feesPaid ?? 0), 0);
   const totalExposure = positions.reduce((s, p) => s + p.exposure, 0);
   const riskValues = positions.map((p) => p.riskToStop).filter((v): v is number => v != null);
   const totalRisk = riskValues.length ? riskValues.reduce((s, v) => s + v, 0) : null;
@@ -358,7 +391,7 @@ export function buildPortfolioSnapshot(
   [...closed]
     .sort((a, b) => (a.closedAt ?? a.openedAt) - (b.closedAt ?? b.openedAt))
     .forEach((trade) => {
-      equity += pnl(trade, trade.exit) ?? 0;
+      equity += pnl(trade, trade.exit, withFees, false) ?? 0;
       peak = Math.max(peak, equity);
       maxDrawdown = Math.max(maxDrawdown, peak - equity);
     });
@@ -568,7 +601,10 @@ export function buildPortfolioSnapshot(
     positions,
     closed,
     realizedPnl,
+    realizedGrossPnl,
     unrealizedPnl,
+    unrealizedGrossPnl,
+    totalFees,
     totalExposure,
     totalRisk,
     winRate: closed.length ? wins.length / closed.length : null,

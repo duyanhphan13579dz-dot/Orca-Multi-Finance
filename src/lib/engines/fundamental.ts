@@ -206,13 +206,15 @@ const AL = {
   ebit: ["ebit", "operatingprofit", "loinhuantumohinhkinhdoanh", "loinhuantuhdkd"],
   ebitda: ["ebitda"],
   interestExpense: ["interestexpense", "chiphilaivay", "laivay"],
+  profitBeforeTax: ["profitbeforetax", "profitbeforetaxation", "loinhuantruoc thue"],
+  taxExpense: ["taxexpense", "incometaxexpense", "chiphithueTNDN", "thueTNDN"],
   netProfit: ["netprofit", "profitfortheyear", "loinhuansauthue", "loinhuanrong", "sauthue", "netincome"],
   totalAssets: ["totalassets", "tongtaisan", "tongcongtaisan"],
   currentAssets: ["currentassets", "taisannganhan", "taisannh"],
   totalLiabilities: ["totalliabilities", "nophaitra", "tongno"],
   currentLiabilities: ["currentliabilities", "nonganhan"],
   equity: ["equity", "vonchusohuu", "ownerequity"],
-  cash: ["cashandequivalents", "cashequivalents", "tienvatuongduong"],
+  cash: ["cash", "cashandequivalents", "cashequivalents", "tienvatuongduong", "tien"],
   shortDebt: ["shorttermdebt", "vaynganhan"],
   longDebt: ["longtermdebt", "vaydaihan"],
   inventory: ["inventories", "inventory", "hangtonkho"],
@@ -319,6 +321,8 @@ export function computeFinancialHealth(
   const ebitdaTtm = ebitdaReported;
   const netProfit = ttmIndexed(inc, AL_S.netProfit);
   const interestExpense = ttmIndexed(inc, AL_S.interestExpense);
+  const profitBeforeTax = ttmIndexed(inc, AL_S.profitBeforeTax);
+  const taxExpense = ttmIndexed(inc, AL_S.taxExpense);
 
   const totalAssets = latestIndexed(bal, AL_S.totalAssets);
   const currentAssets = latestIndexed(bal, AL_S.currentAssets);
@@ -328,11 +332,9 @@ export function computeFinancialHealth(
   const cash = latestIndexed(bal, AL_S.cash);
   const shortDebtRaw = latestIndexed(bal, AL_S.shortDebt);
   const longDebtRaw = latestIndexed(bal, AL_S.longDebt);
-  const shortDebt = shortDebtRaw ?? 0;
-  const longDebt = longDebtRaw ?? 0;
   // Total liabilities contain trade payables, tax, deposits and other non-borrowing
-  // obligations. Use only reported short/long-term borrowings for EV/net-debt.
-  const totalDebt = shortDebtRaw != null || longDebtRaw != null ? shortDebt + longDebt : null;
+  // obligations. Do not silently assume an unreported debt bucket is zero.
+  const totalDebt = shortDebtRaw != null && longDebtRaw != null ? shortDebtRaw + longDebtRaw : null;
   const inventory = latestIndexed(bal, AL_S.inventory);
   const receivables = latestIndexed(bal, AL_S.receivables);
 
@@ -360,8 +362,24 @@ export function computeFinancialHealth(
   if (ocfTtm != null && capexTtm == null) {
     warnings.push("Thiếu CAPEX — không tính FCF từ OCF.");
   }
-  if (totalLiabilities != null && totalDebt == null) {
-    warnings.push("Thiếu nợ vay ngắn/dài hạn — không dùng tổng nợ phải trả thay cho nợ vay.");
+  if (totalDebt == null) {
+    if (shortDebtRaw != null || longDebtRaw != null) {
+      warnings.push("Thiếu một cấu phần nợ vay ngắn/dài hạn — không giả định cấu phần thiếu bằng 0.");
+    } else if (totalLiabilities != null) {
+      warnings.push("Thiếu nợ vay ngắn/dài hạn — không dùng tổng nợ phải trả thay cho nợ vay.");
+    }
+  }
+
+  const observedTaxRate =
+    profitBeforeTax != null && profitBeforeTax > 0 && taxExpense != null
+      ? taxExpense / profitBeforeTax
+      : null;
+  const taxRate =
+    observedTaxRate != null && Number.isFinite(observedTaxRate) && observedTaxRate >= 0 && observedTaxRate < 0.6
+      ? observedTaxRate
+      : null;
+  if (ebit != null && taxRate == null) {
+    warnings.push("RoIC dùng thuế suất chuẩn 20% do thiếu/không hợp lệ thuế suất hiệu dụng TTM.");
   }
 
   void findNum;
@@ -378,9 +396,9 @@ export function computeFinancialHealth(
       roe: zz(div(netProfit, equityAvg), 4),
       roic: zz(
         div(
-          ebit != null ? ebit * (1 - 0.2) : null,
-          totalDebt != null && equityAvg != null
-            ? totalDebt + equityAvg - (cash ?? 0)
+          ebit != null ? ebit * (1 - (taxRate ?? 0.2)) : null,
+          totalDebt != null && equityAvg != null && cash != null
+            ? totalDebt + equityAvg - cash
             : null,
         ),
         4,
@@ -389,9 +407,14 @@ export function computeFinancialHealth(
     liquidity: {
       currentRatio: zz(div(currentAssets, currentLiabilities), 2),
       quickRatio: zz(
-        currentAssets != null && currentLiabilities != null
-          ? (currentAssets - (inventory ?? 0)) / currentLiabilities
-          : null,
+        div(
+          currentAssets != null && inventory != null
+            ? currentAssets - inventory
+            : cash != null && receivables != null
+              ? cash + receivables
+              : null,
+          currentLiabilities,
+        ),
         2,
       ),
       cashRatio: zz(div(cash, currentLiabilities), 2),
@@ -404,10 +427,13 @@ export function computeFinancialHealth(
         div(ebit, interestExpense != null ? Math.abs(interestExpense) : null),
         2,
       ),
-      netDebtToEbitda: zz(
-        div(totalDebt != null ? totalDebt - (cash ?? 0) : null, ebitdaTtm),
-        2,
-      ),
+      netDebtToEbitda:
+        ebitdaTtm != null && ebitdaTtm > 0
+          ? zz(
+              div(totalDebt != null && cash != null ? totalDebt - cash : null, ebitdaTtm),
+              2,
+            )
+          : null,
     },
     cashflow: {
       ocfToSales: zz(div(ocfTtm, revenue), 4),
@@ -448,6 +474,8 @@ export function computeFinancialHealth(
       if (v > 0) return 40;
       return 20;
     }
+    // invert = true (như debtToEquity): Nếu v < 0 nghĩa là VCSH âm, rủi ro vỡ nợ tối đa (10 điểm)
+    if (v < 0) return 10;
     if (v <= good) return 90;
     if (v <= mid) return 65;
     if (v < mid * 2) return 40;
@@ -478,7 +506,29 @@ export function computeFinancialHealth(
   const roe = groups.profitability.roe;
   const ic = groups.leverage.interestCoverage;
   const nde = groups.leverage.netDebtToEbitda;
+
+  if (equity != null && equity < 0) {
+    riskFlags.push("Vốn chủ sở hữu âm — rủi ro kiệt quệ tài chính hoặc đình chỉ giao dịch");
+  }
+  if (
+    ebitdaTtm != null &&
+    ebitdaTtm <= 0 &&
+    totalDebt != null &&
+    cash != null &&
+    totalDebt > cash
+  ) {
+    riskFlags.push("EBITDA âm trong khi có nợ vay ròng — không thể đảm bảo nghĩa vụ nợ từ HĐKD");
+  }
+
   if (profile?.flags) {
+    const de = groups.leverage.debtToEquity;
+    const cr = groups.liquidity.currentRatio;
+    if (profile.flags.maxDebtEquity != null && de != null && de > profile.flags.maxDebtEquity) {
+      riskFlags.push(`Debt/Equity ${de.toFixed(2)} vượt ngưỡng ngành ${profile.flags.maxDebtEquity}`);
+    }
+    if (profile.flags.minCurrentRatio != null && cr != null && cr < profile.flags.minCurrentRatio) {
+      riskFlags.push(`Current ratio ${cr.toFixed(2)} dưới ngưỡng ngành ${profile.flags.minCurrentRatio}`);
+    }
     if (
       profile.flags.minInterestCoverage != null &&
       ic != null &&
@@ -504,13 +554,17 @@ export function computeFinancialHealth(
     }
   }
 
-  const overall = avgDefined([
-    sc.profitability != null ? sc.profitability * w.profitability : null,
-    sc.leverage != null ? sc.leverage * w.leverage : null,
-    sc.cashflow != null ? sc.cashflow * w.cashflow : null,
-    sc.liquidity != null ? sc.liquidity * w.liquidity : null,
-    sc.efficiency != null ? sc.efficiency * w.efficiency : null,
-  ]);
+  const weightedScores = [
+    { score: sc.profitability, weight: w.profitability },
+    { score: sc.leverage, weight: w.leverage },
+    { score: sc.cashflow, weight: w.cashflow },
+    { score: sc.liquidity, weight: w.liquidity },
+    { score: sc.efficiency, weight: w.efficiency },
+  ].filter((x): x is { score: number; weight: number } => x.score != null && x.weight > 0);
+  const activeWeight = weightedScores.reduce((sum, x) => sum + x.weight, 0);
+  const overall = activeWeight > 0
+    ? weightedScores.reduce((sum, x) => sum + x.score * x.weight, 0) / activeWeight
+    : null;
 
   const totalSlots = Object.values(groups).reduce((a, g) => a + Object.keys(g).length, 0);
   const filled = Object.values(groups).reduce(

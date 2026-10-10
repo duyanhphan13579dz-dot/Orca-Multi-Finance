@@ -259,7 +259,7 @@ function DetailModal({
   };
 
   useEffect(() => {
-    setMounted(true);
+    const raf = window.requestAnimationFrame(() => setMounted(true));
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         setLeaving((prev) => {
@@ -276,6 +276,7 @@ function DetailModal({
     document.body.style.overflow = "hidden";
     if (sb > 0) document.body.style.paddingRight = `${sb}px`;
     return () => {
+      window.cancelAnimationFrame(raf);
       document.removeEventListener("keydown", onKey);
       document.body.style.overflow = prevOverflow;
       document.body.style.paddingRight = prevPadding;

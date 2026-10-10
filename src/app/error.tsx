@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect } from "react";
 
 export default function AppError({
@@ -20,13 +21,30 @@ export default function AppError({
       <p className="text-[13px] leading-relaxed text-text-secondary">
         Module vừa gặp sự cố không mong muốn. Dữ liệu khác vẫn có thể hoạt động bình thường — thử tải lại khung này.
       </p>
-      <button
-        type="button"
-        onClick={() => reset()}
-        className="rounded-md bg-accent-primary px-3 py-1.5 text-[13px] font-medium text-background-primary"
-      >
-        Thử lại
-      </button>
+      {error?.digest ? (
+        <p className="text-[11px] text-text-muted">Mã lỗi: {error.digest}</p>
+      ) : null}
+      <div className="flex flex-wrap items-center justify-center gap-2">
+        <button
+          type="button"
+          onClick={() => reset()}
+          className="rounded-md bg-accent-primary px-3 py-1.5 text-[13px] font-medium text-background-primary"
+        >
+          Thử lại
+        </button>
+        <Link
+          href="/screener"
+          className="rounded-md border border-border-subtle px-3 py-1.5 text-[13px] text-text-secondary hover:border-border-default hover:text-text-primary"
+        >
+          Về bộ lọc
+        </Link>
+        <Link
+          href="/"
+          className="rounded-md border border-border-subtle px-3 py-1.5 text-[13px] text-text-secondary hover:border-border-default hover:text-text-primary"
+        >
+          Tổng quan
+        </Link>
+      </div>
     </div>
   );
 }

@@ -12,7 +12,8 @@ export const maxDuration = 60;
  * Hệ thống định giá + phân tích cơ bản ĐỘC LẬP với trang Báo cáo tài chính.
  * Kéo BCTC trực tiếp từ VNDirect api-finfo → tính health + valuation.
  *
- * Query: ?peers=1 (opt-in, higher latency) | ?full=1
+ * Query: ?peers=1 (opt-in, higher latency) | ?full=0 (light multiples-only)
+ * Default: full valuation (DCF + CAPM beta).
  */
 export async function GET(
   req: Request,
@@ -26,7 +27,9 @@ export async function GET(
     }
 
     const url = new URL(req.url);
-    const wantFull = url.searchParams.get("full") === "1";
+    // Default full valuation (DCF + CAPM beta). Pass full=0 for light multiples-only.
+    const fullParam = url.searchParams.get("full");
+    const wantFull = fullParam === "0" ? false : true;
     const wantPeers = url.searchParams.get("peers") === "1" || wantFull;
     const cacheKey = `val:direct:${symbol}:p${wantPeers ? 1 : 0}:f${wantFull ? 1 : 0}`;
 

@@ -38,7 +38,7 @@ test("bold and code runs get their own elements", () => {
 test("answer text is never emitted as raw HTML", () => {
   const html = render({ id: "a3", role: "agent", text: "<img src=x onerror=alert(1)>", ts: 1 });
   assert.ok(!html.includes("<img"), "raw tag must be escaped");
-  assert.match(html, /<img/);
+  assert.match(html, /&lt;img/);
 });
 
 test("agent meta chips expose mode, persona, confidence and symbols", () => {

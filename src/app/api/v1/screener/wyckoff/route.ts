@@ -1,10 +1,12 @@
-import { ok } from "@/lib/envelope";
 import { screenWyckoff } from "@/lib/services/wyckoff-screener";
 import type { WyckoffPhase } from "@/lib/engines/wyckoff-elliott";
 import type { WyckoffSetup } from "@/lib/services/wyckoff-screener";
+import { safeApi } from "@/lib/safe-api";
+import { WORKERS_BUDGET } from "@/lib/data-engine/workers-budget";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
+export const maxDuration = 25;
 
 const PHASES = new Set<WyckoffPhase>([
   "accumulation",
@@ -28,10 +30,7 @@ const SETUPS = new Set<WyckoffSetup>([
   "watch",
 ]);
 
-/**
- * GET /api/v1/screener/wyckoff
- * Quét rổ thanh khoản VN theo heuristic Wyckoff trên nến ngày.
- */
+/** GET /api/v1/screener/wyckoff */
 export async function GET(req: Request) {
   const url = new URL(req.url);
   const phaseRaw = (url.searchParams.get("phase") ?? "all").toLowerCase();
@@ -46,33 +45,29 @@ export async function GET(req: Request) {
     .filter(Boolean);
   const limit = Math.min(Number(url.searchParams.get("limit") ?? 40) || 40, 60);
 
-  const r = await screenWyckoff({
-    symbols: symbols.length ? symbols : undefined,
-    phase,
-    setup,
-    minConfidence: Number.isFinite(minConfidence) ? minConfidence : 40,
-    sector,
-    limit,
+  return safeApi({
+    label: "screener-wyckoff",
+    guard: { wallMs: WORKERS_BUDGET.techScreenWallMs, maxSubrequests: 24, maxConcurrent: 3 },
+    produce: async () => {
+      const r = await screenWyckoff({
+        symbols: symbols.length ? symbols : undefined,
+        phase,
+        setup,
+        minConfidence: Number.isFinite(minConfidence) ? minConfidence : 40,
+        sector,
+        limit,
+      });
+      if (!r) return null;
+      return {
+        data: { universe: "wyckoff", rows: r.rows, scanned: r.scanned, skipped: r.skipped },
+        meta: r.meta,
+      };
+    },
+    fallback: async () => ({
+      data: { universe: "wyckoff", rows: [], scanned: 0, skipped: 0 },
+      meta: { source: "wyckoff-shell", partial: true, stale: true, note: "OHLCV tạm lỗi — thử lại sau" },
+    }),
+    unavailableSource: "wyckoff-screener",
+    unavailableNote: "Wyckoff screener tạm không khả dụng",
   });
-  const payload = r ?? {
-    rows: [],
-    scanned: 0,
-    skipped: 0,
-    meta: {
-      source: "wyckoff-screener",
-      sourceTimestampMs: Date.now(),
-      hasData: false,
-      partial: true,
-      note: "OHLCV tạm lỗi — thử lại sau",
-    },
-  };
-  return ok(
-    {
-      universe: "wyckoff",
-      rows: payload.rows,
-      scanned: payload.scanned,
-      skipped: payload.skipped,
-    },
-    payload.meta,
-  );
 }

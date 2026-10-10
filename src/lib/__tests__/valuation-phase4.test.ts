@@ -86,6 +86,23 @@ console.log("\n=== DPS estimate ===");
     price: null,
   });
   assert(d.status === "ok" && d.value === 2000, "DPS=2000");
+
+  const dFromQuote = estimateDps({
+    dividendsAnnual: null,
+    shares: null,
+    dividendYield: 0.05,
+    price: 50, // quote units: 50 thousand VND
+  });
+  assert(dFromQuote.status === "incomplete" && dFromQuote.value === 2500, "quote-unit price (50k) yields DPS=2500");
+
+  const ddmQuoteUpside = runDdm({
+    dps: 2500,
+    costOfEquity: 0.1,
+    currentPrice: 50, // quote units: 50
+    growthStable: 0.05,
+  });
+  // fairPrice = 2500 * 1.05 / 0.05 = 52500. Upside vs 50k should be +5%, NOT +104900%
+  assert(ddmQuoteUpside.upsidePct === 5, "quote price (50) normalized to 50k gives +5% upside, not +100000%");
 }
 
 console.log("\n=== NAV ===");

@@ -12,11 +12,13 @@ import type {
   DivergenceSignal,
   DivergenceStrength,
   Meta,
+  Quote,
 } from "../types";
 import { getSecurity, sectorOf } from "../vn/master";
 import { defaultTechnicalUniverse } from "../vn/vn100";
 import { getVnQuotes } from "./stocks";
 import { batchVnOhlcv, SCREENER_UNIVERSE_CAP } from "./ohlcv-batch";
+import { WORKERS_BUDGET } from "../data-engine/workers-budget";
 
 export type DivergenceScreenRow = {
   symbol: string;
@@ -69,8 +71,13 @@ const CRYPTO_UNIVERSE = [
   "AVAXUSDT", "DOTUSDT", "LINKUSDT", "MATICUSDT", "NEARUSDT", "ATOMUSDT", "LTCUSDT", "APTUSDT",
 ];
 
-function strengthOk(s: DivergenceStrength, min: DivergenceStrength): boolean {
-  return STRENGTH_RANK[s] >= STRENGTH_RANK[min];
+function strengthRank(s: string | number): number {
+  if (typeof s === "number") return s >= 3 ? 3 : s >= 2 ? 2 : s >= 1 ? 1 : 0;
+  return STRENGTH_RANK[String(s).toUpperCase()] ?? 0;
+}
+
+function strengthOk(s: string | number, min: DivergenceStrength): boolean {
+  return strengthRank(s) >= strengthRank(min);
 }
 
 function isAlertWorthy(d: DivergenceSignal): boolean {
@@ -78,19 +85,19 @@ function isAlertWorthy(d: DivergenceSignal): boolean {
   const confFloor = multi ? 0.5 : 0.55;
   const volOk = d.volumeConfirmed === true;
   const volSoft = d.volumeConfirmed !== false;
-  if (d.strength === "A" && d.confidence >= confFloor && (volOk || (volSoft && d.confidence >= 0.7))) {
+  if (strengthRank(d.strength) === 3 && d.confidence >= confFloor && (volOk || (volSoft && d.confidence >= 0.7))) {
     return true;
   }
   if (
-    d.strength === "B" &&
+    strengthRank(d.strength) === 2 &&
     (d.kind === "regular_bullish" || d.kind === "regular_bearish") &&
     d.confidence >= confFloor &&
     volOk
   ) {
     return true;
   }
-  if (d.strength === "B" && multi && d.confidence >= 0.6 && volOk) return true;
-  if (d.strength === "A" && volOk && d.confidence >= 0.45) return true;
+  if (strengthRank(d.strength) === 2 && multi && d.confidence >= 0.6 && volOk) return true;
+  if (strengthRank(d.strength) === 3 && volOk && d.confidence >= 0.45) return true;
   return false;
 }
 
@@ -111,8 +118,8 @@ function rankSignals(a: DivergenceSignal, b: DivergenceSignal): number {
   const va = a.volumeConfirmed === true ? 1 : 0;
   const vb = b.volumeConfirmed === true ? 1 : 0;
   if (vb !== va) return vb - va;
-  if (STRENGTH_RANK[b.strength] !== STRENGTH_RANK[a.strength]) {
-    return STRENGTH_RANK[b.strength] - STRENGTH_RANK[a.strength];
+  if (strengthRank(b.strength) !== strengthRank(a.strength)) {
+    return strengthRank(b.strength) - strengthRank(a.strength);
   }
   return b.confidence - a.confidence;
 }
@@ -134,14 +141,13 @@ function cacheKeyVn(opts: DivergenceScreenOpts, universe: string[]): string {
   const o = opts.oscillator ?? "any";
   const s = opts.minStrength ?? "C";
   const lim = Math.min(opts.limit ?? 40, 80);
-  const symPart = opts.symbols?.length ? universe.slice(0, 20).join(",") : "vn100";
-  return `div:vn:v3:${w}:${tf}:${k}:${o}:${s}:${lim}:${symPart}`;
+  const symPart = opts.symbols?.length ? universe.join(",") : "vn100";
+  return `div:vn:v5:${w}:${tf}:${k}:${o}:${s}:${lim}:${symPart}`;
 }
 
 export async function screenVnDivergences(
   opts: DivergenceScreenOpts = {},
 ): Promise<DivergenceScreenResult> {
-  // Ưu tiên rổ VN100 — phân kỳ 3–4 phiên gần nhất
   const universe = (opts.symbols?.length ? opts.symbols : defaultTechnicalUniverse(SCREENER_UNIVERSE_CAP))
     .map((s) => s.toUpperCase())
     .filter(Boolean)
@@ -155,14 +161,18 @@ export async function screenVnDivergences(
     const t0 = Date.now();
     const [ohlcvMap, quotesPack] = await Promise.all([
       batchVnOhlcv(universe, {
-        bars: short ? 48 : 120,
-        concurrency: short ? 16 : 12,
-        perSymbolMs: short ? 2_500 : 4_000,
-        deadlineMs: short ? 24_000 : 35_000,
+        bars: short ? 80 : 160,
+        concurrency: WORKERS_BUDGET.ohlcvBatchConcurrency,
+        perSymbolMs: WORKERS_BUDGET.ohlcvPerSymbolMs,
+        deadlineMs: short ? WORKERS_BUDGET.techScreenWallMs : WORKERS_BUDGET.techScreenWallMs + 8_000,
+        resilient: true,
       }),
       getVnQuotes(universe).catch(() => null),
     ]);
-    const quoteBy = new Map((quotesPack?.quotes ?? []).map((q) => [q.symbol.toUpperCase(), q]));
+    const quoteBy = new Map<string, Quote>();
+    for (const quote of quotesPack?.quotes ?? []) {
+      if (quote.symbol) quoteBy.set(quote.symbol.toUpperCase(), quote);
+    }
 
     const rows: DivergenceScreenRow[] = [];
     let skipped = 0;
@@ -257,7 +267,7 @@ export async function screenCryptoDivergences(
   let skipped = 0;
 
   const { mapPool } = await import("./ohlcv-batch");
-  const packs = await mapPool(universe, short ? 8 : 6, async (sym) => {
+  const packs = await mapPool(universe, short ? 6 : 4, async (sym) => {
     try {
       const bars = await getKlinesDeep(sym, interval, short ? 60 : 120);
       return { sym, bars };

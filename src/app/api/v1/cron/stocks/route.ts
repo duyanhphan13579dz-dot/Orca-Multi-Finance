@@ -3,6 +3,7 @@ import { getVnMarketBoard } from "@/lib/services/stocks";
 import { persistSsiOrderBookSnapshot } from "@/lib/services/stock-orderbook";
 import { bootSsiMarketDataPipeline } from "@/lib/realtime/ssi-market-boot";
 import { ssiWs } from "@/lib/realtime/ssi-ws";
+import { cronUnauthorized } from "@/lib/cron-auth";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -10,20 +11,8 @@ export const maxDuration = 30;
 
 /** Warm full VN market board cache (indices + all quotes + universe). */
 export async function GET(req: Request) {
-  const cronSecret = process.env.CRON_SECRET?.trim();
-  if (cronSecret) {
-    const auth = req.headers.get("authorization") ?? "";
-    const querySecret = new URL(req.url).searchParams.get("secret") ?? "";
-    if (auth !== `Bearer ${cronSecret}` && querySecret !== cronSecret) {
-      return new Response(
-        JSON.stringify({ success: false, error: { code: "UNAUTHORIZED", message: "Invalid cron secret" } }),
-        {
-          status: 401,
-          headers: { "Content-Type": "application/json" },
-        },
-      );
-    }
-  }
+  const denied = cronUnauthorized(req);
+  if (denied) return denied;
   const t0 = Date.now();
   const pipeline = bootSsiMarketDataPipeline();
   const unwatch = pipeline.ok ? ssiWs.watchExchange("hose") : () => {};

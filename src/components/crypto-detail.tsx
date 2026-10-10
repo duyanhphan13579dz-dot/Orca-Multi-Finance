@@ -40,15 +40,17 @@ import {
 
 interface CryptoDetail {
   symbol: string;
-  baseAsset: string;
-  ticker: CryptoMarketRow;
-  klines: OhlcvBar[];
-  interval: string;
-  technical: TechnicalSnapshot | null;
-  patterns: CandlePattern[];
-  funding: { fundingRate: number; markPrice?: number; nextFundingTime?: number } | null;
-  openInterest: { openInterest: number; time: number } | null;
-  fundingStatus: "ok" | "unavailable";
+  baseAsset?: string;
+  ticker?: CryptoMarketRow | null;
+  quote?: CryptoMarketRow | null;
+  klines?: OhlcvBar[];
+  bars?: OhlcvBar[];
+  interval?: string;
+  technical?: TechnicalSnapshot | null;
+  patterns?: CandlePattern[];
+  funding?: { fundingRate: number; markPrice?: number; nextFundingTime?: number } | null;
+  openInterest?: { openInterest: number; time: number } | null;
+  fundingStatus?: "ok" | "unavailable";
 }
 
 interface NewsPayload {
@@ -112,10 +114,15 @@ export function CryptoDetailPage({ symbol }: { symbol: string }) {
 
   const { data, meta, isLoading } = useApi<CryptoDetail>(
     `/api/v1/crypto/${encodeURIComponent(symbol)}?interval=${interval}`,
-    { refreshInterval: 20_000 },
+    {
+      refreshInterval: 20_000,
+      // P6-C: soft paint + fail-fast
+      keepPreviousData: true,
+      timeoutMs: 12_000,
+    },
   );
 
-  const series = useMemo(() => toBars(data?.klines ?? []), [data?.klines]);
+  const series = useMemo(() => toBars(data?.klines ?? data?.bars ?? []), [data?.klines, data?.bars]);
   const orderFlow = useMemo(() => deriveOrderFlow(series), [series]);
   const seriesHigh = useMemo(() => {
     if (!series.length) return null;
@@ -126,8 +133,11 @@ export function CryptoDetailPage({ symbol }: { symbol: string }) {
     return Math.min(...series.slice(-48).map((b) => b.low));
   }, [series]);
 
-  if (isLoading && !data) return <Loading rows={12} />;
-  if (!data) {
+  const t = data?.ticker ?? data?.quote ?? null;
+  const price = t?.price;
+
+  if (isLoading && !t) return <Loading rows={12} />;
+  if (!data || !t || price == null || !Number.isFinite(price)) {
     return (
       <Unavailable
         title={`Không lấy được dữ liệu ${symbol}`}
@@ -137,10 +147,10 @@ export function CryptoDetailPage({ symbol }: { symbol: string }) {
     );
   }
 
-  const t = data.ticker;
-  const tech = data.technical;
+  const baseAsset = data.baseAsset || (data.symbol || symbol).toUpperCase().replace(/USDT$/i, "");
+  const sym = data.symbol || `${baseAsset}USDT`;
+  const tech = data.technical ?? null;
   const patterns = data.patterns ?? [];
-  const price = t.price;
   const digits = priceDigits(price);
   const chg = t.changePercent ?? null;
   const rMin = t.low ?? seriesLow ?? price;
@@ -163,16 +173,16 @@ export function CryptoDetailPage({ symbol }: { symbol: string }) {
               <ArrowLeft className="size-3" /> Crypto
             </Link>
             <div className="flex size-7 items-center justify-center rounded-lg border border-accent-primary/30 bg-accent-primary/10 text-[11px] font-bold text-accent-primary">
-              {data.baseAsset.slice(0, 1)}
+              {baseAsset.slice(0, 1)}
             </div>
             <div>
               <div className="flex items-center gap-1.5">
                 <h1 className="text-[15px] font-bold text-text-primary sm:text-[16px]">
-                  {data.baseAsset}
+                  {baseAsset}
                   <span className="text-[12px] font-normal text-text-muted">/USDT</span>
                 </h1>
-                <Badge tone="neutral">{data.symbol}</Badge>
-                <AddToWatchlist symbol={data.symbol} assetType="crypto" />
+                <Badge tone="neutral">{sym}</Badge>
+                <AddToWatchlist symbol={sym} assetType="crypto" />
               </div>
               <div className="num flex items-baseline gap-2 border-l border-border-subtle pl-2.5">
                 <span className="text-[18px] font-bold leading-none text-text-primary sm:text-[20px]">{fmtNum(price, digits)}</span>
@@ -224,7 +234,7 @@ export function CryptoDetailPage({ symbol }: { symbol: string }) {
               key={p}
               href={`/crypto/${p}`}
               className={`rounded-md px-2 py-0.5 text-[10px] font-medium transition-colors ${
-                p === data.symbol
+                p === sym
                   ? "bg-accent-primary/20 text-accent-primary"
                   : "bg-surface-elevated text-text-secondary hover:text-text-primary"
               }`}
@@ -271,7 +281,7 @@ export function CryptoDetailPage({ symbol }: { symbol: string }) {
       <div className="hidden xl:grid xl:grid-cols-12 xl:gap-2 xl:items-stretch">
         <div className="xl:col-span-3 flex min-h-[560px] flex-col gap-2">
           <FILL className="min-h-0 flex-[1.2]">
-            <CryptoTradeDesk symbol={data.symbol} mode="orderflow" />
+            <CryptoTradeDesk symbol={sym} mode="orderflow" />
           </FILL>
           <OrderFlowPanel flow={orderFlow} />
           <LiquidityZonesPanel
@@ -284,56 +294,56 @@ export function CryptoDetailPage({ symbol }: { symbol: string }) {
           />
         </div>
         <div className="xl:col-span-6 flex min-h-[560px] flex-col overflow-hidden rounded-xl border border-border-subtle bg-surface-primary">
-          <OrcaChart symbol={data.symbol} assetType="crypto" defaultTimeframe={interval} height={560} title={`${data.baseAsset}/USDT`} />
+          <OrcaChart symbol={sym} assetType="crypto" defaultTimeframe={interval} height={560} title={`${baseAsset}/USDT`} />
         </div>
         <div className="xl:col-span-3 flex min-h-[560px] flex-col gap-2">
           <FILL className="min-h-0 flex-1">
-            <ScalpPanel symbol={data.symbol} />
+            <ScalpPanel symbol={sym} />
           </FILL>
           <KeyZonesCompact price={price} digits={digits} supports={supports} resistances={resistances} />
-          <CryptoTradeDesk symbol={data.symbol} mode="leverage" />
+          <CryptoTradeDesk symbol={sym} mode="leverage" />
         </div>
       </div>
 
       <div className="space-y-2 xl:hidden">
         {mobileTab === "chart" && (
-          <OrcaChart symbol={data.symbol} assetType="crypto" defaultTimeframe={interval} height={400} title={`${data.baseAsset}/USDT`} />
+          <OrcaChart symbol={sym} assetType="crypto" defaultTimeframe={interval} height={400} title={`${baseAsset}/USDT`} />
         )}
         {mobileTab === "desk" && (
           <>
-            <CryptoTradeDesk symbol={data.symbol} mode="orderflow" />
+            <CryptoTradeDesk symbol={sym} mode="orderflow" />
             <OrderFlowPanel flow={orderFlow} />
             <LiquidityZonesPanel price={price} digits={digits} supports={supports} resistances={resistances} seriesLow={seriesLow} seriesHigh={seriesHigh} />
           </>
         )}
         {mobileTab === "scalp" && (
           <>
-            <ScalpPanel symbol={data.symbol} />
+            <ScalpPanel symbol={sym} />
             <KeyZonesCompact price={price} digits={digits} supports={supports} resistances={resistances} />
-            <CryptoTradeDesk symbol={data.symbol} mode="leverage" />
+            <CryptoTradeDesk symbol={sym} mode="leverage" />
           </>
         )}
         {mobileTab === "structure" && (
-          <MarketStructurePanel tab={structureTab} onTab={setStructureTab} pair={data.symbol} interval={interval} tech={tech} patterns={patterns} cur={t} series={series} assetType="crypto" />
+          <MarketStructurePanel tab={structureTab} onTab={setStructureTab} pair={sym} interval={interval} tech={tech} patterns={patterns} cur={t} series={series} assetType="crypto" />
         )}
         {mobileTab === "news" && (
           <div className="space-y-2">
             <DerivativesStrip fundingRate={fundingRate} oi={data.openInterest?.openInterest ?? null} vol={t.quoteVolume} />
-            <CryptoSentimentPanel symbol={data.symbol} ticker={t} tech={tech} />
-            <CryptoNewsPanel symbol={data.symbol} base={data.baseAsset} />
+            <CryptoSentimentPanel symbol={sym} ticker={t} tech={tech} />
+            <CryptoNewsPanel symbol={sym} base={baseAsset} />
           </div>
         )}
       </div>
 
       <div className="hidden xl:grid xl:grid-cols-12 xl:gap-2 xl:items-stretch">
         <div className="xl:col-span-7 flex min-h-[300px] flex-col">
-          <MarketStructurePanel tab={structureTab} onTab={setStructureTab} pair={data.symbol} interval={interval} tech={tech} patterns={patterns} cur={t} series={series} assetType="crypto" />
+          <MarketStructurePanel tab={structureTab} onTab={setStructureTab} pair={sym} interval={interval} tech={tech} patterns={patterns} cur={t} series={series} assetType="crypto" />
         </div>
         <div className="xl:col-span-5 flex min-h-[300px] flex-col gap-2">
           <DerivativesStrip fundingRate={fundingRate} oi={data.openInterest?.openInterest ?? null} vol={t.quoteVolume} />
           <div className="grid grid-cols-2 gap-2 min-h-0 flex-1">
-            <CryptoSentimentPanel symbol={data.symbol} ticker={t} tech={tech} />
-            <CryptoNewsPanel symbol={data.symbol} base={data.baseAsset} />
+            <CryptoSentimentPanel symbol={sym} ticker={t} tech={tech} />
+            <CryptoNewsPanel symbol={sym} base={baseAsset} />
           </div>
         </div>
       </div>
@@ -423,55 +433,89 @@ function CryptoSentimentPanel({ symbol, ticker, tech }: { symbol: string; ticker
 
 function CryptoNewsPanel({ symbol, base }: { symbol: string; base: string }) {
   const q = encodeURIComponent(`${base} OR ${symbol} crypto`);
-  const { data, isLoading } = useApi<NewsPayload>(`/api/v1/news?q=${q}&limit=6`, { refreshInterval: 300_000 });
+  const { data, isLoading } = useApi<NewsPayload>(`/api/v1/news?q=${q}&limit=8`, {
+    refreshInterval: 120_000,
+  });
   const articles = data?.articles ?? [];
   return (
-    <Panel title={<span className="flex items-center gap-2"><Newspaper className="size-3.5 text-accent-primary" /> Tin crypto</span>}>
-      {isLoading && !articles.length && <Loading rows={2} />}
-      <div className="max-h-40 space-y-1 overflow-y-auto">
-        {articles.slice(0, 6).map((a, i) => (
-          <a key={i} href={a.url} target="_blank" rel="noreferrer" className="flex items-start gap-1.5 rounded-md border border-border-subtle/40 bg-surface-elevated/20 px-2 py-1 text-[10.5px] text-text-secondary transition-colors hover:border-border-default hover:text-text-primary">
-            <ExternalLink className="mt-0.5 size-3 shrink-0 text-text-muted" />
-            <span className="line-clamp-2 flex-1">{a.title}</span>
-          </a>
-        ))}
-        {!isLoading && !articles.length && <p className="text-[11px] text-text-muted">Chưa có tin liên quan.</p>}
-      </div>
+    <Panel
+      title={
+        <span className="flex items-center gap-2">
+          <Newspaper className="size-3.5 text-accent-primary" /> Tin crypto
+        </span>
+      }
+      right={
+        <a
+          href={`https://news.google.com/search?q=${q}&hl=vi&gl=VN&ceid=VN:vi`}
+          target="_blank"
+          rel="noreferrer"
+          className="inline-flex items-center gap-1 text-[10px] text-text-muted hover:text-accent-primary"
+        >
+          Google <ExternalLink className="size-3" />
+        </a>
+      }
+    >
+      {isLoading && !articles.length ? (
+        <Loading rows={3} />
+      ) : articles.length ? (
+        <ul className="space-y-1.5">
+          {articles.slice(0, 6).map((a, i) => (
+            <li key={i}>
+              <a
+                href={a.url}
+                target="_blank"
+                rel="noreferrer"
+                className="line-clamp-2 text-[11px] leading-snug text-text-secondary hover:text-accent-primary"
+              >
+                {a.title}
+              </a>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="text-[11px] text-text-muted">Chưa có tin gần đây.</p>
+      )}
     </Panel>
   );
 }
 
-function computeLocalSentiment(t: { changePercent?: number | null; price?: number }, tech: TechnicalSnapshot | null) {
-  let score = 0;
+function computeLocalSentiment(
+  t: { changePercent?: number | null; price?: number | null },
+  tech: TechnicalSnapshot | null,
+): { score: number; label: string; tone: "up" | "down" | "neutral"; factors: { w: number; text: string }[] } {
   const factors: { w: number; text: string }[] = [];
-  const chg = t.changePercent;
-  if (chg != null) {
-    const w = Math.max(-30, Math.min(30, chg * 4));
-    score += w;
-    factors.push({ w, text: `Biến động phiên ${chg >= 0 ? "+" : ""}${chg.toFixed(2)}%` });
+  let score = 0;
+  const chg = t.changePercent ?? 0;
+  if (chg > 2) {
+    score += 25;
+    factors.push({ w: 25, text: `Tăng mạnh 24h (+${chg.toFixed(1)}%)` });
+  } else if (chg < -2) {
+    score -= 25;
+    factors.push({ w: -25, text: `Giảm mạnh 24h (${chg.toFixed(1)}%)` });
+  } else {
+    factors.push({ w: 0, text: `Biến động hẹp (${chg.toFixed(1)}%)` });
   }
-  if (tech?.rsi14 != null) {
-    if (tech.rsi14 > 70) {
-      score -= 12;
-      factors.push({ w: -12, text: `RSI cao (${tech.rsi14.toFixed(0)}) — quá mua` });
-    } else if (tech.rsi14 < 30) {
-      score += 12;
-      factors.push({ w: 12, text: `RSI thấp (${tech.rsi14.toFixed(0)}) — quá bán` });
+  const rsi = tech?.rsi14;
+  if (rsi != null) {
+    if (rsi >= 70) {
+      score -= 15;
+      factors.push({ w: -15, text: `RSI quá mua (${rsi.toFixed(0)})` });
+    } else if (rsi <= 30) {
+      score += 15;
+      factors.push({ w: 15, text: `RSI quá bán (${rsi.toFixed(0)})` });
     } else {
-      factors.push({ w: 0, text: `RSI trung tính (${tech.rsi14.toFixed(0)})` });
+      factors.push({ w: 0, text: `RSI trung tính (${rsi.toFixed(0)})` });
     }
   }
-  if (tech?.trend?.label) {
-    const label = tech.trend.label;
-    if (/up|bull/i.test(label)) {
-      score += 10;
-      factors.push({ w: 10, text: `Trend: ${label}` });
-    } else if (/down|bear/i.test(label)) {
-      score -= 10;
-      factors.push({ w: -10, text: `Trend: ${label}` });
-    }
+  const trend = tech?.trend?.label;
+  if (trend === "up" || trend === "strong-up") {
+    score += 20;
+    factors.push({ w: 20, text: `Xu hướng ${trend}` });
+  } else if (trend === "down" || trend === "strong-down") {
+    score -= 20;
+    factors.push({ w: -20, text: `Xu hướng ${trend}` });
   }
-  score = Math.max(-100, Math.min(100, Math.round(score)));
+  score = Math.max(-100, Math.min(100, score));
   const label = score >= 20 ? "Bullish" : score <= -20 ? "Bearish" : "Neutral";
   const tone = score >= 20 ? ("up" as const) : score <= -20 ? ("down" as const) : ("neutral" as const);
   return { score, label, tone, factors };

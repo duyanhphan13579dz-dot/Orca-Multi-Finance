@@ -45,6 +45,8 @@ class SessionPoller {
   start() {
     if (this.timer) return;
     if (process.env.ORCA_SESSION_POLLER_DISABLED === "true") return;
+    // Workers: không có tiến trình sống lâu — dùng cron ngoài.
+    if (process.env.CLOUDFLARE_WORKERS === "1" || process.env.NEXT_RUNTIME === "edge") return;
     this.timer = setInterval(() => void this.tick(), 4_000);
     this.timer.unref?.();
     void this.tick();

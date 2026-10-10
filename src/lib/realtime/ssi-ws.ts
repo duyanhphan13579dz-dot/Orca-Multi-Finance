@@ -8,7 +8,7 @@ import { getSsiAccessToken, invalidateSsiToken, ssiFcConfigured } from "../provi
  *
  * Order book: DATA/quote.<symbol> (bids/asks arrays). Legacy X/X-QUOTE is
  * still accepted by the parser for deployments that explicitly use it.
- * forceEnable(): orderbook API can open WS even when SSI_WS_DISABLED=true (Vercel one-shot).
+ * forceEnable(): orderbook API can open WS even when SSI_WS_DISABLED=true (serverless one-shot).
  * Reconnect: fast first hops, urgent on watchSymbol, session-aware silent/backoff.
  */
 
@@ -423,7 +423,7 @@ class SsiMarketWsEngine {
       return;
     }
 
-    const WSImpl = (globalThis as { WebSocket?: new (url: string, protocols?: string | string[]) => WsLike })
+    const WSImpl = (globalThis as unknown as { WebSocket?: new (url: string, protocols?: string | string[]) => WsLike })
       .WebSocket;
     if (!WSImpl) {
       this.state = "disabled";

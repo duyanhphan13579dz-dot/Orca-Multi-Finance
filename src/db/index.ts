@@ -1,5 +1,6 @@
 import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
+import { getCloudflareContext } from "@opennextjs/cloudflare";
 
 type Db = NodePgDatabase;
 
@@ -7,13 +8,37 @@ const globalForDb = globalThis as typeof globalThis & {
   __orcaPgPool?: Pool;
   __orcaDrizzleDb?: Db;
 };
+const scopedPools = new WeakMap<object, Pool>();
+const scopedDbs = new WeakMap<object, Db>();
+
+type RuntimeDbConfig = { scope: object | null; connectionString: string | null };
+function usableUrl(v: string | undefined): string | null {
+  const url = v?.trim();
+  return url && !url.includes("<") && !url.includes(">") && !url.includes("example.com") ? url : null;
+}
+
+function runtimeDbConfig(): RuntimeDbConfig {
+  let runtime: { env?: Record<string, unknown>; ctx?: object } | null = null;
+  try {
+    runtime = getCloudflareContext() as unknown as { env?: Record<string, unknown>; ctx?: object };
+  } catch {
+    // Ngoài request của Worker (CLI/test/build): dùng pool toàn cục với DATABASE_URL.
+  }
+  if (runtime) {
+    // Trong Worker, kết nối I/O KHÔNG được dùng chung giữa các request
+    // ("Cannot perform I/O on behalf of a different request") → luôn tạo pool theo request,
+    // dù qua Hyperdrive (ưu tiên) hay trực tiếp bằng DATABASE_URL.
+    const hyperdrive = runtime.env?.HYPERDRIVE as { connectionString?: string } | undefined;
+    const connectionString = usableUrl(hyperdrive?.connectionString) ?? usableUrl(process.env.DATABASE_URL);
+    const scope = runtime.ctx ?? runtime.env ?? null;
+    if (scope) return { scope, connectionString };
+  }
+  return { scope: null, connectionString: usableUrl(process.env.DATABASE_URL) };
+}
 
 /** Is a database URL configured? Lets ops endpoints report honestly without throwing. */
 export function databaseConfigured(): boolean {
-  const url = process.env.DATABASE_URL?.trim();
-  if (!url) return false;
-  if (url.includes("<") || url.includes(">") || url.includes("example.com")) return false;
-  return true;
+  return runtimeDbConfig().connectionString !== null;
 }
 
 function createMockPool(): Pool {
@@ -79,34 +104,37 @@ function createMockDb(): Db {
 
 /** Real `pg` Pool or mock when DATABASE_URL is not configured or connection fails */
 export function getPool(): Pool {
+  const config = runtimeDbConfig();
+  if (config.scope) {
+    const existing = scopedPools.get(config.scope);
+    if (existing) return existing;
+    const pool = config.connectionString ? new Pool({ connectionString: config.connectionString, max: 4, idleTimeoutMillis: 1_000 }) : createMockPool();
+    scopedPools.set(config.scope, pool);
+    return pool;
+  }
   if (!globalForDb.__orcaPgPool) {
-    if (!databaseConfigured()) {
-      globalForDb.__orcaPgPool = createMockPool();
-    } else {
-      try {
-        globalForDb.__orcaPgPool = new Pool({
-          connectionString: process.env.DATABASE_URL!.trim(),
-        });
-      } catch {
-        globalForDb.__orcaPgPool = createMockPool();
-      }
-    }
+    globalForDb.__orcaPgPool = config.connectionString
+      ? new Pool({ connectionString: config.connectionString })
+      : createMockPool();
   }
   return globalForDb.__orcaPgPool;
 }
 
 /** Real Drizzle client or mock when DATABASE_URL is not configured */
 export function getDb(): Db {
+  const config = runtimeDbConfig();
+  if (config.scope) {
+    const existing = scopedDbs.get(config.scope);
+    if (existing) return existing;
+    let instance: Db;
+    try { instance = config.connectionString ? drizzle(getPool()) : createMockDb(); }
+    catch { instance = createMockDb(); }
+    scopedDbs.set(config.scope, instance);
+    return instance;
+  }
   if (!globalForDb.__orcaDrizzleDb) {
-    if (!databaseConfigured()) {
-      globalForDb.__orcaDrizzleDb = createMockDb();
-    } else {
-      try {
-        globalForDb.__orcaDrizzleDb = drizzle(getPool());
-      } catch {
-        globalForDb.__orcaDrizzleDb = createMockDb();
-      }
-    }
+    try { globalForDb.__orcaDrizzleDb = config.connectionString ? drizzle(getPool()) : createMockDb(); }
+    catch { globalForDb.__orcaDrizzleDb = createMockDb(); }
   }
   return globalForDb.__orcaDrizzleDb;
 }

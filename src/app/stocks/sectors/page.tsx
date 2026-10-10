@@ -155,8 +155,8 @@ export default function SectorTrendPage() {
           />
         }
       >
-        <div className="overflow-x-auto">
-          <table className="stock-table">
+        <div className="table-scroll-wrap">
+          <table className="stock-table min-w-[560px]">
             <thead>
               <tr className="border-b border-line text-left text-ink-3">
                 <th className="py-1.5 pr-2 font-medium">Ngành</th>

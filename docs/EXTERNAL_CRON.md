@@ -1,6 +1,6 @@
 # External Cron (cron-job.org)
 
-**Vercel Cron đã tắt** (`vercel.json` không còn block `crons`).  
+**Cloudflare Cron Triggers không dùng** (`wrangler.jsonc` không khai báo `triggers.crons`).  
 Toàn bộ lịch chạy qua **cron-job.org** (hoặc GitHub Actions / provider tương đương).
 
 Route API vẫn dùng:
@@ -14,7 +14,7 @@ Authorization: Bearer <CRON_SECRET>
 
 ---
 
-## 1. Biến môi trường (Vercel)
+## 1. Biến môi trường / secrets (Cloudflare)
 
 | Key | Ghi chú |
 |---|---|
@@ -32,7 +32,7 @@ openssl rand -hex 24
 
 1. [https://cron-job.org](https://cron-job.org) → Create cronjob
 2. **Method:** `GET`
-3. **URL:** `https://orcamulti.vercel.app/api/v1/cron/<name>`
+3. **URL:** `https://orca-multi-finance.workers.dev/api/v1/cron/<name>`
 4. **Header:** `Authorization` = `Bearer <CRON_SECRET>`
 5. **Timezone:** UTC (bảng dưới đã quy từ giờ VN = UTC+7)
 6. **Retry:** bật 1–2 lần nếu 5xx
@@ -61,7 +61,7 @@ openssl rand -hex 24
 
 ```bash
 export CRON_SECRET='...'
-export BASE='https://orcamulti.vercel.app'
+export BASE='https://orca-multi-finance.workers.dev'
 
 curl -sS -H "Authorization: Bearer $CRON_SECRET" \
   "$BASE/api/v1/cron/alerts" | head -c 500
@@ -72,8 +72,8 @@ curl -sS -H "Authorization: Bearer $CRON_SECRET" \
 
 ---
 
-## 3. Ghi chú Hobby plan
+## 3. Ghi chú Cloudflare Workers
 
-- Vercel Hobby **không** cần (và **không** nên) khai báo `crons` trong `vercel.json` khi đã dùng external scheduler.
-- API route vẫn `maxDuration` theo từng file; cronjob.org chỉ HTTP GET — timeout phía provider ~30–60s, route nặng (stocks/reports) nên giữ `maxDuration` đủ lớn trên Vercel.
-- Region: `sin1` (Singapore) trong `vercel.json` để gần VN.
+- Không cần khai báo `triggers.crons` trong `wrangler.jsonc` khi đã dùng external scheduler.
+- `maxDuration` trong từng route **không còn tác dụng** trên Workers (giới hạn là CPU time + wall-clock của gói Workers); cronjob.org chỉ HTTP GET — timeout phía provider ~30–60s, giữ các job chia phase như cũ.
+- Vị trí chạy: `placement.mode = "smart"` trong `wrangler.jsonc` (thay cho region `sin1` của Vercel).

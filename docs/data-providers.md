@@ -49,10 +49,9 @@ Endpoints hỗ trợ `/v1/market/indices`, `/v1/market/quotes?symbols=`, `/v1/sy
 - Fallback 2: Frankfurter `/v1/{start}..{end}?base=…` — chuỗi ECB hằng ngày (đánh nhãn reference, không giả lập intraday).
 - % thay đổi đối chiếu **bản fix ECB gần nhất** (1 request, cache 6h).
 
-### Commodities (`src/lib/providers/commodities.ts` + aggregator)
+### Commodities (`src/lib/providers/commodities.ts` + `services/commodities.ts`)
 
-Catalog 12 mặt hàng: metals (XAU, XAG), energy (WTI, Brent, NatGas), industrial (copper, steel), agriculture (coffee, sugar, corn, wheat, soybean), vietnam (SJC).
-Nguồn theo ưu tiên từng mã; **mỗi row giữ toàn bộ `sourceRecords`** (multi-source provenance) và map `vnImpact`: commodity → ngành VN → mã liên quan (tham chiếu, không nhân quả).
+Nguồn bảng hàng hóa ưu tiên: VietnamBiz Data `/goods`. Isolate còn giữ build ID dùng Next.js JSON; isolate lạnh tải trang HTML một lần và parse `__NEXT_DATA__` để tránh tải HTML lần hai chỉ nhằm dò build ID. Yahoo Finance là nguồn đối chiếu tùy chọn, không được phép giữ chậm luồng dữ liệu VietnamBiz quá ngắn hạn; **mỗi row giữ các `sourceRecords` thực sự nhận được**.
 
 ### News (`src/lib/providers/news.ts`)
 
@@ -60,7 +59,7 @@ Parser RSS tối giản (không dependency): CDATA/entity decoding, validation t
 
 ## Reliability & rate limits
 
-- Mọi gọi qua `http.ts`: timeout 7–9s, retry ≤2, backoff `400ms·2^n + jitter`, circuit 4 lỗi/60s.
+- Mọi gọi qua `http.ts`: timeout bao gồm cả tải response body, retry tùy provider (không mặc định retry các trang HTML lớn), circuit 4 lỗi/60s.
 - Rate limit: response 429/5xx tự backoff; cadence cache theo SLA domain (crypto 12s, forex 10m, commodity 5m, news 2m).
 
 ## Thêm provider mới

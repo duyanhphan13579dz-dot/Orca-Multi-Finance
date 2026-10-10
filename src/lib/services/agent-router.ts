@@ -45,7 +45,14 @@ export const DOMAIN_LABELS: Record<Exclude<AgentDomain, "general">, string> = {
 export const DOMAIN_GUIDES: Record<Exclude<AgentDomain, "general">, string> = {
   market: "AI_MARKET_GUIDE.md", industry: "AI_INDUSTRY_GUIDE.md", stock: "AI_STOCK_GUIDE.md", commodity: "AI_COMMODITY_GUIDE.md",
 };
-const KNOWN_STOCKS = new Set(["FPT", "CMG", "VCB", "TCB", "HPG", "MWG", "SSI", "GAS", "VIC", "VHM", "MBB", "CTG", "BID", "VPB", "VNM", "MSN"]);
+import { isVnSymbol } from "@/lib/vn/master";
+
+const NON_STOCK_TOKENS = new Set([
+  "USD", "VND", "EUR", "BTC", "ETH", "SOL", "BNB", "XRP",
+  "SMC", "VSA", "ICT", "EPS", "ROE", "ROA", "NAV", "DCF",
+  "TTM", "GDP", "CPI", "FDI", "FED", "SBV", "NDT", "RSI", "ATR",
+  "HOSE", "HNX", "UPCOM", "VNI", "ALL", "THE", "AND", "FOR",
+]);
 const uniq = (xs: string[]) => [...new Set(xs)];
 
 function detectIndustries(q: string) {
@@ -61,7 +68,11 @@ export function routeQuestion(question: string): AgentRoute {
   const q = question.trim();
   const lower = q.toLowerCase();
   const upper = q.toUpperCase();
-  const symbols = uniq((upper.match(/\b[A-Z]{3}\b/g) ?? []).filter((x) => KNOWN_STOCKS.has(x)));
+  const symbols = uniq(
+    (upper.match(/\b[A-Z]{3}\b/g) ?? []).filter(
+      (x) => isVnSymbol(x) && !NON_STOCK_TOKENS.has(x),
+    ),
+  );
   const industries = uniq([...detectIndustries(q), ...(symbols.includes("GAS") && /dầu|oil|wti|brent/i.test(q) ? ["oil-gas"] : [])]);
   const commodities = detectCommodities(q);
   const indices = uniq((lower.match(/vn-?index|vn30|hnx|hose/g) ?? []).map((x) => x.toUpperCase().replace("-", "")));
@@ -105,5 +116,6 @@ export default routeQuestion;
 export function routeAcceptanceCases() {
   return [
     ["Thị trường hôm nay thế nào?", ["market"]], ["Ngành ngân hàng thế nào?", ["industry"]], ["Phân tích FPT", ["stock"]], ["Giá vàng hôm nay?", ["commodity"]], ["Dầu tăng ảnh hưởng GAS thế nào?", ["commodity", "industry", "stock"]], ["VN-Index giảm thì FPT có bị ảnh hưởng không?", ["market", "stock"]], ["Ngành thép hưởng lợi gì từ giá HRC?", ["commodity", "industry"]], ["FPT hay CMG có nền tảng tài chính tốt hơn?", ["stock"]],
+    ["Phân tích cổ phiếu DGC", ["stock"]], ["Định giá PVD và REE", ["stock"]],
   ] as const;
 }

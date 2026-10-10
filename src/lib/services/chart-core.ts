@@ -47,6 +47,7 @@ export interface ChartMarketData {
   intervalMs: number;
   gaps: number;
   suspect: number;
+  timeframe: string;
 }
 
 export interface ChartArgs {

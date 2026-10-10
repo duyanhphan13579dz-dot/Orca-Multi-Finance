@@ -1,6 +1,7 @@
 import "server-only";
 import { recordFailure, recordSuccess } from "../health";
 import { eventBus } from "../events";
+import { isRealtimeWsDisabled } from "./ws-policy";
 
 /**
  * CENTRALIZED BINANCE WEBSOCKET INGESTION ENGINE (low-latency)
@@ -149,7 +150,8 @@ class BinanceRealtimeEngine {
   private emitWindowStart = Date.now();
 
   private enabled(): boolean {
-    return process.env.BINANCE_WS_DISABLED !== "true";
+    if (process.env.CLOUDFLARE_WORKERS === "1" || process.env.NEXT_RUNTIME === "edge") return false;
+    return !isRealtimeWsDisabled("BINANCE_WS_DISABLED");
   }
 
   requestKline(symbol: string, interval: string): () => void {
@@ -203,7 +205,7 @@ class BinanceRealtimeEngine {
       return;
     }
 
-    const WSImpl = (globalThis as { WebSocket?: new (url: string) => WsLike }).WebSocket;
+    const WSImpl = (globalThis as unknown as { WebSocket?: new (url: string) => WsLike }).WebSocket;
     if (!WSImpl) {
       this.kline.state = "disabled";
       return;
@@ -322,7 +324,7 @@ class BinanceRealtimeEngine {
   start() {
     if (this.started || !this.enabled()) return;
     this.started = true;
-    const WSImpl = (globalThis as { WebSocket?: new (url: string) => WsLike }).WebSocket;
+    const WSImpl = (globalThis as unknown as { WebSocket?: new (url: string) => WsLike }).WebSocket;
     if (!WSImpl) {
       this.spot.state = "disabled";
       this.fut.state = "disabled";
@@ -342,7 +344,7 @@ class BinanceRealtimeEngine {
   private connect(kind: "spot" | "futures", url: string) {
     const st = this.stats(kind);
     const provider = kind === "spot" ? SPOT_PROVIDER : FUT_PROVIDER;
-    const WSImpl = (globalThis as { WebSocket?: new (url: string) => WsLike }).WebSocket;
+    const WSImpl = (globalThis as unknown as { WebSocket?: new (url: string) => WsLike }).WebSocket;
     if (!WSImpl) return;
     try {
       st.state = "connecting";

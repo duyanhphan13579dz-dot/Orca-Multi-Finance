@@ -59,7 +59,7 @@ def main(paths: list[str], out: str) -> None:
         "\n".join(json.dumps(r, ensure_ascii=False) for r in rows) + "\n",
         encoding="utf-8",
     )
-    print(f"wrote {len(rows)} chat examples → {out}")
+    print(f"wrote {len(rows)} chat examples -> {out}")
 
 
 if __name__ == "__main__":

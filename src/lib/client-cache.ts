@@ -8,7 +8,7 @@
 
 type Entry = { at: number; payload: unknown; hits: number };
 
-const MAX_ENTRIES = 72;
+const MAX_ENTRIES = 128;
 const DEFAULT_TTL_MS = 240_000;
 /** Core market endpoints keep longer so tab-hop never blanks. */
 const STICKY_TTL_MS = 420_000;
@@ -22,6 +22,12 @@ const STICKY_PREFIXES = [
   "/api/v1/commodities",
   "/api/v1/news",
   "/api/v1/macro-economic",
+  "/api/v1/currency-interest-rate",
+  "/api/v1/derivatives",
+  "/api/v1/screener",
+  "/api/v1/reports",
+  "/api/v1/watchlist",
+  "/api/v1/portfolio",
 ];
 
 function isSticky(key: string): boolean {

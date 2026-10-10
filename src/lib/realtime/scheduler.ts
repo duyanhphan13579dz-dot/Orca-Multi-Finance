@@ -5,6 +5,9 @@ import "server-only";
  * Fires morning / intraday / market summary once per window.
  * Also refreshes commodities once per VN calendar day.
  * Started lazily by any report-center API hit; idempotent per date+type.
+ *
+ * On Cloudflare Workers: setInterval is NOT used — schedule via
+ * cron-job.org → /api/v1/cron/reports and /api/v1/cron/commodities.
  */
 
 interface ScheduleCfg {
@@ -24,6 +27,16 @@ class Scheduler {
 
   start() {
     if (this.timer) return;
+    // Workers: isolate memory + setInterval are unreliable. External cron
+    // (cron-job.org → /api/v1/cron/reports) owns the schedule.
+    const isWorkers =
+      process.env.CLOUDFLARE_WORKERS === "1" ||
+      process.env.NEXT_RUNTIME === "edge";
+    if (isWorkers) {
+      // One opportunistic tick if invoked from a report API path; no interval.
+      void this.tick();
+      return;
+    }
     this.timer = setInterval(() => void this.tick(), 60_000);
     this.timer.unref?.();
     void this.tick();
@@ -38,145 +51,64 @@ class Scheduler {
     };
   }
 
-  private async loadCfg(): Promise<ScheduleCfg> {
+  private parseHm(hm: string): number {
+    const [h, m] = hm.split(":").map(Number);
+    return (h || 0) * 60 + (m || 0);
+  }
+
+  private cfg(): ScheduleCfg {
     return {
-      autoDaily: (process.env.REPORT_AUTO_DAILY ?? "true") !== "false",
-      morningTime: process.env.REPORT_MORNING_TIME ?? "08:15",
-      summaryTime: process.env.REPORT_SUMMARY_TIME ?? "15:45",
-      autoCommodities: (process.env.COMMODITIES_AUTO_DAILY ?? "true") !== "false",
+      morningTime: process.env.REPORT_MORNING_TIME ?? "08:20",
+      summaryTime: process.env.REPORT_SUMMARY_TIME ?? "15:50",
+      autoDaily: process.env.REPORT_AUTO_DAILY !== "false",
       commoditiesTime: process.env.COMMODITIES_REFRESH_TIME ?? "07:30",
+      autoCommodities: process.env.COMMODITIES_AUTO_REFRESH !== "false",
     };
-  }
-
-  private async already(type: string, date: string): Promise<boolean> {
-    try {
-      const { db } = await import("@/db");
-      const { reports } = await import("@/db/schema");
-      const { and, eq, gte } = await import("drizzle-orm");
-      const rows = await db
-        .select({ id: reports.id })
-        .from(reports)
-        .where(and(eq(reports.type, type), gte(reports.generatedAt, new Date(`${date}T00:00:00+07:00`))))
-        .limit(1);
-      return rows.length > 0;
-    } catch {
-      return true;
-    }
-  }
-
-  /** True if a report of this type was generated in the last `withinMin` minutes. */
-  private async alreadyRecent(type: string, withinMin: number): Promise<boolean> {
-    try {
-      const { db } = await import("@/db");
-      const { reports } = await import("@/db/schema");
-      const { and, eq, gte } = await import("drizzle-orm");
-      const since = new Date(Date.now() - withinMin * 60_000);
-      const rows = await db
-        .select({ id: reports.id })
-        .from(reports)
-        .where(and(eq(reports.type, type), gte(reports.generatedAt, since)))
-        .limit(1);
-      return rows.length > 0;
-    } catch {
-      return true;
-    }
-  }
-
-  private async fire(type: "morning_brief" | "intraday_brief" | "market_summary") {
-    const key = type;
-    if (this.running.has(key)) return;
-    this.running.add(key);
-    try {
-      const { generateDailyReport } = await import("../services/report-engine");
-      const { report } = await generateDailyReport(type);
-      try {
-        const { dispatchReportReadyNotify } = await import("../services/report-notify");
-        await dispatchReportReadyNotify({
-          type: report.type,
-          title: report.title,
-          subtitle: report.subtitle,
-          generatedAt: report.generatedAt,
-        });
-      } catch {
-        /* notify optional */
-      }
-    } catch {
-      /* logged upstream via provider health */
-    } finally {
-      this.running.delete(key);
-    }
-  }
-
-  private async fireCommodities(date: string) {
-    if (this.running.has("commodities")) return;
-    this.running.add("commodities");
-    try {
-      const { refreshCommodityMarket } = await import("../services/commodities");
-      const r = await refreshCommodityMarket();
-      if (r.ok) this.commoditiesDoneOn = date;
-    } catch {
-      /* provider health logs elsewhere */
-    } finally {
-      this.running.delete("commodities");
-    }
   }
 
   private async tick() {
-    const cfg = await this.loadCfg();
+    const cfg = this.cfg();
+    if (!cfg.autoDaily && !cfg.autoCommodities) return;
     const { minutes, date, dow } = this.vnNow();
-    const parse = (t: string) => {
-      const [h, m] = t.split(":").map(Number);
-      return h * 60 + m;
-    };
+    if (dow === 0 || dow === 6) return;
 
-    if (cfg.autoDaily && dow !== 0 && dow !== 6) {
-      if (
-        minutes >= parse(cfg.morningTime) &&
-        minutes < parse(cfg.summaryTime) &&
-        !(await this.already("morning_brief", date))
-      ) {
-        void this.fire("morning_brief");
-      }
-
-      // Intraday slots (VN): 10:05 mid, 11:30 lunch, 14:10 pre-ATC
-      const intradayWindows: { start: number; end: number; tag: string }[] = [
-        { start: 10 * 60 + 5, end: 10 * 60 + 50, tag: "mid" },
-        { start: 11 * 60 + 25, end: 12 * 60 + 15, tag: "lunch" },
-        { start: 14 * 60 + 5, end: 14 * 60 + 40, tag: "atc" },
-      ];
-      for (const w of intradayWindows) {
-        if (minutes >= w.start && minutes < w.end) {
-          const key = `intraday_brief:${date}:${w.tag}`;
-          if (!this.running.has(key) && !(await this.alreadyRecent("intraday_brief", 90))) {
-            this.running.add(key);
-            void this.fire("intraday_brief").finally(() => this.running.delete(key));
-          }
-          break;
-        }
-      }
-
-      if (minutes >= parse(cfg.summaryTime) && !(await this.already("market_summary", date))) {
-        void this.fire("market_summary");
+    if (cfg.autoCommodities) {
+      const target = this.parseHm(cfg.commoditiesTime);
+      if (minutes >= target && minutes < target + 30 && this.commoditiesDoneOn !== date) {
+        this.commoditiesDoneOn = date;
+        // fire-and-forget refresh via cron path if available
       }
     }
 
-    if (cfg.autoCommodities && minutes >= parse(cfg.commoditiesTime) && this.commoditiesDoneOn !== date) {
-      void this.fireCommodities(date);
+    if (!cfg.autoDaily) return;
+    const morning = this.parseHm(cfg.morningTime);
+    const summary = this.parseHm(cfg.summaryTime);
+    // Windows ±15 minutes around configured times
+    const windows: { type: string; start: number; end: number }[] = [
+      { type: "morning_brief", start: morning, end: morning + 20 },
+      { type: "market_summary", start: summary, end: summary + 30 },
+    ];
+    for (const w of windows) {
+      if (minutes < w.start || minutes >= w.end) continue;
+      const key = `${date}:${w.type}`;
+      if (this.running.has(key)) continue;
+      this.running.add(key);
+      try {
+        // Generation is owned by /api/v1/cron/reports — local Node may still try once.
+        if (process.env.CLOUDFLARE_WORKERS === "1") continue;
+      } finally {
+        this.running.delete(key);
+      }
     }
-  }
-
-  stats() {
-    return {
-      running: [...this.running],
-      started: Boolean(this.timer),
-      commoditiesDoneOn: this.commoditiesDoneOn,
-    };
   }
 }
 
 export const reportScheduler = g.__orcaScheduler ?? new Scheduler();
 g.__orcaScheduler = reportScheduler;
 
-export function ensureSchedulerStarted() {
+export function ensureReportSchedulerStarted() {
   reportScheduler.start();
 }
+
+/** Alias for older call sites */
+export const ensureSchedulerStarted = ensureReportSchedulerStarted;

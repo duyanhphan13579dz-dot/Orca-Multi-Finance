@@ -6,13 +6,22 @@ import { Section } from "@/components/settings-panels-extra";
 import { AlertTriangle, Database, Server } from "lucide-react";
 
 export function SystemTab() {
-  const { data, isLoading } = useApi<Record<string, unknown>>("/api/v1/system/info", {
+  const { data, isLoading, error } = useApi<Record<string, unknown>>("/api/v1/system/info", {
     refreshInterval: 15_000,
   });
   if (isLoading && !data) {
     return (
       <Panel>
         <p className="text-[12px] text-text-muted">Dang tai thong tin he thong...</p>
+      </Panel>
+    );
+  }
+  if (error && !data) {
+    return (
+      <Panel>
+        <p className="text-[12px] text-text-muted">
+          Khong tai duoc thong tin he thong — can dang nhap bang tai khoan quan tri.
+        </p>
       </Panel>
     );
   }
@@ -48,7 +57,7 @@ export function SystemTab() {
         <div className="mt-2 flex items-start gap-2 rounded-lg border border-warning/30 bg-warning/5 p-2.5 text-[12px] text-text-secondary">
           <AlertTriangle className="mt-0.5 size-4 shrink-0 text-warning" />
           <span>
-            LLM chua cau hinh — set OPENROUTER_API_KEY tren Vercel roi redeploy.
+            LLM chua cau hinh — set OPENROUTER_API_KEY tren Cloudflare roi redeploy.
           </span>
         </div>
       ) : null}

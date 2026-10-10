@@ -28,8 +28,21 @@ export function SheetsSyncPanel() {
   }, []);
 
   useEffect(() => {
-    void refreshStatus();
-  }, [refreshStatus]);
+    let cancelled = false;
+    const run = async () => {
+      try {
+        const res = await fetch("/api/v1/sheets?action=status");
+        const json = (await res.json()) as { data?: Status };
+        if (!cancelled) setStatus(json.data ?? null);
+      } catch {
+        if (!cancelled) setStatus({ configured: false, spreadsheetId: null, serviceEmail: null });
+      }
+    };
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const init = async () => {
     setBusy("init");

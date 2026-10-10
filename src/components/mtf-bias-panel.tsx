@@ -29,11 +29,17 @@ export function MtfBiasPanel({
 }) {
   const [bias, setBias] = useState<MtfBiasResult | null>(null);
   const [loading, setLoading] = useState(true);
+  const [prevKey, setPrevKey] = useState(() => `${symbol}:${assetType}:${chartTimeframe}`);
+  const currentKey = `${symbol}:${assetType}:${chartTimeframe}`;
+
+  if (prevKey !== currentKey) {
+    setPrevKey(currentKey);
+    setLoading(true);
+  }
 
   useEffect(() => {
     let cancelled = false;
     const tfs = companionTimeframes(chartTimeframe, tfsFor(assetType));
-    setLoading(true);
     (async () => {
       try {
         const seriesByTf: Record<string, OhlcvBar[]> = {};

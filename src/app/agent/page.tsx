@@ -110,7 +110,7 @@ export default function AgentPage() {
               domain={ctx.domain}
               title={ctx.title}
               entity={ctx.relatedEntities[0]}
-              updatedAt={m.meta?.sourceTimestamp ?? m.meta?.ingestedAt ?? ctx.dataMeta.freshestAt}
+              updatedAt={m.meta?.sourceTimestamp ? String(m.meta.sourceTimestamp) : (m.meta?.ingestedAt ?? ctx.dataMeta.freshestAt)}
             />
           ))}
         </div>

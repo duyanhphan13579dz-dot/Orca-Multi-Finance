@@ -5,7 +5,7 @@ import "server-only";
  *
  * Supported env pairs (first non-empty wins):
  *   1. SSI_FC_CONSUMER_ID / SSI_FC_CONSUMER_SECRET  (canonical)
- *   2. SSI_API_KEY / SSI_API_SECRET                  (Vercel aliases)
+ *   2. SSI_API_KEY / SSI_API_SECRET                  (host-env aliases)
  *   3. SSI_CONSUMER_ID / SSI_CONSUMER_SECRET
  *
  * Call ensureSsiEnvAliases() early so any code still reading SSI_FC_* works.

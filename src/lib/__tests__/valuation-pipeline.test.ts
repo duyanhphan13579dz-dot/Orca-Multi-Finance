@@ -57,6 +57,9 @@ test("VN quote conversion keeps market and financial units separate", () => {
   assert.equal(vnVndPerShareToQuote(50_000, 1_000), 50);
   assert.equal(vnVndPerShareToQuote(50_000, 1), 50_000);
   assert.equal(vnPriceQuoteToVnd(Number.NaN), null);
+  assert.equal(vnPriceQuoteToVnd(450, "VND"), 450);
+  assert.equal(vnPriceScale(450, "VND"), 1);
+  assert.equal(vnPriceQuoteToVnd(0.45, "kVND"), 450);
 });
 
 test("computeValuation calculates VND multiples and returns fair value in quote units", () => {
@@ -108,12 +111,12 @@ test("computeValuation uses statement-backed FCFF and FCFE when supplied", () =>
 
 test("net-debt ratios do not treat missing cash as zero", () => {
   const missingCash = computeDetailedRatios({
-    metrics: { shortTermDebt: 100, ebitda: 50 },
+    metrics: { shortTermDebt: 100, longTermDebt: 0, ebitda: 50 },
     priceQuote: null,
     sharesOutstanding: null,
   });
   const zeroCash = computeDetailedRatios({
-    metrics: { shortTermDebt: 100, cash: 0, ebitda: 50 },
+    metrics: { shortTermDebt: 100, longTermDebt: 0, cash: 0, ebitda: 50 },
     priceQuote: null,
     sharesOutstanding: null,
   });

@@ -30,6 +30,8 @@ class Heartbeat {
   start() {
     if (this.timer) return;
     if (process.env.ORCA_HEARTBEAT_DISABLED === "true") return;
+    // Workers: không có tiến trình sống lâu — dùng cron ngoài.
+    if (process.env.CLOUDFLARE_WORKERS === "1" || process.env.NEXT_RUNTIME === "edge") return;
     try {
       ensureSessionPollerStarted();
     } catch {

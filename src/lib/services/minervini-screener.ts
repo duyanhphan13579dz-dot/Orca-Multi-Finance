@@ -3,13 +3,14 @@ import { buildMeta } from "../freshness";
 import { sma } from "../technical";
 import { getVnQuotes } from "./stocks";
 import { LIQUID_BOARD } from "../providers/public-vn-feed";
-import { fetchOhlcvResilient, mapPool } from "./screener-ohlcv";
+import { batchVnOhlcv } from "./ohlcv-batch";
+import { WORKERS_BUDGET } from "../data-engine/workers-budget";
 import { getSecurity, sectorOf } from "../vn/master";
-import type { Meta, OhlcvBar } from "../types";
+import type { Meta, OhlcvBar, Quote } from "../types";
 
 /**
  * Mark Minervini — Trend Template screener (SEPA universe filter).
- * Resilient OHLCV (retry) + never returns null — empty table + partial meta.
+ * Resilient OHLCV batch + never returns null — empty table + partial meta.
  */
 
 export interface MinerviniCriteria {
@@ -131,8 +132,10 @@ function analyzeBars(symbol: string, bars: OhlcvBar[]): RawPack | null {
   const lookHigh = bars.slice(-252);
   const highs = lookHigh.map((b) => b.high);
   const lows = lookHigh.map((b) => b.low);
-  const high52w = highs.length ? Math.max(...highs) : null;
-  const low52w = lows.length ? Math.min(...lows) : null;
+  // Thị trường VN có ~245-248 phiên/năm (nghỉ Tết); 200+ phiên tương đương ~40 tuần/1 năm giao dịch
+  const hasFull52w = lookHigh.length >= 200;
+  const high52w = hasFull52w && highs.length ? Math.max(...highs) : null;
+  const low52w = hasFull52w && lows.length ? Math.min(...lows) : null;
 
   return {
     symbol,
@@ -144,8 +147,8 @@ function analyzeBars(symbol: string, bars: OhlcvBar[]): RawPack | null {
     sma200Prev30: smaAt(closes, 200, 30),
     high52w,
     low52w,
-    ret126: pctRet(closes, Math.min(126, closes.length - 1)),
-    ret252: pctRet(closes, Math.min(252, closes.length - 1)),
+    ret126: closes.length > 126 ? pctRet(closes, 126) : null,
+    ret252: closes.length >= 240 ? pctRet(closes, Math.min(252, closes.length - 1)) : null,
     volume20: avgVol(bars, 20),
     volume60: avgVol(bars, 60),
   };
@@ -231,27 +234,41 @@ export async function screenMinervini(args?: {
   sector?: string;
   minRs?: number;
   limit?: number;
+  skipQuotes?: boolean;
 }): Promise<{ rows: MinerviniScreenRow[]; scanned: number; skipped: number; meta: Meta } | null> {
   const uniq = [
     ...new Set((args?.symbols?.length ? args.symbols : LIQUID_BOARD).map((s) => s.toUpperCase()).filter(Boolean)),
   ].slice(0, 100);
 
-  const quotesPack = await getVnQuotes(uniq).catch(() => null);
-  const quoteMap = new Map((quotesPack?.quotes ?? []).map((q) => [q.symbol, q]));
+  const screenStartedAt = Date.now();
+  const quotesPack = args?.skipQuotes ? null : await getVnQuotes(uniq).catch(() => null);
+  const quoteMap = new Map<string, Quote>();
+  for (const quote of quotesPack?.quotes ?? []) {
+    if (quote.symbol) quoteMap.set(quote.symbol, quote);
+  }
 
   let skipped = 0;
-  const packs = await mapPool(uniq, 8, async (symbol) => {
-    const { bars } = await fetchOhlcvResilient(symbol, 280);
+  const ohlcvMap = await batchVnOhlcv(uniq, {
+    bars: 260,
+    concurrency: WORKERS_BUDGET.ohlcvBatchConcurrency,
+    perSymbolMs: WORKERS_BUDGET.ohlcvPerSymbolMs + 1_000,
+    deadlineMs: Math.max(1_000, WORKERS_BUDGET.techScreenWallMs - (Date.now() - screenStartedAt) - 1_500),
+    resilient: true,
+    priority: uniq.slice(0, 30),
+  });
+  const packs: (RawPack | null)[] = [];
+  for (const symbol of uniq) {
+    const bars = ohlcvMap.get(symbol)?.bars ?? [];
     const pack = analyzeBars(symbol, bars);
     if (!pack) {
       skipped += 1;
-      return null;
+      packs.push(null);
+    } else {
+      packs.push(pack);
     }
-    return pack;
-  });
+  }
 
   const valid = packs.filter((p): p is RawPack => p != null);
-  // Never hard-fail — empty table + partial note instead of "không khả dụng"
 
   const retKey = (p: RawPack) => p.ret252 ?? p.ret126;
   const ranked = valid

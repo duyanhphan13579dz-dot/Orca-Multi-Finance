@@ -63,13 +63,18 @@ export const env = {
       return {} as Record<string, string>;
     }
   })(),
-  msnApiKey:
-    opt(process.env.MSN_FINANCE_API_KEY) ??
-    "0QfOX3Vn51YCzitbLaRkTTBadtWpgTN8NZLW0C1SEM",
+  /** Không còn khóa mặc định trong mã nguồn; chưa có biến → tính năng MSN tắt. */
+  msnApiKey: opt(process.env.MSN_FINANCE_API_KEY),
 
   redisUrl: redisIsTcp ? redisCandidate : undefined,
   redisNote,
-  jwtSecret: opt(process.env.JWT_SECRET) ?? "orca-dev-insecure-secret-change-in-production",
+  /** Upstash Redis REST — works on Cloudflare Workers (no TCP). Prefer when set. */
+  upstashRestUrl:
+    opt(process.env.UPSTASH_REDIS_REST_URL) ??
+    (redisCandidate && /^https?:\/\//i.test(redisCandidate) ? redisCandidate : undefined),
+  upstashRestToken: opt(process.env.UPSTASH_REDIS_REST_TOKEN),
+  /** Không còn khóa mặc định: auth.ts tự quyết định (production thiếu → từ chối, dev → khóa cục bộ). */
+  jwtSecret: opt(process.env.JWT_SECRET),
 
   openrouterApiKey: opt(process.env.OPENROUTER_API_KEY),
   openrouterModel: opt(process.env.OPENROUTER_MODEL),

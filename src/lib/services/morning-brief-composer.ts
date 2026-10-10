@@ -385,7 +385,7 @@ export function composeMorningFramework(
   if (comms.length) {
     const ranked = [...comms]
       .map((c) => {
-        const label = (c.name || c.commodity || c.symbol || "").trim();
+        const label = (c.name || (c as { commodity?: string }).commodity || c.symbol || "").trim();
         const impact = resolveCommImpact(c.symbol, label);
         const hasDelta = c.changePercent != null;
         const score = (hasDelta ? Math.abs(c.changePercent!) : 0) + (impact ? 5 : 0);

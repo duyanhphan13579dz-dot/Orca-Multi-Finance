@@ -11,7 +11,11 @@ const PRIMARY_BASE = () =>
 
 function vndBases(): string[] {
   const primary = PRIMARY_BASE();
-  const alts = ["https://api-finfo.vndirect.com.vn", "https://finfo-api.vndirect.com.vn"];
+  const envFallbacks = (process.env.VNDIRECT_FALLBACK_BASE_URLS ?? "")
+    .split(/[;,\s]+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const alts = [...envFallbacks, "https://api-finfo.vndirect.com.vn", "https://finfo-api.vndirect.com.vn"];
   const out: string[] = [];
   for (const b of [primary, ...alts]) {
     const n = b.replace(/\/$/, "");
@@ -65,6 +69,8 @@ const VND_HEADERS: Record<string, string> = {
   Accept: "application/json, text/plain, */*",
   Origin: "https://dstock.vndirect.com.vn",
   Referer: "https://dstock.vndirect.com.vn/",
+  "User-Agent":
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
   "X-Requested-With": "XMLHttpRequest",
 };
 
@@ -92,11 +98,12 @@ export function getVndirectLatencyStats() {
   };
 }
 
-async function vndGet<T>(path: string, timeoutMs = 8_000): Promise<T> {
+async function vndGet<T>(path: string, timeoutMs = 8_000, signal?: AbortSignal): Promise<T> {
   const bases = vndBases();
   const t0 = performance.now();
   let lastErr = "unreachable";
   for (let i = 0; i < bases.length; i++) {
+    if (signal?.aborted) break;
     const idx = (lastGoodBase + i) % bases.length;
     const res = await httpJson<T>(`${bases[idx]}${path}`, {
       provider: VNDIRECT,
@@ -104,6 +111,7 @@ async function vndGet<T>(path: string, timeoutMs = 8_000): Promise<T> {
       retries: 2,
       backoffBaseMs: 220,
       headers: VND_HEADERS,
+      signal,
     });
     if (res.ok && res.data != null) {
       lastGoodBase = idx;
@@ -111,6 +119,7 @@ async function vndGet<T>(path: string, timeoutMs = 8_000): Promise<T> {
       return res.data;
     }
     lastErr = res.error ?? "unreachable";
+    if (signal?.aborted) break;
   }
   recordVndLatency(path, performance.now() - t0, false);
   throw new ProviderError(`vndirect: ${lastErr}`, VNDIRECT);
@@ -140,32 +149,64 @@ export async function getVndLatestSessionDate(): Promise<string> {
 }
 
 export async function getVndIndices(): Promise<{ items: IndexQuote[]; sourceTs: number | null }> {
-  const codes = ["VNINDEX", "VN30", "HNX", "HNX30", "UPCOM"];
-  const items: IndexQuote[] = [];
+  const codes = ["VNINDEX", "VN30", "HNX", "HNX30", "UPCOM", "VN100"];
+  const byCode = new Map<string, IndexQuote>();
   let newest: number | null = null;
-  const results = await Promise.allSettled(
-    codes.map((code) =>
-      vndGet<Page<VndPriceRow>>(`/v4/vnmarket_prices?q=code:${code}&size=1&sort=date:desc`, 6_000),
-    ),
-  );
-  for (let i = 0; i < codes.length; i++) {
-    const settled = results[i];
-    if (!settled || settled.status !== "fulfilled") continue;
-    const r = settled.value.data?.[0];
-    if (!r?.close) continue;
-    const code = codes[i]!;
-    const ts = r.date ? Date.parse(`${r.date}T15:00:00+07:00`) : null;
-    if (ts != null && Number.isFinite(ts) && (newest == null || ts > newest)) newest = ts;
-    items.push({
-      code,
-      name: code,
-      value: r.close,
-      change: num(r.change) ?? 0,
-      changePercent: num(r.changePercent) ?? num(r.changeRatio) ?? num(r.pctChange) ?? 0,
-      volume: num(r.nmVolume),
-      updatedAt: r.date ?? null,
-    });
+
+  // Tier 1: Single batch query for all index codes (~300ms)
+  try {
+    const batchPayload = await vndGet<Page<VndPriceRow>>(
+      `/v4/vnmarket_prices?q=code:${codes.join(",")}&size=15&sort=date:desc`,
+      5_000,
+    );
+    for (const r of batchPayload.data ?? []) {
+      const code = String(r.code ?? "").toUpperCase();
+      if (!code || !r.close || byCode.has(code)) continue;
+      const ts = r.date ? Date.parse(`${r.date}T15:00:00+07:00`) : null;
+      if (ts != null && Number.isFinite(ts) && (newest == null || ts > newest)) newest = ts;
+      byCode.set(code, {
+        code,
+        name: code,
+        value: r.close,
+        change: num(r.change) ?? 0,
+        changePercent: num(r.changePercent) ?? num(r.changeRatio) ?? num(r.pctChange) ?? 0,
+        volume: num(r.nmVolume),
+        updatedAt: r.date ?? null,
+      });
+    }
+  } catch {
+    /* fallback to per-code below */
   }
+
+  // Tier 2: Fill any missing index codes individually
+  const missing = codes.filter((c) => !byCode.has(c));
+  if (missing.length > 0) {
+    const results = await Promise.allSettled(
+      missing.map((code) =>
+        vndGet<Page<VndPriceRow>>(`/v4/vnmarket_prices?q=code:${code}&size=1&sort=date:desc`, 4_500),
+      ),
+    );
+    for (let i = 0; i < missing.length; i++) {
+      const settled = results[i];
+      if (!settled || settled.status !== "fulfilled") continue;
+      const r = settled.value.data?.[0];
+      if (!r?.close) continue;
+      const code = missing[i]!;
+      const ts = r.date ? Date.parse(`${r.date}T15:00:00+07:00`) : null;
+      if (ts != null && Number.isFinite(ts) && (newest == null || ts > newest)) newest = ts;
+      byCode.set(code, {
+        code,
+        name: code,
+        value: r.close,
+        change: num(r.change) ?? 0,
+        changePercent: num(r.changePercent) ?? num(r.changeRatio) ?? num(r.pctChange) ?? 0,
+        volume: num(r.nmVolume),
+        updatedAt: r.date ?? null,
+      });
+    }
+  }
+
+  const items = [...byCode.values()];
   if (!items.length) throw new ProviderError("vndirect: empty indices", VNDIRECT);
   return { items, sourceTs: newest };
 }
@@ -178,26 +219,19 @@ export async function getVndMarketQuotes(
 }
 
 export async function getVndQuotes(symbols: string[]): Promise<{ quotes: Quote[]; sourceTs: number | null }> {
-  const uniq = [...new Set(symbols.map((s) => s.toUpperCase()).filter(Boolean))].slice(0, 40);
+  const uniq = [...new Set(symbols.map((s) => s.toUpperCase()).filter(Boolean))].slice(0, 80);
   if (!uniq.length) return { quotes: [], sourceTs: null };
-  const date = await getVndLatestSessionDate();
-  const quotes: Quote[] = [];
+
+  const bySym = new Map<string, Quote>();
   let newest: number | null = null;
-  const results = await Promise.allSettled(
-    uniq.map((s) =>
-      vndGet<Page<VndPriceRow>>(`/v4/stock_prices?q=code:${s}~date:${date}&size=1&sort=date:desc`, 6_000),
-    ),
-  );
-  for (const r of results) {
-    if (r.status !== "fulfilled") continue;
-    const row = r.value.data?.[0];
-    if (!row) continue;
+
+  const ingestRow = (row: VndPriceRow) => {
     const symbol = String(row.code ?? "").toUpperCase();
     const price = num(row.close);
-    if (!symbol || price == null) continue;
+    if (!symbol || price == null || bySym.has(symbol)) return;
     const t = row.date ? Date.parse(`${row.date}T15:00:00+07:00`) : null;
     if (t != null && Number.isFinite(t) && (newest == null || t > newest)) newest = t;
-    quotes.push({
+    bySym.set(symbol, {
       symbol,
       assetClass: "stock",
       price,
@@ -213,15 +247,61 @@ export async function getVndQuotes(symbols: string[]): Promise<{ quotes: Quote[]
       floorPrice: num(row.floorPrice),
       updatedAt: row.date ?? null,
     });
+  };
+
+  // Tier 1: Fast multi-symbol batching in chunks of 25 (1-3 requests total instead of 80)
+  const CHUNK_SIZE = 25;
+  const chunks: string[][] = [];
+  for (let i = 0; i < uniq.length; i += CHUNK_SIZE) {
+    chunks.push(uniq.slice(i, i + CHUNK_SIZE));
   }
+
+  await Promise.allSettled(
+    chunks.map(async (chunk) => {
+      try {
+        const payload = await vndGet<Page<VndPriceRow>>(
+          `/v4/stock_prices?q=code:${chunk.join(",")}~type:STOCK&size=${chunk.length * 3}&sort=date:desc`,
+          5_500,
+        );
+        for (const row of payload.data ?? []) {
+          ingestRow(row);
+        }
+      } catch {
+        /* fallback per symbol below */
+      }
+    }),
+  );
+
+  // Tier 2: Check any symbols still missing
+  const missing = uniq.filter((s) => !bySym.has(s));
+  if (missing.length > 0 && missing.length <= 15) {
+    try {
+      const date = await getVndLatestSessionDate().catch(() => null);
+      await Promise.allSettled(
+        missing.map(async (s) => {
+          const dateParam = date ? `~date:${date}` : "";
+          const payload = await vndGet<Page<VndPriceRow>>(
+            `/v4/stock_prices?q=code:${s}${dateParam}&size=1&sort=date:desc`,
+            4_000,
+          );
+          if (payload.data?.[0]) ingestRow(payload.data[0]);
+        }),
+      );
+    } catch {
+      /* ignore */
+    }
+  }
+
+  const quotes = [...bySym.values()];
   if (!quotes.length) throw new ProviderError("vndirect: empty quotes batch", VNDIRECT);
   return { quotes, sourceTs: newest };
 }
 
-export async function getVndOhlcv(symbol: string, size = 250): Promise<OhlcvBar[]> {
+export async function getVndOhlcv(symbol: string, size = 250, signal?: AbortSignal): Promise<OhlcvBar[]> {
   const payload = await vndGet<Page<VndPriceRow>>(
     `/v4/stock_prices?q=code:${symbol.toUpperCase()}&size=${Math.min(size, 500)}&sort=date:asc`,
     10_000,
+    signal,
   );
   const rows = payload.data ?? [];
   const bars: OhlcvBar[] = [];
@@ -260,11 +340,12 @@ export function isVnIndexSymbol(symbol: string): boolean {
   return raw in INDEX_ALIASES || stripped in INDEX_ALIASES;
 }
 
-export async function getVndIndexOhlcv(code: string, size = 250): Promise<OhlcvBar[]> {
+export async function getVndIndexOhlcv(code: string, size = 250, signal?: AbortSignal): Promise<OhlcvBar[]> {
   const idx = vndIndexCode(code);
   const payload = await vndGet<Page<VndPriceRow>>(
     `/v4/vnmarket_prices?q=code:${idx}&size=${Math.min(size, 500)}&sort=date:asc`,
     10_000,
+    signal,
   );
   const bars: OhlcvBar[] = [];
   for (const r of payload.data ?? []) {

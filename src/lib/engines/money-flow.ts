@@ -66,6 +66,8 @@ export interface SwingPoint {
   price: number;
   kind: SwingKind;
   type: "high" | "low";
+  confirmedAtIndex: number;
+  isProvisional?: boolean;
 }
 
 export interface FairValueGap {
@@ -233,11 +235,12 @@ function findSwings(bars: OhlcvBar[], halfWindow: number, kind: SwingKind): Swin
     const hi = Math.max(...window.map((b) => b.high));
     const lo = Math.min(...window.map((b) => b.low));
     const bar = bars[i]!;
+    const confirmedAtIndex = i + halfWindow;
     if (bar.high === hi) {
-      out.push({ index: i, time: bar.time, price: bar.high, kind, type: "high" });
+      out.push({ index: i, time: bar.time, price: bar.high, kind, type: "high", confirmedAtIndex, isProvisional: false });
     }
     if (bar.low === lo) {
-      out.push({ index: i, time: bar.time, price: bar.low, kind, type: "low" });
+      out.push({ index: i, time: bar.time, price: bar.low, kind, type: "low", confirmedAtIndex, isProvisional: false });
     }
   }
   return out;
@@ -763,14 +766,14 @@ function resolveState(input: {
   if (
     score > 15 &&
     premiumDiscount === "DISCOUNT" &&
-    (vsaEvents.includes("NO_SUPPLY") || effortResult === "bullish" || absorption === "bullish")
+    (vsaEvents.includes("NO_SUPPLY") || effortResult === "bullish")
   ) {
     return "ACCUMULATION_CANDIDATE";
   }
   if (
     score < -15 &&
     premiumDiscount === "PREMIUM" &&
-    (vsaEvents.includes("NO_DEMAND") || effortResult === "bearish" || absorption === "bearish")
+    (vsaEvents.includes("NO_DEMAND") || effortResult === "bearish")
   ) {
     return "DISTRIBUTION_CANDIDATE";
   }
@@ -950,7 +953,7 @@ export function analyzeMoneyFlow(
       : primaryFvg?.direction === "bearish"
         ? "bearish"
         : "neutral",
-  ].filter((d) => d !== "neutral");
+  ].filter((d): d is FlowDirection => d !== "neutral");
 
   const agreementBull = dirs.filter((d) => d === "bullish").length;
   const agreementBear = dirs.filter((d) => d === "bearish").length;

@@ -3,8 +3,9 @@
 import "@/app/stock-fs-table.css";
 
 import { useEffect, useState } from "react";
+import { ExternalLink } from "lucide-react";
 import { useApi } from "@/lib/hooks";
-import { fmtCompact, Loading, Panel, Unavailable } from "@/components/ui";
+import { fmtCompact, Loading, Panel, Unavailable, ErrorState, EmptyState, FreshnessAlertBanner } from "@/components/ui";
 import { financialsApiUrl, type FinTablePayload } from "@/components/stocks/financials-table-data";
 
 type TabKey = "income" | "balance" | "cashflow" | "ratios";
@@ -180,12 +181,13 @@ export default function StockFinancialsPage({ params }: { params: Promise<{ symb
     params.then((p) => setSymbol(p.symbol.toUpperCase()));
   }, [params]);
 
-  const { res, data, isLoading, error } = useApi<FinTablePayload>(
+  // P7-A: fail-fast client + keep previous rows; soft shell with DStock links
+  const { res, data, isLoading, error, mutate } = useApi<FinTablePayload>(
     symbol ? financialsApiUrl(symbol) : null,
-    { refreshInterval: 300_000, timeoutMs: 55_000 },
+    { refreshInterval: 300_000, timeoutMs: 18_000, keepPreviousData: true },
   );
 
-  if (!symbol || (isLoading && !res)) return <Loading rows={8} />;
+  if (!symbol) return <Loading rows={6} label="Đang mở BCTC…" />;
 
   const failNote = (() => {
     if (res && !res.success) {
@@ -197,9 +199,56 @@ export default function StockFinancialsPage({ params }: { params: Promise<{ symb
     return "Nguồn báo cáo đang gián đoạn. Thử lại sau hoặc mở link DStock bên dưới.";
   })();
 
-  if (!res?.success || !data?.financials) {
+  if (isLoading && !data) {
     return (
-      <Unavailable title={`Không lấy được BCTC ${symbol || ""}`} note={failNote} />
+      <div className="stock-workspace space-y-3">
+        <Loading rows={6} label="Đang tải BCTC (tối đa ~18 giây)…" />
+        <Panel title="Nguồn đối chiếu (VNDIRECT DStock)">
+          <ul className="space-y-1.5 text-[12px]">
+            <li>
+              <a className="text-accent underline-offset-2 hover:underline" href={`https://dstock.vndirect.com.vn/bao-cao-ket-qua-kinh-doanh/${symbol}`} target="_blank" rel="noopener noreferrer">
+                KQKD {symbol} ↗
+              </a>
+            </li>
+            <li>
+              <a className="text-accent underline-offset-2 hover:underline" href={`https://dstock.vndirect.com.vn/bang-can-doi-ke-toan/${symbol}`} target="_blank" rel="noopener noreferrer">
+                Cân đối kế toán {symbol} ↗
+              </a>
+            </li>
+          </ul>
+        </Panel>
+      </div>
+    );
+  }
+
+  if (!data?.financials) {
+    return (
+      <div className="stock-workspace space-y-3">
+        <ErrorState
+          title={`Không lấy được BCTC ${symbol || ""}`}
+          message={failNote || "Không thể kết nối hoặc dữ liệu BCTC từ nhà cung cấp đang tạm dừng."}
+          onRetry={() => void mutate()}
+        />
+        <Panel title="Nguồn đối chiếu (VNDIRECT DStock)">
+          <ul className="space-y-1.5 text-[12px]">
+            <li>
+              <a className="break-all text-accent underline-offset-2 hover:underline" href={`https://dstock.vndirect.com.vn/bang-can-doi-ke-toan/${symbol}`} target="_blank" rel="noopener noreferrer">
+                dstock…/bang-can-doi-ke-toan/{symbol}
+              </a>
+            </li>
+            <li>
+              <a className="break-all text-accent underline-offset-2 hover:underline" href={`https://dstock.vndirect.com.vn/bao-cao-ket-qua-kinh-doanh/${symbol}`} target="_blank" rel="noopener noreferrer">
+                dstock…/bao-cao-ket-qua-kinh-doanh/{symbol}
+              </a>
+            </li>
+            <li>
+              <a className="break-all text-accent underline-offset-2 hover:underline" href={`https://dstock.vndirect.com.vn/bao-cao-luu-chuyen-tien-te/${symbol}`} target="_blank" rel="noopener noreferrer">
+                dstock…/bao-cao-luu-chuyen-tien-te/{symbol}
+              </a>
+            </li>
+          </ul>
+        </Panel>
+      </div>
     );
   }
 
@@ -259,23 +308,47 @@ export default function StockFinancialsPage({ params }: { params: Promise<{ symb
           ))}
         </div>
 
-        <div className="stock-fs-meta mb-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-ink-3">
-          <span>
-            {TABS.find((x) => x.key === tab)?.label} · Nguồn{" "}
-            <strong className="text-ink-2">{sourceLabel}</strong>
-          </span>
-          {fm?.latestPeriod && (
+        <div className="stock-fs-meta mb-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-[11px] text-ink-3">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
             <span>
-              Kỳ mới nhất: <strong className="text-ink-2">{fm.latestPeriod}</strong>
+              {TABS.find((x) => x.key === tab)?.label} · Nguồn{" "}
+              <strong className="text-ink-2">{sourceLabel}</strong>
             </span>
-          )}
-          {tab === "ratios" && (
-            <span className="text-accent/90">Chỉ số được tính tự động từ BCTC</span>
+            {fm?.latestPeriod && (
+              <span>
+                Kỳ mới nhất: <strong className="text-ink-2">{fm.latestPeriod}</strong>
+              </span>
+            )}
+            {tab === "ratios" && (
+              <span className="text-accent/90">Chỉ số được tính tự động từ BCTC</span>
+            )}
+          </div>
+          {tab !== "ratios" && symbol && (
+            <a
+              href={
+                tab === "balance"
+                  ? `https://dstock.vndirect.com.vn/bang-can-doi-ke-toan/${symbol}`
+                  : tab === "cashflow"
+                    ? `https://dstock.vndirect.com.vn/bao-cao-luu-chuyen-tien-te/${symbol}`
+                    : `https://dstock.vndirect.com.vn/bao-cao-ket-qua-kinh-doanh/${symbol}`
+              }
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 rounded bg-accent/10 px-2 py-0.5 text-[10.5px] font-medium text-accent hover:bg-accent/20"
+            >
+              <ExternalLink className="size-3" />
+              Xem nguồn gốc trên DStock VNDirect ↗
+            </a>
           )}
         </div>
 
         {!rows.length ? (
-          <p className="text-[12px] text-ink-3">Bảng này chưa có dữ liệu từ {sourceLabel}.</p>
+          <EmptyState
+            title={`Chưa có dữ liệu ${TABS.find((x) => x.key === tab)?.label}`}
+            description={`Bảng này chưa có dữ liệu báo cáo từ ${sourceLabel} cho mã ${symbol}.`}
+            actionLabel="Tải lại BCTC"
+            onAction={() => void mutate()}
+          />
         ) : (
           <>
             <div className="stock-fs-scroll md:hidden">

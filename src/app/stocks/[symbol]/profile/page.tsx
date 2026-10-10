@@ -175,7 +175,6 @@ export default function StockProfilePage({ params }: { params: Promise<{ symbol:
           <div className="company-profile-top">
             <div className="company-profile-identity">
               {p?.logo ? (
-                // eslint-disable-next-line @next/next/no-img-element
                 <img src={p.logo} alt={p.vnName ?? symbol} className="size-12 rounded-lg border border-line object-contain bg-bg-1" />
               ) : (
                 <div className="flex size-12 items-center justify-center rounded-lg border border-line bg-bg-2 text-accent">

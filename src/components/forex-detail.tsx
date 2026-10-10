@@ -60,11 +60,13 @@ const QUICK_PAIRS = [
   "USDJPY",
   "XAUUSD",
   "XAGUSD",
+  "OILUSD",
+  "USOIL",
+  "UKOIL",
   "AUDUSD",
   "EURJPY",
   "GBPJPY",
-  "EURCHF",
-  "AUDNZD",
+  "XPTUSD",
 ] as const;
 
 type MobileTab = "chart" | "desk" | "scalp" | "structure" | "news";
@@ -93,7 +95,10 @@ export function ForexDetailPage({ pair }: { pair: string }) {
   const [structureTab, setStructureTab] = useState<StructureTab>("ms");
 
   const { data, meta, isLoading } = useApi<ForexDetail>(`/api/v1/forex/${pair}`, {
-    refreshInterval: 60_000,
+    refreshInterval: 30_000,
+    keepPreviousData: true,
+    // P6-D: fail-fast client timeout
+    timeoutMs: 12_000,
   });
 
   const seriesHigh = useMemo(() => {
@@ -129,7 +134,6 @@ export function ForexDetailPage({ pair }: { pair: string }) {
 
   return (
     <div className="flex flex-col gap-2">
-      {/* Dense ticker */}
       <div className="panel rounded-xl p-2.5 sm:p-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex flex-wrap items-center gap-2 sm:gap-2.5">
@@ -229,7 +233,6 @@ export function ForexDetailPage({ pair }: { pair: string }) {
         </div>
       </div>
 
-      {/* Mobile tabs */}
       <div className="xl:hidden">
         <div className="flex gap-1 overflow-x-auto rounded-lg border border-border-subtle bg-surface-elevated/40 p-1">
           {(
@@ -255,7 +258,6 @@ export function ForexDetailPage({ pair }: { pair: string }) {
         </div>
       </div>
 
-      {/* Top stage: 3+6+3 */}
       <div className="hidden xl:grid xl:grid-cols-12 xl:gap-2 xl:items-stretch">
         <div className="xl:col-span-3 flex min-h-[560px] flex-col gap-2">
           <FILL className="min-h-0 flex-[1.2]">
@@ -279,11 +281,65 @@ export function ForexDetailPage({ pair }: { pair: string }) {
         </div>
 
         <div className="xl:col-span-6 flex min-h-[560px] flex-col overflow-hidden rounded-xl border border-border-subtle bg-surface-primary">
+          {tech ? (
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-border-subtle px-2.5 py-1.5 text-[10px] text-text-secondary">
+              <span className="font-semibold text-text-primary">Chỉ báo</span>
+              {tech.rsi14 != null && (
+                <span>
+                  RSI14{" "}
+                  <b className={tech.rsi14 >= 70 ? "text-down" : tech.rsi14 <= 30 ? "text-up" : "text-text-primary"}>
+                    {tech.rsi14.toFixed(1)}
+                  </b>
+                </span>
+              )}
+              {(tech.macd?.histogram ?? tech.macd?.hist) != null && (
+                <span>
+                  MACD hist{" "}
+                  <b className={(tech.macd?.histogram ?? tech.macd?.hist ?? 0) >= 0 ? "text-up" : "text-down"}>
+                    {(tech.macd?.histogram ?? tech.macd?.hist)!.toFixed(5)}
+                  </b>
+                </span>
+              )}
+              {tech.sma?.sma20 != null && (
+                <span>
+                  SMA20 <b className="text-text-primary">{fmtNum(tech.sma.sma20, digits)}</b>
+                </span>
+              )}
+              {tech.sma?.sma50 != null && (
+                <span>
+                  SMA50 <b className="text-text-primary">{fmtNum(tech.sma.sma50, digits)}</b>
+                </span>
+              )}
+              {tech.ema?.ema12 != null && (
+                <span>
+                  EMA12 <b className="text-text-primary">{fmtNum(tech.ema.ema12, digits)}</b>
+                </span>
+              )}
+              {tech.atr14 != null && (
+                <span>
+                  ATR14 <b className="text-text-primary">{fmtNum(tech.atr14, digits)}</b>
+                </span>
+              )}
+              {tech.trend?.label && (
+                <span>
+                  Trend <b className="text-text-primary">{tech.trend.label}</b>
+                  {tech.trend.score != null ? ` (${tech.trend.score})` : ""}
+                </span>
+              )}
+              {tech.bollinger?.upper != null && tech.bollinger?.lower != null && (
+                <span>
+                  BB <b className="text-text-primary">{fmtNum(tech.bollinger.lower, digits)}</b>
+                  {" – "}
+                  <b className="text-text-primary">{fmtNum(tech.bollinger.upper, digits)}</b>
+                </span>
+              )}
+            </div>
+          ) : null}
           <OrcaChart
             symbol={pair}
             assetType="forex"
             defaultTimeframe={interval}
-            height={560}
+            height={tech ? 520 : 560}
             title={`${data.base}/${data.quote}`}
           />
         </div>
@@ -296,16 +352,27 @@ export function ForexDetailPage({ pair }: { pair: string }) {
         </div>
       </div>
 
-      {/* Mobile content */}
       <div className="space-y-2 xl:hidden">
         {mobileTab === "chart" && (
-          <OrcaChart
-            symbol={pair}
-            assetType="forex"
-            defaultTimeframe={interval}
-            height={400}
-            title={`${data.base}/${data.quote}`}
-          />
+          <>
+            {tech ? (
+              <div className="flex flex-wrap gap-2 rounded-lg border border-border-subtle bg-surface-primary px-2 py-1.5 text-[10px] text-text-secondary">
+                <span className="font-semibold text-text-primary">Chỉ báo</span>
+                {tech.rsi14 != null && <span>RSI14 <b>{tech.rsi14.toFixed(1)}</b></span>}
+                {(tech.macd?.histogram ?? tech.macd?.hist) != null && (
+                  <span>MACD <b>{(tech.macd?.histogram ?? tech.macd?.hist)!.toFixed(5)}</b></span>
+                )}
+                {tech.atr14 != null && <span>ATR <b>{fmtNum(tech.atr14, digits)}</b></span>}
+              </div>
+            ) : null}
+            <OrcaChart
+              symbol={pair}
+              assetType="forex"
+              defaultTimeframe={interval}
+              height={400}
+              title={`${data.base}/${data.quote}`}
+            />
+          </>
         )}
         {mobileTab === "desk" && (
           <>
@@ -354,7 +421,6 @@ export function ForexDetailPage({ pair }: { pair: string }) {
         )}
       </div>
 
-      {/* Bottom cockpit: 7+5 */}
       <div className="hidden xl:grid xl:grid-cols-12 xl:gap-2 xl:items-stretch">
         <div className="xl:col-span-7 flex min-h-[300px] flex-col">
           <MarketStructurePanel

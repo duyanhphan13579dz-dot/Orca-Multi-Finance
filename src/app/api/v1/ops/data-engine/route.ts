@@ -1,6 +1,7 @@
 import { catalogSummary, hubStats, SOURCE_CATALOG } from "@/lib/data-engine";
 import { getFinancialSourceHealth, getMarketSourceHealth } from "@/lib/financial";
 
+import { requireInternalSession } from "@/lib/internal-api-auth";
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
@@ -9,6 +10,8 @@ export const runtime = "nodejs";
  * Catalog of sources + optional request hub stats + financial/market health.
  */
 export async function GET() {
+  const unauthorized = await requireInternalSession();
+  if (unauthorized) return unauthorized;
   let financialHealth: unknown = null;
   let marketHealth: unknown = null;
   try {

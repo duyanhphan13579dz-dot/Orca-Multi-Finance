@@ -3,14 +3,13 @@ import { getVnOhlcv } from "./stocks";
 import { getVndOhlcv, getVndIndexOhlcv, isVnIndexSymbol } from "../providers/vndirect";
 import { fetchVndDchartHistory } from "../providers/vndirect-dchart";
 import { getPublicOhlcv } from "../providers/public-vn-feed";
-import { raceHealthy } from "../data-engine/resilience";
+import { firstHealthy, raceHealthy } from "../data-engine/resilience";
 import type { OhlcvBar } from "../types";
 
 type OhlcvPack = Awaited<ReturnType<typeof getVnOhlcv>>;
 
 /**
- * Shared OHLCV fetch for screeners — one retry on empty/failure to cut
- * transient "screener không khả dụng" when a provider blips.
+ * Shared OHLCV fetch for screeners — sequential first to cut CF Workers subrequest burn.
  */
 export async function fetchOhlcvResilient(
   symbol: string,
@@ -22,29 +21,52 @@ export async function fetchOhlcvResilient(
     {
       id: "vndirect-dchart",
       run: () => fetchVndDchartHistory(sym, "D", bars),
-      accept: (v: OhlcvBar[]) => Array.isArray(v) && v.length >= 30,
+      accept: (v: OhlcvBar[]) => Array.isArray(v) && v.length >= 20,
     },
     {
       id: "vndirect-ohlcv",
       run: () => (isIndex ? getVndIndexOhlcv(sym, bars) : getVndOhlcv(sym, bars)),
-      accept: (v: OhlcvBar[]) => Array.isArray(v) && v.length >= 30,
+      accept: (v: OhlcvBar[]) => Array.isArray(v) && v.length >= 20,
     },
     {
       id: "entrade-public-ohlcv",
       run: () => getPublicOhlcv(sym, bars, isIndex ? "index" : "stock"),
-      accept: (v: OhlcvBar[]) => Array.isArray(v) && v.length >= 30,
+      accept: (v: OhlcvBar[]) => Array.isArray(v) && v.length >= 20,
     },
   ];
 
+  // Sequential firstHealthy — fewer simultaneous subrequests than race (CF Error 1102).
   try {
-    const hit = await raceHealthy(attempts, { perAttemptMs: 6_500, label: `screener-ohlcv:${sym}` });
+    const hit = await firstHealthy(
+      attempts.map((a) => ({
+        id: a.id,
+        run: async (_signal?: AbortSignal) => a.run(),
+        accept: a.accept,
+      })),
+      { budgetMs: 8_000, perAttemptMs: 4_000, label: `screener-ohlcv:${sym}` },
+    );
     return {
       bars: hit.value,
-      pack: { bars: hit.value, meta: { source: hit.sourceId, sourceTimestampMs: Date.now() } } as OhlcvPack,
+      pack: { bars: hit.value, meta: { source: hit.sourceId, sourceTimestampMs: Date.now() } } as any,
     };
   } catch {
-    const pack = await getVnOhlcv(sym, bars).catch(() => null);
-    return { bars: pack?.bars ?? [], pack };
+    try {
+      const hit = await raceHealthy<OhlcvBar[]>(
+        attempts.map((a) => ({
+          id: a.id,
+          run: async (_signal?: AbortSignal) => a.run(),
+          accept: a.accept,
+        })),
+        { perAttemptMs: 3_500, label: `screener-ohlcv-race:${sym}` },
+      );
+      return {
+        bars: hit.value,
+        pack: { bars: hit.value, meta: { source: hit.sourceId, sourceTimestampMs: Date.now() } } as any,
+      };
+    } catch {
+      const pack = await getVnOhlcv(sym, bars).catch(() => null);
+      return { bars: pack?.bars ?? [], pack };
+    }
   }
 }
 

@@ -7,8 +7,7 @@ import { buildMeta } from "../freshness";
 import { computeFinancialHealth, type FinancialHealthResult } from "../engines/fundamental";
 import { computeValuation } from "../engines/valuation";
 import { collectPeerMetrics } from "../engines/valuation-peers";
-import { fetchVndirectFinancials, periodsToLegacyRows } from "../financial/vndirect-fs";
-import { fetchVnstockFinancials } from "../financial/vnstock-provider";
+import { periodsToLegacyRows } from "../financial/vndirect-fs";
 import { computeDetailedRatios, pickMetricsFromPeriods } from "../financial/ratio-engine";
 import { buildTtmPeriod } from "../financial/normalize";
 import {
@@ -16,8 +15,12 @@ import {
   getVndValuationRatios,
   priceQuoteToVnd,
 } from "../providers/vndirect-company";
+import { getVietcapCompany } from "../providers/vietcap";
 import { getVnQuotes } from "./stocks";
 import { sectorOf } from "../vn/master";
+import { industryFairMultiples } from "../financial/industry-profiles";
+import { fetchFinancialStatementsMulti } from "../financial/fs-multi";
+import { resolveCapmInputs, type CapmInputs } from "../financial/valuation-capm";
 import type { Meta } from "../types";
 import type { NormalizedPeriod } from "../financial/types";
 
@@ -32,12 +35,6 @@ function saneMultiple(v: number | null | undefined, maxAbs = 500): number | null
   if (v == null || !Number.isFinite(v)) return null;
   if (v <= 0) return null;
   if (Math.abs(v) > maxAbs) return null;
-  return v;
-}
-
-function saneYieldPct(v: number | null | undefined): number | null {
-  if (v == null || !Number.isFinite(v)) return null;
-  if (Math.abs(v) > 80) return null;
   return v;
 }
 
@@ -60,57 +57,49 @@ function finitePositive(v: number | null | undefined): number | null {
   return typeof v === "number" && Number.isFinite(v) && v > 0 ? v : null;
 }
 
-/**
- * Derive only statement-backed FCFF/FCFE inputs. Missing fields stay null so
- * valuation methods can report incomplete data instead of silently assuming 0.
- */
 function deriveValuationCashFlowInputs(
   periods: NormalizedPeriod[] | undefined,
   ttm: NormalizedPeriod | null | undefined,
 ): ValuationCashFlowInputs {
-  const m = ttm?.metrics;
-  const ebitTtm = m?.ebit ?? m?.operatingProfit ?? null;
-  const ebitdaTtm = m?.ebitda ?? null;
+  const ordered = (periods ?? []).filter((p) => p.periodType !== "ttm");
+  const latest = ordered[0];
+  const prior = ordered[1];
+  const ebitTtm = ttm?.metrics?.ebit ?? latest?.metrics?.ebit ?? null;
+  const ebitdaTtm = ttm?.metrics?.ebitda ?? latest?.metrics?.ebitda ?? null;
   const daTtm =
-    ebitTtm != null && ebitdaTtm != null && ebitdaTtm >= ebitTtm
+    ebitdaTtm != null && ebitTtm != null && ebitdaTtm >= ebitTtm
       ? ebitdaTtm - ebitTtm
       : null;
-  const capexTtm = m?.capex != null && Number.isFinite(m.capex) ? Math.abs(m.capex) : null;
+  const capexTtm =
+    ttm?.metrics?.capex != null
+      ? Math.abs(ttm.metrics.capex)
+      : latest?.metrics?.capex != null
+        ? Math.abs(latest.metrics.capex)
+        : null;
+  const preTax = latest?.metrics?.profitBeforeTax ?? null;
+  const taxExp = latest?.metrics?.taxExpense ?? null;
   const taxRate =
-    m?.taxExpense != null && m.profitBeforeTax != null && m.profitBeforeTax > 0
-      ? Math.min(0.5, Math.max(0, m.taxExpense / m.profitBeforeTax))
-      : null;
-
-  const snapshots = (periods ?? [])
-    .filter(
-      (p) =>
-        p.periodType === "quarter" &&
-        (p.metrics.currentAssets != null ||
-          p.metrics.currentLiabilities != null ||
-          p.metrics.shortTermDebt != null ||
-          p.metrics.longTermDebt != null),
-    )
-    .sort((a, b) => String(b.fiscalDate ?? b.period).localeCompare(String(a.fiscalDate ?? a.period)));
-  const latest = snapshots[0]?.metrics;
-  const prior = snapshots[1]?.metrics;
-  const debt = (x: typeof latest) =>
-    x && (x.shortTermDebt != null || x.longTermDebt != null)
-      ? (x.shortTermDebt ?? 0) + (x.longTermDebt ?? 0)
-      : null;
+    taxExp != null && preTax != null && preTax !== 0
+      ? Math.min(0.4, Math.max(0, taxExp / preTax))
+      : 0.2;
+  const debt = (x: typeof latest) => {
+    const st = x?.metrics?.shortTermDebt;
+    const lt = x?.metrics?.longTermDebt;
+    return st != null || lt != null ? (st ?? 0) + (lt ?? 0) : null;
+  };
   const operatingNwc = (x: typeof latest) => {
-    if (!x || x.currentAssets == null || x.currentLiabilities == null) return null;
-    return (
-      x.currentAssets -
-      (x.cash ?? 0) -
-      (x.shortTermInvestments ?? 0) -
-      (x.currentLiabilities - (x.shortTermDebt ?? 0))
-    );
+    const ca = x?.metrics?.currentAssets;
+    const cl = x?.metrics?.currentLiabilities;
+    if (ca == null || cl == null) return null;
+    const cash = x?.metrics?.cash ?? 0;
+    const sti = x?.metrics?.shortTermInvestments ?? 0;
+    const stDebt = x?.metrics?.shortTermDebt ?? 0;
+    return ca - cash - sti - (cl - stDebt);
   };
   const latestNwc = operatingNwc(latest);
   const priorNwc = operatingNwc(prior);
   const latestDebt = debt(latest);
   const priorDebt = debt(prior);
-
   return {
     ebitTtm: finitePositive(ebitTtm) ?? (ebitTtm != null && ebitTtm < 0 ? ebitTtm : null),
     taxRate,
@@ -131,15 +120,15 @@ export async function runFundamentalValuation(
   const wantFull = opts?.full === true;
   const wantPeers = opts?.peers === true || (opts?.peers !== false && wantFull);
 
-  const fsP = cached(`fv:fs:${symbol}:v3`, {
+  const fsP = cached(`fv:fs:${symbol}:v5`, {
     ttlMs: 15 * 60_000,
     staleMs: 2 * 3_600_000,
     producer: async () => {
-      const primary = await fetchVndirectFinancials(symbol, { limitPeriods: 16 });
-      if (primary?.periods.length) return primary;
-      const fallback = await fetchVnstockFinancials(symbol, { limitPeriods: 16 });
-      if (fallback?.periods.length) return fallback;
-      throw new Error(`financial statements unavailable from configured providers: ${symbol}`);
+      const multi = await fetchFinancialStatementsMulti(symbol);
+      if (!multi?.periods?.length) {
+        throw new Error(`financial statements unavailable: ${symbol}`);
+      }
+      return multi;
     },
   })
     .then((r) => r.value)
@@ -147,7 +136,7 @@ export async function runFundamentalValuation(
 
   const quoteP = getVnQuotes([symbol]).catch(() => null);
 
-  const equityP = cached(`fv:equity:${symbol}:v2`, {
+  const equityP = cached(`fv:equity:${symbol}:v3`, {
     ttlMs: 2 * 3_600_000,
     staleMs: 12 * 3_600_000,
     producer: async () => {
@@ -175,28 +164,58 @@ export async function runFundamentalValuation(
     ? collectPeerMetrics(symbol, 4).catch(() => null)
     : Promise.resolve(null);
 
-  const [fs, quotes, equity, vndRatios, peerPack] = await Promise.all([
-    fsP,
-    quoteP,
-    equityP,
-    ratiosP,
-    peersP,
+  const vietcapP = cached(`fv:vietcap:${symbol}:v1`, {
+    ttlMs: 30 * 60_000,
+    staleMs: 4 * 3_600_000,
+    producer: async () => {
+      const vc = await getVietcapCompany(symbol);
+      if (!vc) throw new Error(`vietcap unavailable: ${symbol}`);
+      return vc;
+    },
+  })
+    .then((r) => r.value)
+    .catch(() => null);
+
+  const capmP = resolveCapmInputs(symbol, { skipBeta: !wantFull }).catch(() => null);
+
+  const [fs, quotes, equity, vndRatios, peerPack, vietcap, capm] = await Promise.all([
+    fsP, quoteP, equityP, ratiosP, peersP, vietcapP, capmP,
   ]);
 
-  const priceQuote =
+  let priceQuote =
     quotes?.quotes?.[0]?.price && quotes.quotes[0].price > 0 ? quotes.quotes[0].price : 0;
-  const priceSource = quotes?.meta?.source ?? "vndirect";
-  const priceVnd = priceQuoteToVnd(priceQuote);
+  let priceSource: string | null =
+    priceQuote > 0 ? (quotes?.meta?.source ? String(quotes.meta.source) : "quotes") : null;
 
-  if (!fs?.periods?.length && priceQuote <= 0 && !vndRatios?.marketCap) {
+  if (priceQuote <= 0 && vietcap?.price != null && vietcap.price > 0) {
+    priceQuote = vietcap.price;
+    priceSource = "vietcap";
+  }
+
+  const provisionalShares =
+    (equity?.sharesOutstanding ?? equity?.totalShares ?? vietcap?.sharesOutstanding) || null;
+  const provisionalMcap =
+    (vndRatios?.marketCap && vndRatios.marketCap > 0 ? vndRatios.marketCap : null) ??
+    (equity?.marketCapReported && equity.marketCapReported > 0 ? equity.marketCapReported : null) ??
+    (vietcap?.marketCap && vietcap.marketCap > 0 ? vietcap.marketCap : null);
+  if (priceQuote <= 0 && provisionalMcap && provisionalShares && provisionalShares > 0) {
+    const vndPerShare = provisionalMcap / provisionalShares;
+    priceQuote = vndPerShare >= 500 ? vndPerShare / 1000 : vndPerShare;
+    priceSource = "implied-mcap/shares";
+  }
+
+  const priceVnd = priceQuoteToVnd(priceQuote) ?? 0;
+
+  if (!fs?.periods?.length && priceQuote <= 0 && !vndRatios?.marketCap && !provisionalMcap) {
     return null;
   }
 
   const notes: string[] = [];
-  notes.push("Pipeline độc lập — quote thị trường + VNDirect ratios + BCTC đa nguồn + DCF 2 giai đoạn.");
+  notes.push("Pipeline độc lập — quote + ratios + BCTC đa nguồn + định giá đa phương pháp.");
   if (priceQuote > 0 && priceQuote < 500) {
     notes.push(`Giá quote ${priceQuote} → ${priceVnd.toLocaleString("vi-VN")} VND (×1000 nghìn đồng).`);
   }
+  if (priceSource) notes.push(`Nguồn giá: ${priceSource}.`);
 
   let health: FinancialHealthResult;
   if (fs?.periods?.length) {
@@ -209,187 +228,96 @@ export async function runFundamentalValuation(
       },
       { symbol },
     );
-    notes.push(`BCTC: ${fs.periods.length} kỳ · latency ${fs.latencyMs}ms · nguồn ${fs.periods[0]?.source ?? "financial-provider"}`);
+    const srcList = (fs as { sources?: string[] }).sources;
+    notes.push(
+      `BCTC: ${fs.periods.length} kỳ · latency ${fs.latencyMs ?? 0}ms · nguồn ${(srcList ?? [fs.periods[0]?.source ?? "financial-provider"]).join(" ∥ ")}`,
+    );
   } else {
     health = computeFinancialHealth(
       { income: [], balance: [], cashflow: [] },
       { symbol },
     );
-    notes.push("Không lấy được BCTC từ nguồn đã cấu hình — chỉ dùng ratios/giá thị trường nếu có.");
+    notes.push("Không lấy được BCTC — chỉ dùng ratios/giá thị trường nếu có.");
   }
 
   let sharesOutstanding: number | null = health.anchors?.shares ?? null;
   let sharesSource: string | null = sharesOutstanding != null ? "financial-statements" : null;
-  let sharesReportDate: string | null = null;
-  let marketCapReported: number | null = equity?.marketCapReported ?? null;
-  if (equity) sharesReportDate = equity.reportDate ?? null;
-
-  if (equity?.sharesOutstanding && equity.sharesOutstanding > 0) {
-    sharesOutstanding = equity.sharesOutstanding;
-    sharesSource = equity.source ?? "vndirect-equity";
+  const eqShares = equity?.sharesOutstanding ?? equity?.totalShares ?? null;
+  if (eqShares != null && eqShares > 0) {
+    sharesOutstanding = eqShares;
+    sharesSource = equity?.source ?? "vndirect-equity";
+  }
+  if ((sharesOutstanding == null || sharesOutstanding <= 0) && vietcap?.sharesOutstanding && vietcap.sharesOutstanding > 0) {
+    sharesOutstanding = vietcap.sharesOutstanding;
+    sharesSource = "vietcap";
+  }
+  if (sharesOutstanding != null && sharesOutstanding > 0 && health.anchors) {
+    health = {
+      ...health,
+      anchors: { ...health.anchors, shares: sharesOutstanding },
+    };
   }
 
-  let epsTtm: number | null = health.anchors.epsTtm;
-  if (vndRatios?.eps != null && Number.isFinite(vndRatios.eps) && vndRatios.eps !== 0) {
-    epsTtm = vndRatios.eps;
-    notes.push(`EPS TTM từ VNDirect ratios: ${epsTtm}`);
-  } else if (vndRatios?.pe != null && vndRatios.pe > 0 && priceVnd > 0) {
-    // EPS must use full VND/share just like statements, not the market quote unit.
-    epsTtm = priceVnd / vndRatios.pe;
-    notes.push("EPS suy ngược từ giá VND / P/E VNDirect (được đánh dấu là suy ra)");
+  const ttm = fs?.periods?.length ? buildTtmPeriod(fs.periods) : null;
+  const cfInputs = deriveValuationCashFlowInputs(fs?.periods, ttm);
+
+  const industryFair = industryFairMultiples(symbol);
+  if (industryFair.fairPe != null) {
+    notes.push(
+      `Ngành ${industryFair.labelVi}: fair PE hướng dẫn ~${industryFair.fairPe.toFixed(1)}x (khi thiếu peers/hist).`,
+    );
   }
 
-  const fcfTtm = health.anchors.fcfTtm;
-  const cashFlowInputs = deriveValuationCashFlowInputs(
-    fs?.periods,
-    fs?.periods?.length ? buildTtmPeriod(fs.periods) : null,
-  );
+  const marketCapOverride =
+    (vndRatios?.marketCap != null && vndRatios.marketCap > 0 ? vndRatios.marketCap : null) ??
+    (equity?.marketCapReported != null && equity.marketCapReported > 0
+      ? equity.marketCapReported
+      : null) ??
+    (vietcap?.marketCap != null && vietcap.marketCap > 0 ? vietcap.marketCap : null);
 
-  const marketCapFromPrice =
-    priceVnd > 0 && sharesOutstanding != null && sharesOutstanding > 0
-      ? priceVnd * sharesOutstanding
-      : null;
-  // Re-price shares outstanding with the current quote; fall back to the latest
-  // reported market cap only when quote or share count is unavailable.
-  const marketCapPreferred =
-    sharesSource?.includes("estimate") && marketCapReported != null && marketCapReported > 0
-      ? marketCapReported
-      : marketCapFromPrice ??
-        (marketCapReported != null && marketCapReported > 0 ? marketCapReported : null) ??
-        vndRatios?.marketCap ??
-        null;
-
-  if (marketCapPreferred) {
-    notes.push(`Vốn hóa: ${Math.round(marketCapPreferred).toLocaleString("vi-VN")} VND`);
-  }
-
-  health = {
-    ...health,
-    anchors: {
-      ...health.anchors,
-      shares: sharesOutstanding ?? health.anchors.shares,
-      epsTtm:
-        epsTtm ??
-        (health.anchors.netProfit != null && sharesOutstanding != null && sharesOutstanding > 0
-          ? health.anchors.netProfit / sharesOutstanding
-          : health.anchors.epsTtm),
-      fcfTtm,
-    },
-  };
-
-  const anchors = health.anchors;
-  const currentPe =
-    vndRatios?.pe ??
-    (priceVnd > 0 && epsTtm != null && epsTtm > 0 ? priceVnd / epsTtm : null);
-  const bvps =
-    anchors.equity != null && sharesOutstanding != null && sharesOutstanding > 0
-      ? anchors.equity / sharesOutstanding
-      : null;
-  const currentPb =
-    vndRatios?.pb ?? (priceVnd > 0 && bvps != null && bvps > 0 ? priceVnd / bvps : null);
-  const currentPs =
-    vndRatios?.ps ??
-    (marketCapPreferred != null && anchors.revenue != null && anchors.revenue > 0
-      ? marketCapPreferred / anchors.revenue
-      : null);
-  const currentEv =
-    marketCapPreferred != null && anchors.totalDebt != null && anchors.cash != null
-      ? marketCapPreferred + anchors.totalDebt - anchors.cash
-      : null;
-  const currentEvEbitda =
-    vndRatios?.evEbitda ??
-    (currentEv != null && anchors.ebitdaTtm != null && anchors.ebitdaTtm > 0
-      ? currentEv / anchors.ebitdaTtm
-      : null);
-  const currentPfcf =
-    marketCapPreferred != null && fcfTtm != null && fcfTtm > 0
-      ? marketCapPreferred / fcfTtm
-      : null;
-  const dividendYieldRatio =
-    vndRatios?.dividendYield == null
-      ? null
-      : vndRatios.dividendYield > 1
-        ? vndRatios.dividendYield / 100
-        : vndRatios.dividendYield;
-
-  const peerComparison = peerPack?.peers.length
-    ? {
-        symbol,
-        sector: peerPack.sector || sectorOf(symbol),
-        subject: {
-          symbol,
-          pe: currentPe,
-          pb: currentPb,
-          ps: currentPs,
-          evEbitda: currentEvEbitda,
-          pfcf: currentPfcf,
-          dividendYield: dividendYieldRatio,
-          marketCap: marketCapPreferred,
-        },
-        peers: peerPack.peers,
-      }
-    : undefined;
-  if (peerComparison) {
-    notes.push(`Peers: ${peerComparison.peers.map((p) => p.symbol).join(", ")}`);
-  }
+  if (capm?.notes?.length) notes.push(...capm.notes.slice(0, 4));
 
   const valuation = computeValuation({
-    price: priceQuote > 0 ? priceQuote : 0,
+    fairPe: industryFair.fairPe,
+    fairPb: industryFair.fairPb,
+    fairEvEbitda: industryFair.fairEvEbitda,
+    price: priceQuote > 0 ? priceQuote : 1,
     priceVnd: priceVnd > 0 ? priceVnd : null,
+    marketCapOverride,
     health,
-    peerComparison,
-    marketCapOverride: marketCapPreferred,
-    dividendYield: dividendYieldRatio,
-    ebitTtm: cashFlowInputs.ebitTtm,
-    taxRate: cashFlowInputs.taxRate,
-    daTtm: cashFlowInputs.daTtm,
-    deltaNwc: cashFlowInputs.deltaNwc,
-    netBorrowing: cashFlowInputs.netBorrowing,
-    capexTtm: cashFlowInputs.capexTtm,
+    dividendYield: vndRatios?.dividendYield ?? null,
+    ebitTtm: cfInputs.ebitTtm,
+    taxRate: cfInputs.taxRate,
+    daTtm: cfInputs.daTtm,
+    capexTtm: cfInputs.capexTtm,
+    deltaNwc: cfInputs.deltaNwc,
+    netBorrowing: cfInputs.netBorrowing,
+    riskFreeRate: capm?.riskFreeRate ?? null,
+    beta: capm?.beta ?? null,
+    equityRiskPremium: capm
+      ? capm.equityRiskPremium + capm.countryRiskPremium
+      : null,
+    peerComparison: peerPack?.peers?.length
+      ? {
+          symbol,
+          sector: peerPack.sector ?? sectorOf(symbol),
+          subject: {
+            symbol,
+            pe: saneMultiple(vndRatios?.pe) ?? null,
+            pb: saneMultiple(vndRatios?.pb) ?? null,
+            ps: saneMultiple(vndRatios?.ps) ?? null,
+            evEbitda: saneMultiple(vndRatios?.evEbitda) ?? null,
+            pfcf: null,
+            dividendYield: yieldRatioToPct(vndRatios?.dividendYield),
+            marketCap: marketCapOverride,
+          },
+          peers: peerPack.peers,
+        }
+      : undefined,
     symbol,
+    level: wantFull ? "full" : "basic",
   });
 
-  const eng = valuation.multiples;
-  const multiples = {
-    pe: saneMultiple(vndRatios?.pe) ?? saneMultiple(eng.pe),
-    pb: saneMultiple(vndRatios?.pb) ?? saneMultiple(eng.pb),
-    ps: saneMultiple(vndRatios?.ps) ?? saneMultiple(eng.ps),
-    peg: saneMultiple(eng.peg),
-    pcf: saneMultiple(eng.pcf),
-    pfcf: saneMultiple(eng.pfcf),
-    evEbitda: saneMultiple(vndRatios?.evEbitda) ?? saneMultiple(eng.evEbitda),
-    evEbit: saneMultiple(eng.evEbit),
-    evSales: saneMultiple(eng.evSales),
-    evFcff: saneMultiple(eng.evFcff),
-    fcfYield: saneYieldPct(eng.fcfYield),
-    dividendYield: yieldRatioToPct(vndRatios?.dividendYield) ?? saneYieldPct(eng.dividendYield),
-    earningsYield: saneYieldPct(eng.earningsYield),
-  };
-
-  const p3 = valuation.phase3;
-  const p4 = valuation.phase4;
-  const p5 = valuation.phase5;
-  const blended = p5?.finalFairValue ?? valuation.fairValue?.blendedFairValue ?? null;
-  if (blended == null && priceQuote > 0) {
-    notes.push("Chưa đủ dữ liệu DCF/fair value đầy đủ — dựa multiples thị trường.");
-  }
-
-  const upside =
-    blended != null && priceQuote > 0
-      ? {
-          fairValue: blended,
-          price: priceQuote,
-          upsidePct: ((blended - priceQuote) / priceQuote) * 100,
-        }
-      : null;
-
-  const enterpriseValue = valuation.enterpriseValue;
-
-  // Preserve the detailed DCF model rows (assumptions, yearly PVs, terminal
-  // value, fairPriceQuote and sensitivity-compatible units) for the UI.
-  const dcfScenarios = valuation.phase3?.dcf ?? [];
-
-  // Detailed ratio suite (liquidity · leverage · profitability · efficiency · valuation · DuPont)
   let detailedRatios = null as ReturnType<typeof computeDetailedRatios> | null;
   try {
     const picked = pickMetricsFromPeriods(fs?.periods ?? []);
@@ -400,14 +328,14 @@ export async function runFundamentalValuation(
       sharesOutstanding,
       marketMultiples: vndRatios
         ? {
-            pe: vndRatios.pe,
-            pb: vndRatios.pb,
-            ps: vndRatios.ps,
-            evEbitda: vndRatios.evEbitda,
-            dividendYield: vndRatios.dividendYield,
-            marketCap: vndRatios.marketCap ?? marketCapPreferred ?? null,
+            pe: saneMultiple(vndRatios.pe),
+            pb: saneMultiple(vndRatios.pb),
+            ps: saneMultiple(vndRatios.ps),
+            evEbitda: saneMultiple(vndRatios.evEbitda),
+            dividendYield: yieldRatioToPct(vndRatios.dividendYield),
+            marketCap: vndRatios.marketCap ?? null,
           }
-        : { marketCap: marketCapPreferred ?? null },
+        : { marketCap: null },
       periodLabel: picked.label,
     });
     if (detailedRatios.quality.filled > 0) {
@@ -420,153 +348,132 @@ export async function runFundamentalValuation(
   }
 
   const allNotes = [...notes, ...(valuation.notes ?? [])].slice(0, 40);
-
-  const resolvedMarketCap =
-    marketCapPreferred ?? valuation.marketCap ?? marketCapFromPrice;
-  const timestampMs = (value: string | null | undefined): number | null => {
-    if (!value) return null;
-    const parsed = Date.parse(value);
-    return Number.isFinite(parsed) ? parsed : null;
-  };
-  const quoteTimestampMs =
-    timestampMs(quotes?.meta?.sourceTimestamp) ??
-    timestampMs(quotes?.quotes?.[0]?.updatedAt);
-  const financialTimestampMs = timestampMs(fs?.periods?.[0]?.fiscalDate);
-  const ratioTimestampMs = timestampMs(vndRatios?.reportDate);
-  const sourceTimestampMs =
-    quoteTimestampMs ?? financialTimestampMs ?? ratioTimestampMs ?? timestampMs(equity?.reportDate);
   const sourceParts = [
     priceQuote > 0 ? quotes?.meta?.source : null,
-    fs?.periods.length ? fs.periods[0]?.source ?? "vndirect-fs" : null,
+    fs?.periods?.length ? (fs as { sources?: string[] }).sources?.join("+") ?? "bctc" : null,
     equity?.source,
     vndRatios?.source,
-    peerPack?.peers.length ? "sector-peers" : null,
+    vietcap ? "vietcap" : null,
+    capm ? `capm:${capm.sources.beta}+${capm.sources.riskFree}` : null,
+    peerPack?.peers?.length ? "sector-peers" : null,
+    industryFair.profileId,
   ].filter((part): part is string => Boolean(part));
+
+  const capmPayload: CapmInputs | null = capm;
+  const v = valuation;
+  const p5 = v.phase5;
+
+  const flatPrice = priceQuote > 0 ? priceQuote : v.price > 0 ? v.price : null;
+  const flatMcap = v.marketCap ?? marketCapOverride;
+  const flatMult = v.multiples;
+  const multPe = flatMult.pe ?? saneMultiple(vndRatios?.pe) ?? null;
+  const multPb = flatMult.pb ?? saneMultiple(vndRatios?.pb) ?? null;
+  const multPs = flatMult.ps ?? saneMultiple(vndRatios?.ps) ?? null;
+  const multEv = flatMult.evEbitda ?? saneMultiple(vndRatios?.evEbitda) ?? null;
 
   const data: Record<string, unknown> = {
     symbol,
+    currentPrice: flatPrice,
+    price: flatPrice,
+    priceVnd: priceVnd > 0 ? priceVnd : null,
+    priceSource,
+    marketCap: flatMcap,
+    enterpriseValue: v.enterpriseValue,
     sharesOutstanding,
     sharesSource,
-    sharesReportDate,
-    marketCap: resolvedMarketCap,
-    marketCapReported,
-    currentPrice: priceQuote > 0 ? priceQuote : null,
-    priceSource,
-    marketSnapshot: {
-      price: priceQuote > 0 ? priceQuote : null,
-      priceVnd: priceVnd > 0 ? priceVnd : null,
-      priceSource,
-      priceUnitScale: priceQuote > 0 ? priceVnd / priceQuote : null,
-      sharesOutstanding,
-      sharesSource,
-      sharesReportDate,
-      marketCap: resolvedMarketCap,
-      marketCapReported,
-      enterpriseValue: enterpriseValue ?? null,
+    multiples: {
+      pe: multPe,
+      pb: multPb,
+      ps: multPs,
+      peg: flatMult.peg,
+      pcf: flatMult.pcf,
+      pfcf: flatMult.pfcf,
+      evEbitda: multEv,
+      evEbit: flatMult.evEbit,
+      evSales: flatMult.evSales,
+      evFcff: flatMult.evFcff,
+      fcfYield: flatMult.fcfYield,
+      dividendYield: flatMult.dividendYield ?? yieldRatioToPct(vndRatios?.dividendYield),
+      earningsYield: flatMult.earningsYield,
     },
-    valuationUnits: {
-      marketPrice: "market-quote",
-      fairValue: "market-quote",
-      financialPerShare: "VND/share",
-      marketCap: "VND",
-      enterpriseValue: "VND",
-      quoteScale: priceQuote > 0 ? priceVnd / priceQuote : 1_000,
-    },
-    sourceDetails: {
-      market: {
-        source: priceQuote > 0 ? quotes?.meta?.source ?? priceSource : null,
-        sourceTimestamp: quotes?.meta?.sourceTimestamp ?? quotes?.quotes?.[0]?.updatedAt ?? null,
-      },
-      financialStatements: {
-        source: fs?.periods?.[0]?.source ?? null,
-        latestPeriod: fs?.periods?.[0]?.period ?? null,
-        fiscalDate: fs?.periods?.[0]?.fiscalDate ?? null,
-      },
-      equity: {
-        source: equity?.source ?? null,
-        reportDate: equity?.reportDate ?? null,
-        shares: sharesOutstanding,
-      },
-      ratios: {
-        source: vndRatios?.source ?? null,
-        reportDate: vndRatios?.reportDate ?? null,
-      },
-      peers: peerPack?.peers.map((peer) => peer.symbol) ?? [],
-      sourcesUsed: sourceParts,
-    },
-    enterpriseValue,
-    multiples,
-    detailedRatios,
-    vndirectRatios: vndRatios
-      ? {
-          pe: vndRatios.pe,
-          pb: vndRatios.pb,
-          ps: vndRatios.ps,
-          eps: vndRatios.eps,
-          bvps: vndRatios.bvps,
-          roe: vndRatios.roe,
-          roa: vndRatios.roa,
-          dividendYield: vndRatios.dividendYield,
-          marketCap: vndRatios.marketCap,
-          reportDate: vndRatios.reportDate,
-          source: vndRatios.source,
-        }
-      : null,
     fairValues: {
-      blended,
-      low: p5?.confidenceBands?.low ?? null,
-      base: p5?.confidenceBands?.base ?? null,
-      high: p5?.confidenceBands?.high ?? null,
-      bandWidthPct: p5?.confidenceBands?.bandWidthPct ?? null,
-      dcfBase: valuation.phase3?.fairValue.methods.dcfBase ?? null,
-      dcfBear: valuation.phase3?.fairValue.methods.dcfBear ?? null,
-      dcfBull: valuation.phase3?.fairValue.methods.dcfBull ?? null,
-      dcf: dcfScenarios,
+      blended: p5?.finalFairValue ?? v.fairValue?.blendedFairValue ?? null,
+      dcfBase: v.fairValue?.methods?.dcfBase ?? null,
+      dcfBear: v.fairValue?.methods?.dcfBear ?? null,
+      dcfBull: v.fairValue?.methods?.dcfBull ?? null,
+      peBased: v.fairValue?.methods?.peBased ?? null,
+      pbBased: v.fairValue?.methods?.pbBased ?? null,
+      evEbitdaBased: v.fairValue?.methods?.evEbitdaBased ?? null,
+      pfcfBased: v.fairValue?.methods?.pfcfBased ?? null,
+      status: v.fairValue?.valuationStatus ?? p5?.valuationStatus ?? null,
     },
-    dcfDetail: {
-      scenarios: dcfScenarios,
-      sensitivity: valuation.sensitivity ?? p3?.sensitivity ?? null,
-      costOfCapital: p3?.costOfCapital ?? null,
-    },
-    upsideDownside: upside?.upsidePct ?? null,
-    upsideDownsideDetail: upside,
+    upsideDownside: p5?.score?.upsidePct ?? v.fairValue?.upsidePct ?? null,
     valuationScore: p5?.valuationScore ?? null,
     valuationGrade: p5?.grade ?? null,
-    industryProfile: p5?.profileId ?? null,
-    confidence: valuation.confidence,
-    dataQuality: valuation.dataQuality,
-    health: {
-      score: health.scores?.overall ?? null,
-      scores: health.scores,
-      coverage: health.coverage,
-      anchors: health.anchors,
-      groups: health.groups,
-      warnings: health.warnings?.slice(0, 8),
-      riskFlags: health.riskFlags?.slice(0, 8),
-      industry: health.industry,
+    confidence: v.confidence,
+    industryProfile: industryFair.labelVi,
+    dcfDetail: v.phase3
+      ? {
+          scenarios: v.phase3.dcf,
+          sensitivity: v.phase3.sensitivity ?? v.sensitivity ?? null,
+          costOfCapital: v.phase3.costOfCapital,
+        }
+      : v.dcf
+        ? { scenarios: v.dcf, sensitivity: v.sensitivity ?? null, costOfCapital: null }
+        : null,
+    health,
+    valuation: v,
+    detailedRatios,
+    capm: capmPayload
+      ? {
+          riskFreeRate: capmPayload.riskFreeRate,
+          beta: capmPayload.beta,
+          equityRiskPremium: capmPayload.equityRiskPremium,
+          countryRiskPremium: capmPayload.countryRiskPremium,
+          costOfEquity: capmPayload.costOfEquity,
+          sources: capmPayload.sources,
+          betaMeta: capmPayload.betaMeta,
+          notes: capmPayload.notes,
+        }
+      : null,
+    industry: {
+      id: industryFair.profileId,
+      labelVi: industryFair.labelVi,
+      fairPe: industryFair.fairPe,
+      fairPb: industryFair.fairPb,
+      fairEvEbitda: industryFair.fairEvEbitda,
     },
+    marketRatios: {
+      pe: saneMultiple(vndRatios?.pe) ?? null,
+      pb: saneMultiple(vndRatios?.pb) ?? null,
+      ps: saneMultiple(vndRatios?.ps) ?? null,
+      evEbitda: saneMultiple(vndRatios?.evEbitda) ?? null,
+      dividendYield: yieldRatioToPct(vndRatios?.dividendYield),
+      marketCap: marketCapOverride,
+      marketCapSources: [
+        vndRatios?.marketCap ? "vndirect-ratios" : null,
+        equity?.marketCapReported ? "vndirect-equity" : null,
+        vietcap?.marketCap ? "vietcap" : null,
+      ].filter(Boolean),
+    },
+    vndirectRatios: {
+      pe: saneMultiple(vndRatios?.pe) ?? null,
+      pb: saneMultiple(vndRatios?.pb) ?? null,
+      ps: saneMultiple(vndRatios?.ps) ?? null,
+      evEbitda: saneMultiple(vndRatios?.evEbitda) ?? null,
+      dividendYield: yieldRatioToPct(vndRatios?.dividendYield),
+      marketCap: marketCapOverride,
+    },
+    peers: peerPack,
     notes: allNotes,
-    pipeline: "fundamental-valuation-direct-v4-ratios",
-    calculatedAt: new Date().toISOString(),
-    valuationEngineVersion: valuation.valuationEngineVersion,
+    ttmPeriod: ttm?.period ?? null,
   };
 
-  if (wantFull) {
-    data.phase1 = valuation.phase1 ?? null;
-    data.phase2 = valuation.phase2 ?? null;
-    data.phase3 = p3 ?? null;
-    data.phase4 = p4 ?? null;
-    data.phase5 = p5 ?? null;
-  }
-
   const meta = buildMeta({
-    source: `fundamental-direct+${sourceParts.join("+") || "no-source"}`,
-    sourceTimestampMs,
-    hasData: Boolean(priceQuote > 0 || fs?.periods.length || resolvedMarketCap),
-    degraded: priceQuote <= 0 || !fs?.periods.length,
-    partial: priceQuote <= 0 || !fs?.periods.length || sharesOutstanding == null,
-    note: allNotes[0] ?? "Định giá độc lập từ nguồn dữ liệu thị trường/BCTC",
-    slas: { liveSlaMs: 20_000, freshSlaMs: 120_000, delayedSlaMs: 7 * 86_400_000 },
+    source: sourceParts.join("+") || "fundamental-valuation",
+    sourceTimestampMs: Date.now(),
+    partial: !fs?.periods?.length || priceQuote <= 0,
+    note: allNotes[0],
   });
 
   return { symbol, data, meta, health };

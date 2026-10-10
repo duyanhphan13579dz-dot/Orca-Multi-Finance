@@ -46,7 +46,10 @@ export function LiquiditySparkPanel({
   spark?: LiquiditySparkSeries;
 }) {
   const l = intel.liquidity;
-  const realVols = spark?.volumes?.filter((v) => Number.isFinite(v) && v > 0) ?? [];
+  const realVols = useMemo(
+    () => spark?.volumes?.filter((v) => Number.isFinite(v) && v > 0) ?? [],
+    [spark?.volumes],
+  );
   const useReal = realVols.length >= 4;
 
   const avgReal = useReal ? realVols.reduce((a, b) => a + b, 0) / realVols.length : null;
@@ -216,7 +219,7 @@ export function CommandTabs({
 
 export function showSection(tab: CcTab, group: "vn" | "global" | "flow" | "news" | "core"): boolean {
   if (tab === "all") return true;
-  if (group === "core") return tab === "vn" || tab === "all";
+  if (group === "core") return tab === "vn";
   return tab === group;
 }
 

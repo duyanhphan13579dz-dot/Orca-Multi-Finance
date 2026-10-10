@@ -57,7 +57,7 @@ export interface DerivativesSnapshot {
   note: string;
 }
 
-async function resolveVn30Spot(): Promise<{ price: number | null; source: string | null; ts: number | null }> {
+export async function resolveVn30Spot(): Promise<{ price: number | null; source: string | null; ts: number | null }> {
   try {
     const { getPublicIndices } = await import("../providers/public-vn-feed");
     const idx = await getPublicIndices(["VN30"]);
@@ -298,7 +298,7 @@ export function buildFlowForRow(row: DerivativeContractRow): DerivativeFlowSigna
       source: q.source ?? null,
     });
   }
-  return signal as DerivativeFlowSignal;
+  return signal as unknown as DerivativeFlowSignal;
 }
 
 export interface DerivativesSnapshotWithFlow extends DerivativesSnapshot {

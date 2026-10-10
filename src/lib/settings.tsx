@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 
 /**
  * ORCA Settings System — client store + server persistence.
@@ -350,19 +350,27 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   return <SettingsCtx.Provider value={value}>{children}</SettingsCtx.Provider>;
 }
 
+function subscribeSettings(cb: () => void) {
+  listeners.add(cb);
+  return () => {
+    listeners.delete(cb);
+  };
+}
+
+function getSettingsClientSnapshot() {
+  return snapshot;
+}
+
+function getSettingsServerSnapshot() {
+  return DEFAULT_SETTINGS;
+}
+
 export function useSettings(): SettingsCtxValue {
   const ctx = useContext(SettingsCtx);
+  const extSettings = useSyncExternalStore(subscribeSettings, getSettingsClientSnapshot, getSettingsServerSnapshot);
   if (ctx) return ctx;
-  const [, setTick] = useState(0);
-  useEffect(() => {
-    const l = () => setTick((n) => n + 1);
-    listeners.add(l);
-    return () => {
-      listeners.delete(l);
-    };
-  }, []);
   return {
-    settings: snapshot,
+    settings: extSettings,
     update: updateSettings,
     reset: () => {
       snapshot = { ...DEFAULT_SETTINGS, updatedAt: Date.now() };

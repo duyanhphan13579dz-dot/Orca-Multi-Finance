@@ -6,11 +6,14 @@ import {
   getMarketSourceHealth,
 } from "@/lib/financial/source-health";
 
+import { requireInternalSession } from "@/lib/internal-api-auth";
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 /** GET /api/v1/system/data-engine — catalog + hub + source health + sync ranking */
 export async function GET() {
+  const unauthorized = await requireInternalSession();
+  if (unauthorized) return unauthorized;
   const catalog = catalogSummary();
   const hub = hubStats();
   const financialHealth = getFinancialSourceHealth();

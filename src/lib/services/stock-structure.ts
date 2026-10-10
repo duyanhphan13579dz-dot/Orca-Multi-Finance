@@ -20,7 +20,7 @@ export async function getStockStructure(
   const analysis = analyzeStructure(bars);
   if (!analysis) return null;
 
-  let alphaBeta: AlphaBetaSnapshot | null = detail.detail.technical?.alphaBeta ?? null;
+  let alphaBeta: AlphaBetaSnapshot | null = (detail.detail.technical?.alphaBeta as AlphaBetaSnapshot | null | undefined) ?? null;
   if (!alphaBeta && bars.length >= 80) {
     try {
       const idx = await getVnOhlcv("VNINDEX", Math.min(Math.max(bars.length, 260), 560));

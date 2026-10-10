@@ -19,10 +19,18 @@ const SPOT_HOSTS = [
   env.binanceBaseUrl,
   "https://api1.binance.com",
   "https://api2.binance.com",
+  "https://api3.binance.com",
+  "https://api4.binance.com",
   "https://api.binance.com",
 ].filter((h): h is string => Boolean(h));
 
-const FUTURES_HOSTS = [env.binanceFapiBaseUrl, "https://fapi.binance.com", "https://fapi1.binance.com"].filter(
+const FUTURES_HOSTS = [
+  env.binanceFapiBaseUrl,
+  "https://fapi.binance.com",
+  "https://fapi1.binance.com",
+  "https://fapi2.binance.com",
+  "https://fapi3.binance.com",
+].filter(
   (h): h is string => Boolean(h),
 );
 

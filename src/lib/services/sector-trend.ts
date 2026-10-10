@@ -171,7 +171,9 @@ export async function getSectorTrendSnapshot(opts?: {
     snapshot: res.value,
     meta: buildMeta({
       source: board.meta.source,
-      sourceTimestampMs: board.meta.sourceTimestamp ? Date.parse(board.meta.sourceTimestamp) : null,
+      sourceTimestampMs: board.meta.sourceTimestamp
+        ? (typeof board.meta.sourceTimestamp === "number" ? board.meta.sourceTimestamp : Date.parse(board.meta.sourceTimestamp))
+        : null,
       cached: res.cached || board.meta.cached,
       stale: res.stale || board.meta.stale,
       note: `Xu hướng ngành · ${res.value.sectors.length} nhóm · phiên ${res.value.sessionDate ?? "—"}`,

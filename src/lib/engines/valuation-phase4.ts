@@ -18,6 +18,12 @@ function round(n: number | null, d = 4): number | null {
   return Math.round(n * f) / f;
 }
 
+function priceToVnd(price: number | null | undefined): number | null {
+  if (price == null || !Number.isFinite(price) || !(price > 0)) return null;
+  if (price < 500) return price * 1000;
+  return price;
+}
+
 function cell(
   value: number | null,
   status: MetricCell["status"],
@@ -116,9 +122,10 @@ export function runResidualIncome(input: {
 
   const shares = finite(input.shares) && input.shares! > 0 ? input.shares! : null;
   const fairPrice = shares != null ? total / shares : null;
+  const currentPriceVnd = priceToVnd(input.currentPrice);
   const upsidePct =
-    fairPrice != null && finite(input.currentPrice) && input.currentPrice! > 0
-      ? (fairPrice / input.currentPrice! - 1) * 100
+    fairPrice != null && currentPriceVnd != null && currentPriceVnd > 0
+      ? (fairPrice / currentPriceVnd - 1) * 100
       : null;
 
   if (fairPrice == null) notes.push("Thiếu shares — không quy đổi fair price RI");
@@ -210,9 +217,10 @@ export function runDdm(input: {
     const tv = dpsStable1 / (ke - gStable);
     const pvTv = tv / (1 + ke) ** highYears;
     const price = pvExplicit + pvTv;
+    const currentPriceVnd = priceToVnd(input.currentPrice);
     const upside =
-      finite(input.currentPrice) && input.currentPrice! > 0
-        ? (price / input.currentPrice! - 1) * 100
+      currentPriceVnd != null && currentPriceVnd > 0
+        ? (price / currentPriceVnd - 1) * 100
         : null;
     return {
       model: "two_stage",
@@ -233,9 +241,10 @@ export function runDdm(input: {
 
   const dps1 = dps0 * (1 + gStable);
   const price = dps1 / (ke - gStable);
+  const currentPriceVnd = priceToVnd(input.currentPrice);
   const upside =
-    finite(input.currentPrice) && input.currentPrice! > 0
-      ? (price / input.currentPrice! - 1) * 100
+    currentPriceVnd != null && currentPriceVnd > 0
+      ? (price / currentPriceVnd - 1) * 100
       : null;
 
   return {
@@ -279,7 +288,8 @@ export function estimateDps(input: {
     input.price! > 0
   ) {
     const y = input.dividendYield! > 1 ? input.dividendYield! / 100 : input.dividendYield!;
-    return cell(round(y * input.price!, 2), "incomplete", "DPS ước từ yield × price", [
+    const pVnd = priceToVnd(input.price!)!;
+    return cell(round(y * pVnd, 2), "incomplete", "DPS ước từ yield × price", [
       "dividendYield",
       "price",
     ]);
@@ -337,11 +347,12 @@ export function runNav(input: {
   const shares = finite(input.shares) && input.shares! > 0 ? input.shares! : null;
   const navPs = shares != null ? equity / shares : null;
   const adjNavPs = shares != null ? adjusted / shares : null;
+  const currentPriceVnd = priceToVnd(input.currentPrice);
   const upside =
-    adjNavPs != null && finite(input.currentPrice) && input.currentPrice! > 0
-      ? (adjNavPs / input.currentPrice! - 1) * 100
-      : navPs != null && finite(input.currentPrice) && input.currentPrice! > 0
-        ? (navPs / input.currentPrice! - 1) * 100
+    adjNavPs != null && currentPriceVnd != null && currentPriceVnd > 0
+      ? (adjNavPs / currentPriceVnd - 1) * 100
+      : navPs != null && currentPriceVnd != null && currentPriceVnd > 0
+        ? (navPs / currentPriceVnd - 1) * 100
         : null;
 
   if (shares == null) notes.push("Thiếu shares — không quy đổi NAV/cổ phiếu");
@@ -449,9 +460,10 @@ export function runSotp(input: {
 
   const shares = finite(input.shares) && input.shares! > 0 ? input.shares! : null;
   const fairPrice = shares != null ? afterDisc / shares : null;
+  const currentPriceVnd = priceToVnd(input.currentPrice);
   const upside =
-    fairPrice != null && finite(input.currentPrice) && input.currentPrice! > 0
-      ? (fairPrice / input.currentPrice! - 1) * 100
+    fairPrice != null && currentPriceVnd != null && currentPriceVnd > 0
+      ? (fairPrice / currentPriceVnd - 1) * 100
       : null;
 
   const status: MetricCell["status"] =

@@ -174,7 +174,7 @@ html {
 }
 
 .orca-modal-root {
-  /* positioning set by component */
+  isolation: isolate;
 }
 .orca-modal-overlay {
   animation: orca-overlay-in var(--dur-modal) var(--ease-out-soft) both;
@@ -396,15 +396,84 @@ html {
 .orca-loading-dots > span:nth-child(2) { animation-delay: 0.18s; }
 .orca-loading-dots > span:nth-child(3) { animation-delay: 0.36s; }
 
+/* ——— Page & tab transitions ——— */
+@view-transition {
+  navigation: auto;
+}
+
+@keyframes orca-page-in {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 4px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+.orca-page-transition,
+.orca-page-enter {
+  animation: orca-page-in 180ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  will-change: opacity, transform;
+}
+
+@keyframes orca-tab-in {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 3px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+.orca-tab-pane,
+[role="tabpanel"],
+.tab-content {
+  animation: orca-tab-in 150ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  will-change: opacity, transform;
+}
+
+/* ——— Smooth theme & mode transitions ——— */
+html[data-theme] {
+  transition: background-color 220ms ease, color 220ms ease;
+}
+
+body,
+.orca-aside,
+header,
+.panel,
+.orca-panel,
+.seg {
+  transition: background-color 180ms ease, border-color 180ms ease, color 180ms ease, box-shadow 180ms ease;
+}
+
+/* ——— Ultra-responsive button & mode clicks ——— */
+button:not(:disabled):active,
+[role="button"]:not([aria-disabled="true"]):active,
+.btn-press:active,
+.orca-interactive:active {
+  transform: scale(0.975);
+  transition: transform 60ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .orca-page-enter,
+  .orca-page-transition,
+  .orca-tab-pane,
+  [role="tabpanel"],
+  .tab-content,
   .orca-modal-overlay,
   .orca-modal-panel,
   .orca-fade-up {
     animation: none !important;
   }
-  .orca-interactive:active {
-    transform: none;
+  .orca-interactive:active,
+  button:active,
+  [role="button"]:active {
+    transform: none !important;
   }
   .orca-route-progress-bar {
     transition: none !important;

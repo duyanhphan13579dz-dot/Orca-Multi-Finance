@@ -3,116 +3,142 @@ import { httpJson } from "../http";
 import type { ChartCandle } from "../chart-const";
 import { ProviderError } from "./binance";
 
-/**
- * Approved public fallback provider for FX/commodity OHLC (Yahoo Finance
- * public chart endpoint — no key, real timestamps, exchange timezone meta).
- * Used only when Biquote/primary paths cannot supply historical candles.
- */
+export const YAHOO = "yahoo";
 
-export const YAHOO = "yahoo-fx";
+const HOSTS = [
+  "https://query1.finance.yahoo.com",
+  "https://query2.finance.yahoo.com",
+];
 
-const HOSTS = ["https://query2.finance.yahoo.com", "https://query1.finance.yahoo.com"];
 let lastGood = 0;
 
-type YahooChartResp = {
+type YahooChartResult = {
   chart?: {
     result?: {
-      meta?: { regularMarketPrice?: number; regularMarketTime?: number; exchangeTimezoneName?: string; currency?: string };
+      meta?: {
+        symbol?: string;
+        regularMarketPrice?: number;
+        previousClose?: number;
+        chartPreviousClose?: number;
+        regularMarketDayHigh?: number;
+        regularMarketDayLow?: number;
+        regularMarketTime?: number;
+        currency?: string;
+      };
       timestamp?: number[];
-      indicators?: { quote?: { open?: (number | null)[]; high?: (number | null)[]; low?: (number | null)[]; close?: (number | null)[]; volume?: (number | null)[] }[] };
+      indicators?: {
+        quote?: {
+          open?: (number | null)[];
+          high?: (number | null)[];
+          low?: (number | null)[];
+          close?: (number | null)[];
+          volume?: (number | null)[];
+        }[];
+      };
     }[];
-    error?: { code?: string; description?: string } | null;
   };
 };
 
-export interface YahooResult {
+export type YahooResult = {
   candles: ChartCandle[];
-  timezone: string | null;
-  currency: string | null;
-  regularMarketTime: number | null;
-}
+  meta: {
+    symbol: string;
+    currency: string | null;
+    regularMarketPrice: number | null;
+  };
+};
 
 export async function getYahooChart(yahooSymbol: string, interval: string, range: string): Promise<YahooResult> {
   let lastErr = "unreachable";
   for (let i = 0; i < HOSTS.length; i++) {
     const idx = (lastGood + i) % HOSTS.length;
-    const res = await httpJson<YahooChartResp>(
+    const res = await httpJson<YahooChartResult>(
       `${HOSTS[idx]}/v8/finance/chart/${encodeURIComponent(yahooSymbol)}?interval=${encodeURIComponent(interval)}&range=${encodeURIComponent(range)}&includePrePost=false`,
-      { provider: YAHOO, timeoutMs: 12_000, retries: 2, headers: { Accept: "application/json" } },
+      { provider: YAHOO, timeoutMs: 4_200, retries: 0 },
     );
-    if (res.ok && res.data?.chart?.result?.[0]) {
-      lastGood = idx;
-      const r = res.data.chart.result[0];
-      const ts = r.timestamp ?? [];
-      const q = r.indicators?.quote?.[0];
-      const candles: ChartCandle[] = [];
-      for (let k = 0; k < ts.length; k++) {
-        const o = q?.open?.[k];
-        const h = q?.high?.[k];
-        const l = q?.low?.[k];
-        const c = q?.close?.[k];
-        if (o == null || h == null || l == null || c == null) continue;
-        candles.push({ time: ts[k]! * 1000, open: o, high: h, low: l, close: c, volume: q?.volume?.[k] ?? 0 });
-      }
-      if (!candles.length) continue;
-      return {
-        candles,
-        timezone: r.meta?.exchangeTimezoneName ?? null,
-        currency: r.meta?.currency ?? null,
-        regularMarketTime: r.meta?.regularMarketTime ? r.meta.regularMarketTime * 1000 : null,
-      };
+    const result = res.data?.chart?.result?.[0];
+    if (!res.ok || !result?.timestamp?.length) {
+      lastErr = res.error ?? "empty";
+      continue;
     }
-    lastErr = res.data?.chart?.error?.description ?? res.error ?? "unreachable";
+    lastGood = idx;
+    const q = result.indicators?.quote?.[0];
+    const candles: ChartCandle[] = [];
+    for (let j = 0; j < result.timestamp.length; j++) {
+      const t = result.timestamp[j]! * 1000;
+      const open = q?.open?.[j];
+      const high = q?.high?.[j];
+      const low = q?.low?.[j];
+      const close = q?.close?.[j];
+      if (open == null || high == null || low == null || close == null) continue;
+      if (!(close > 0)) continue;
+      candles.push({
+        time: t,
+        open,
+        high,
+        low,
+        close,
+        volume: q?.volume?.[j] ?? 0,
+      });
+    }
+    return {
+      candles,
+      meta: {
+        symbol: result.meta?.symbol ?? yahooSymbol,
+        currency: result.meta?.currency ?? null,
+        regularMarketPrice: result.meta?.regularMarketPrice ?? null,
+      },
+    };
   }
-  throw new ProviderError(`yahoo: ${lastErr}`, YAHOO);
+  throw new ProviderError(`yahoo chart: ${lastErr}`, YAHOO);
 }
 
-/**
- * Yahoo tickers for FX pairs and commodity aliases used by the chart engine.
- * Commodity page sends GOLD / WTI / … — must NOT fall through to "GOLD=X" (404).
- */
+export function yahooCryptoSymbol(symbol: string): string {
+  const s = symbol.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  if (s.endsWith("USDT")) return `${s.slice(0, -4)}-USD`;
+  if (s.endsWith("USD") && s.length > 3) return `${s.slice(0, -3)}-USD`;
+  if (s.includes("-")) return s;
+  return `${s}-USD`;
+}
+
 const YAHOO_PAIR_SYMBOL: Record<string, string> = {
-  // Metals
   XAUUSD: "GC=F",
   GOLD: "GC=F",
   XAU: "GC=F",
   XAGUSD: "SI=F",
   SILVER: "SI=F",
   XAG: "SI=F",
-  // Energy
+  XPTUSD: "PL=F",
+  PLATINUM: "PL=F",
+  XPDUSD: "PA=F",
+  PALLADIUM: "PA=F",
   USOIL: "CL=F",
+  OILUSD: "CL=F",
+  WTIUSD: "CL=F",
   WTI: "CL=F",
   CRUDE: "CL=F",
   CL: "CL=F",
-  BRENT: "BZ=F",
   UKOIL: "BZ=F",
+  BRENT: "BZ=F",
+  BRENTUSD: "BZ=F",
   NATGAS: "NG=F",
-  NG: "NG=F",
-  // Industrial
+  NGUSD: "NG=F",
   COPPER: "HG=F",
-  HG: "HG=F",
-  // Softs (optional)
-  COFFEE: "KC=F",
-  KC: "KC=F",
-  SUGAR: "SB=F",
-  COTTON: "CT=F",
-  // Index alias
+  HGUSD: "HG=F",
+  DXY: "DX-Y.NYB",
+  USDOLLAR: "DX-Y.NYB",
+  US500: "^GSPC",
+  US30: "^DJI",
   USTEC: "^NDX",
 };
 
-/** map "EURUSD" → "EURUSD=X"; metals/oil use futures; never emit invalid COMMODITY=X */
 export function yahooSymbolForPair(pair: string): string {
   const p = pair.toUpperCase().replace(/[^A-Z0-9]/g, "");
   if (YAHOO_PAIR_SYMBOL[p]) return YAHOO_PAIR_SYMBOL[p]!;
-  // Already a futures-style code (e.g. GCF passed cleaned) — leave as-is if ends with F pattern handled above
-  // FX pairs are typically 6 letters
   if (/^[A-Z]{6}$/.test(p)) return `${p}=X`;
-  // Unknown short commodity codes: try as-is rather than broken =X
   if (p.length <= 5) return p;
   return `${p}=X`;
 }
-
-/* --------------------------- quote snapshot API ---------------------------- */
 
 export interface YahooQuote {
   symbol: string;
@@ -143,76 +169,113 @@ type YahooMetaResp = {
   };
 };
 
-/** Latest quote via the public chart meta (no key, real provider timestamps). */
 export async function getYahooQuote(yahooSymbol: string): Promise<YahooQuote> {
   let lastErr = "unreachable";
   for (let i = 0; i < HOSTS.length; i++) {
     const idx = (lastGood + i) % HOSTS.length;
     const res = await httpJson<YahooMetaResp>(
       `${HOSTS[idx]}/v8/finance/chart/${encodeURIComponent(yahooSymbol)}?interval=1d&range=5d`,
-      { provider: YAHOO, timeoutMs: 8_000, retries: 1 },
+      { provider: YAHOO, timeoutMs: 3_500, retries: 0 },
     );
     const m = res.data?.chart?.result?.[0]?.meta;
     if (res.ok && m && typeof m.regularMarketPrice === "number") {
       lastGood = idx;
-      const prev = m.previousClose ?? m.chartPreviousClose ?? null;
       const price = m.regularMarketPrice;
+      const prev = m.previousClose ?? m.chartPreviousClose ?? null;
+      const change = prev != null ? price - prev : null;
+      const changePercent = prev != null && prev !== 0 ? ((price - prev) / prev) * 100 : null;
       return {
         symbol: m.symbol ?? yahooSymbol,
         price,
         previousClose: prev,
-        change: prev != null ? price - prev : null,
-        changePercent: prev ? ((price - prev) / prev) * 100 : null,
+        change,
+        changePercent,
         dayHigh: m.regularMarketDayHigh ?? null,
         dayLow: m.regularMarketDayLow ?? null,
         currency: m.currency ?? null,
         marketTime: m.regularMarketTime ? m.regularMarketTime * 1000 : null,
       };
     }
-    lastErr = res.error ?? "no_meta";
+    lastErr = res.error ?? "empty";
   }
   throw new ProviderError(`yahoo quote: ${lastErr}`, YAHOO);
 }
 
-/** Batch quotes with bounded concurrency; partial success is preserved. */
+/**
+ * P3-C: batch Yahoo quotes with race-first early exit.
+ * - concurrency 5, per-symbol soft 3.5s
+ * - exit when coverage >= 70% or hard budget 5.5s
+ * - do not wait for slowest host on every symbol
+ */
 export async function getYahooQuotes(symbols: string[]): Promise<Map<string, YahooQuote>> {
   const out = new Map<string, YahooQuote>();
-  const chunk = 6;
-  for (let i = 0; i < symbols.length; i += chunk) {
-    const batch = symbols.slice(i, i + chunk);
-    const results = await Promise.allSettled(batch.map((s) => getYahooQuote(s)));
-    results.forEach((r, j) => {
-      if (r.status === "fulfilled") out.set(batch[j]!, r.value);
+  const uniq = [...new Set(symbols.filter(Boolean))].slice(0, 16);
+  if (!uniq.length) return out;
+
+  const EXIT_COVERAGE = 0.7;
+  const HARD_MS = 5_500;
+  const PER_MS = 3_500;
+  const concurrency = Math.min(5, uniq.length);
+  const t0 = Date.now();
+  let next = 0;
+  let settled = false;
+
+  await new Promise<void>((resolve) => {
+    const hardStop = setTimeout(() => {
+      settled = true;
+      resolve();
+    }, HARD_MS);
+
+    const workers = Array.from({ length: concurrency }, async () => {
+      while (!settled) {
+        const i = next++;
+        if (i >= uniq.length) break;
+        if (Date.now() - t0 >= HARD_MS) break;
+        const sym = uniq[i]!;
+        try {
+          const q = await Promise.race([
+            getYahooQuote(sym),
+            new Promise<null>((r) => setTimeout(() => r(null), PER_MS)),
+          ]);
+          if (q) out.set(sym, q);
+        } catch {
+          /* skip */
+        }
+        if (!settled && out.size / uniq.length >= EXIT_COVERAGE) {
+          settled = true;
+          clearTimeout(hardStop);
+          resolve();
+          break;
+        }
+      }
     });
-  }
+
+    void Promise.all(workers).then(() => {
+      if (!settled) {
+        settled = true;
+        clearTimeout(hardStop);
+        resolve();
+      }
+    });
+  });
+
   return out;
 }
-/**
- * Yahoo public chart range ceilings (approx):
- * - 1m: ~7d, 2m–90m: ~60d, 60m/1h: ~730d
- * - 1d / 1wk: multi-year, 1mo: max
- * Futures (GC=F etc.) downsample to monthly when range=max — prefer 2y for true daily bars.
- */
-const INTRADAY_LIMITS: Record<string, string> = {
-  "1m": "7d",
-  "2m": "60d",
-  "5m": "60d",
-  "15m": "60d",
-  "30m": "60d",
-  "60m": "730d",
-  "90m": "60d",
-  "1h": "730d",
-  "1d": "2y",
-  "1wk": "max",
-  "1mo": "max",
-  "1w": "max",
+
+const INTRADAY_LIMITS: Record<string, { interval: string; range: string }> = {
+  "1m": { interval: "1m", range: "7d" },
+  "5m": { interval: "5m", range: "60d" },
+  "15m": { interval: "15m", range: "60d" },
+  "30m": { interval: "30m", range: "60d" },
+  "1h": { interval: "60m", range: "730d" },
+  "4h": { interval: "60m", range: "730d" },
+  "1d": { interval: "1d", range: "2y" },
+  "1w": { interval: "1wk", range: "5y" },
+  "1M": { interval: "1mo", range: "max" },
+  "12M": { interval: "1mo", range: "max" },
 };
 
-export function yahooIntervalFor(tf: string): { interval: string; range: string; aggregate4h?: boolean } | null {
-  if (tf === "4h") return { interval: "1h", range: "730d", aggregate4h: true };
-  if (tf === "1w") return { interval: "1wk", range: "max" };
-  if (tf === "1M") return { interval: "1mo", range: "max" };
-  if (tf === "1d") return { interval: "1d", range: "2y" };
-  if (INTRADAY_LIMITS[tf]) return { interval: tf === "1h" ? "1h" : tf, range: INTRADAY_LIMITS[tf]! };
+export function yahooIntervalFor(tf: string): { interval: string; range: string } | null {
+  if (INTRADAY_LIMITS[tf]) return INTRADAY_LIMITS[tf]!;
   return null;
 }

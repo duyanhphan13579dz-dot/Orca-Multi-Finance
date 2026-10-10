@@ -1,4 +1,3 @@
-/* eslint-disable @next/next/no-img-element */
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
@@ -52,7 +51,9 @@ type ValPayload = {
     evEbitda?: number | null;
     peg?: number | null;
   };
+  /** Legacy alias — engine also emits marketRatios */
   vndirectRatios?: { pe?: number | null; pb?: number | null; ps?: number | null; dividendYield?: number | null };
+  marketRatios?: { pe?: number | null; pb?: number | null; ps?: number | null; dividendYield?: number | null };
   fairValues?: { dcfBase?: number | null; blended?: number | null; graham?: number | null };
   upsideDownside?: number | null;
   marketCap?: number | null;
@@ -92,25 +93,30 @@ export default function StockFundamentalsPage({
     params.then((p) => setSymbol(p.symbol.toUpperCase()));
   }, [params]);
 
-  const { res, data, isLoading, meta } = useApi<FundPayload>(
+  // P7-B: soft timeout + keepPrevious; paint when fund or val arrives
+  const { res, data, isLoading, meta, mutate } = useApi<FundPayload>(
     symbol ? `/api/v1/stocks/${encodeURIComponent(symbol)}/fundamentals` : null,
-    { refreshInterval: 90_000 },
+    { refreshInterval: 90_000, timeoutMs: 15_000, keepPreviousData: true },
   );
 
   const { data: valData } = useApi<ValPayload>(
     symbol ? `/api/v1/stocks/${encodeURIComponent(symbol)}/valuation` : null,
-    { refreshInterval: 120_000 },
+    { refreshInterval: 120_000, timeoutMs: 12_000, keepPreviousData: true },
   );
 
   const metrics = useMemo(() => {
-    if (!data?.financials) return null;
+    if (!data) return null;
     const m = valData?.multiples;
-    const vr = valData?.vndirectRatios;
+    const vr = valData?.vndirectRatios ?? valData?.marketRatios;
     const fv = valData?.fairValues;
+    const income = (data.financials?.income ?? []) as Record<string, unknown>[];
+    const balance = (data.financials?.balance ?? []) as Record<string, unknown>[];
+    const cashflow = (data.financials?.cashflow ?? []) as Record<string, unknown>[];
+    // Still render investment/valuation strips when BCTC rows are empty
     return buildSnapshotMetrics({
-      income: (data.financials.income ?? []) as Record<string, unknown>[],
-      balance: (data.financials.balance ?? []) as Record<string, unknown>[],
-      cashflow: (data.financials.cashflow ?? []) as Record<string, unknown>[],
+      income,
+      balance,
+      cashflow,
       price: data.quote?.price ?? null,
       closes: data.closes ?? [],
       shares: data.sharesOutstanding ?? data.financialHealth?.anchors?.shares ?? null,
@@ -133,7 +139,10 @@ export default function StockFundamentalsPage({
         upsidePct: valData?.upsideDownside ?? null,
         marketCap: valData?.marketCap ?? null,
         dividendYield:
-          data.performance?.dividendYield ?? data.vndirectRatios?.dividendYield ?? null,
+          data.performance?.dividendYield ??
+          data.vndirectRatios?.dividendYield ??
+          vr?.dividendYield ??
+          null,
       },
     });
   }, [data, valData]);
@@ -191,9 +200,27 @@ export default function StockFundamentalsPage({
     return { income, roe, cashflow };
   }, [data]);
 
-  if (!symbol || (isLoading && !res)) return <Loading rows={8} />;
-  if (!res?.success || !data || !metrics) {
-    return <Unavailable title={`Không lấy được phân tích cơ bản ${symbol || ""}`} />;
+  if (!symbol) return <Loading rows={6} label="Đang mở phân tích cơ bản…" />;
+  if (isLoading && !data && !valData) {
+    return <Loading rows={6} label="Đang tải chỉ số cơ bản (tối đa ~15 giây)…" />;
+  }
+  if (!data || !metrics) {
+    const msg =
+      (res && !res.success && typeof (res as { error?: { message?: string } }).error?.message === "string"
+        ? (res as { error: { message: string } }).error.message
+        : null) ?? "Nguồn BCTC/giá đang gián đoạn. Thử lại sau vài giây.";
+    return (
+      <div className="space-y-3">
+        <Unavailable title={`Không lấy được phân tích cơ bản ${symbol || ""}`} note={msg} />
+        <button
+          type="button"
+          className="rounded-lg border border-border-subtle px-3 py-2 text-[12px] font-medium hover:border-accent-primary/40"
+          onClick={() => void mutate()}
+        >
+          Thử tải lại
+        </button>
+      </div>
+    );
   }
 
   const tabs: { key: TabKey; label: string }[] = [
@@ -208,9 +235,9 @@ export default function StockFundamentalsPage({
     tab === "operating"
       ? metrics.operating
       : tab === "investment"
-        ? metrics.investment
+        ? metrics.performance
         : tab === "health"
-          ? [...metrics.debtPillars, ...metrics.healthExtra]
+          ? metrics.leverage
           : tab === "cashflow"
             ? metrics.cashflow
             : metrics.valuation;

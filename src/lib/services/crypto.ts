@@ -2,45 +2,30 @@ import "server-only";
 import { cached } from "../cache";
 import { buildMeta } from "../freshness";
 import * as binance from "../providers/binance";
+import { getCoinGeckoSimplePrices } from "../providers/coingecko";
+import { getCoinCapAssets, getOkxSpotTickers } from "../providers/crypto-public";
 import { binanceWs, ensureBinanceWsStarted } from "../realtime/binance-ws";
+import { analyzeSeries, detectPatterns } from "../technical";
+import { validateQuote, logQualityEvent } from "../quality";
 import { candleAggregator } from "../realtime/candles";
 import { eventBus } from "../events";
-import { logQualityEvent, validateQuote } from "../quality";
-import { analyzeSeries, detectPatterns } from "../technical";
-import type { CandlePattern, CryptoMarketRow, Meta, OhlcvBar, TechnicalSnapshot } from "../types";
+import type { Meta, OhlcvBar, TechnicalSnapshot, CandlePattern } from "../types";
+import { firstHealthy } from "../data-engine/resilience";
 
-const LEVERAGED_RE = /(UP|DOWN|BULL|BEAR)USDT$/i;
-const EXCLUDED_BASES = new Set(["USDC", "FDUSD", "TUSD", "BUSD", "DAI", "EUR", "GBP", "TRY", "BRL"]);
-
-interface AllMarket {
-  rows: CryptoMarketRow[];
-  fetchedAt: number;
-  overlaid: number;
-  invalid: number;
-  suspect: number;
-}
-
-function toRow(t: binance.BinanceTicker24h): CryptoMarketRow | null {
-  if (!t.symbol.endsWith("USDT") || LEVERAGED_RE.test(t.symbol)) return null;
-  const base = t.symbol.replace(/USDT$/, "");
-  if (EXCLUDED_BASES.has(base)) return null;
-  const price = Number(t.lastPrice);
-  if (!Number.isFinite(price) || price <= 0) return null;
-  return {
-    symbol: t.symbol,
-    baseAsset: base,
-    assetClass: "crypto",
-    price,
-    change: Number(t.priceChange),
-    changePercent: Number(t.priceChangePercent),
-    open: Number(t.openPrice),
-    high: Number(t.highPrice),
-    low: Number(t.lowPrice),
-    volume: Number(t.volume),
-    quoteVolume: Number(t.quoteVolume),
-    trades24h: t.count ?? null,
-    updatedAt: t.closeTime ? new Date(t.closeTime).toISOString() : null,
-  };
+export interface CryptoMarketRow {
+  symbol: string;
+  baseAsset: string;
+  assetClass: "crypto";
+  price: number;
+  change: number | null;
+  changePercent: number | null;
+  open: number | null;
+  high: number | null;
+  low: number | null;
+  volume: number | null;
+  quoteVolume: number | null;
+  trades24h: number | null;
+  updatedAt: string | null;
 }
 
 export interface CryptoSummary {
@@ -54,245 +39,531 @@ export interface CryptoSummary {
   fetchedAt: string;
 }
 
-export async function getCryptoMarkets(): Promise<{ rows: CryptoMarketRow[]; summary: CryptoSummary; meta: Meta } | null> {
-  try {
-    const res = await cached<AllMarket>("crypto:all", {
-      ttlMs: 12_000,
-      staleMs: 10 * 60_000,
-      producer: async () => {
-        const tickers = await binance.getAllSpotTickers();
-        let rows = tickers
-          .map(toRow)
-          .filter((r): r is CryptoMarketRow => r !== null)
-          .sort((a, b) => (b.quoteVolume ?? 0) - (a.quoteVolume ?? 0));
-        if (!rows.length) throw new Error("binance: no spot rows");
-        let invalid = 0;
-        let suspect = 0;
-        rows = rows.filter((r) => {
-          const q = validateQuote(r, { assetClass: "crypto", sourceTimestampMs: Date.now() });
-          if (q.status === "INVALID") {
-            invalid++;
-            void logQualityEvent("binance-spot", r.symbol, q);
-            return false;
-          }
-          if (q.status === "SUSPECT") suspect++;
-          return true;
-        });
-        ensureBinanceWsStarted();
-        const live = binanceWs.getTickers(10_000);
-        let overlaid = 0;
-        if (live.size) {
-          for (const row of rows) {
-            const ws = live.get(row.symbol);
-            if (!ws) continue;
-            row.price = ws.price;
-            row.changePercent = ws.changePercent;
-            row.volume = ws.volume;
-            row.quoteVolume = ws.quoteVolume;
-            row.updatedAt = new Date(ws.eventTime).toISOString();
-            overlaid++;
-          }
-        }
-        const subscribed = candleAggregator.subscribedSymbols();
-        const fetchedAt = Date.now();
-        if (subscribed.length && overlaid === 0) {
-          const bySymbol = new Map(rows.map((r) => [r.symbol, r]));
-          for (const sym of subscribed) {
-            const row = bySymbol.get(sym);
-            if (!row) continue;
-            eventBus.emit(`tick:${sym}`, {
-              symbol: sym,
-              price: row.price,
-              cumVolume: row.volume ?? 0,
-              cumQuoteVolume: row.quoteVolume ?? 0,
-              ts: fetchedAt,
-            });
-          }
-        }
-        return { rows, fetchedAt, overlaid, invalid, suspect };
-      },
-    });
-    const { rows, fetchedAt } = res.value;
-    const advancers = rows.filter((r) => (r.changePercent ?? 0) > 0).length;
-    const decliners = rows.filter((r) => (r.changePercent ?? 0) < 0).length;
-    const avg = rows.reduce((a, r) => a + (r.changePercent ?? 0), 0) / Math.max(rows.length, 1);
-    const summary: CryptoSummary = {
-      marketCount: rows.length,
-      advancers,
-      decliners,
-      avgChangePercent: avg,
-      totalQuoteVolume: rows.reduce((a, r) => a + (r.quoteVolume ?? 0), 0),
-      btcChangePercent: rows.find((r) => r.baseAsset === "BTC")?.changePercent ?? null,
-      ethChangePercent: rows.find((r) => r.baseAsset === "ETH")?.changePercent ?? null,
-      fetchedAt: new Date(fetchedAt).toISOString(),
-    };
-    const meta = buildMeta({
-      source: res.value.overlaid > 0 ? "binance-ws + binance" : "binance",
-      sourceTimestampMs: fetchedAt,
-      cached: res.cached,
-      stale: res.stale,
-      note: res.value.invalid > 0 || res.value.suspect > 0
-        ? `Data quality: ${res.value.invalid} record INVALID (đã loại), ${res.value.suspect} SUSPECT (đã ghi log)`
-        : undefined,
-      slas: { liveSlaMs: 30_000, freshSlaMs: 120_000, delayedSlaMs: 600_000 },
-    });
-    meta.qualityStatus = res.value.invalid > 0 || res.value.suspect > 0 ? "SUSPECT" : "VALID";
-    return { rows, summary, meta };
-  } catch (primaryErr) {
-    try {
-      const { getCoinGeckoSimplePrices } = await import("../providers/coingecko");
-      const cg = await getCoinGeckoSimplePrices();
-      const rows: CryptoMarketRow[] = cg.rows.map((r) => ({
-        symbol: r.symbol,
-        baseAsset: r.baseAsset,
-        assetClass: "crypto" as const,
-        price: r.price,
-        change: null,
-        changePercent: r.changePercent,
-        open: null,
-        high: null,
-        low: null,
-        volume: null,
-        quoteVolume: r.quoteVolume,
-        trades24h: null,
-        updatedAt: new Date(cg.sourceTs).toISOString(),
-      }));
-      const btc = rows.find((r) => r.symbol === "BTCUSDT");
-      const eth = rows.find((r) => r.symbol === "ETHUSDT");
-      const withCh = rows.filter((r) => r.changePercent != null);
-      const advancers = withCh.filter((r) => (r.changePercent ?? 0) > 0).length;
-      const decliners = withCh.filter((r) => (r.changePercent ?? 0) < 0).length;
-      const avgChangePercent = withCh.length
-        ? withCh.reduce((a, r) => a + (r.changePercent ?? 0), 0) / withCh.length
-        : 0;
-      const summary: CryptoSummary = {
-        marketCount: rows.length,
-        advancers,
-        decliners,
-        avgChangePercent,
-        totalQuoteVolume: rows.reduce((a, r) => a + (r.quoteVolume ?? 0), 0),
-        btcChangePercent: btc?.changePercent ?? null,
-        ethChangePercent: eth?.changePercent ?? null,
-        fetchedAt: new Date(cg.sourceTs).toISOString(),
-      };
-      const meta = buildMeta({
-        source: "coingecko",
-        sourceTimestampMs: cg.sourceTs,
-        note: `Binance unavailable — fallback CoinGecko simple price (${rows.length} assets)`,
-        partial: true,
-        slas: { liveSlaMs: 120_000, freshSlaMs: 600_000, delayedSlaMs: 3_600_000 },
-      });
-      return { rows, summary, meta };
-    } catch (fbErr) {
-      console.warn("[getCryptoMarkets] binance+coingecko failed", primaryErr, fbErr);
-      return null;
-    }
-  }
-}
-
 export interface CryptoDetail {
   symbol: string;
-  baseAsset: string;
-  ticker: CryptoMarketRow;
-  klines: OhlcvBar[];
-  interval: string;
+  quote: CryptoMarketRow | null;
+  bars: OhlcvBar[];
   technical: TechnicalSnapshot | null;
   patterns: CandlePattern[];
   funding: binance.FundingInfo | null;
   openInterest: { openInterest: number; time: number } | null;
-  fundingStatus: "ok" | "unavailable";
 }
 
-export async function getCryptoKlines(symbol: string, interval = "1h", limit = 200): Promise<{ bars: OhlcvBar[]; meta: Meta } | null> {
-  const sym = symbol.toUpperCase();
+export interface CryptoScreenerParams {
+  sort?: "volume" | "gainers" | "losers";
+  limit?: number;
+  minQuoteVolume?: number;
+  minChange?: number;
+  maxChange?: number;
+}
+
+type AllMarket = {
+  rows: CryptoMarketRow[];
+  fetchedAt: number;
+  overlaid: number;
+  invalid: number;
+  suspect: number;
+  source: string;
+};
+
+type LastGood = { pack: AllMarket; at: number };
+
+function lastGoodStore(): { current: LastGood | null } {
+  const g = globalThis as typeof globalThis & { __orcaCryptoLast?: { current: LastGood | null } };
+  if (!g.__orcaCryptoLast) g.__orcaCryptoLast = { current: null };
+  return g.__orcaCryptoLast;
+}
+
+function remember(pack: AllMarket) {
+  if (!pack.rows.length) return;
+  lastGoodStore().current = { pack, at: Date.now() };
+}
+
+function recall(maxAgeMs = 30 * 60_000): AllMarket | null {
+  const lg = lastGoodStore().current;
+  if (!lg || Date.now() - lg.at > maxAgeMs) return null;
+  return { ...lg.pack, source: `${lg.pack.source}+last-good` };
+}
+
+function toRow(t: binance.BinanceTicker24h): CryptoMarketRow | null {
+  const price = Number(t.lastPrice);
+  if (!(price > 0)) return null;
+  const symbol = String(t.symbol ?? "").toUpperCase();
+  if (!symbol.endsWith("USDT")) return null;
+  return {
+    symbol,
+    baseAsset: symbol.replace(/USDT$/, ""),
+    assetClass: "crypto",
+    price,
+    change: Number(t.priceChange) || null,
+    changePercent: Number(t.priceChangePercent) || null,
+    open: Number(t.openPrice) || null,
+    high: Number(t.highPrice) || null,
+    low: Number(t.lowPrice) || null,
+    volume: Number(t.volume) || null,
+    quoteVolume: Number(t.quoteVolume) || null,
+    trades24h: Number(t.count) || null,
+    updatedAt: t.closeTime ? new Date(t.closeTime).toISOString() : null,
+  };
+}
+
+function fromPublic(p: {
+  symbol: string;
+  baseAsset: string;
+  price: number;
+  changePercent: number | null;
+  quoteVolume: number | null;
+  volume?: number | null;
+  high?: number | null;
+  low?: number | null;
+  open?: number | null;
+}): CryptoMarketRow {
+  const ch = p.changePercent;
+  const open = p.open ?? (ch != null && p.price > 0 ? p.price / (1 + ch / 100) : null);
+  return {
+    symbol: p.symbol,
+    baseAsset: p.baseAsset,
+    assetClass: "crypto",
+    price: p.price,
+    change: open != null ? p.price - open : null,
+    changePercent: ch,
+    open,
+    high: p.high ?? null,
+    low: p.low ?? null,
+    volume: p.volume ?? null,
+    quoteVolume: p.quoteVolume,
+    trades24h: null,
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+async function loadBinanceMarkets(): Promise<AllMarket> {
   try {
-    const res = await cached(`crypto:klines:${sym}:${interval}:${limit}`, {
-      ttlMs: 25_000,
+    ensureBinanceWsStarted();
+  } catch {
+    /* */
+  }
+  const tickers = await binance.getAllSpotTickers();
+  if (!tickers?.length) throw new Error("binance empty");
+
+  // Fast pre-filter USDT pairs to avoid heavy parsing of 2,500+ instruments
+  const usdtTickers = tickers.filter((t) => {
+    const s = t.symbol;
+    return typeof s === "string" && s.endsWith("USDT") && Number(t.lastPrice) > 0;
+  });
+
+  const rows: CryptoMarketRow[] = [];
+  let invalid = 0;
+  let suspect = 0;
+  for (const t of usdtTickers) {
+    const row = toRow(t);
+    if (!row) {
+      invalid += 1;
+      continue;
+    }
+    const q = validateQuote(
+      {
+        price: row.price,
+        open: row.open,
+        high: row.high,
+        low: row.low,
+        changePercent: row.changePercent,
+        volume: row.volume,
+        updatedAt: row.updatedAt,
+      },
+      { assetClass: "crypto", sourceTimestampMs: t.closeTime || null },
+    );
+    if (q.status === "INVALID") {
+      invalid += 1;
+      continue;
+    }
+    if (q.status === "SUSPECT" || q.status === "STALE") {
+      suspect += 1;
+    }
+    rows.push(row);
+  }
+
+  // Aggregate single quality log instead of 50+ DB subrequests in loop
+  if (invalid > 0 || suspect > 0) {
+    void logQualityEvent("binance", `crypto batch quality (invalid=${invalid}, suspect=${suspect} of ${usdtTickers.length})`, {
+      status: invalid > 0 ? "SUSPECT" : "VALID",
+      score: 0.9,
+      flags: [{ check: "batch_quality", severity: "warn", message: `batch issues: invalid=${invalid}, suspect=${suspect}` }],
+    });
+  }
+
+  let overlaid = 0;
+  try {
+    const live = binanceWs.getTickers(10_000);
+    if (live.size) {
+      const bySym = new Map(Array.from(live.values(), (x) => [String(x.symbol).toUpperCase(), x]));
+      for (const row of rows) {
+        const l = bySym.get(row.symbol);
+        if (l?.price && l.price > 0) {
+          row.price = l.price;
+          overlaid += 1;
+          eventBus.emit(`tick:${row.symbol}`, {
+            symbol: row.symbol,
+            price: l.price,
+            ts: Date.now(),
+            source: "binance",
+          });
+        }
+      }
+    }
+  } catch {
+    /* soft */
+  }
+
+  try {
+    candleAggregator.subscribedSymbols();
+  } catch {
+    /* */
+  }
+
+  rows.sort((a, b) => (b.quoteVolume ?? 0) - (a.quoteVolume ?? 0));
+  if (!rows.length) throw new Error("binance no valid rows");
+  // Retain top 250 pairs by liquidity to prevent Worker memory spikes & huge JSON serialization
+  const topRows = rows.slice(0, 250);
+  return {
+    rows: topRows,
+    fetchedAt: Date.now(),
+    overlaid,
+    invalid,
+    suspect,
+    source: overlaid > 0 ? "binance+ws" : "binance",
+  };
+}
+
+async function loadOkxMarkets(): Promise<AllMarket> {
+  const pack = await getOkxSpotTickers();
+  const rows = pack.rows.map(fromPublic);
+  rows.sort((a, b) => (b.quoteVolume ?? 0) - (a.quoteVolume ?? 0));
+  return {
+    rows,
+    fetchedAt: pack.sourceTs,
+    overlaid: 0,
+    invalid: 0,
+    suspect: 0,
+    source: "okx-public",
+  };
+}
+
+async function loadCoinCapMarkets(): Promise<AllMarket> {
+  const pack = await getCoinCapAssets(80);
+  const rows = pack.rows.map(fromPublic);
+  return {
+    rows,
+    fetchedAt: pack.sourceTs,
+    overlaid: 0,
+    invalid: 0,
+    suspect: 0,
+    source: "coincap",
+  };
+}
+
+async function loadCoinGeckoMarkets(): Promise<AllMarket> {
+  const pack = await getCoinGeckoSimplePrices();
+  const rows = pack.rows.map((r) =>
+    fromPublic({
+      symbol: r.symbol,
+      baseAsset: r.baseAsset,
+      price: r.price,
+      changePercent: r.changePercent,
+      quoteVolume: r.quoteVolume,
+    }),
+  );
+  return {
+    rows,
+    fetchedAt: pack.sourceTs,
+    overlaid: 0,
+    invalid: 0,
+    suspect: 0,
+    source: `coingecko:${pack.via}`,
+  };
+}
+
+function summarize(rows: CryptoMarketRow[], fetchedAt: number): CryptoSummary {
+  let advancers = 0;
+  let decliners = 0;
+  let sumPct = 0;
+  let pctN = 0;
+  let totalQuoteVolume = 0;
+  let btcChangePercent: number | null = null;
+  let ethChangePercent: number | null = null;
+  for (const r of rows) {
+    totalQuoteVolume += r.quoteVolume ?? 0;
+    if (r.changePercent != null) {
+      sumPct += r.changePercent;
+      pctN += 1;
+      if (r.changePercent > 0) advancers += 1;
+      else if (r.changePercent < 0) decliners += 1;
+    }
+    if (r.symbol === "BTCUSDT") btcChangePercent = r.changePercent;
+    if (r.symbol === "ETHUSDT") ethChangePercent = r.changePercent;
+  }
+  return {
+    marketCount: rows.length,
+    advancers,
+    decliners,
+    avgChangePercent: pctN ? sumPct / pctN : 0,
+    totalQuoteVolume,
+    btcChangePercent,
+    ethChangePercent,
+    fetchedAt: new Date(fetchedAt).toISOString(),
+  };
+}
+
+/** Crypto markets: Binance → OKX → CoinCap → CoinGecko → last-good */
+export async function getCryptoMarkets(): Promise<{
+  rows: CryptoMarketRow[];
+  summary: CryptoSummary;
+  meta: Meta;
+} | null> {
+  try {
+    const res = await cached<AllMarket>("crypto:all:v2", {
+      ttlMs: 12_000,
       staleMs: 15 * 60_000,
-      producer: async () => ({ bars: await binance.getKlines(sym, interval, limit), fetchedAt: Date.now() }),
+      softSwr: true,
+      producer: async () => {
+        try {
+          const hit = await firstHealthy<AllMarket>(
+            [
+              { id: "binance", run: async () => loadBinanceMarkets() },
+              { id: "okx-public", run: async () => loadOkxMarkets() },
+              { id: "coingecko", run: async () => loadCoinGeckoMarkets() },
+              { id: "coincap", run: async () => loadCoinCapMarkets() },
+            ],
+            { budgetMs: 10_000, perAttemptMs: 6_000, label: "crypto-markets" },
+          );
+          remember(hit.value);
+          return hit.value;
+        } catch {
+          const lg = recall();
+          if (lg) return lg;
+          throw new Error("all crypto sources empty");
+        }
+      },
     });
-    const lastBar = res.value.bars[res.value.bars.length - 1];
-    const meta = buildMeta({
-      source: "binance",
-      sourceTimestampMs: lastBar ? lastBar.time : res.value.fetchedAt,
-      cached: res.cached,
-      stale: res.stale,
-      slas: { liveSlaMs: 120_000, freshSlaMs: 300_000, delayedSlaMs: 3_600_000 },
-    });
-    return { bars: res.value.bars, meta };
+
+    const pack = res.value;
+    if (!pack?.rows?.length) {
+      const lg = recall();
+      if (!lg) return null;
+      return {
+        rows: lg.rows,
+        summary: summarize(lg.rows, lg.fetchedAt),
+        meta: buildMeta({
+          source: lg.source,
+          sourceTimestampMs: lg.fetchedAt,
+          stale: true,
+          partial: true,
+          note: "crypto last-good",
+        }),
+      };
+    }
+
+    remember(pack);
+    return {
+      rows: pack.rows,
+      summary: summarize(pack.rows, pack.fetchedAt),
+      meta: buildMeta({
+        source: pack.source,
+        sourceTimestampMs: pack.fetchedAt,
+        cached: res.cached,
+        stale: res.stale,
+        note:
+          pack.invalid || pack.suspect
+            ? `invalid=${pack.invalid}; suspect=${pack.suspect}; overlaid=${pack.overlaid}`
+            : pack.overlaid
+              ? `overlaid=${pack.overlaid}`
+              : undefined,
+      }),
+    };
+  } catch {
+    const lg = recall();
+    if (!lg) return null;
+    return {
+      rows: lg.rows,
+      summary: summarize(lg.rows, lg.fetchedAt),
+      meta: buildMeta({
+        source: lg.source,
+        sourceTimestampMs: lg.fetchedAt,
+        stale: true,
+        partial: true,
+        note: "crypto last-good after error",
+      }),
+    };
+  }
+}
+
+const YAHOO_INTERVAL: Record<string, string> = {
+  "5m": "5m",
+  "15m": "15m",
+  "1h": "60m",
+  "4h": "1h",
+  "1d": "1d",
+  "1w": "1wk",
+};
+
+const YAHOO_RANGE: Record<string, string> = {
+  "5m": "5d",
+  "15m": "1mo",
+  "1h": "3mo",
+  "4h": "6mo",
+  "1d": "2y",
+  "1w": "5y",
+};
+
+export async function getCryptoKlines(
+  symbol: string,
+  interval = "1h",
+  limit = 200,
+): Promise<{ bars: OhlcvBar[]; meta: Meta } | null> {
+  const pair = symbol.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  try {
+    const bars = await binance.getKlines(pair, interval, limit);
+    if (bars?.length) {
+      return {
+        bars,
+        meta: buildMeta({
+          source: "binance-klines",
+          sourceTimestampMs: bars[bars.length - 1]?.time ?? Date.now(),
+        }),
+      };
+    }
+  } catch {
+    /* fallback Yahoo */
+  }
+
+  try {
+    const { getYahooChart } = await import("../providers/yahoo");
+    const base = pair.replace(/USDT$/, "");
+    const ySym = `${base}-USD`;
+    const yInterval = YAHOO_INTERVAL[interval] ?? "60m";
+    const yRange = YAHOO_RANGE[interval] ?? "3mo";
+    const y = await getYahooChart(ySym, yInterval, yRange);
+    const bars: OhlcvBar[] = (y.candles ?? [])
+      .slice(-limit)
+      .map((c) => ({
+        time: c.time,
+        open: c.open,
+        high: c.high,
+        low: c.low,
+        close: c.close,
+        volume: c.volume ?? 0,
+      }))
+      .filter((b) => b.close > 0);
+    if (bars.length >= 5) {
+      return {
+        bars,
+        meta: buildMeta({
+          source: "yahoo-crypto",
+          sourceTimestampMs: bars[bars.length - 1]?.time ?? Date.now(),
+          partial: true,
+          note: `Yahoo ${ySym} fallback`,
+        }),
+      };
+    }
+  } catch {
+    /* */
+  }
+  return null;
+}
+
+export async function getCryptoDetail(
+  symbol: string,
+  interval = "1h",
+): Promise<{ detail: CryptoDetail; meta: Meta } | null> {
+  const sym = symbol.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  if (!sym) return null;
+  const pair = sym.endsWith("USDT") ? sym : `${sym}USDT`;
+
+  try {
+    const quotePromise = (async (): Promise<CryptoMarketRow | null> => {
+      try {
+        const spot = await binance.getSpotTicker(pair);
+        const row = toRow(spot);
+        if (row) return row;
+      } catch {
+        /* fallback */
+      }
+      const markets = await getCryptoMarkets().catch(() => null);
+      return markets?.rows.find((r) => r.symbol === pair) ?? null;
+    })();
+
+    const [quote, klinesPack, funding, oi] = await Promise.all([
+      quotePromise,
+      getCryptoKlines(pair, interval, 200).catch(() => null),
+      binance.getFundingRate(pair).catch(() => null),
+      binance.getOpenInterest(pair).catch(() => null),
+    ]);
+    const bars = klinesPack?.bars ?? [];
+    let technical: TechnicalSnapshot | null = null;
+    let patterns: CandlePattern[] = [];
+    if (bars.length >= 20) {
+      try {
+        technical = analyzeSeries(bars);
+        patterns = detectPatterns(bars);
+      } catch {
+        /* */
+      }
+    }
+    try {
+      const mark = binanceWs.getMark?.(pair, 120_000);
+      if (mark?.markPrice && quote) quote.price = mark.markPrice;
+    } catch {
+      /* */
+    }
+    if (!quote && !bars.length) return null;
+    const detail: CryptoDetail = {
+      symbol: pair,
+      quote,
+      bars,
+      technical,
+      patterns,
+      funding,
+      openInterest: oi,
+    };
+    const sources = [
+      quote ? "binance-spot" : null,
+      klinesPack?.meta?.source,
+      funding ? "binance-funding" : null,
+    ].filter(Boolean);
+    return {
+      detail,
+      meta: buildMeta({
+        source: sources.join("+") || "crypto",
+        sourceTimestampMs: bars.length ? bars[bars.length - 1]!.time : Date.now(),
+        partial: !quote || bars.length < 20,
+      }),
+    };
   } catch {
     return null;
   }
 }
 
-export async function getCryptoDetail(symbol: string, interval = "1h"): Promise<{ detail: CryptoDetail; meta: Meta } | null> {
-  const sym = symbol.toUpperCase().endsWith("USDT") ? symbol.toUpperCase() : `${symbol.toUpperCase()}USDT`;
-  const [tickerRes, klinesRes, fundingRes, oiRes] = await Promise.allSettled([
-    binance.getSpotTicker(sym),
-    getCryptoKlines(sym, interval, 200),
-    binance.getFundingRate(sym),
-    binance.getOpenInterest(sym),
-  ]);
-  if (tickerRes.status === "rejected") return null;
-  const t = tickerRes.value;
-  const base = toRow(t);
-  if (!base) return null;
-  const bars = klinesRes.status === "fulfilled" && klinesRes.value ? klinesRes.value.bars : [];
-  const technical = bars.length ? analyzeSeries(bars) : null;
-  const patterns = bars.length ? detectPatterns(bars) : [];
-  let funding = fundingRes.status === "fulfilled" ? fundingRes.value : null;
-  if (!funding) {
-    ensureBinanceWsStarted();
-    const mark = binanceWs.getMark(sym, 120_000);
-    if (mark) {
-      funding = {
-        symbol: sym,
-        markPrice: mark.markPrice,
-        indexPrice: mark.markPrice,
-        fundingRate: mark.fundingRate,
-        nextFundingTime: mark.eventTime,
-      };
-    }
-  }
-  const openInterest =
-    oiRes.status === "fulfilled" ? { openInterest: oiRes.value.openInterest, time: oiRes.value.time } : null;
-  const detail: CryptoDetail = {
-    symbol: sym,
-    baseAsset: sym.replace(/USDT$/, ""),
-    ticker: base,
-    klines: bars,
-    interval,
-    technical,
-    patterns,
-    funding,
-    openInterest,
-    fundingStatus: funding ? "ok" : "unavailable",
-  };
-  const meta = buildMeta({
-    source: "binance",
-    sourceTimestampMs: t.closeTime ?? Date.now(),
-    note: funding ? undefined : "Dữ liệu futures (funding/OI) tạm thờ không khả dụng từ vị trí máy chủ",
-    partial: !funding,
-  });
-  return { detail, meta };
-}
-
-export interface CryptoScreenerParams {
-  minChange?: number;
-  maxChange?: number;
-  minQuoteVolume?: number;
-  limit?: number;
-  sort?: "volume" | "gainers" | "losers";
-}
-
-export async function screenCrypto(params: CryptoScreenerParams): Promise<{ rows: CryptoMarketRow[]; meta: Meta } | null> {
+export async function screenCrypto(
+  params: CryptoScreenerParams,
+): Promise<{ rows: CryptoMarketRow[]; meta: Meta } | null> {
   const m = await getCryptoMarkets();
   if (!m) return null;
   let rows = m.rows;
-  if (params.minChange != null) rows = rows.filter((r) => (r.changePercent ?? 0) >= (params.minChange as number));
-  if (params.maxChange != null) rows = rows.filter((r) => (r.changePercent ?? 0) <= (params.maxChange as number));
-  if (params.minQuoteVolume != null) rows = rows.filter((r) => (r.quoteVolume ?? 0) >= (params.minQuoteVolume as number));
-  if (params.sort === "gainers") rows = [...rows].sort((a, b) => (b.changePercent ?? 0) - (a.changePercent ?? 0));
-  if (params.sort === "losers") rows = [...rows].sort((a, b) => (a.changePercent ?? 0) - (b.changePercent ?? 0));
+  if (params.minQuoteVolume != null) {
+    rows = rows.filter((r) => (r.quoteVolume ?? 0) >= (params.minQuoteVolume ?? 0));
+  }
+  if (params.minChange != null) {
+    rows = rows.filter((r) => (r.changePercent ?? 0) >= (params.minChange ?? 0));
+  }
+  if (params.maxChange != null) {
+    rows = rows.filter((r) => (r.changePercent ?? 0) <= (params.maxChange ?? 0));
+  }
+  if (params.sort === "gainers") {
+    rows = [...rows].sort((a, b) => (b.changePercent ?? 0) - (a.changePercent ?? 0));
+  } else if (params.sort === "losers") {
+    rows = [...rows].sort((a, b) => (a.changePercent ?? 0) - (b.changePercent ?? 0));
+  } else {
+    rows = [...rows].sort((a, b) => (b.quoteVolume ?? 0) - (a.quoteVolume ?? 0));
+  }
   return { rows: rows.slice(0, params.limit ?? 40), meta: m.meta };
 }

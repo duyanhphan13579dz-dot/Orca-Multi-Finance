@@ -6,7 +6,7 @@ import { useEffect, useRef, useState, useTransition } from "react";
 import { RefreshCw } from "lucide-react";
 import { Spinner } from "@/components/ui";
 import { signalNavStart } from "@/components/route-progress";
-import { markAppNavigating } from "@/lib/hooks";
+import { markAppNavigating, prefetchApi } from "@/lib/hooks";
 
 /** Tổng quan → BCTC → Cơ bản → Định giá → Doanh nghiệp */
 const TABS = [
@@ -26,10 +26,15 @@ export function StockTabs({ symbol }: { symbol: string }) {
   const [pendingHref, setPendingHref] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
 
+  const [prevPathname, setPrevPathname] = useState(pathname);
+  if (prevPathname !== pathname) {
+    setPrevPathname(pathname);
+    setPendingHref(null);
+  }
+
   useEffect(() => {
     const active = navRef.current?.querySelector<HTMLElement>("[data-active=true]");
     active?.scrollIntoView({ inline: "center", block: "nearest", behavior: "smooth" });
-    setPendingHref(null);
   }, [pathname]);
 
   const onRefresh = () => {
@@ -69,6 +74,19 @@ export function StockTabs({ symbol }: { symbol: string }) {
               href={href}
               data-active={active ? "true" : undefined}
               aria-busy={isTabPending || undefined}
+              onMouseEnter={() => {
+                // P7-C: warm tab APIs before click
+                if (t.key === "financials") {
+                  prefetchApi(`/api/v1/stocks/${symbol}/financials`, 18_000);
+                } else if (t.key === "fundamentals") {
+                  prefetchApi(`/api/v1/stocks/${symbol}/fundamentals`, 15_000);
+                  prefetchApi(`/api/v1/stocks/${symbol}/valuation`, 12_000);
+                } else if (t.key === "valuation") {
+                  prefetchApi(`/api/v1/stocks/${symbol}/valuation`, 12_000);
+                } else if (t.key === "profile") {
+                  prefetchApi(`/api/v1/stocks/${symbol}/company`, 10_000);
+                }
+              }}
               onClick={(e) => {
                 if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
                 if (active && !pending) return;

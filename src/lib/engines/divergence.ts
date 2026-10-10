@@ -177,7 +177,7 @@ function pairAdjacent(
     confidence = Math.max(0.2, Math.min(0.95, confidence));
 
     const strength: DivergenceStrength =
-      confidence >= 0.72 ? "strong" : confidence >= 0.55 ? "moderate" : "weak";
+      confidence >= 0.72 ? "A" : confidence >= 0.55 ? "B" : "C";
 
     signals.push({
       kind,
@@ -338,7 +338,7 @@ export function buildDivergenceConfluence(
           oscillators: [s.oscillator],
           bestConfidence: s.confidence,
           signals: [s],
-          strength: s.strength,
+          strength: s.strength as DivergenceStrength,
         });
         continue;
       }
@@ -347,7 +347,7 @@ export function buildDivergenceConfluence(
       existing.signals.push(s);
       if (s.confidence > existing.bestConfidence) {
         existing.bestConfidence = s.confidence;
-        existing.strength = s.strength;
+        existing.strength = s.strength as DivergenceStrength;
       }
     }
   }

@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useApi } from "@/lib/hooks";
 import type { VnOrderBook, VnTrade } from "@/lib/services/stock-orderbook";
 import type { FreshnessStatus } from "@/lib/types";
-import { FreshnessDot, Loading, Panel, Unavailable } from "@/components/ui";
+import { FreshnessDot, Loading, Panel, Unavailable, ErrorState, FreshnessAlertBanner, EmptyState } from "@/components/ui";
 
 function fmtPrice(p: number): string {
   if (p >= 1000) return p.toLocaleString("vi-VN", { maximumFractionDigits: 0 });
@@ -35,7 +35,7 @@ function fmtTime(t: string | null, eventTime: number): string {
 
 /** Terminal-style market depth + match tape — SSE primary, REST 1s fallback. */
 export function OrderBookPanel({ symbol, compact = false }: { symbol: string; compact?: boolean }) {
-  const { res, data: restData, meta: restMeta, isLoading } = useApi<VnOrderBook>(
+  const { res, data: restData, meta: restMeta, isLoading, mutate } = useApi<VnOrderBook>(
     symbol ? `/api/v1/stocks/${symbol}/orderbook` : null,
     // SSE is primary. REST is only a resilient snapshot fallback; avoid
     // invoking a serverless function once per second while SSI is connecting.
@@ -178,15 +178,22 @@ export function OrderBookPanel({ symbol, compact = false }: { symbol: string; co
   }
 
   if (!data) {
+    if (res && !res.success) {
+      return (
+        <Panel title="Độ sâu thị trường" right={<FreshnessDot status="UNAVAILABLE" ageMs={ageMs} />}>
+          <ErrorState
+            title={`Không thể tải sổ lệnh ${symbol}`}
+            message={res.error.message}
+            onRetry={() => void mutate()}
+          />
+        </Panel>
+      );
+    }
     return (
       <Panel title="Độ sâu thị trường" right={<FreshnessDot status="UNAVAILABLE" ageMs={ageMs} />}>
         <Unavailable
           title={`Chưa có sổ lệnh ${symbol}`}
-          note={
-            res && !res.success
-              ? res.error.message
-              : "Đang thử SSI iBoard và VPS song song, sau đó dùng snapshot phiên gần nhất nếu đã lưu. SSI WebSocket chỉ là nguồn realtime bổ sung."
-          }
+          note="Đang thử SSI iBoard và VPS song song, sau đó dùng snapshot phiên gần nhất nếu đã lưu. SSI WebSocket chỉ là nguồn realtime bổ sung."
         />
       </Panel>
     );

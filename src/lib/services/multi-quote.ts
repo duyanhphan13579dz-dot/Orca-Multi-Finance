@@ -22,9 +22,9 @@ import { isCircuitOpen } from "../health";
  * Không dùng SSI FastConnect (SSI_CONSUMER_* / SSI_FC_*) — API có credential,
  * không thuộc nhóm public. Credential SSI vẫn dùng ở orderbook/derivatives riêng.
  *
- * Tier 1 (song song): VNDirect + VPS + SSI iBoard
- * Tier 2 (song song, khi coverage thấp): Vietcap + public-vn
- * Tier 3 (last-resort gap): public-vn small batches
+ * Tier 1 (song song, race-first exit @72%): VNDirect + VPS + SSI iBoard
+ * Tier 2 (song song, fill gap / coverage thấp): Vietcap + public-vn
+ * P2-A: early exit when coverage sufficient — do not wait for slowest source
  *
  * MULTI_SOURCE_MODE=parallel|aggressive
  */
@@ -48,13 +48,10 @@ const PRICE_PRIORITY: Record<string, number> = {
 const rank = (src: string) => PRICE_PRIORITY[src] ?? 0;
 const CONFLICT_PCT = 0.015;
 const CONFLICT_ABS = 200;
-const PRIMARY_COVERAGE_OK = 0.75;
-const TIER1_TIMEOUT_MS = 4_500;
-const TIER2_TIMEOUT_MS = 5_500;
-const TIER2_BUDGET_MS = 7_000;
-const TIER3_TIMEOUT_MS = 6_000;
-/** Max symbols per provider call — large lists are chunked & run in parallel. */
-const CHUNK_SIZE = 40;
+const PRIMARY_COVERAGE_OK = 0.70; // P2-A
+const TIER1_TIMEOUT_MS = 3_800; // P2-A race-first
+const TIER2_TIMEOUT_MS = 4_500;
+const TIER2_BUDGET_MS = 5_500;
 
 type TaggedQuote = Quote & { _src: string; _latencyMs: number };
 type SourceBatch = { src: string; quotes: Quote[]; latencyMs: number; ok: boolean };
@@ -68,47 +65,6 @@ function multiSourceMode(): "parallel" | "aggressive" {
 async function asPack(fn: () => Promise<Quote[]>): Promise<QuotePack> {
   const quotes = await fn();
   return { quotes: quotes ?? [], sourceTs: quotes?.length ? Date.now() : null };
-}
-
-function chunkSymbols(syms: string[], size = CHUNK_SIZE): string[][] {
-  if (syms.length <= size) return [syms];
-  const out: string[][] = [];
-  for (let i = 0; i < syms.length; i += size) out.push(syms.slice(i, i + size));
-  return out;
-}
-
-/** Run a quote provider across symbol chunks in parallel, then merge. */
-async function runChunkedSource(
-  src: string,
-  symbols: string[],
-  fetchChunk: (chunk: string[]) => Promise<QuotePack>,
-  timeoutMs: number,
-  chunkSize = CHUNK_SIZE,
-): Promise<SourceBatch> {
-  const chunks = chunkSymbols(symbols, chunkSize);
-  if (chunks.length <= 1) {
-    return runSource(src, () => fetchChunk(symbols), timeoutMs);
-  }
-  const t0 = performance.now();
-  const parts = await Promise.all(
-    chunks.map((ch) =>
-      runSource(`${src}:chunk`, () => fetchChunk(ch), timeoutMs).then((b) => b.quotes),
-    ),
-  );
-  const merged: Quote[] = [];
-  const seen = new Set<string>();
-  for (const qs of parts) {
-    for (const q of qs) {
-      const s = String(q.symbol ?? "").toUpperCase();
-      if (!s || seen.has(s) || !(Number(q.price) > 0)) continue;
-      seen.add(s);
-      merged.push(q);
-    }
-  }
-  const latencyMs = Math.round(performance.now() - t0);
-  const ok = merged.length > 0;
-  recordMarketSource(src as MarketSourceId, ok, latencyMs);
-  return { src, quotes: merged, latencyMs, ok };
 }
 
 function withDeadline<T>(p: Promise<T>, ms: number): Promise<T> {
@@ -298,7 +254,6 @@ async function runParallelTier(
 }
 
 export async function getMultiQuotes(symbols: string[]): Promise<MultiQuoteResult> {
-  try {
   const uniq = [...new Set(symbols.map((s) => s.toUpperCase()).filter(Boolean))];
   if (!uniq.length) {
     return { quotes: [], sources: [], sourceTs: null, latencies: {}, conflicts: 0 };
@@ -311,114 +266,61 @@ export async function getMultiQuotes(symbols: string[]): Promise<MultiQuoteResul
   let conflicts = 0;
   const mode = multiSourceMode();
 
-  // Tier 1: PUBLIC primary — song song + chunked (không API key)
+  // Tier 1: PUBLIC primary — song song, không API key
   const tier1: { src: string; p: Promise<SourceBatch> }[] = [
     {
       src: "vndirect",
-      p: runChunkedSource(
-        "vndirect",
-        uniq,
-        (ch) => vndirect.getVndQuotes(ch),
-        TIER1_TIMEOUT_MS,
-      ),
+      p: runSource("vndirect", () => vndirect.getVndQuotes(uniq), TIER1_TIMEOUT_MS),
     },
     {
       src: "vps",
-      p: runChunkedSource(
-        "vps",
-        uniq,
-        (ch) => asPack(() => getVpsQuotes(ch)),
-        TIER1_TIMEOUT_MS,
-      ),
+      p: runSource("vps", () => asPack(() => getVpsQuotes(uniq)), TIER1_TIMEOUT_MS),
     },
     {
       src: "ssi-iboard",
-      p: runChunkedSource(
-        "ssi-iboard",
-        uniq,
-        (ch) => asPack(() => getSsiIboardQuotes(ch)),
-        TIER1_TIMEOUT_MS,
-      ),
+      p: runSource("ssi-iboard", () => asPack(() => getSsiIboardQuotes(uniq)), TIER1_TIMEOUT_MS),
     },
   ];
 
   conflicts += await runParallelTier(tier1, bySym, uniq, usedSources, latencies, batches, {
-    budgetMs: TIER1_TIMEOUT_MS + 800,
-    // Early-exit when we have full coverage from any combination of tier1
-    exitCoverage: 1,
+    budgetMs: TIER1_TIMEOUT_MS + 400,
+    exitCoverage: 0.72, // P2-A: return when ~72% symbols filled
   });
 
-  // Always fill missing symbols — even when overall coverage looks "good"
-  const missingAfterT1 = uniq.filter((s) => !bySym.has(s));
+  // Always fill missing symbols (and broad refresh if coverage low / aggressive)
+  const missing = uniq.filter((s) => !bySym.has(s));
   const needBroadFallback =
     mode === "aggressive" || coverageOf(bySym, uniq) < PRIMARY_COVERAGE_OK;
 
-  if (missingAfterT1.length > 0 || needBroadFallback) {
-    // Tier 2: PUBLIC secondary — fill gaps (or full refresh in aggressive mode)
-    const target =
-      mode === "aggressive" || needBroadFallback
-        ? uniq
-        : missingAfterT1;
-
-    const tier2: { src: string; p: Promise<SourceBatch> }[] = [
-      {
-        src: "vietcap",
-        p: runChunkedSource(
-          "vietcap",
-          target,
-          (ch) => getVietcapQuotes(ch),
-          TIER2_TIMEOUT_MS,
-          20,
-        ),
-      },
-      {
-        src: "public-vn",
-        p: runChunkedSource(
-          "public-vn",
-          target,
-          async (ch) => {
-            const r = await getPublicQuotes(ch);
-            return { quotes: r.quotes ?? [], sourceTs: r.sourceTs ?? Date.now() };
-          },
-          TIER2_TIMEOUT_MS,
-        ),
-      },
-    ];
-
-    conflicts += await runParallelTier(tier2, bySym, uniq, usedSources, latencies, batches, {
-      budgetMs: TIER2_BUDGET_MS,
-      exitCoverage: 0.98,
-    });
+  if (missing.length === 0 && !needBroadFallback) {
+    return finish(bySym, usedSources, latencies, batches, conflicts);
   }
 
-  // Tier 3: last-resort for still-missing — public-vn only, small batches
-  const stillMissing = uniq.filter((s) => !bySym.has(s));
-  if (stillMissing.length > 0 && stillMissing.length <= 80) {
-    try {
-      const batch = await runChunkedSource(
-        "public-vn-gap",
-        stillMissing,
-        async (ch) => {
-          const r = await getPublicQuotes(ch);
+  // Tier 2: PUBLIC secondary
+  const target = mode === "aggressive" || needBroadFallback ? uniq : missing;
+
+  const tier2: { src: string; p: Promise<SourceBatch> }[] = [
+    {
+      src: "vietcap",
+      p: runSource("vietcap", () => getVietcapQuotes(target), TIER2_TIMEOUT_MS),
+    },
+    {
+      src: "public-vn",
+      p: runSource(
+        "public-vn",
+        async () => {
+          const r = await getPublicQuotes(target);
           return { quotes: r.quotes ?? [], sourceTs: r.sourceTs ?? Date.now() };
         },
-        TIER3_TIMEOUT_MS,
-      );
-      // Normalize source id for ranking
-      batch.src = "public-vn";
-      batches.push(batch);
-      latencies["public-vn-gap"] = batch.latencyMs;
-      if (batch.ok) {
-        usedSources.push("public-vn");
-        conflicts += applyBatch(bySym, batch);
-      }
-    } catch {
-      /* soft-fail */
-    }
-  }
+        TIER2_TIMEOUT_MS,
+      ),
+    },
+  ];
+
+  conflicts += await runParallelTier(tier2, bySym, uniq, usedSources, latencies, batches, {
+    budgetMs: TIER2_BUDGET_MS,
+    exitCoverage: 0.98,
+  });
 
   return finish(bySym, usedSources, latencies, batches, conflicts);
-  } catch {
-    return { quotes: [], sources: [], sourceTs: null, latencies: {}, conflicts: 0 };
-  }
 }

@@ -7,8 +7,9 @@ import {
   Badge,
   Chg,
   Loading,
-  ErrorNote,
-  Unavailable,
+  ErrorState,
+  EmptyState,
+  FreshnessAlertBanner,
   FreshnessDot,
   fmtNum,
   fmtCompact,
@@ -29,8 +30,8 @@ export function ValuationPanel({
   const [wantLlm, setWantLlm] = useState(false);
   const [showNotes, setShowNotes] = useState(false);
 
-  const { data, meta, isLoading, error } = useApi<Record<string, unknown>>(
-    symbol ? `/api/v1/stocks/${encodeURIComponent(symbol)}/valuation` : null,
+  const { data, meta, isLoading, error, mutate } = useApi<Record<string, unknown>>(
+    symbol ? `/api/v1/stocks/${encodeURIComponent(symbol)}/valuation?full=1` : null,
     { refreshInterval: 120_000 },
   );
 
@@ -47,7 +48,7 @@ export function ValuationPanel({
   if (isLoading && !data) {
     return (
       <Panel title="Định giá">
-        <Loading rows={6} />
+        <Loading rows={6} label={`Đang tải mô hình định giá ${symbol}…`} />
       </Panel>
     );
   }
@@ -55,7 +56,11 @@ export function ValuationPanel({
   if (error && !data) {
     return (
       <Panel title="Định giá">
-        <ErrorNote message={String(error)} />
+        <ErrorState
+          title={`Không thể dựng định giá ${symbol}`}
+          message={error instanceof Error ? error.message : String(error)}
+          onRetry={() => void mutate()}
+        />
       </Panel>
     );
   }
@@ -63,25 +68,70 @@ export function ValuationPanel({
   if (!data) {
     return (
       <Panel title="Định giá">
-        <Unavailable title="Chưa có dữ liệu định giá" note={`Không dựng được valuation cho ${symbol}.`} />
+        <EmptyState
+          title="Chưa có dữ liệu định giá"
+          description={`Không tìm thấy dữ liệu BCTC và chỉ số để xây dựng mô hình cho ${symbol}.`}
+          actionLabel="Tải lại"
+          onAction={() => void mutate()}
+        />
       </Panel>
     );
   }
 
-  const currentPrice = Number(data.currentPrice ?? 0);
-  const marketCap = data.marketCap != null ? Number(data.marketCap) : null;
+  // Prefer flat view-model fields; fall back to nested engine payload if present.
+  const nested = (data.valuation ?? null) as Record<string, unknown> | null;
+  const nestedMult = (nested?.multiples ?? null) as Record<string, number | null> | null;
+  const nestedFv = (nested?.fairValue ?? null) as Record<string, unknown> | null;
+  const nestedP5 = (nested?.phase5 ?? null) as Record<string, unknown> | null;
+
+  const currentPrice = Number(
+    data.currentPrice ?? data.price ?? nested?.price ?? 0,
+  );
+  const marketCap =
+    data.marketCap != null
+      ? Number(data.marketCap)
+      : nested?.marketCap != null
+        ? Number(nested.marketCap)
+        : null;
   const sharesOutstanding =
     data.sharesOutstanding != null ? Number(data.sharesOutstanding) : null;
   const enterpriseValue =
-    data.enterpriseValue != null ? Number(data.enterpriseValue) : null;
+    data.enterpriseValue != null
+      ? Number(data.enterpriseValue)
+      : nested?.enterpriseValue != null
+        ? Number(nested.enterpriseValue)
+        : null;
   const fv = (data.fairValues ?? {}) as Record<string, unknown>;
-  const blended = fv.blended != null ? Number(fv.blended) : null;
-  const upside =
-    data.upsideDownside != null ? Number(data.upsideDownside) : null;
-  const grade = data.valuationGrade != null ? String(data.valuationGrade) : null;
-  const score =
-    data.valuationScore != null ? Number(data.valuationScore) : null;
-  const multiples = (data.multiples ?? {}) as Record<string, number | null>;
+  const blendedRaw =
+    fv.blended ??
+    nestedP5?.finalFairValue ??
+    nestedFv?.blendedFairValue ??
+    null;
+  const blended = blendedRaw != null ? Number(blendedRaw) : null;
+  const upsideRaw =
+    data.upsideDownside ?? nestedP5?.upsidePct ?? nestedFv?.upsidePct ?? null;
+  const upside = upsideRaw != null ? Number(upsideRaw) : null;
+  const grade =
+    data.valuationGrade != null
+      ? String(data.valuationGrade)
+      : nestedP5?.grade != null
+        ? String(nestedP5.grade)
+        : null;
+  const scoreRaw = data.valuationScore ?? nestedP5?.valuationScore ?? null;
+  const score = scoreRaw != null ? Number(scoreRaw) : null;
+  const multiples = {
+    pe: (data.multiples as Record<string, number | null> | undefined)?.pe ?? nestedMult?.pe ?? null,
+    pb: (data.multiples as Record<string, number | null> | undefined)?.pb ?? nestedMult?.pb ?? null,
+    ps: (data.multiples as Record<string, number | null> | undefined)?.ps ?? nestedMult?.ps ?? null,
+    evEbitda:
+      (data.multiples as Record<string, number | null> | undefined)?.evEbitda ??
+      nestedMult?.evEbitda ??
+      null,
+    fcfYield:
+      (data.multiples as Record<string, number | null> | undefined)?.fcfYield ??
+      nestedMult?.fcfYield ??
+      null,
+  } as Record<string, number | null>;
   const notes = Array.isArray(data.notes)
     ? (data.notes as string[]).filter(Boolean)
     : [];
@@ -90,7 +140,15 @@ export function ValuationPanel({
   const sharesSource =
     typeof data.sharesSource === "string" ? data.sharesSource : null;
 
-  const dcfDetail = (data.dcfDetail ?? null) as {
+  const nestedP3 = (nested?.phase3 ?? null) as Record<string, unknown> | null;
+  const dcfDetail = (data.dcfDetail ??
+    (nestedP3
+      ? {
+          scenarios: nestedP3.dcf ?? nested?.dcf ?? null,
+          sensitivity: nestedP3.sensitivity ?? nested?.sensitivity ?? null,
+          costOfCapital: nestedP3.costOfCapital ?? null,
+        }
+      : null)) as {
     scenarios?: unknown[];
     sensitivity?: unknown;
     costOfCapital?: unknown;
@@ -118,6 +176,15 @@ export function ValuationPanel({
           </span>
         }
       >
+        {meta?.freshness && (meta.freshness === "DELAYED" || meta.freshness === "STALE" || meta.degraded) && (
+          <FreshnessAlertBanner
+            state={meta.freshness === "STALE" ? "stale" : meta.degraded ? "degraded" : "delayed"}
+            ageMs={meta.ageMs}
+            note={meta.note}
+            source={meta.source}
+            className="mb-3"
+          />
+        )}
         <div className={`grid gap-4 ${compact ? "md:grid-cols-2" : "md:grid-cols-[auto_1fr_1fr]"}`}>
           <div className="flex flex-col items-center justify-center">
             <div className="num text-[28px] font-bold text-ink">

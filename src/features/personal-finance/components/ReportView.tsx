@@ -127,50 +127,52 @@ export const ReportView: React.FC<ReportViewProps> = ({ currentSnapshot, profile
           <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-300 mb-2 border-b border-[#14233e] pb-1">
             1. BẢNG TỔNG HỢP CÁC CHỈ SỐ CỐT LÕI
           </h3>
-          <table className="w-full text-xs font-mono border border-[#162744]">
-            <tbody>
-              <tr className="border-b border-[#14233e]">
-                <td className="p-2.5 bg-[#0a1222] text-slate-400 w-1/4">Tài sản ròng (Net Worth):</td>
-                <td className="p-2.5 font-bold text-white w-1/4">
-                  {metrics.netWorth.toLocaleString('vi-VN')} ₫
-                </td>
-                <td className="p-2.5 bg-[#0a1222] text-slate-400 w-1/4">Điểm sức khỏe tài chính:</td>
-                <td className="p-2.5 font-bold text-amber-300 w-1/4">
-                  {metrics.healthScore.total} / 100 ({metrics.healthScore.ratingText})
-                </td>
-              </tr>
-              <tr className="border-b border-[#14233e]">
-                <td className="p-2.5 bg-[#0a1222] text-slate-400">Thu nhập thực nhận (Net):</td>
-                <td className="p-2.5 font-bold text-slate-200">
-                  {metrics.totalNetIncome.toLocaleString('vi-VN')} ₫
-                </td>
-                <td className="p-2.5 bg-[#0a1222] text-slate-400">Tổng chi tiêu tháng:</td>
-                <td className="p-2.5 font-bold text-slate-200">
-                  {metrics.totalExpenses.toLocaleString('vi-VN')} ₫
-                </td>
-              </tr>
-              <tr className="border-b border-[#14233e]">
-                <td className="p-2.5 bg-[#0a1222] text-slate-400">Tiết kiệm tháng này:</td>
-                <td className="p-2.5 font-bold text-emerald-400">
-                  {metrics.monthlySavings.toLocaleString('vi-VN')} ₫ ({metrics.savingsRate}%)
-                </td>
-                <td className="p-2.5 bg-[#0a1222] text-slate-400">Tỷ lệ chi phí cố định:</td>
-                <td className="p-2.5 font-bold text-slate-200">
-                  {metrics.fixedCostRatio}% (Trần an toàn 65%)
-                </td>
-              </tr>
-              <tr>
-                <td className="p-2.5 bg-[#0a1222] text-slate-400">Quỹ dự phòng khẩn cấp:</td>
-                <td className="p-2.5 font-bold text-slate-200">
-                  {metrics.emergencyFundMonths} tháng ({metrics.liquidAssets.toLocaleString('vi-VN')} ₫)
-                </td>
-                <td className="p-2.5 bg-[#0a1222] text-slate-400">Tổng dư nợ phải trả:</td>
-                <td className="p-2.5 font-bold text-rose-400">
-                  {metrics.totalDebt.toLocaleString('vi-VN')} ₫ (DTI: {metrics.debtToIncomeRatio}%)
-                </td>
-              </tr>
-            </tbody>
-          </table>
+          <div className="table-scroll-wrap">
+            <table className="w-full min-w-[560px] text-xs font-mono border border-[#162744]">
+              <tbody>
+                <tr className="border-b border-[#14233e]">
+                  <td className="p-2.5 bg-[#0a1222] text-slate-400 w-1/4">Tài sản ròng (Net Worth):</td>
+                  <td className="p-2.5 font-bold text-white w-1/4">
+                    {metrics.netWorth.toLocaleString('vi-VN')} ₫
+                  </td>
+                  <td className="p-2.5 bg-[#0a1222] text-slate-400 w-1/4">Điểm sức khỏe tài chính:</td>
+                  <td className="p-2.5 font-bold text-amber-300 w-1/4">
+                    {metrics.healthScore.total} / 100 ({metrics.healthScore.ratingText})
+                  </td>
+                </tr>
+                <tr className="border-b border-[#14233e]">
+                  <td className="p-2.5 bg-[#0a1222] text-slate-400">Thu nhập thực nhận (Net):</td>
+                  <td className="p-2.5 font-bold text-slate-200">
+                    {metrics.totalNetIncome.toLocaleString('vi-VN')} ₫
+                  </td>
+                  <td className="p-2.5 bg-[#0a1222] text-slate-400">Tổng chi tiêu tháng:</td>
+                  <td className="p-2.5 font-bold text-slate-200">
+                    {metrics.totalExpenses.toLocaleString('vi-VN')} ₫
+                  </td>
+                </tr>
+                <tr className="border-b border-[#14233e]">
+                  <td className="p-2.5 bg-[#0a1222] text-slate-400">Tiết kiệm tháng này:</td>
+                  <td className="p-2.5 font-bold text-emerald-400">
+                    {metrics.monthlySavings.toLocaleString('vi-VN')} ₫ ({metrics.savingsRate}%)
+                  </td>
+                  <td className="p-2.5 bg-[#0a1222] text-slate-400">Tỷ lệ chi phí cố định:</td>
+                  <td className="p-2.5 font-bold text-slate-200">
+                    {metrics.fixedCostRatio}% (Trần an toàn 65%)
+                  </td>
+                </tr>
+                <tr>
+                  <td className="p-2.5 bg-[#0a1222] text-slate-400">Quỹ dự phòng khẩn cấp:</td>
+                  <td className="p-2.5 font-bold text-slate-200">
+                    {metrics.emergencyFundMonths} tháng ({metrics.liquidAssets.toLocaleString('vi-VN')} ₫)
+                  </td>
+                  <td className="p-2.5 bg-[#0a1222] text-slate-400">Tổng dư nợ phải trả:</td>
+                  <td className="p-2.5 font-bold text-rose-400">
+                    {metrics.totalDebt.toLocaleString('vi-VN')} ₫ (DTI: {metrics.debtToIncomeRatio}%)
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
         </div>
 
         {/* 5 Health Score Pillars Detailed Breakdown */}

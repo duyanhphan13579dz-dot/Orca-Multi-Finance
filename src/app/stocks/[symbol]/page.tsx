@@ -5,7 +5,7 @@ import dynamic from "next/dynamic";
 import { useApi } from "@/lib/hooks";
 import type { VnStockDetail } from "@/lib/services/stocks";
 import type { Meta } from "@/lib/types";
-import { FreshnessDot, Loading, Panel, Unavailable } from "@/components/ui";
+import { FreshnessDot, Loading, Panel, Unavailable, ErrorState, FreshnessAlertBanner, SyncMetricBadge } from "@/components/ui";
 import {
   Activity,
   ArrowDownRight,
@@ -14,8 +14,10 @@ import {
 } from "lucide-react";
 import { OrcaChart } from "@/components/orca-chart";
 import { StockNewsSentiment } from "@/components/stocks/news-sentiment-chip";
+import { CompanyNewsPanel } from "@/components/stocks/company-news-panel";
 import { OrderBookPanel } from "@/components/stocks/order-book-panel";
 import { MarketBreadthCard } from "@/components/stocks/market-breadth-card";
+import { ErrorBoundary } from "@/components/error-boundary";
 
 const TechRecoPanel = dynamic(
   () => import("@/components/stocks/tech-reco-panel").then((m) => m.TechRecoPanel),
@@ -217,30 +219,40 @@ export default function StockDetailPage({ params }: { params: Promise<{ symbol: 
     symbol ? `/api/v1/stocks/${encodeURIComponent(symbol)}` : null,
     {
       refreshInterval: 15_000,
-      timeoutMs: 15_000,
+      // P6-B: tighter client timeout; soft shell covers cold path
+      timeoutMs: 12_000,
       keepPreviousData: true,
     },
   );
 
-  const isFull = (d: typeof data) =>
-    Boolean(d?.quote?.price && d.quote.price > 0 && d.bars && d.bars.length >= 20);
+  // P6-B: progressive — paint as soon as we have a price OR any bars (not wait for 20)
+  const hasQuote = Boolean(data?.quote?.price && data.quote.price > 0);
+  const hasBars = Boolean(data?.bars && data.bars.length >= 5);
+  const isFull = Boolean(hasQuote && data?.bars && data.bars.length >= 20);
+  const canPaint = hasQuote || hasBars || Boolean(data?.profile) || Boolean(data?.technical);
 
-  const coldRetryRef = useRef(0);
-  const hadFullRef = useRef(false);
+  const [retried, setRetried] = useState(false);
+  const [hadPaint, setHadPaint] = useState(false);
+  const [prevSymbol, setPrevSymbol] = useState(symbol);
+
+  if (symbol !== prevSymbol) {
+    setPrevSymbol(symbol);
+    setHadPaint(false);
+    setRetried(false);
+  } else if (canPaint && !hadPaint) {
+    setHadPaint(true);
+  } else if (isFull && retried) {
+    setRetried(false);
+  }
+
   useEffect(() => {
-    if (!symbol) return;
-    if (isFull(data)) {
-      coldRetryRef.current = 0;
-      return;
-    }
-    if (isLoading || isValidating) return;
-    if (coldRetryRef.current >= 1) return;
-    coldRetryRef.current = 1;
+    if (!symbol || isFull || isLoading || isValidating || retried) return;
     const t = window.setTimeout(() => {
+      setRetried(true);
       void mutate();
     }, 400);
     return () => window.clearTimeout(t);
-  }, [symbol, data, isLoading, isValidating, mutate]);
+  }, [symbol, isLoading, isValidating, mutate, isFull, retried]);
 
   useEffect(() => {
     if (!data?.symbol) return;
@@ -279,7 +291,6 @@ export default function StockDetailPage({ params }: { params: Promise<{ symbol: 
     if (!nav) return;
     const btn = nav.querySelector<HTMLElement>(`[data-section="${activeSection}"]`);
     if (!btn) return;
-    // Horizontal-only — never call scrollIntoView (it scrolls .orca-main-scroll vertically).
     const navRect = nav.getBoundingClientRect();
     const btnRect = btn.getBoundingClientRect();
     const delta =
@@ -287,48 +298,37 @@ export default function StockDetailPage({ params }: { params: Promise<{ symbol: 
     nav.scrollTo({ left: nav.scrollLeft + delta, behavior: "smooth" });
   }, [activeSection]);
 
-  const full = isFull(data);
-  if (full) hadFullRef.current = true;
-  // Only block the whole page on the *first* load. Never unmount content during
-  // background refresh — that resets .orca-main-scroll and jumps the user up.
+  // P6-B: only block on *first* cold load with zero payload
   const initialWait =
     !symbol ||
-    (!data && (isLoading || isValidating || coldRetryRef.current < 1)) ||
-    (!full && !data && isLoading);
+    (!data && (isLoading || isValidating || !retried));
 
   if (initialWait) {
     return (
       <div className="stock-workspace">
         <Loading
           rows={3}
-          label="Đang tải đầy đủ dữ liệu cổ phiếu (tối đa ~15 giây)…"
+          label="Đang tải dữ liệu cổ phiếu (tối đa ~12 giây)…"
         />
       </div>
     );
   }
 
-  // Don't tear down the page on a flaky refresh — only when we never got full data
-  if (!data || (!full && !hadFullRef.current)) {
+  if (!data || (!canPaint && !hadPaint)) {
     return (
       <div className="stock-workspace space-y-3">
-        <Unavailable
+        <ErrorState
           title={`Chưa tải đủ dữ liệu ${symbol}`}
-          note={
+          message={
             res && !res.success
               ? res.error.message
-              : "Yêu cầu đủ giá + lịch sử nến. Bấm thử lại."
+              : "Yêu cầu giá thị trường hoặc lịch sử nến để hiển thị biểu đồ và phân tích."
           }
-        />
-        <button
-          type="button"
-          className="rounded-lg border border-border-subtle px-3 py-2 text-[12px] font-medium hover:border-accent-primary/40"
-          onClick={() => {
-            coldRetryRef.current = 0;
+          onRetry={() => {
+            setRetried(false);
             void mutate();
           }}
-        >
-          Thử tải lại
-        </button>
+        />
       </div>
     );
   }
@@ -353,6 +353,16 @@ export default function StockDetailPage({ params }: { params: Promise<{ symbol: 
         ))}
       </nav>
 
+      {meta?.freshness && (meta.freshness === "DELAYED" || meta.freshness === "STALE" || meta.degraded) && (
+        <FreshnessAlertBanner
+          state={meta.freshness === "STALE" ? "stale" : meta.degraded ? "degraded" : "delayed"}
+          ageMs={meta.ageMs}
+          note={meta.note}
+          source={meta.source}
+          className="mb-2"
+        />
+      )}
+
       <DecisionStrip quote={data.quote} technical={data.technical} meta={meta ?? null} />
 
       <section id="sec-chart" className="stock-section-card" style={{ scrollMarginTop: ANCHOR_OFFSET }}>
@@ -365,13 +375,19 @@ export default function StockDetailPage({ params }: { params: Promise<{ symbol: 
         </div>
         <div className="stock-chart-trio-grid">
           <div className="stock-side-depth">
-            <OrderBookPanel symbol={data.symbol} compact />
+            <ErrorBoundary name="orderbook" resetKey={data.symbol}>
+              <OrderBookPanel symbol={data.symbol} compact />
+            </ErrorBoundary>
           </div>
           <div className="stock-chart-frame stock-chart-frame--compact">
-            <OrcaChart symbol={data.symbol} assetType="stock" title={data.symbol} height={340} />
+            <ErrorBoundary name="chart" resetKey={data.symbol}>
+              <OrcaChart symbol={data.symbol} assetType="stock" title={data.symbol} height={340} />
+            </ErrorBoundary>
           </div>
           <div className="stock-side-breadth">
-            <MarketBreadthCard />
+            <ErrorBoundary name="breadth" resetKey={data.symbol}>
+              <MarketBreadthCard />
+            </ErrorBoundary>
           </div>
         </div>
       </section>
@@ -390,8 +406,12 @@ export default function StockDetailPage({ params }: { params: Promise<{ symbol: 
           <span className="stock-section-index">02</span>
         </div>
         <div className="grid gap-3 lg:grid-cols-2">
-          <TechRecoPanel symbol={data.symbol} />
-          <PatternAnalysisHub symbol={data.symbol} technical={data.technical} patterns={data.patterns} />
+          <ErrorBoundary name="tech-reco" resetKey={data.symbol}>
+            <TechRecoPanel symbol={data.symbol} />
+          </ErrorBoundary>
+          <ErrorBoundary name="patterns" resetKey={data.symbol}>
+            <PatternAnalysisHub symbol={data.symbol} technical={data.technical} patterns={data.patterns} />
+          </ErrorBoundary>
         </div>
       </section>
 
@@ -403,7 +423,12 @@ export default function StockDetailPage({ params }: { params: Promise<{ symbol: 
           </div>
           <span className="stock-section-index">03</span>
         </div>
-        <StockNewsSentiment symbol={data.symbol} />
+        <ErrorBoundary name="news-sent" resetKey={data.symbol}>
+          <StockNewsSentiment symbol={data.symbol} />
+        </ErrorBoundary>
+        <ErrorBoundary name="company-news" resetKey={data.symbol}>
+          <CompanyNewsPanel symbol={data.symbol} />
+        </ErrorBoundary>
       </section>
     </div>
   );

@@ -265,9 +265,9 @@ async function callOnce(
     Authorization: `Bearer ${apiKey}`,
   };
   if (provider === "openrouter") {
-    headers["HTTP-Referer"] = process.env.VERCEL_URL
-      ? `https://${process.env.VERCEL_URL}`
-      : "https://orca-multi-finance.vercel.app";
+    headers["HTTP-Referer"] = process.env.NEXT_PUBLIC_SITE_URL?.startsWith("http")
+      ? process.env.NEXT_PUBLIC_SITE_URL
+      : "https://orca-multi-finance.workers.dev";
     headers["X-Title"] = "Orca Multi Finance";
   }
 
