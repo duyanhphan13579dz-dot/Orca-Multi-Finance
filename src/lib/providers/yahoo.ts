@@ -54,7 +54,7 @@ export async function getYahooChart(yahooSymbol: string, interval: string, range
     const idx = (lastGood + i) % HOSTS.length;
     const res = await httpJson<YahooChartResult>(
       `${HOSTS[idx]}/v8/finance/chart/${encodeURIComponent(yahooSymbol)}?interval=${encodeURIComponent(interval)}&range=${encodeURIComponent(range)}&includePrePost=false`,
-      { provider: YAHOO, timeoutMs: 5_000, retries: 0 },
+      { provider: YAHOO, timeoutMs: 4_200, retries: 0 },
     );
     const result = res.data?.chart?.result?.[0];
     if (!res.ok || !result?.timestamp?.length) {
@@ -175,7 +175,7 @@ export async function getYahooQuote(yahooSymbol: string): Promise<YahooQuote> {
     const idx = (lastGood + i) % HOSTS.length;
     const res = await httpJson<YahooMetaResp>(
       `${HOSTS[idx]}/v8/finance/chart/${encodeURIComponent(yahooSymbol)}?interval=1d&range=5d`,
-      { provider: YAHOO, timeoutMs: 4_000, retries: 0 },
+      { provider: YAHOO, timeoutMs: 3_500, retries: 0 },
     );
     const m = res.data?.chart?.result?.[0]?.meta;
     if (res.ok && m && typeof m.regularMarketPrice === "number") {
@@ -201,24 +201,64 @@ export async function getYahooQuote(yahooSymbol: string): Promise<YahooQuote> {
   throw new ProviderError(`yahoo quote: ${lastErr}`, YAHOO);
 }
 
+/**
+ * P3-C: batch Yahoo quotes with race-first early exit.
+ * - concurrency 5, per-symbol soft 3.5s
+ * - exit when coverage >= 70% or hard budget 5.5s
+ * - do not wait for slowest host on every symbol
+ */
 export async function getYahooQuotes(symbols: string[]): Promise<Map<string, YahooQuote>> {
   const out = new Map<string, YahooQuote>();
-  const uniq = [...new Set(symbols.filter(Boolean))].slice(0, 12);
-  const concurrency = 4;
-  for (let i = 0; i < uniq.length; i += concurrency) {
-    const batch = uniq.slice(i, i + concurrency);
-    const results = await Promise.allSettled(
-      batch.map((s) =>
-        Promise.race([
-          getYahooQuote(s),
-          new Promise<null>((r) => setTimeout(() => r(null), 4_200)),
-        ]),
-      ),
-    );
-    results.forEach((r, j) => {
-      if (r.status === "fulfilled" && r.value) out.set(batch[j]!, r.value);
+  const uniq = [...new Set(symbols.filter(Boolean))].slice(0, 16);
+  if (!uniq.length) return out;
+
+  const EXIT_COVERAGE = 0.7;
+  const HARD_MS = 5_500;
+  const PER_MS = 3_500;
+  const concurrency = Math.min(5, uniq.length);
+  const t0 = Date.now();
+  let next = 0;
+  let settled = false;
+
+  await new Promise<void>((resolve) => {
+    const hardStop = setTimeout(() => {
+      settled = true;
+      resolve();
+    }, HARD_MS);
+
+    const workers = Array.from({ length: concurrency }, async () => {
+      while (!settled) {
+        const i = next++;
+        if (i >= uniq.length) break;
+        if (Date.now() - t0 >= HARD_MS) break;
+        const sym = uniq[i]!;
+        try {
+          const q = await Promise.race([
+            getYahooQuote(sym),
+            new Promise<null>((r) => setTimeout(() => r(null), PER_MS)),
+          ]);
+          if (q) out.set(sym, q);
+        } catch {
+          /* skip */
+        }
+        if (!settled && out.size / uniq.length >= EXIT_COVERAGE) {
+          settled = true;
+          clearTimeout(hardStop);
+          resolve();
+          break;
+        }
+      }
     });
-  }
+
+    void Promise.all(workers).then(() => {
+      if (!settled) {
+        settled = true;
+        clearTimeout(hardStop);
+        resolve();
+      }
+    });
+  });
+
   return out;
 }
 
