@@ -9,7 +9,8 @@ import { putHot, getHot } from "@/lib/hot-snapshot";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
-export const maxDuration = 25;
+/** P8c: user path ≤18s (board soft produce still under wall) */
+export const maxDuration = 18;
 
 export async function GET(req: Request) {
   try {
@@ -35,7 +36,11 @@ export async function GET(req: Request) {
   if (wantVn30) {
     return safeApi({
       label: "vn-board-vn30",
-      guard: { wallMs: 6_000, maxSubrequests: 14, maxConcurrent: 2 },
+      guard: {
+        wallMs: 6_000,
+        maxSubrequests: 12,
+        maxConcurrent: WORKERS_BUDGET.maxParallelProviders,
+      },
       produce: async () => {
         const market = await getVn30Board();
         if (!market || (!market.indices.length && !market.quotes.length)) return null;
@@ -55,6 +60,7 @@ export async function GET(req: Request) {
           headers: {
             "Cache-Control": "private, max-age=8, stale-while-revalidate=30",
             "X-Orca-Board": "vn30",
+            "X-Orca-Mode": "live",
           },
         };
       },
@@ -94,8 +100,8 @@ export async function GET(req: Request) {
       label: "vn-board",
       guard: {
         wallMs: WORKERS_BUDGET.boardWallMs,
-        maxSubrequests: 22,
-        maxConcurrent: 2,
+        maxSubrequests: WORKERS_BUDGET.maxSubrequestsPerRequest,
+        maxConcurrent: WORKERS_BUDGET.maxParallelProviders,
       },
       produce: async () => {
         const fresh = await getHot<{
@@ -115,6 +121,7 @@ export async function GET(req: Request) {
             headers: {
               "Cache-Control": "private, max-age=8, stale-while-revalidate=40",
               "X-Orca-Hot": "fresh",
+              "X-Orca-Mode": "hot",
             },
           };
         }
@@ -179,6 +186,7 @@ export async function GET(req: Request) {
             "Cache-Control": market.meta.stale
               ? "private, max-age=8, stale-while-revalidate=60"
               : "private, max-age=10, stale-while-revalidate=40",
+            "X-Orca-Mode": "live",
           },
         };
       },
@@ -214,7 +222,7 @@ export async function GET(req: Request) {
             source: "board-shell",
             partial: true,
             stale: true,
-            note: "shell — cron hot-warm sẽ đổ đầy",
+            note: "shell — cron board-warm sẽ đổ đầy",
           },
         };
       },
@@ -231,8 +239,8 @@ export async function GET(req: Request) {
     label: "vn-quotes",
     guard: {
       wallMs: Math.min(10_000, WORKERS_BUDGET.boardWallMs),
-      maxSubrequests: 16,
-      maxConcurrent: 2,
+      maxSubrequests: 14,
+      maxConcurrent: WORKERS_BUDGET.maxParallelProviders,
     },
     produce: async () => {
       const pack = await getVnQuotes(symbols);
@@ -247,6 +255,7 @@ export async function GET(req: Request) {
         meta: pack.meta,
         headers: {
           "Cache-Control": "private, max-age=8, stale-while-revalidate=30",
+          "X-Orca-Mode": "live",
         },
       };
     },

@@ -2,13 +2,15 @@ import { ok, unavailable } from "@/lib/envelope";
 import { getMultiAssetBoard } from "@/lib/services/multi-asset-board";
 import { cronUnauthorized } from "@/lib/cron-auth";
 import { runGuarded, guardMeta } from "@/lib/data-engine/workers-guard";
+import { WORKERS_BUDGET } from "@/lib/data-engine/workers-budget";
+import { putHot } from "@/lib/hot-snapshot";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
-export const maxDuration = 18;
+export const maxDuration = 15;
 
 /**
- * Warm BTC · ETH · XAU · XAG · FOREX board.
+ * Warm BTC · ETH · XAU · XAG · FOREX board + putHot multi-asset.
  * GET /api/v1/cron/multi-asset-warm?secret=...
  * Recommend every 60–90s (24/7).
  */
@@ -22,15 +24,26 @@ export async function GET(req: Request) {
       async () => getMultiAssetBoard().catch(() => null),
       {
         label: "cron-multi-asset-warm",
-        wallMs: 14_000,
-        maxSubrequests: 22,
-        maxConcurrent: 3,
+        wallMs: WORKERS_BUDGET.cronDomainWallMs,
+        maxSubrequests: WORKERS_BUDGET.cronMaxSubrequests,
+        maxConcurrent: 2,
       },
     );
 
     if (!pack?.board.rows.length) {
       return unavailable("multi-asset-warm", "Multi-asset warm failed");
     }
+
+    const data = {
+      rows: pack.board.rows,
+      byClass: pack.board.byClass,
+      sources: pack.board.sources,
+      count: pack.board.rows.length,
+    };
+    putHot("multi-asset", data, {
+      source: pack.meta?.source ?? "multi-warm",
+      partial: pack.meta?.partial,
+    });
 
     const { byClass, sources } = pack.board;
     return ok(

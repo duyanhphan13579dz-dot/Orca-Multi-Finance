@@ -6,7 +6,8 @@ import { buildMeta } from "@/lib/freshness";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
-export const maxDuration = 30;
+/** P8c: screener user ≤18s; default scan prefers hot */
+export const maxDuration = 18;
 
 function num(v: string | null): number | undefined {
   if (v == null || v === "") return undefined;
@@ -24,7 +25,10 @@ export async function GET(req: Request) {
   const symbols = url.searchParams.get("symbols")?.split(/[ ,\s;]+/).filter(Boolean);
   const sector = url.searchParams.get("sector") ?? undefined;
   const exchange = url.searchParams.get("exchange") ?? undefined;
-  const defaultScan = !symbols?.length && !sector && !exchange &&
+  const defaultScan =
+    !symbols?.length &&
+    !sector &&
+    !exchange &&
     [...url.searchParams.keys()].every((key) => key === "_");
 
   const filters = {
@@ -57,7 +61,8 @@ export async function GET(req: Request) {
     minRevenueYoy: num(url.searchParams.get("minRevenueYoy")),
     maxRevenueYoy: num(url.searchParams.get("maxRevenueYoy")),
     maxNetDebtEbitda: num(url.searchParams.get("maxNetDebtEbitda")),
-    requirePositiveFcf: flag(url.searchParams.get("requirePositiveFcf")) ?? flag(url.searchParams.get("minFcf")),
+    requirePositiveFcf:
+      flag(url.searchParams.get("requirePositiveFcf")) ?? flag(url.searchParams.get("minFcf")),
     minPrice: num(url.searchParams.get("minPrice")),
     maxPrice: num(url.searchParams.get("maxPrice")),
     limit: num(url.searchParams.get("limit")),
@@ -67,10 +72,34 @@ export async function GET(req: Request) {
     label: "screener-fundamental",
     guard: {
       wallMs: WORKERS_BUDGET.techScreenWallMs,
-      maxSubrequests: 26,
-      maxConcurrent: 2,
+      maxSubrequests: 20,
+      maxConcurrent: WORKERS_BUDGET.maxParallelProviders,
     },
     produce: async () => {
+      // P8b: default scan → hot first
+      if (defaultScan) {
+        const fresh = await getHot<{
+          rows: FundamentalScreenRow[];
+          scanned: number;
+          skipped: number;
+          withData: number;
+        }>("screener-fundamental");
+        if (fresh?.fresh && fresh.data?.rows?.length) {
+          return {
+            data: fresh.data,
+            meta: {
+              ...fresh.meta,
+              note: `hot-fresh fundamental · ${Math.round(fresh.ageMs / 1000)}s`,
+            },
+            headers: {
+              "Cache-Control": "private, max-age=30, stale-while-revalidate=120",
+              "X-Orca-Hot": "fresh",
+              "X-Orca-Mode": "hot",
+            },
+          };
+        }
+      }
+
       const result = await screenFundamental(filters);
       if (!result) return null;
       const response = {
@@ -83,21 +112,33 @@ export async function GET(req: Request) {
         meta: result.meta,
       };
       if (defaultScan) putHot("screener-fundamental", response.data, response.meta);
-      return response;
+      return {
+        ...response,
+        headers: {
+          "Cache-Control": "private, max-age=20, stale-while-revalidate=90",
+          "X-Orca-Mode": "live",
+        },
+      };
     },
     fallback: async () => {
       if (defaultScan) {
-        const last = await getHot<{ rows: FundamentalScreenRow[]; scanned: number; skipped: number; withData: number }>("screener-fundamental");
-        if (last) return {
-          data: last.data,
-          meta: buildMeta({
-            source: "fundamental-last-good",
-            cached: true,
-            partial: true,
-            stale: true,
-            note: "Phục vụ last-good Fundamental snapshot trong khi nguồn đang phục hồi",
-          }),
-        };
+        const last = await getHot<{
+          rows: FundamentalScreenRow[];
+          scanned: number;
+          skipped: number;
+          withData: number;
+        }>("screener-fundamental");
+        if (last)
+          return {
+            data: last.data,
+            meta: buildMeta({
+              source: "fundamental-last-good",
+              cached: true,
+              partial: true,
+              stale: true,
+              note: "Phục vụ last-good Fundamental snapshot trong khi nguồn đang phục hồi",
+            }),
+          };
       }
       return {
         data: { rows: [] as FundamentalScreenRow[], scanned: 0, skipped: 0, withData: 0 },
