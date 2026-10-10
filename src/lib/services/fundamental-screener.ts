@@ -250,40 +250,61 @@ export async function screenFundamental(opts: FundamentalFilterOpts = {}) {
     fallback,
     opts.symbols?.length ? Math.min(opts.symbols.length, WORKERS_BUDGET.screenerUniverseMax) : uniMax,
   );
-  // Include the complete normalized universe: length + first 8 symbols can collide
-  // for distinct custom scan lists and return another request's rows.
   const cacheKey = `screener:fundamental:v7:${symbols.join(",")}`;
 
-  // Full-market runs are assembled from short cron slices and become visible only
-  // after every slice is committed. User requests never fan out across the market.
-  const result = fullMarket ? null : await cached(cacheKey, {
-    ttlMs: 20 * 60_000,
-    staleMs: 2 * 60 * 60_000,
-    softSwr: true,
-    producer: async () => {
-      const [snapPack, quotes] = await Promise.all([
-        getFundamentalSnapshots(symbols, { concurrency: WORKERS_BUDGET.snapshotConcurrency, persist: false }),
-        hubVnQuotes(symbols).catch(() => null),
-      ]);
-      const quoteMap = new Map<string, { price?: number | null }>();
-      for (const quote of quotes?.quotes ?? []) {
-        if (quote.symbol) quoteMap.set(quote.symbol, quote);
-      }
+  const result = fullMarket
+    ? null
+    : await cached(cacheKey, {
+        ttlMs: 20 * 60_000,
+        staleMs: 2 * 60 * 60_000,
+        softSwr: true,
+        producer: async () => {
+          const [snapPack, quotes] = await Promise.all([
+            getFundamentalSnapshots(symbols, {
+              concurrency: WORKERS_BUDGET.snapshotConcurrency,
+              persist: false,
+            }),
+            hubVnQuotes(symbols).catch(() => null),
+          ]);
+          const quoteMap = new Map<string, { price?: number | null }>();
+          for (const quote of quotes?.quotes ?? []) {
+            if (quote.symbol) quoteMap.set(quote.symbol, quote);
+          }
 
-      const rows: FundamentalScreenRow[] = [];
-      for (const s of snapPack.snapshots) {
-        if (!s.hasHealth && s.roe == null && s.roa == null && s.netMargin == null) continue;
-        const price = quoteMap.get(s.symbol)?.price ?? null;
-        rows.push(toRow(s, price));
-      }
-      rows.sort((a, b) => b.score - a.score || a.symbol.localeCompare(b.symbol));
-      return { allRows: rows, scanned: snapPack.scanned, withData: snapPack.hit };
-    },
-  });
+          const rows: FundamentalScreenRow[] = [];
+          for (const s of snapPack.snapshots) {
+            if (!s.hasHealth && s.roe == null && s.roa == null && s.netMargin == null) continue;
+            const price = quoteMap.get(s.symbol)?.price ?? null;
+            rows.push(toRow(s, price));
+          }
+          rows.sort((a, b) => b.score - a.score || a.symbol.localeCompare(b.symbol));
+          return { allRows: rows, scanned: snapPack.scanned, withData: snapPack.hit };
+        },
+      });
 
-  const allRows = fullMarket?.rows ?? result!.value.allRows;
-  const scanned = fullMarket?.scanned ?? result!.value.scanned;
-  const withData = fullMarket?.withData ?? result!.value.withData;
+  // Never throw on empty/failed cache — return soft empty shell
+  const pack = fullMarket
+    ? { allRows: fullMarket.rows, scanned: fullMarket.scanned, withData: fullMarket.withData }
+    : result?.value ?? null;
+
+  if (!pack) {
+    return {
+      rows: [] as FundamentalScreenRow[],
+      scanned: 0,
+      skipped: 0,
+      withData: 0,
+      meta: buildMeta({
+        source: "fundamental-shell",
+        partial: true,
+        stale: true,
+        note: "Fundamental screener tạm trống — đang phục hồi",
+      }),
+    };
+  }
+
+  const allRows = pack.allRows ?? [];
+  const scanned = pack.scanned ?? 0;
+  const withData = pack.withData ?? 0;
   let rows = allRows.filter((r) => passesFilters(r, opts));
   if (opts.sector) rows = rows.filter((r) => r.sector === opts.sector);
   const limit = Math.min(opts.limit ?? 80, 100);
@@ -292,7 +313,7 @@ export async function screenFundamental(opts: FundamentalFilterOpts = {}) {
   return {
     rows,
     scanned,
-    skipped: scanned - withData,
+    skipped: Math.max(0, scanned - withData),
     withData,
     meta: buildMeta({
       source: fullMarket ? "fundamental-market-snapshot" : "financial-snapshots+bctc",
