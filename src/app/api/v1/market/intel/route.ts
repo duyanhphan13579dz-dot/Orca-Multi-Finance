@@ -2,16 +2,22 @@ import { buildMarketIntel } from "@/lib/services/market-intel";
 import { getVnSession } from "@/lib/vn/sessions";
 import { safeApi } from "@/lib/safe-api";
 import { putHot, getHot } from "@/lib/hot-snapshot";
+import { WORKERS_BUDGET } from "@/lib/data-engine/workers-budget";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
-export const maxDuration = 22;
+/** P8c: user path ≤15s */
+export const maxDuration = 15;
 
 /** MARKET INTELLIGENCE — last-good first, never hard-blank. */
 export async function GET() {
   return safeApi({
     label: "market-intel",
-    guard: { wallMs: 14_000, maxSubrequests: 22, maxConcurrent: 3 },
+    guard: {
+      wallMs: WORKERS_BUDGET.apiWallMs,
+      maxSubrequests: WORKERS_BUDGET.maxSubrequestsPerRequest,
+      maxConcurrent: WORKERS_BUDGET.maxParallelProviders,
+    },
     produce: async () => {
       const fresh = await getHot("intel");
       if (fresh?.fresh && fresh.data) {
@@ -24,6 +30,7 @@ export async function GET() {
           headers: {
             "Cache-Control": "private, max-age=8, stale-while-revalidate=45",
             "X-Orca-Hot": "fresh",
+            "X-Orca-Mode": "hot",
           },
         };
       }
@@ -40,6 +47,7 @@ export async function GET() {
         meta: meta ?? { source: "intel" },
         headers: {
           "Cache-Control": "private, max-age=12, stale-while-revalidate=60",
+          "X-Orca-Mode": "live",
         },
       };
     },
@@ -94,7 +102,7 @@ export async function GET() {
             crossAsset: "UNAVAILABLE",
             news: "UNAVAILABLE",
           },
-          vnDataNote: "Shell — cron hot-warm sẽ đổ đầy",
+          vnDataNote: "Shell — cron intel-warm sẽ đổ đầy",
         },
         meta: { source: "intel-shell", partial: true, stale: true, note: "shell" },
       };

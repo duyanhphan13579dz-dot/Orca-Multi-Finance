@@ -2,10 +2,12 @@ import { safeApi } from "@/lib/safe-api";
 import { getForexMarkets } from "@/lib/services/forex";
 import { ensureCryptoForexRealtime } from "@/lib/realtime/crypto-forex-boot";
 import { putHot, getHot } from "@/lib/hot-snapshot";
+import { WORKERS_BUDGET } from "@/lib/data-engine/workers-budget";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
-export const maxDuration = 20;
+/** P8c: user path ≤15s */
+export const maxDuration = 15;
 
 export async function GET() {
   try {
@@ -16,7 +18,11 @@ export async function GET() {
 
   return safeApi({
     label: "forex-markets",
-    guard: { wallMs: 14_000, maxSubrequests: 24, maxConcurrent: 3 },
+    guard: {
+      wallMs: WORKERS_BUDGET.apiWallMs,
+      maxSubrequests: WORKERS_BUDGET.maxSubrequestsPerRequest,
+      maxConcurrent: WORKERS_BUDGET.maxParallelProviders,
+    },
     produce: async () => {
       const fresh = await getHot<{ rows: unknown[]; usdStrengthNote?: string }>("forex");
       if (fresh?.fresh && Array.isArray(fresh.data?.rows) && fresh.data.rows.length) {
@@ -26,6 +32,7 @@ export async function GET() {
           headers: {
             "Cache-Control": "private, max-age=8, stale-while-revalidate=45",
             "X-Orca-Hot": "fresh",
+            "X-Orca-Mode": "hot",
           },
         };
       }
@@ -47,6 +54,7 @@ export async function GET() {
           "Cache-Control": r.meta.stale
             ? "private, max-age=8, stale-while-revalidate=90"
             : "private, max-age=15, stale-while-revalidate=60",
+          "X-Orca-Mode": "live",
         },
       };
     },

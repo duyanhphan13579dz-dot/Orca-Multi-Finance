@@ -1,9 +1,11 @@
 import { safeApi } from "@/lib/safe-api";
 import { putHot, getHot } from "@/lib/hot-snapshot";
+import { WORKERS_BUDGET } from "@/lib/data-engine/workers-budget";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
-export const maxDuration = 20;
+/** P8c: user path ≤15s */
+export const maxDuration = 15;
 
 const ASIA_YAHOO: { yahoo: string; key: string; label: string }[] = [
   { yahoo: "^N225", key: "N225", label: "Nikkei 225" },
@@ -117,7 +119,11 @@ async function loadLiqSpark(): Promise<{
 export async function GET() {
   return safeApi({
     label: "market-global",
-    guard: { wallMs: 12_000, maxSubrequests: 18, maxConcurrent: 3 },
+    guard: {
+      wallMs: WORKERS_BUDGET.apiWallMs,
+      maxSubrequests: WORKERS_BUDGET.maxSubrequestsPerRequest,
+      maxConcurrent: WORKERS_BUDGET.maxParallelProviders,
+    },
     produce: async () => {
       const fresh = await getHot("global");
       if (fresh?.fresh && fresh.data) {
@@ -127,6 +133,7 @@ export async function GET() {
           headers: {
             "Cache-Control": "private, max-age=15, stale-while-revalidate=60",
             "X-Orca-Hot": "fresh",
+            "X-Orca-Mode": "hot",
           },
         };
       }
@@ -142,19 +149,21 @@ export async function GET() {
           Promise.race([
             loadAsia(),
             new Promise<{ rows: AsiaRow[]; source: string }>((r) =>
-              setTimeout(() => r({ rows: [], source: "asia-timeout" }), 3_500),
+              setTimeout(() => r({ rows: [], source: "asia-timeout" }), 3_000),
             ),
           ]),
           Promise.race([
             loadLiqSpark(),
-            new Promise<null>((r) => setTimeout(() => r(null), 2_500)),
+            new Promise<null>((r) => setTimeout(() => r(null), 2_000)),
           ]),
         ]);
         asiaP = secondary[0];
         liqP = secondary[1];
       }
 
-      const sources = [usP.source, cryptoP.source, asiaP.source].filter((s) => s && s !== "none" && s !== "skipped");
+      const sources = [usP.source, cryptoP.source, asiaP.source].filter(
+        (s) => s && s !== "none" && s !== "skipped",
+      );
       if (liqP) sources.push(`liq:${liqP.source}`);
 
       const data = {
@@ -176,6 +185,7 @@ export async function GET() {
         },
         headers: {
           "Cache-Control": "private, max-age=20, stale-while-revalidate=90",
+          "X-Orca-Mode": "live",
         },
       };
     },

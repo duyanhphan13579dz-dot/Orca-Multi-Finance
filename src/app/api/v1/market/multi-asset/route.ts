@@ -1,10 +1,12 @@
 import { safeApi } from "@/lib/safe-api";
 import { getMultiAssetBoard, getMultiAssetQuote } from "@/lib/services/multi-asset-board";
 import { putHot, getHot } from "@/lib/hot-snapshot";
+import { WORKERS_BUDGET } from "@/lib/data-engine/workers-budget";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
-export const maxDuration = 20;
+/** P8c: user path ≤15s */
+export const maxDuration = 15;
 
 export async function GET(req: Request) {
   const url = new URL(req.url);
@@ -13,7 +15,11 @@ export async function GET(req: Request) {
   if (symbol) {
     return safeApi({
       label: `multi-asset:${symbol}`,
-      guard: { wallMs: 12_000, maxSubrequests: 16, maxConcurrent: 2 },
+      guard: {
+        wallMs: WORKERS_BUDGET.apiWallMs,
+        maxSubrequests: 12,
+        maxConcurrent: 2,
+      },
       produce: async () => {
         const r = await getMultiAssetQuote(symbol);
         if (!r) return null;
@@ -35,7 +41,11 @@ export async function GET(req: Request) {
 
   return safeApi({
     label: "multi-asset-board",
-    guard: { wallMs: 14_000, maxSubrequests: 22, maxConcurrent: 3 },
+    guard: {
+      wallMs: WORKERS_BUDGET.apiWallMs,
+      maxSubrequests: WORKERS_BUDGET.maxSubrequestsPerRequest,
+      maxConcurrent: WORKERS_BUDGET.maxParallelProviders,
+    },
     produce: async () => {
       const fresh = await getHot("multi-asset");
       if (fresh?.fresh && fresh.data) {
@@ -45,6 +55,7 @@ export async function GET(req: Request) {
           headers: {
             "Cache-Control": "private, max-age=8, stale-while-revalidate=40",
             "X-Orca-Hot": "fresh",
+            "X-Orca-Mode": "hot",
           },
         };
       }
@@ -64,6 +75,7 @@ export async function GET(req: Request) {
           "Cache-Control": r.meta.stale
             ? "private, max-age=8, stale-while-revalidate=60"
             : "private, max-age=12, stale-while-revalidate=45",
+          "X-Orca-Mode": "live",
         },
       };
     },
