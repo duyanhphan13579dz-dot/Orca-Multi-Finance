@@ -18,9 +18,8 @@ const CSP = [
 ].join("; ");
 
 const nextConfig: NextConfig = {
-  // Temporary: allow production deploy while residual strict TS mismatches are cleaned up.
-  // Core type contracts were expanded; remaining errors are nullability / optional fields.
-  typescript: { ignoreBuildErrors: true },
+  // Strict TS verification: 0 errors across entire codebase (.tsc-baseline: 0)
+  typescript: { ignoreBuildErrors: false },
   output: "standalone",
   // Keep heavy Node-only packages out of the Next server bundle.
   // pg-cloudflare must travel with pg — OpenNext/esbuild resolves it from pg/lib/stream.js.

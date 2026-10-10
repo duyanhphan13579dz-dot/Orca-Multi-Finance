@@ -160,8 +160,8 @@ export const StockStructurePanel = memo(function StockStructurePanel({ symbol }:
               </span>
               <Badge tone={biasTone(e.bias)}>{e.confidence}%</Badge>
             </div>
-            <div className="text-[13px] font-medium text-text-primary">{e.phaseVi ?? e.labelVi ?? e.waveLabel}</div>
-            <div className="mt-1 text-[11px] text-text-muted">{e.summary ?? e.note ?? ""}</div>
+            <div className="text-[13px] font-medium text-text-primary">{e.patternVi ?? e.pattern}</div>
+            <div className="mt-1 text-[11px] text-text-muted">{e.notes?.join(" · ") ?? ""}</div>
           </div>
         </div>
       </div>

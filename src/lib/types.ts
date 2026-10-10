@@ -13,12 +13,12 @@ export type AssetClass = "stock" | "crypto" | "forex" | "commodity" | "index" | 
 export type QualityStatus = "VALID" | "SUSPECT" | "INVALID" | "STALE";
 
 export interface Meta {
-  source: string;
-  sourceTimestamp: string | null;
+  source?: string;
+  sourceTimestamp?: string | number | null;
   providerReceivedAt?: string | null;
   ingestedAt?: string;
-  freshness: FreshnessStatus;
-  ageMs: number | null;
+  freshness?: FreshnessStatus;
+  ageMs?: number | null;
   cached?: boolean;
   stale?: boolean;
   latencyMs?: number;

@@ -26,7 +26,9 @@ export async function GET(_req: Request, ctx: { params: Promise<{ symbol: string
       },
       {
         source: r.meta.source,
-        sourceTimestampMs: r.meta.sourceTimestamp ? Date.parse(r.meta.sourceTimestamp) : null,
+        sourceTimestampMs: r.meta.sourceTimestamp
+          ? (typeof r.meta.sourceTimestamp === "number" ? r.meta.sourceTimestamp : Date.parse(r.meta.sourceTimestamp))
+          : null,
         cached: r.meta.cached,
         stale: r.meta.stale,
         note: r.meta.note,

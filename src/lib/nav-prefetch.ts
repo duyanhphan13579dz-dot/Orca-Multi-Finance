@@ -19,9 +19,25 @@ export function prefetchRouteApis(href: string): void {
   } else if (path === "/commodities") {
     apis.push("/api/v1/commodities");
   } else if (path === "/screener" || path.startsWith("/screener")) {
-    apis.push("/api/v1/screener/fundamental", "/api/v1/screener/valuation");
+    apis.push("/api/v1/screener/fundamental", "/api/v1/screener/valuation", "/api/v1/screener/canslim");
   } else if (path.includes("multi") || path === "/heatmap") {
-    apis.push("/api/v1/market/multi-asset");
+    apis.push("/api/v1/market/multi-asset", "/api/v1/stocks?board=vn30");
+  } else if (path === "/news" || path.startsWith("/news")) {
+    apis.push("/api/v1/news");
+  } else if (path === "/reports" || path.startsWith("/reports")) {
+    apis.push("/api/v1/reports");
+  } else if (path === "/derivatives" || path.startsWith("/derivatives")) {
+    apis.push("/api/v1/derivatives");
+  } else if (path === "/macro-economic") {
+    apis.push("/api/v1/macro-economic");
+  } else if (path === "/currency-interest-rate") {
+    apis.push("/api/v1/currency-interest-rate");
+  } else if (path === "/watchlist") {
+    apis.push("/api/v1/watchlist");
+  } else if (path === "/portfolio") {
+    apis.push("/api/v1/portfolio");
+  } else if (path.startsWith("/personal-finance")) {
+    apis.push("/api/v1/personal-finance/state");
   }
   for (const u of apis) prefetchApi(u, 8_000);
 }

@@ -69,3 +69,11 @@ export async function getEconomicData(
     return null;
   }
 }
+
+export async function getEconomyBundle() {
+  const [macro, rate] = await Promise.all([
+    getEconomicData("macro-economic"),
+    getEconomicData("currency-interest-rate"),
+  ]);
+  return { macro, rate };
+}

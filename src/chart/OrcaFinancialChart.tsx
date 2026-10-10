@@ -11,7 +11,7 @@ import { useApi } from "@/lib/hooks";
 import { useSettings } from "@/lib/settings";
 import { tfsFor, TF_LABEL, type ChartAssetType, type ChartCandle, type ChartMarketData } from "@/lib/chart-const";
 import { SeriesManager } from "./series-manager";
-import { ChartLiveManager, type LiveState } from "./live-manager";
+import { ChartLiveManager, type LiveState, type LiveCandle } from "./live-manager";
 import { supportsLiveChart } from "./live-policy";
 import { ORCA_CHART_THEME as T, type ChartKind } from "./theme";
 import { Loading } from "@/components/ui";
@@ -408,11 +408,18 @@ function OrcaFinancialChartInner({ symbol, assetType, defaultTimeframe, height =
       symbol,
       tf,
       {
-        onCandle: (c: ChartCandle, closed: boolean) => {
+        onCandle: (c: LiveCandle, closed: boolean) => {
           const mgr = mgrRef.current;
           if (!mgr) return;
           try {
-            let candle = c;
+            let candle: ChartCandle = {
+              time: c.time,
+              open: c.open,
+              high: c.high,
+              low: c.low,
+              close: c.close,
+              volume: c.volume ?? 0,
+            };
             const hist = dataRef.current?.candles;
             const lastHist = hist?.length ? hist[hist.length - 1] : null;
             if (assetType === "stock" && lastHist && lastHist.close > 0 && c.close > 0) {
@@ -420,20 +427,20 @@ function OrcaFinancialChartInner({ symbol, assetType, defaultTimeframe, height =
               if (ratio > 50) {
                 const factor = ratio > 500 ? 1_000 : ratio;
                 candle = {
-                  ...c,
-                  open: c.open / factor,
-                  high: c.high / factor,
-                  low: c.low / factor,
-                  close: c.close / factor,
+                  ...candle,
+                  open: candle.open / factor,
+                  high: candle.high / factor,
+                  low: candle.low / factor,
+                  close: candle.close / factor,
                 };
               } else if (ratio < 1 / 50) {
                 const factor = ratio < 1 / 500 ? 1_000 : Math.round(1 / ratio);
                 candle = {
-                  ...c,
-                  open: c.open * factor,
-                  high: c.high * factor,
-                  low: c.low * factor,
-                  close: c.close * factor,
+                  ...candle,
+                  open: candle.open * factor,
+                  high: candle.high * factor,
+                  low: candle.low * factor,
+                  close: candle.close * factor,
                 };
               }
             }

@@ -33,6 +33,16 @@ export async function GET(req: Request) {
 
   const session = getVnSession();
 
+  type Vn30BoardData = {
+    indices: any[];
+    quotes: any[];
+    universeSize: number;
+    sessionDate: any;
+    session: ReturnType<typeof getVnSession>;
+    count: number;
+    boardTier: "vn30";
+  };
+
   if (wantVn30) {
     return safeApi({
       label: "vn-board-vn30",
@@ -44,14 +54,14 @@ export async function GET(req: Request) {
       produce: async () => {
         const market = await getVn30Board();
         if (!market || (!market.indices.length && !market.quotes.length)) return null;
-        const data = {
+        const data: Vn30BoardData = {
           indices: market.indices,
           quotes: market.quotes,
           universeSize: market.universeSize,
           sessionDate: market.sessionDate,
           session,
           count: market.quotes.length,
-          boardTier: "vn30" as const,
+          boardTier: "vn30",
         };
         putHot("board", data, { source: market.meta.source, partial: true, note: market.meta.note });
         return {
@@ -65,15 +75,16 @@ export async function GET(req: Request) {
         };
       },
       fallback: async () => {
-        const snap = await getHot("board");
+        const snap = await getHot<Vn30BoardData>("board");
         if (snap?.data) {
           return {
-            data: { ...(snap.data as object), session },
+            data: { ...snap.data, session },
             meta: {
               ...snap.meta,
+              source: (snap.meta?.source as string | undefined) ?? "board-cache",
               note: `last-good · ${Math.round(snap.ageMs / 1000)}s`,
-              partial: true,
-              stale: true,
+              partial: true as const,
+              stale: true as const,
             },
           };
         }

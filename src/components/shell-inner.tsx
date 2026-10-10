@@ -472,7 +472,9 @@ export function ShellInner({ children }: { children: ReactNode }) {
           </header>
           <main className="orca-main-scroll min-h-0 flex-1 overflow-y-auto">
             <ErrorBoundary name="page" resetKey={pathname}>
-              <div className="p-3 sm:p-4">{children}</div>
+              <div key={pathname} className="orca-page-transition p-3 sm:p-4">
+                {children}
+              </div>
             </ErrorBoundary>
           </main>
         </div>

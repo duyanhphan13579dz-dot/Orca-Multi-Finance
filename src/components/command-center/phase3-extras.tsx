@@ -216,7 +216,7 @@ export function CommandTabs({
 
 export function showSection(tab: CcTab, group: "vn" | "global" | "flow" | "news" | "core"): boolean {
   if (tab === "all") return true;
-  if (group === "core") return tab === "vn" || tab === "all";
+  if (group === "core") return tab === "vn";
   return tab === group;
 }
 

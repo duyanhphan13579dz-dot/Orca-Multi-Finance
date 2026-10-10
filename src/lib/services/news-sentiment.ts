@@ -293,7 +293,7 @@ export async function getNewsSentiment(args: {
         ? `news-lexicon+llm:${llm.model}`
         : "news-lexicon",
     sourceTimestampMs: news.meta.sourceTimestamp
-      ? Date.parse(news.meta.sourceTimestamp)
+      ? (typeof news.meta.sourceTimestamp === "number" ? news.meta.sourceTimestamp : Date.parse(news.meta.sourceTimestamp))
       : Date.now(),
     cached: news.meta.cached,
     stale: news.meta.stale,

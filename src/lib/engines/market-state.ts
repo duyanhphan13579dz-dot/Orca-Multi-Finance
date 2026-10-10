@@ -59,9 +59,10 @@ export function detectMarketState(bars: OhlcvBar[]): MarketStateResult | null {
   const sma20v = sma(closes, 20);
   const sma50v = sma(closes, 50);
   const s20 = sma20v[closes.length - 1];
-  const s20prev = sma20v[closes.length - 11];
   const s50 = sma50v[closes.length - 1];
-  const mh = macd(closes).last?.histogram ?? 0;
+  const s20prev = sma20v[closes.length - 11];
+  const macdSeries = macd(closes);
+  const mh = macdSeries.histogram[closes.length - 1] ?? 0;
   let trendScore = 0;
   if (s20 != null) trendScore += last > s20 ? 1 : -1;
   if (s50 != null) trendScore += last > s50 ? 1 : -1;

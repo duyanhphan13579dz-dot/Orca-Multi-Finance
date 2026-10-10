@@ -38,6 +38,7 @@ type FailKind = "network" | "handshake" | "silent" | "rate_limit" | "unknown";
 export interface VndirectLiveQuote {
   symbol: string; price: number; volume: number; value: number;
   open: number | null; high: number | null; low: number | null;
+  changePercent?: number | null; ceiling?: number | null; floor?: number | null;
   matchQtty: number | null; eventTime: number; source: "SP" | "BA";
 }
 export interface VndirectLiveIndex {
@@ -231,7 +232,7 @@ class VndirectWsEngine {
   private async connect() {
     if (!this.enabled()) { this.state = "disabled"; return; }
     if (this.connecting) return;
-    const WSImpl = (globalThis as { WebSocket?: new (url: string) => WsLike }).WebSocket;
+    const WSImpl = (globalThis as unknown as { WebSocket?: new (url: string) => WsLike }).WebSocket;
     if (!WSImpl) { this.state = "disabled"; this.lastError = "no native WebSocket in runtime"; return; }
     this.connecting = true;
     this.state = "connecting";

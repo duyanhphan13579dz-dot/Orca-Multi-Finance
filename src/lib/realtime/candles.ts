@@ -251,13 +251,21 @@ class CandleAggregator {
     const lastV = this.lastValidated.get(sym);
     if (!lastV || now - lastV.at > VALIDATE_THROTTLE_MS) {
       const v = validateQuote(
-        { symbol: sym, price: tick.price, ts: tick.ts },
+        {
+          price: tick.price,
+          open: tick.price,
+          high: tick.price,
+          low: tick.price,
+          volume: tick.cumVolume,
+          changePercent: 0,
+          updatedAt: new Date(tick.ts).toISOString(),
+        },
         { assetClass: assetClass === "vn" ? "stock" : "crypto", staleMs: 5 * 60_000, sourceTimestampMs: tick.ts },
       );
       quality = v.status;
       this.lastValidated.set(sym, { at: now, status: quality });
       if (quality === "INVALID" || quality === "SUSPECT") {
-        logQualityEvent({ symbol: sym, status: quality, source: tick.source ?? "tick" });
+        logQualityEvent(tick.source ?? "tick", sym, v);
       }
     } else {
       quality = lastV.status;

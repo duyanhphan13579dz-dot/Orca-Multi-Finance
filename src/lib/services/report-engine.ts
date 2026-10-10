@@ -343,7 +343,7 @@ export async function generateDailyReport(
             : "Chiến lược tuần · định hướng trung hạn",
     generatedAt: new Date().toISOString(),
     sessionState: ctx.sessionState,
-    marketDataTimestamp: ctx.meta.sourceTimestamp ?? null,
+    marketDataTimestamp: ctx.meta.sourceTimestamp != null ? String(ctx.meta.sourceTimestamp) : null,
     freshness: (ctx.meta.sections as Record<string, FreshnessStatus>) ?? {},
     sections,
     scenarios: [],

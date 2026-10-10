@@ -338,7 +338,7 @@ export function buildDivergenceConfluence(
           oscillators: [s.oscillator],
           bestConfidence: s.confidence,
           signals: [s],
-          strength: s.strength,
+          strength: s.strength as DivergenceStrength,
         });
         continue;
       }
@@ -347,7 +347,7 @@ export function buildDivergenceConfluence(
       existing.signals.push(s);
       if (s.confidence > existing.bestConfidence) {
         existing.bestConfidence = s.confidence;
-        existing.strength = s.strength;
+        existing.strength = s.strength as DivergenceStrength;
       }
     }
   }

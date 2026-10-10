@@ -248,7 +248,8 @@ export function strategyTech(
 
   const rsiArr = rsi(closes, 14);
   const rsiLast = rsiArr[closes.length - 1];
-  const macdRes = macd(closes).last;
+  const mRes = macd(closes);
+  const macdRes = mRes.histogram.length > 0 ? { histogram: mRes.histogram[mRes.histogram.length - 1] } : null;
   const e9 = ema(closes, 9)[closes.length - 1];
   const e21 = ema(closes, 21)[closes.length - 1];
 

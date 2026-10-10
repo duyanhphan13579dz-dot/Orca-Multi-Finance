@@ -32,7 +32,9 @@ export async function GET(req: Request) {
       },
       {
         source: r.meta.source,
-        sourceTimestampMs: r.meta.sourceTimestamp ? Date.parse(r.meta.sourceTimestamp) : null,
+        sourceTimestampMs: r.meta.sourceTimestamp
+          ? (typeof r.meta.sourceTimestamp === "number" ? r.meta.sourceTimestamp : Date.parse(r.meta.sourceTimestamp))
+          : null,
         cached: r.meta.cached,
         stale: r.meta.stale,
         note: r.meta.note,
@@ -56,7 +58,9 @@ export async function GET(req: Request) {
     },
     {
       source: snap.meta.source,
-      sourceTimestampMs: snap.meta.sourceTimestamp ? Date.parse(snap.meta.sourceTimestamp) : null,
+      sourceTimestampMs: snap.meta.sourceTimestamp
+        ? (typeof snap.meta.sourceTimestamp === "number" ? snap.meta.sourceTimestamp : Date.parse(snap.meta.sourceTimestamp))
+        : null,
       cached: snap.meta.cached,
       stale: snap.meta.stale,
       note: snap.meta.note,

@@ -134,7 +134,7 @@ export async function generateMorningBrief(): Promise<{ report: Report; meta: Me
       title: `ORCA Morning Brief — ${dateVi}`,
       subtitle: "Fallback snapshot · Data Hub path ưu tiên qua report-engine",
       generatedAt: now.toISOString(),
-      marketDataTimestamp: meta.sourceTimestamp ?? null,
+      marketDataTimestamp: meta.sourceTimestamp != null ? String(meta.sourceTimestamp) : null,
       freshness: (meta.sections as Record<string, string>) ?? {},
       sections,
     },

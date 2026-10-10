@@ -203,7 +203,7 @@ class BinanceRealtimeEngine {
       return;
     }
 
-    const WSImpl = (globalThis as { WebSocket?: new (url: string) => WsLike }).WebSocket;
+    const WSImpl = (globalThis as unknown as { WebSocket?: new (url: string) => WsLike }).WebSocket;
     if (!WSImpl) {
       this.kline.state = "disabled";
       return;
@@ -322,7 +322,7 @@ class BinanceRealtimeEngine {
   start() {
     if (this.started || !this.enabled()) return;
     this.started = true;
-    const WSImpl = (globalThis as { WebSocket?: new (url: string) => WsLike }).WebSocket;
+    const WSImpl = (globalThis as unknown as { WebSocket?: new (url: string) => WsLike }).WebSocket;
     if (!WSImpl) {
       this.spot.state = "disabled";
       this.fut.state = "disabled";
@@ -342,7 +342,7 @@ class BinanceRealtimeEngine {
   private connect(kind: "spot" | "futures", url: string) {
     const st = this.stats(kind);
     const provider = kind === "spot" ? SPOT_PROVIDER : FUT_PROVIDER;
-    const WSImpl = (globalThis as { WebSocket?: new (url: string) => WsLike }).WebSocket;
+    const WSImpl = (globalThis as unknown as { WebSocket?: new (url: string) => WsLike }).WebSocket;
     if (!WSImpl) return;
     try {
       st.state = "connecting";

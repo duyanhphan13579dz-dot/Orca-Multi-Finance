@@ -6,6 +6,11 @@ import type { Meta } from "../types";
 import { getSectorTrendForSymbol } from "./sector-trend";
 import { getVnStockDetail } from "./stocks";
 
+function toTs(ts?: string | number | null): number | null {
+  if (ts == null) return null;
+  return typeof ts === "number" ? ts : (Date.parse(ts) || null);
+}
+
 export interface FinancialAiAnalysis {
   symbol: string;
   narrative: string;
@@ -389,9 +394,7 @@ export async function analyzeFinancialHealthAi(
       },
       meta: buildMeta({
         source: detailRes.meta.source,
-        sourceTimestampMs: detailRes.meta.sourceTimestamp
-          ? Date.parse(detailRes.meta.sourceTimestamp)
-          : null,
+        sourceTimestampMs: toTs(detailRes.meta.sourceTimestamp),
         cached: detailRes.meta.cached,
         stale: true,
         note: "Thiếu BCTC",
@@ -404,9 +407,7 @@ export async function analyzeFinancialHealthAi(
       analysis: deterministicFallback(ctx),
       meta: buildMeta({
         source: detailRes.meta.source,
-        sourceTimestampMs: detailRes.meta.sourceTimestamp
-          ? Date.parse(detailRes.meta.sourceTimestamp)
-          : null,
+        sourceTimestampMs: toTs(detailRes.meta.sourceTimestamp),
         cached: detailRes.meta.cached,
         stale: detailRes.meta.stale,
         note: "OpenRouter/AI chưa cấu hình — deterministic",
@@ -458,9 +459,7 @@ export async function analyzeFinancialHealthAi(
       analysis: { ...fb, sourceNote: "LLM lỗi — fallback deterministic" },
       meta: buildMeta({
         source: detailRes.meta.source,
-        sourceTimestampMs: detailRes.meta.sourceTimestamp
-          ? Date.parse(detailRes.meta.sourceTimestamp)
-          : null,
+        sourceTimestampMs: toTs(detailRes.meta.sourceTimestamp),
         cached: detailRes.meta.cached,
         stale: detailRes.meta.stale,
         note: "LLM unavailable",
@@ -483,9 +482,7 @@ export async function analyzeFinancialHealthAi(
     },
     meta: buildMeta({
       source: `${detailRes.meta.source}+llm:${llm.model}`,
-      sourceTimestampMs: detailRes.meta.sourceTimestamp
-        ? Date.parse(detailRes.meta.sourceTimestamp)
-        : Date.now(),
+      sourceTimestampMs: toTs(detailRes.meta.sourceTimestamp) ?? Date.now(),
       cached: false,
       stale: detailRes.meta.stale,
       note: `AI chart+health · ${llm.latencyMs}ms · ${llm.model}`,
@@ -532,9 +529,7 @@ export async function forecastRevenueAi(
       },
       meta: buildMeta({
         source: detailRes.meta.source,
-        sourceTimestampMs: detailRes.meta.sourceTimestamp
-          ? Date.parse(detailRes.meta.sourceTimestamp)
-          : null,
+        sourceTimestampMs: toTs(detailRes.meta.sourceTimestamp),
         cached: detailRes.meta.cached,
         stale: detailRes.meta.stale,
         note: "insufficient BCTC history",
@@ -639,9 +634,7 @@ export async function forecastRevenueAi(
     },
     meta: buildMeta({
       source: detailRes.meta.source,
-      sourceTimestampMs: detailRes.meta.sourceTimestamp
-        ? Date.parse(detailRes.meta.sourceTimestamp)
-        : null,
+      sourceTimestampMs: toTs(detailRes.meta.sourceTimestamp),
       cached: detailRes.meta.cached,
       stale: detailRes.meta.stale,
       note: `Revenue forecast · growth ${pct(baseG)}`,

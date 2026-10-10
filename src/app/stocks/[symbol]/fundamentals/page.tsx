@@ -236,9 +236,9 @@ export default function StockFundamentalsPage({
     tab === "operating"
       ? metrics.operating
       : tab === "investment"
-        ? metrics.investment
+        ? metrics.performance
         : tab === "health"
-          ? [...metrics.debtPillars, ...metrics.healthExtra]
+          ? metrics.leverage
           : tab === "cashflow"
             ? metrics.cashflow
             : metrics.valuation;

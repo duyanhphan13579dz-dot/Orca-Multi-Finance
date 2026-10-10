@@ -763,14 +763,14 @@ function resolveState(input: {
   if (
     score > 15 &&
     premiumDiscount === "DISCOUNT" &&
-    (vsaEvents.includes("NO_SUPPLY") || effortResult === "bullish" || absorption === "bullish")
+    (vsaEvents.includes("NO_SUPPLY") || effortResult === "bullish")
   ) {
     return "ACCUMULATION_CANDIDATE";
   }
   if (
     score < -15 &&
     premiumDiscount === "PREMIUM" &&
-    (vsaEvents.includes("NO_DEMAND") || effortResult === "bearish" || absorption === "bearish")
+    (vsaEvents.includes("NO_DEMAND") || effortResult === "bearish")
   ) {
     return "DISTRIBUTION_CANDIDATE";
   }
@@ -950,7 +950,7 @@ export function analyzeMoneyFlow(
       : primaryFvg?.direction === "bearish"
         ? "bearish"
         : "neutral",
-  ].filter((d) => d !== "neutral");
+  ].filter((d): d is FlowDirection => d !== "neutral");
 
   const agreementBull = dirs.filter((d) => d === "bullish").length;
   const agreementBear = dirs.filter((d) => d === "bearish").length;

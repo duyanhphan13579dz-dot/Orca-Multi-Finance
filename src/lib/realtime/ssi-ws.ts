@@ -423,7 +423,7 @@ class SsiMarketWsEngine {
       return;
     }
 
-    const WSImpl = (globalThis as { WebSocket?: new (url: string, protocols?: string | string[]) => WsLike })
+    const WSImpl = (globalThis as unknown as { WebSocket?: new (url: string, protocols?: string | string[]) => WsLike })
       .WebSocket;
     if (!WSImpl) {
       this.state = "disabled";
