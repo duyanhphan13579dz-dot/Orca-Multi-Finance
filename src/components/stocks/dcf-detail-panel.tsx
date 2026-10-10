@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Panel, Badge, Chg, fmtCompact, fmtNum } from "@/components/ui";
+import { Panel, Badge, Chg, fmtCompact, fmtNum, EmptyState } from "@/components/ui";
 import { LineChart, ChevronDown, ChevronUp } from "lucide-react";
 
 type DcfYear = {
@@ -87,9 +87,10 @@ export function DcfDetailPanel({
   if (!list.length) {
     return (
       <Panel title="Mô hình DCF">
-        <p className="text-[12px] text-text-muted">
-          Chưa đủ FCF dương để chạy DCF. Cần dòng tiền tự do (OCF − CAPEX) hoặc LN ròng ổn định từ BCTC.
-        </p>
+        <EmptyState
+          title="Chưa đủ điều kiện chạy mô hình DCF"
+          description="Cần dòng tiền tự do dương (OCF − CAPEX) hoặc LN ròng ổn định từ chuỗi BCTC tối thiểu 4 quý gần nhất."
+        />
       </Panel>
     );
   }

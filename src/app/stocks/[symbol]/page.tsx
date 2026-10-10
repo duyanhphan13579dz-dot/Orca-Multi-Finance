@@ -5,7 +5,7 @@ import dynamic from "next/dynamic";
 import { useApi } from "@/lib/hooks";
 import type { VnStockDetail } from "@/lib/services/stocks";
 import type { Meta } from "@/lib/types";
-import { FreshnessDot, Loading, Panel, Unavailable } from "@/components/ui";
+import { FreshnessDot, Loading, Panel, Unavailable, ErrorState, FreshnessAlertBanner, SyncMetricBadge } from "@/components/ui";
 import {
   Activity,
   ArrowDownRight,
@@ -317,24 +317,18 @@ export default function StockDetailPage({ params }: { params: Promise<{ symbol: 
   if (!data || (!canPaint && !hadPaint)) {
     return (
       <div className="stock-workspace space-y-3">
-        <Unavailable
+        <ErrorState
           title={`Chưa tải đủ dữ liệu ${symbol}`}
-          note={
+          message={
             res && !res.success
               ? res.error.message
-              : "Yêu cầu giá hoặc lịch sử nến. Bấm thử lại."
+              : "Yêu cầu giá thị trường hoặc lịch sử nến để hiển thị biểu đồ và phân tích."
           }
-        />
-        <button
-          type="button"
-          className="rounded-lg border border-border-subtle px-3 py-2 text-[12px] font-medium hover:border-accent-primary/40"
-          onClick={() => {
+          onRetry={() => {
             setRetried(false);
             void mutate();
           }}
-        >
-          Thử tải lại
-        </button>
+        />
       </div>
     );
   }
@@ -358,6 +352,16 @@ export default function StockDetailPage({ params }: { params: Promise<{ symbol: 
           </button>
         ))}
       </nav>
+
+      {meta?.freshness && (meta.freshness === "DELAYED" || meta.freshness === "STALE" || meta.degraded) && (
+        <FreshnessAlertBanner
+          state={meta.freshness === "STALE" ? "stale" : meta.degraded ? "degraded" : "delayed"}
+          ageMs={meta.ageMs}
+          note={meta.note}
+          source={meta.source}
+          className="mb-2"
+        />
+      )}
 
       <DecisionStrip quote={data.quote} technical={data.technical} meta={meta ?? null} />
 

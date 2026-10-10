@@ -5,7 +5,7 @@ import "@/app/stock-fs-table.css";
 import { useEffect, useState } from "react";
 import { ExternalLink } from "lucide-react";
 import { useApi } from "@/lib/hooks";
-import { fmtCompact, Loading, Panel, Unavailable } from "@/components/ui";
+import { fmtCompact, Loading, Panel, Unavailable, ErrorState, EmptyState, FreshnessAlertBanner } from "@/components/ui";
 import { financialsApiUrl, type FinTablePayload } from "@/components/stocks/financials-table-data";
 
 type TabKey = "income" | "balance" | "cashflow" | "ratios";
@@ -224,14 +224,11 @@ export default function StockFinancialsPage({ params }: { params: Promise<{ symb
   if (!data?.financials) {
     return (
       <div className="stock-workspace space-y-3">
-        <Unavailable title={`Không lấy được BCTC ${symbol || ""}`} note={failNote} />
-        <button
-          type="button"
-          className="rounded-lg border border-border-subtle px-3 py-2 text-[12px] font-medium hover:border-accent-primary/40"
-          onClick={() => void mutate()}
-        >
-          Thử tải lại
-        </button>
+        <ErrorState
+          title={`Không lấy được BCTC ${symbol || ""}`}
+          message={failNote || "Không thể kết nối hoặc dữ liệu BCTC từ nhà cung cấp đang tạm dừng."}
+          onRetry={() => void mutate()}
+        />
         <Panel title="Nguồn đối chiếu (VNDIRECT DStock)">
           <ul className="space-y-1.5 text-[12px]">
             <li>
@@ -346,7 +343,12 @@ export default function StockFinancialsPage({ params }: { params: Promise<{ symb
         </div>
 
         {!rows.length ? (
-          <p className="text-[12px] text-ink-3">Bảng này chưa có dữ liệu từ {sourceLabel}.</p>
+          <EmptyState
+            title={`Chưa có dữ liệu ${TABS.find((x) => x.key === tab)?.label}`}
+            description={`Bảng này chưa có dữ liệu báo cáo từ ${sourceLabel} cho mã ${symbol}.`}
+            actionLabel="Tải lại BCTC"
+            onAction={() => void mutate()}
+          />
         ) : (
           <>
             <div className="stock-fs-scroll md:hidden">

@@ -4,7 +4,7 @@ import { memo } from "react";
 import { ExternalLink, Newspaper } from "lucide-react";
 import { useApi } from "@/lib/hooks";
 import type { StockNewsResult } from "@/lib/services/stock-news";
-import { Loading, Panel } from "@/components/ui";
+import { Loading, Panel, EmptyState } from "@/components/ui";
 
 const fmt = (iso: string | null) => {
   const t = iso ? Date.parse(iso) : NaN;
@@ -34,12 +34,10 @@ export const CompanyNewsPanel = memo(function CompanyNewsPanel({ symbol }: { sym
   if (!items.length) {
     return (
       <Panel title={title}>
-        <p className="text-[12px] text-text-muted">
-          Chưa lấy được tin cho <b>{symbol}</b>.{" "}
-          <a className="underline" href={`https://dstock.vndirect.com.vn/tin-tuc-ma/${encodeURIComponent(symbol)}`} target="_blank" rel="noopener noreferrer">
-            Xem trên VNDirect DStock
-          </a>
-        </p>
+        <EmptyState
+          title={`Chưa có tin tức cho ${symbol}`}
+          description="Chưa có tin tức niêm yết mới nhất hoặc thông cáo từ DStock VNDirect cho mã này."
+        />
       </Panel>
     );
   }

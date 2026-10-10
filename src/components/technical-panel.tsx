@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import type { CandlePattern, TechnicalSnapshot } from "@/lib/types";
-import { Badge, fmtNum, Panel, priceDigits } from "@/components/ui";
+import { Badge, fmtNum, Panel, priceDigits, EmptyState } from "@/components/ui";
 import { Crosshair, Gauge, LineChart, Shield, TrendingDown, TrendingUp, Waves, Compass, Activity, ChevronDown } from "lucide-react";
 
 const TREND_LABEL: Record<string, { vi: string; tone: "up" | "down" | "neutral" }> = {
@@ -29,7 +29,10 @@ export function TechnicalPanel({
   if (!tech) {
     return (
       <Panel title="Phân tích kỹ thuật" className="h-full">
-        <p className="text-[12px] text-text-muted">Chưa đủ dữ liệu chuỗi giá để tính toán chỉ báo.</p>
+        <EmptyState
+          title="Chưa đủ dữ liệu kỹ thuật"
+          description="Cần tối thiểu chuỗi giá lịch sử (OHLCV) để tính toán MA, RSI, MACD và các vùng giá Pivot."
+        />
       </Panel>
     );
   }

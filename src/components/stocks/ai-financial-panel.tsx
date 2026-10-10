@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useState } from "react";
-import { fmtCompact, Panel } from "@/components/ui";
+import { fmtCompact, Panel, ErrorState, EmptyState, Loading } from "@/components/ui";
 
 interface AiAnalysisPayload {
   symbol: string;
@@ -131,15 +131,21 @@ export function AiFinancialPanel({ symbol }: { symbol: string }) {
       }
     >
       {!data && !fc && !err && !loading && !loadingFc && (
-        <p className="text-[12px] text-ink-3">
-          Bấm <strong className="text-ink-2">AI phân tích</strong> hoặc{" "}
-          <strong className="text-ink-2">Dự báo doanh thu</strong> để bắt đầu.
-        </p>
+        <EmptyState
+          title={`Sẵn sàng phân tích AI cho ${symbol}`}
+          description="Bấm 'AI phân tích + đọc chart' hoặc 'Dự báo doanh thu' để mô hình quét cấu trúc BCTC, mẫu hình nến và xuất báo cáo tổng hợp."
+        />
       )}
       {(loading || loadingFc) && (
-        <p className="text-[12px] text-ink-3">Đang phân tích…</p>
+        <Loading rows={3} label={`AI đang xử lý dữ liệu và cấu trúc giá ${symbol}…`} />
       )}
-      {err && <p className="text-[12px] text-warn/90">{err}</p>}
+      {err && (
+        <ErrorState
+          title="Không thể hoàn tất phân tích"
+          message={err}
+          onRetry={() => void runAnalysis()}
+        />
+      )}
 
       {data && (
         <div className="mb-4 space-y-3 border-b border-line/50 pb-4">

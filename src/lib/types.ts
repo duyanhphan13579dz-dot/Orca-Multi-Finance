@@ -15,12 +15,14 @@ export type QualityStatus = "VALID" | "SUSPECT" | "INVALID" | "STALE";
 export interface Meta {
   source?: string;
   sourceTimestamp?: string | number | null;
+  sourceTimestampMs?: number | null;
   providerReceivedAt?: string | null;
   ingestedAt?: string;
   freshness?: FreshnessStatus;
   ageMs?: number | null;
   cached?: boolean;
   stale?: boolean;
+  degraded?: boolean;
   latencyMs?: number;
   qualityStatus?: QualityStatus;
   note?: string;

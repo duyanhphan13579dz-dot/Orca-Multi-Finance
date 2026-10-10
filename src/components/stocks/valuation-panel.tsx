@@ -7,8 +7,9 @@ import {
   Badge,
   Chg,
   Loading,
-  ErrorNote,
-  Unavailable,
+  ErrorState,
+  EmptyState,
+  FreshnessAlertBanner,
   FreshnessDot,
   fmtNum,
   fmtCompact,
@@ -29,7 +30,7 @@ export function ValuationPanel({
   const [wantLlm, setWantLlm] = useState(false);
   const [showNotes, setShowNotes] = useState(false);
 
-  const { data, meta, isLoading, error } = useApi<Record<string, unknown>>(
+  const { data, meta, isLoading, error, mutate } = useApi<Record<string, unknown>>(
     symbol ? `/api/v1/stocks/${encodeURIComponent(symbol)}/valuation?full=1` : null,
     { refreshInterval: 120_000 },
   );
@@ -47,7 +48,7 @@ export function ValuationPanel({
   if (isLoading && !data) {
     return (
       <Panel title="Định giá">
-        <Loading rows={6} />
+        <Loading rows={6} label={`Đang tải mô hình định giá ${symbol}…`} />
       </Panel>
     );
   }
@@ -55,7 +56,11 @@ export function ValuationPanel({
   if (error && !data) {
     return (
       <Panel title="Định giá">
-        <ErrorNote message={String(error)} />
+        <ErrorState
+          title={`Không thể dựng định giá ${symbol}`}
+          message={error instanceof Error ? error.message : String(error)}
+          onRetry={() => void mutate()}
+        />
       </Panel>
     );
   }
@@ -63,7 +68,12 @@ export function ValuationPanel({
   if (!data) {
     return (
       <Panel title="Định giá">
-        <Unavailable title="Chưa có dữ liệu định giá" note={`Không dựng được valuation cho ${symbol}.`} />
+        <EmptyState
+          title="Chưa có dữ liệu định giá"
+          description={`Không tìm thấy dữ liệu BCTC và chỉ số để xây dựng mô hình cho ${symbol}.`}
+          actionLabel="Tải lại"
+          onAction={() => void mutate()}
+        />
       </Panel>
     );
   }
@@ -166,6 +176,15 @@ export function ValuationPanel({
           </span>
         }
       >
+        {meta?.freshness && (meta.freshness === "DELAYED" || meta.freshness === "STALE" || meta.degraded) && (
+          <FreshnessAlertBanner
+            state={meta.freshness === "STALE" ? "stale" : meta.degraded ? "degraded" : "delayed"}
+            ageMs={meta.ageMs}
+            note={meta.note}
+            source={meta.source}
+            className="mb-3"
+          />
+        )}
         <div className={`grid gap-4 ${compact ? "md:grid-cols-2" : "md:grid-cols-[auto_1fr_1fr]"}`}>
           <div className="flex flex-col items-center justify-center">
             <div className="num text-[28px] font-bold text-ink">
