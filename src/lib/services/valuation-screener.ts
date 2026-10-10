@@ -243,55 +243,87 @@ export async function screenValuation(opts: ValuationFilterOpts = {}) {
   const symbols = normalizeSymbols(opts.symbols, DEFAULT_SYMBOLS.split(","), 80);
   const key = `screener:valuation:v7:${symbols.join(",")}`;
 
-  const result = await cached(key, {
-    ttlMs: 8 * 60_000,
-    staleMs: 40 * 60_000,
-    producer: async () => {
-      const [quotes, snapPack] = await Promise.all([
-        hubVnQuotes(symbols).catch(() => null),
-        getFundamentalSnapshots(symbols, { concurrency: WORKERS_BUDGET.snapshotConcurrency }),
-      ]);
-      const quoteMap = new Map<string, { price?: number | null }>();
-      for (const quote of quotes?.quotes ?? []) {
-        if (quote.symbol) quoteMap.set(quote.symbol, quote);
-      }
-      const snapMap = new Map(snapPack.snapshots.map((s) => [s.symbol, s]));
+  let result: {
+    value: {
+      allRows: ValuationScreenRow[];
+      scanned: number;
+      withData: number;
+      bctcHit: number;
+    } | null;
+    cached?: boolean;
+    stale?: boolean;
+  } | null = null;
 
-      const rows = (
-        await mapPool(symbols, Math.min(4, WORKERS_BUDGET.snapshotConcurrency + 1), async (symbol): Promise<ValuationScreenRow | null> => {
-          const ratios = await getVndValuationRatios(symbol).catch(() => null);
-          const price = quoteMap.get(symbol)?.price ?? null;
-          return mergeValuation(symbol, price, ratios, snapMap.get(symbol));
-        })
-      ).filter((row): row is ValuationScreenRow => row !== null);
+  try {
+    result = await cached(key, {
+      ttlMs: 8 * 60_000,
+      staleMs: 40 * 60_000,
+      producer: async () => {
+        const [quotes, snapPack] = await Promise.all([
+          hubVnQuotes(symbols).catch(() => null),
+          getFundamentalSnapshots(symbols, { concurrency: WORKERS_BUDGET.snapshotConcurrency }),
+        ]);
+        const quoteMap = new Map<string, { price?: number | null }>();
+        for (const quote of quotes?.quotes ?? []) {
+          if (quote.symbol) quoteMap.set(quote.symbol, quote);
+        }
+        const snapMap = new Map(snapPack.snapshots.map((s) => [s.symbol, s]));
 
-      rows.sort((a, b) => b.score - a.score || a.symbol.localeCompare(b.symbol));
-      return {
-        allRows: rows,
-        scanned: symbols.length,
-        withData: rows.length,
-        bctcHit: snapPack.hit,
-      };
-    },
-  });
+        const rows = (
+          await mapPool(symbols, Math.min(4, WORKERS_BUDGET.snapshotConcurrency + 1), async (symbol): Promise<ValuationScreenRow | null> => {
+            const ratios = await getVndValuationRatios(symbol).catch(() => null);
+            const price = quoteMap.get(symbol)?.price ?? null;
+            return mergeValuation(symbol, price, ratios, snapMap.get(symbol));
+          })
+        ).filter((row): row is ValuationScreenRow => row !== null);
 
-  let rows = result.value.allRows.filter((r) => passes(r, opts));
+        rows.sort((a, b) => b.score - a.score || a.symbol.localeCompare(b.symbol));
+        return {
+          allRows: rows,
+          scanned: symbols.length,
+          withData: rows.length,
+          bctcHit: snapPack.hit,
+        };
+      },
+    });
+  } catch {
+    result = null;
+  }
+
+  const pack = result?.value;
+  if (!pack) {
+    return {
+      rows: [] as ValuationScreenRow[],
+      scanned: 0,
+      skipped: 0,
+      withData: 0,
+      bctcHit: 0,
+      meta: buildMeta({
+        source: "valuation-shell",
+        partial: true,
+        stale: true,
+        note: "Valuation screener tạm trống — đang phục hồi",
+      }),
+    };
+  }
+
+  let rows = pack.allRows.filter((r) => passes(r, opts));
   if (opts.sector) rows = rows.filter((r) => r.sector === opts.sector);
   const limit = Math.min(opts.limit ?? 80, 100);
   rows = rows.slice(0, limit);
 
   return {
     rows,
-    scanned: result.value.scanned,
-    skipped: result.value.scanned - result.value.withData,
-    withData: result.value.withData,
-    bctcHit: result.value.bctcHit,
+    scanned: pack.scanned,
+    skipped: Math.max(0, pack.scanned - pack.withData),
+    withData: pack.withData,
+    bctcHit: pack.bctcHit,
     meta: buildMeta({
       source: "vndirect-ratios+bctc-snapshots",
-      cached: result.cached,
-      stale: result.stale,
-      partial: result.value.scanned > result.value.withData,
-      note: `P/E·P/B·P/S·EV/EBITDA · ${rows.length} khớp / ${result.value.withData} có data`,
+      cached: result?.cached,
+      stale: result?.stale,
+      partial: pack.scanned > pack.withData,
+      note: `P/E·P/B·P/S·EV/EBITDA · ${rows.length} khớp / ${pack.withData} có data`,
     }),
   };
 }
