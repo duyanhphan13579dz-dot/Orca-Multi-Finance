@@ -97,6 +97,8 @@ export function ForexDetailPage({ pair }: { pair: string }) {
   const { data, meta, isLoading } = useApi<ForexDetail>(`/api/v1/forex/${pair}`, {
     refreshInterval: 30_000,
     keepPreviousData: true,
+    // P6-D: fail-fast client timeout
+    timeoutMs: 12_000,
   });
 
   const seriesHigh = useMemo(() => {
