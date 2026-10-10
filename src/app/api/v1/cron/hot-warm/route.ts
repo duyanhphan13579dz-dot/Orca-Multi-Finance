@@ -8,7 +8,7 @@ export const runtime = "nodejs";
 export const maxDuration = 28;
 
 /**
- * P0 unified hot-warm — keeps last-good for the 5 hottest APIs.
+ * P0/P2-D unified hot-warm — board/intel/forex/global/multi-asset + fundamental/valuation screeners.
  * GET /api/v1/cron/hot-warm?secret=...
  * Recommended cadence: every 45–60s (24/7).
  */
@@ -17,7 +17,7 @@ export async function GET(req: Request) {
   if (denied) return denied;
 
   const t0 = Date.now();
-  const HARD_MS = 24_000;
+  const HARD_MS = 26_000; // P2-D: room for screener warm
   const remaining = () => Math.max(0, HARD_MS - (Date.now() - t0));
   const results: Record<string, { ok: boolean; ms: number; note?: string }> = {};
 
@@ -188,6 +188,101 @@ export async function GET(req: Request) {
       }
     } catch (e) {
       results["multi-asset"] = { ok: false, ms: Date.now() - s, note: e instanceof Error ? e.message : "err" };
+    }
+  }
+
+  // P2-D: warm default fundamental + valuation screeners (soft, budget-gated)
+  if (remaining() > 4_000) {
+    const s = Date.now();
+    try {
+      const pack = await runGuarded(
+        async () => {
+          const { screenFundamental } = await import("@/lib/services/fundamental-screener");
+          return screenFundamental({ limit: 40 }).catch(() => null);
+        },
+        {
+          label: "hot-warm-fundamental",
+          wallMs: Math.min(8_000, remaining()),
+          maxSubrequests: 14,
+          maxConcurrent: 2,
+        },
+      );
+      if (pack?.rows?.length) {
+        putHot(
+          "screener-fundamental",
+          {
+            rows: pack.rows,
+            scanned: pack.scanned,
+            skipped: pack.skipped,
+            withData: pack.withData,
+          },
+          {
+            source: pack.meta?.source ?? "fundamental-warm",
+            partial: pack.meta?.partial,
+            note: pack.meta?.note,
+          },
+        );
+        results["screener-fundamental"] = {
+          ok: true,
+          ms: Date.now() - s,
+          note: `${pack.rows.length} rows`,
+        };
+      } else {
+        results["screener-fundamental"] = { ok: false, ms: Date.now() - s, note: "empty" };
+      }
+    } catch (e) {
+      results["screener-fundamental"] = {
+        ok: false,
+        ms: Date.now() - s,
+        note: e instanceof Error ? e.message : "err",
+      };
+    }
+  }
+
+  if (remaining() > 3_500) {
+    const s = Date.now();
+    try {
+      const pack = await runGuarded(
+        async () => {
+          const { screenValuation } = await import("@/lib/services/valuation-screener");
+          return screenValuation({ limit: 40 }).catch(() => null);
+        },
+        {
+          label: "hot-warm-valuation",
+          wallMs: Math.min(8_000, remaining()),
+          maxSubrequests: 14,
+          maxConcurrent: 2,
+        },
+      );
+      if (pack?.rows?.length) {
+        putHot(
+          "screener-valuation",
+          {
+            rows: pack.rows,
+            scanned: pack.scanned,
+            skipped: pack.skipped,
+            withData: pack.withData,
+          },
+          {
+            source: pack.meta?.source ?? "valuation-warm",
+            partial: pack.meta?.partial,
+            note: pack.meta?.note,
+          },
+        );
+        results["screener-valuation"] = {
+          ok: true,
+          ms: Date.now() - s,
+          note: `${pack.rows.length} rows`,
+        };
+      } else {
+        results["screener-valuation"] = { ok: false, ms: Date.now() - s, note: "empty" };
+      }
+    } catch (e) {
+      results["screener-valuation"] = {
+        ok: false,
+        ms: Date.now() - s,
+        note: e instanceof Error ? e.message : "err",
+      };
     }
   }
 
