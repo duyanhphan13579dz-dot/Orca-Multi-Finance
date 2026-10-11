@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
-import { useApi } from "@/lib/hooks";
+import { useApi, useHydrated } from "@/lib/hooks";
 import type { CryptoSummary } from "@/lib/services/crypto";
 import type { CryptoMarketRow, Meta } from "@/lib/types";
 import { Badge, Chg, fmtCompact, fmtNum, FreshnessDot, Loading, MetaLine, Panel, priceDigits, Unavailable } from "@/components/ui";
@@ -38,7 +38,8 @@ export function CryptoMarketPage() {
     return r.slice(0, 80);
   }, [data, tab, q]);
 
-  if (isLoading && !data) return <Loading rows={12} />;
+  const hydrated = useHydrated();
+  if (!hydrated || (isLoading && !data)) return <Loading rows={12} />;
   if (!data)
     return (
       <Unavailable

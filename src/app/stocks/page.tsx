@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
-import { useApi } from "@/lib/hooks";
+import { useApi, useHydrated } from "@/lib/hooks";
 import { VN_SECTOR_MAP, DEFAULT_VN_WATCHLIST, sectorOf } from "@/lib/vn/master";
 import type { IndexQuote, Quote } from "@/lib/types";
 import { Badge, Chg, fmtCompact, fmtNum, FreshnessDot, Loading, MetaLine, Panel, Unavailable } from "@/components/ui";
@@ -73,8 +73,12 @@ export default function VnMarketCenterPage() {
     return { atCeiling, atFloor };
   }, [quotes]);
 
+  const hydrated = useHydrated();
+
   // Keep showing last board while revalidating / after transient errors
-  if ((isLoading || coreLoading) && !data?.quotes?.length) return <Loading rows={12} />;
+  if (!hydrated || ((isLoading || coreLoading) && !data?.quotes?.length)) {
+    return <Loading rows={12} />;
+  }
 
   return (
     <div className="stock-workspace">

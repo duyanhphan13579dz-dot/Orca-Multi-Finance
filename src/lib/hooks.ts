@@ -99,6 +99,20 @@ function usePageVisible(): boolean {
   return useSyncExternalStore(subscribePageVisibility, getPageVisibility, getServerPageVisibility);
 }
 
+const emptySubscribe = () => () => undefined;
+
+/**
+ * Hook trả về false trong quá trình SSR và Hydration ban đầu, và true ngay sau khi mount client.
+ * Giúp đồng bộ 100% HTML render từ Server và Client, triệt tiêu hoàn toàn lỗi React Hydration Error.
+ */
+export function useHydrated(): boolean {
+  return useSyncExternalStore(
+    emptySubscribe,
+    () => true,
+    () => false,
+  );
+}
+
 export function useApi<T>(
   url: string | null,
   opts?: { refreshInterval?: number; timeoutMs?: number; keepPreviousData?: boolean },

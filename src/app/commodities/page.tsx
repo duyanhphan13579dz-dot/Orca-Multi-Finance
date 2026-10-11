@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { useApi } from "@/lib/hooks";
+import { useApi, useHydrated } from "@/lib/hooks";
 import type { CommodityMarket } from "@/lib/services/commodities";
 import { Badge, Chg, fmtNum, FreshnessDot, Loading, MetaLine, Unavailable, ErrorState, EmptyState, FreshnessAlertBanner } from "@/components/ui";
 import { AddToWatchlist } from "@/components/watchlist-button";
@@ -101,7 +101,8 @@ export default function CommoditiesPage() {
     return acc;
   }, [data?.catalog]);
 
-  if (isLoading && !data) return <Loading rows={10} />;
+  const hydrated = useHydrated();
+  if (!hydrated || (isLoading && !data)) return <Loading rows={10} />;
 
   return (
     <div className="space-y-3">

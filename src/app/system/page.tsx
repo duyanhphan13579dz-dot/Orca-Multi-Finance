@@ -1,6 +1,6 @@
 "use client";
 
-import { useApi } from "@/lib/hooks";
+import { useApi, useHydrated } from "@/lib/hooks";
 import type { ProviderStatus } from "@/lib/types";
 import { Badge, FreshnessDot, Loading, Panel } from "@/components/ui";
 import { Activity, Cpu, Database, RefreshCw, Server, Zap } from "lucide-react";
@@ -39,7 +39,8 @@ const STATUS_TONE: Record<ProviderStatus["status"], "up" | "down" | "warn" | "ne
 
 export default function SystemPage() {
   const { data, isLoading, mutate } = useApi<OpsData>("/api/v1/system/providers", { refreshInterval: 10_000 });
-  if (isLoading && !data) return <Loading rows={10} />;
+  const hydrated = useHydrated();
+  if (!hydrated || (isLoading && !data)) return <Loading rows={10} />;
   const d = data;
   return (
     <div className="space-y-3">

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useApi } from "@/lib/hooks";
+import { useApi, useHydrated } from "@/lib/hooks";
 import type { ForexMarket } from "@/lib/services/forex";
 import type { ForexRow } from "@/lib/types";
 import { Chg, FreshnessDot, Loading, MetaLine, Panel, Unavailable } from "@/components/ui";
@@ -14,7 +14,8 @@ export function ForexDashboard() {
     // P5-A: tighter client timeout — hot snapshot / last-good cover cold path
     timeoutMs: 10_000,
   });
-  if (isLoading && !data) return <Loading rows={10} />;
+  const hydrated = useHydrated();
+  if (!hydrated || (isLoading && !data)) return <Loading rows={10} />;
   if (!data) {
     return (
       <Unavailable
