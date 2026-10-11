@@ -210,6 +210,41 @@ async function forexCandles(symbol: string, tf: string, limit: number): Promise<
   };
 }
 
+function resolveCommodityYahooSymbol(symbol: string): string {
+  const s = symbol.toUpperCase().trim();
+  if (s === "GOLD" || s === "XAU" || s === "XAUUSD") return "GC=F";
+  if (s === "SILVER" || s === "XAG" || s === "XAGUSD") return "SI=F";
+  if (s === "WTI" || s === "OIL" || s === "CRUDE") return "CL=F";
+  if (s === "BRENT") return "BZ=F";
+  if (s === "GAS" || s === "NATGAS") return "NG=F";
+  if (s === "COPPER") return "HG=F";
+  if (s === "PLATINUM") return "PL=F";
+  if (s === "SOYBEAN" || s === "SOYBEANS") return "ZS=F";
+  if (s === "CORN") return "ZC=F";
+  if (s === "WHEAT") return "ZW=F";
+  return s;
+}
+
+async function commodityCandles(symbol: string, tf: string, limit: number): Promise<CandleSeriesResult> {
+  const ySym = resolveCommodityYahooSymbol(symbol);
+  const cfg = yahooIntervalFor(tf);
+  if (cfg) {
+    try {
+      const raw = await getYahooChart(ySym, cfg.interval, cfg.range);
+      const candles = (raw?.candles ?? []).slice(-limit);
+      if (candles.length >= 5) {
+        return {
+          candles,
+          source: `yahoo:${ySym}`,
+        };
+      }
+    } catch {
+      /* fall through to forex / biquote */
+    }
+  }
+  return forexCandles(symbol, tf, limit);
+}
+
 export async function getChartHistory(
   args: ChartArgs,
 ): Promise<{ data: ChartMarketData; meta: Meta } | null> {
@@ -243,7 +278,9 @@ export async function getChartHistory(
             source: (r?.meta as { source?: string } | undefined)?.source ?? "vn-ohlcv",
           };
           series.candles = scaleVnStockToFullVnd(series.candles);
-        } else if (args.assetType === "forex" || args.assetType === "commodity") {
+        } else if (args.assetType === "commodity") {
+          series = await commodityCandles(symbol, tf, limit);
+        } else if (args.assetType === "forex") {
           series = await forexCandles(symbol, tf, limit);
         } else {
           series = await yahooCandles(symbol, tf, limit);
