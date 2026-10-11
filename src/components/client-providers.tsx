@@ -7,6 +7,7 @@ import { PatternAlertMonitorHost } from "@/components/pattern-alert-monitor-host
 import { ErrorBoundary } from "@/components/error-boundary";
 import { prefetchMarketSnapshot } from "@/components/ticker-tape";
 import { prefetchApi } from "@/lib/hooks";
+import { ConvexClientProvider } from "@/components/convex-client-provider";
 
 const globalSwrCache = new Map();
 
@@ -163,12 +164,15 @@ export function ClientProviders({ children }: { children: ReactNode }) {
         revalidateIfStale: true,
       }}
     >
-      <ErrorBoundary name="app-root">
-        <PriceAlertMonitorHost />
-        <PatternAlertMonitorHost />
-        <WarmCriticalApis />
-        {children}
-      </ErrorBoundary>
+      <ConvexClientProvider>
+        <ErrorBoundary name="app-root">
+          <PriceAlertMonitorHost />
+          <PatternAlertMonitorHost />
+          <WarmCriticalApis />
+          {children}
+        </ErrorBoundary>
+      </ConvexClientProvider>
     </SWRConfig>
   );
 }
+
