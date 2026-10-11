@@ -99,30 +99,30 @@ html {
 }
 .orca-main-scroll::-webkit-scrollbar-track { background: transparent; }
 
-/* ——— Page route enter — soft, no blank flash ——— */
+/* ——— Page route enter — ultra-smooth, fluid fade-up with cubic-bezier easing ——— */
 @keyframes orca-page-in {
-  from {
-    opacity: 0.92;
-    transform: translateY(3px);
+  0% {
+    opacity: 0;
+    transform: translate3d(0, 10px, 0);
   }
-  to {
+  100% {
     opacity: 1;
-    transform: translateY(0);
+    transform: translate3d(0, 0, 0);
   }
 }
 .orca-page-enter {
-  animation: orca-page-in 180ms var(--ease-out-soft) both;
+  width: 100%;
 }
 
-/* ——— Top route progress (masks RSC latency) ——— */
+/* ——— Top route progress (silky shimmer gradient bar) ——— */
 .orca-route-progress {
   pointer-events: none;
   position: fixed;
   top: 0;
   left: 0;
   right: 0;
-  z-index: 9999;
-  height: 2px;
+  z-index: 99999;
+  height: 2.5px;
   background: transparent;
 }
 .orca-route-progress-bar {
@@ -130,16 +130,19 @@ html {
   width: 0;
   background: linear-gradient(
     90deg,
-    color-mix(in srgb, var(--color-accent-primary) 85%, #38bdf8),
-    var(--color-accent-primary),
-    color-mix(in srgb, var(--color-accent-primary) 70%, #a78bfa)
+    color-mix(in srgb, var(--color-accent-primary) 90%, #38bdf8),
+    #38bdf8,
+    #818cf8,
+    #c084fc,
+    var(--color-accent-primary)
   );
-  box-shadow: 0 0 8px color-mix(in srgb, var(--color-accent-primary) 55%, transparent);
-  transition: width 200ms var(--ease-out-soft);
-  border-radius: 0 1px 1px 0;
+  background-size: 200% 100%;
+  box-shadow: 0 0 10px rgba(56, 189, 248, 0.75), 0 0 4px rgba(192, 132, 252, 0.6);
+  transition: width 220ms cubic-bezier(0.16, 1, 0.3, 1);
+  border-radius: 0 2px 2px 0;
 }
 .orca-route-progress[data-active="0"] .orca-route-progress-bar {
-  transition: width 160ms var(--ease-out-smooth), opacity 200ms ease;
+  transition: width 140ms ease-out, opacity 220ms ease;
   opacity: 0;
 }
 
@@ -412,16 +415,25 @@ html {
   }
 }
 
-.orca-page-transition,
-.orca-page-enter {
-  animation: orca-page-in 180ms cubic-bezier(0.16, 1, 0.3, 1) both;
+.orca-page-transition {
+  animation: orca-page-in 240ms cubic-bezier(0.16, 1, 0.3, 1) both;
   will-change: opacity, transform;
+  backface-visibility: hidden;
+  transform: translateZ(0);
+}
+
+.orca-nav-item {
+  transition: background-color 140ms ease, color 140ms ease, transform 120ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.orca-nav-item:active {
+  transform: scale(0.975);
 }
 
 @keyframes orca-tab-in {
   from {
     opacity: 0;
-    transform: translate3d(0, 3px, 0);
+    transform: translate3d(0, 6px, 0);
   }
   to {
     opacity: 1;
@@ -432,7 +444,7 @@ html {
 .orca-tab-pane,
 [role="tabpanel"],
 .tab-content {
-  animation: orca-tab-in 150ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation: orca-tab-in 200ms cubic-bezier(0.16, 1, 0.3, 1) both;
   will-change: opacity, transform;
 }
 

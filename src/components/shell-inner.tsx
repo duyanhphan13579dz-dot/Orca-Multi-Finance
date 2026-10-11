@@ -165,6 +165,15 @@ export function ShellInner({ children }: { children: ReactNode }) {
     };
   }, [pathname]);
 
+  const mainScrollRef = useRef<HTMLElement>(null);
+
+  // Reset cuộn về đầu trang ngay khi chuyển route để giao diện trang mới luôn bắt đầu mượt mà
+  useEffect(() => {
+    if (mainScrollRef.current) {
+      mainScrollRef.current.scrollTo({ top: 0, behavior: "instant" });
+    }
+  }, [pathname]);
+
   const toggleCollapsed = useCallback(() => {
     setSideAnimating(true);
     setCollapsed((v) => {
@@ -224,6 +233,8 @@ export function ShellInner({ children }: { children: ReactNode }) {
           href={href}
           onClick={(e) => onNav(href, e)}
           onMouseEnter={() => onHover(href)}
+          onTouchStart={() => onHover(href)}
+          onFocus={() => onHover(href)}
           className={
             "orca-nav-item group relative flex h-9 shrink-0 items-center gap-2.5 rounded-lg px-2.5 text-[13px] leading-none " +
             (active
@@ -305,6 +316,7 @@ export function ShellInner({ children }: { children: ReactNode }) {
             setMobileOpen(false);
           }}
           onMouseEnter={() => onHover(href)}
+          onTouchStart={() => onHover(href)}
           className={
             "orca-nav-item group relative flex min-h-11 shrink-0 items-center gap-2.5 rounded-lg px-3 text-[14px] leading-none " +
             (active
@@ -500,7 +512,10 @@ export function ShellInner({ children }: { children: ReactNode }) {
               )}
             </div>
           </header>
-          <main className="orca-main-scroll min-h-0 flex-1 overflow-y-auto pb-[calc(4.25rem+env(safe-area-inset-bottom))] md:pb-0">
+          <main
+            ref={mainScrollRef}
+            className="orca-main-scroll min-h-0 flex-1 overflow-y-auto pb-[calc(4.25rem+env(safe-area-inset-bottom))] md:pb-0"
+          >
             <ErrorBoundary name="page" resetKey={pathname}>
               <div key={pathname} className="orca-page-transition p-2.5 sm:p-4">
                 {children}
@@ -515,6 +530,7 @@ export function ShellInner({ children }: { children: ReactNode }) {
         activePersonalTab={activePersonalTab}
         onOpenDrawer={() => setMobileOpen(true)}
         onNav={onNav}
+        onHover={onHover}
       />
     </div>
   );

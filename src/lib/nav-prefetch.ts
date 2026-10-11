@@ -2,11 +2,18 @@
 
 import { prefetchApi } from "@/lib/hooks";
 
+const prefetchedRecently = new Map<string, number>();
+
 /**
  * P4-A: warm hot APIs for a nav route on hover/intent.
+ * Thêm bộ đệm deduplication 4s để tránh spam request khi chuột lướt qua nhiều menu.
  */
 export function prefetchRouteApis(href: string): void {
   const path = (href.split("#")[0] || href).trim();
+  const last = prefetchedRecently.get(path);
+  if (last && Date.now() - last < 4_000) return;
+  prefetchedRecently.set(path, Date.now());
+
   const apis: string[] = [];
   if (path === "/" || path === "") {
     apis.push("/api/v1/stocks?board=vn30", "/api/v1/market/intel", "/api/v1/market/global");

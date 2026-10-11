@@ -25,13 +25,12 @@ export function RouteProgress() {
     clearTimers();
     setVisible(true);
     setActive(true);
-    setWidth(12);
-    // Ease toward ~80% while waiting for the new route
+    setWidth(28);
+    // Tăng tốc độ phản hồi thanh tiến trình khi người dùng nhấn chuyển trang
     timers.current.push(
-      setTimeout(() => setWidth(38), 40),
-      setTimeout(() => setWidth(62), 180),
-      setTimeout(() => setWidth(78), 420),
-      setTimeout(() => setWidth(86), 900),
+      setTimeout(() => setWidth(65), 60),
+      setTimeout(() => setWidth(85), 180),
+      setTimeout(() => setWidth(93), 400),
     );
   }, [clearTimers]);
 
@@ -43,7 +42,7 @@ export function RouteProgress() {
       setTimeout(() => {
         setVisible(false);
         setWidth(0);
-      }, 220),
+      }, 260),
     );
   }, [clearTimers]);
 

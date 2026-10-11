@@ -20,6 +20,7 @@ interface MobileBottomNavProps {
   activePersonalTab: string;
   onOpenDrawer: () => void;
   onNav: (href: string, e?: React.MouseEvent<HTMLElement>) => void;
+  onHover?: (href: string) => void;
 }
 
 interface NavItem {
@@ -39,6 +40,7 @@ export function MobileBottomNav({
   activePersonalTab,
   onOpenDrawer,
   onNav,
+  onHover,
 }: MobileBottomNavProps) {
   // Mode Đầu tư: 5 tabs chính cho ngón tay cái
   const investmentTabs: NavItem[] = [
@@ -158,6 +160,8 @@ export function MobileBottomNav({
               key={tab.id}
               href={tab.href}
               onClick={(e) => onNav(tab.href, e)}
+              onTouchStart={() => onHover?.(tab.href)}
+              onMouseEnter={() => onHover?.(tab.href)}
               className={
                 "relative flex h-full min-w-0 flex-col items-center justify-center gap-0.5 rounded-lg transition-transform active:scale-90 " +
                 (isActive
